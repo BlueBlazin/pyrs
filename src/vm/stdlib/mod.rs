@@ -1,6 +1,10 @@
+pub(super) mod bz2;
 pub(super) mod csv;
 pub(super) mod hashlib;
 pub(super) mod json;
+pub(super) mod lzma;
 pub(super) mod pickle;
 pub(super) mod re;
+pub(super) mod ssl;
 pub(super) mod sqlite3;
+pub(super) mod zlib;

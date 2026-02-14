@@ -5773,6 +5773,71 @@ impl Vm {
                 self.builtin_hashlib_hash_hexdigest(args, kwargs)
             }
             BuiltinFunction::HashlibHashCopy => self.builtin_hashlib_hash_copy(args, kwargs),
+            BuiltinFunction::ZlibCompress => self.builtin_zlib_compress(args, kwargs),
+            BuiltinFunction::ZlibDecompress => self.builtin_zlib_decompress(args, kwargs),
+            BuiltinFunction::ZlibCompressObj => self.builtin_zlib_compressobj(args, kwargs),
+            BuiltinFunction::ZlibDecompressObj => self.builtin_zlib_decompressobj(args, kwargs),
+            BuiltinFunction::ZlibCrc32 => self.builtin_zlib_crc32(args, kwargs),
+            BuiltinFunction::ZlibCompressObjectCompress => {
+                self.builtin_zlib_compress_object_compress(args, kwargs)
+            }
+            BuiltinFunction::ZlibCompressObjectFlush => {
+                self.builtin_zlib_compress_object_flush(args, kwargs)
+            }
+            BuiltinFunction::ZlibDecompressObjectDecompress => {
+                self.builtin_zlib_decompress_object_decompress(args, kwargs)
+            }
+            BuiltinFunction::ZlibDecompressObjectFlush => {
+                self.builtin_zlib_decompress_object_flush(args, kwargs)
+            }
+            BuiltinFunction::Bz2CompressorInit => self.builtin_bz2_compressor_init(args, kwargs),
+            BuiltinFunction::Bz2CompressorCompress => {
+                self.builtin_bz2_compressor_compress(args, kwargs)
+            }
+            BuiltinFunction::Bz2CompressorFlush => {
+                self.builtin_bz2_compressor_flush(args, kwargs)
+            }
+            BuiltinFunction::Bz2DecompressorInit => {
+                self.builtin_bz2_decompressor_init(args, kwargs)
+            }
+            BuiltinFunction::Bz2DecompressorDecompress => {
+                self.builtin_bz2_decompressor_decompress(args, kwargs)
+            }
+            BuiltinFunction::LzmaCompressorInit => {
+                self.builtin_lzma_compressor_init(args, kwargs)
+            }
+            BuiltinFunction::LzmaCompressorCompress => {
+                self.builtin_lzma_compressor_compress(args, kwargs)
+            }
+            BuiltinFunction::LzmaCompressorFlush => {
+                self.builtin_lzma_compressor_flush(args, kwargs)
+            }
+            BuiltinFunction::LzmaDecompressorInit => {
+                self.builtin_lzma_decompressor_init(args, kwargs)
+            }
+            BuiltinFunction::LzmaDecompressorDecompress => {
+                self.builtin_lzma_decompressor_decompress(args, kwargs)
+            }
+            BuiltinFunction::LzmaIsCheckSupported => {
+                self.builtin_lzma_is_check_supported(args, kwargs)
+            }
+            BuiltinFunction::LzmaEncodeFilterProperties => {
+                self.builtin_lzma_encode_filter_properties(args, kwargs)
+            }
+            BuiltinFunction::LzmaDecodeFilterProperties => {
+                self.builtin_lzma_decode_filter_properties(args, kwargs)
+            }
+            BuiltinFunction::SslTxt2Obj => self.builtin_ssl_txt2obj(args, kwargs),
+            BuiltinFunction::SslNid2Obj => self.builtin_ssl_nid2obj(args, kwargs),
+            BuiltinFunction::SslRandStatus => self.builtin_ssl_rand_status(args, kwargs),
+            BuiltinFunction::SslRandAdd => self.builtin_ssl_rand_add(args, kwargs),
+            BuiltinFunction::SslRandBytes => self.builtin_ssl_rand_bytes(args, kwargs),
+            BuiltinFunction::SslRandEgd => self.builtin_ssl_rand_egd(args, kwargs),
+            BuiltinFunction::SslContextNew => self.builtin_ssl_context_new(args, kwargs),
+            BuiltinFunction::SslContextInit => self.builtin_ssl_context_init(args, kwargs),
+            BuiltinFunction::SslCreateDefaultContext => {
+                self.builtin_ssl_create_default_context(args, kwargs)
+            }
             BuiltinFunction::PickleDump => self.builtin_pickle_dump(args, kwargs),
             BuiltinFunction::PickleDumps => self.builtin_pickle_dumps(args, kwargs),
             BuiltinFunction::PickleLoad => self.builtin_pickle_load(args, kwargs),

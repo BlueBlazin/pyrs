@@ -505,6 +505,357 @@ impl Vm {
                 Value::ExceptionType("ValueError".to_string()),
             )],
         );
+        let zlib_compress_type = match self
+            .heap
+            .alloc_class(ClassObject::new("Compress".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *zlib_compress_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("zlib".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "compress".to_string(),
+                Value::Builtin(BuiltinFunction::ZlibCompressObjectCompress),
+            );
+            class_data.attrs.insert(
+                "flush".to_string(),
+                Value::Builtin(BuiltinFunction::ZlibCompressObjectFlush),
+            );
+        }
+        let zlib_decompress_type = match self
+            .heap
+            .alloc_class(ClassObject::new("Decompress".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *zlib_decompress_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("zlib".to_string()));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "decompress".to_string(),
+                Value::Builtin(BuiltinFunction::ZlibDecompressObjectDecompress),
+            );
+            class_data.attrs.insert(
+                "flush".to_string(),
+                Value::Builtin(BuiltinFunction::ZlibDecompressObjectFlush),
+            );
+        }
+        self.install_builtin_module(
+            "zlib",
+            &[
+                ("compress", BuiltinFunction::ZlibCompress),
+                ("decompress", BuiltinFunction::ZlibDecompress),
+                ("compressobj", BuiltinFunction::ZlibCompressObj),
+                ("decompressobj", BuiltinFunction::ZlibDecompressObj),
+                ("crc32", BuiltinFunction::ZlibCrc32),
+            ],
+            vec![
+                ("Compress", Value::Class(zlib_compress_type)),
+                ("Decompress", Value::Class(zlib_decompress_type)),
+                ("error", Value::ExceptionType("Exception".to_string())),
+                (
+                    "ZLIB_VERSION",
+                    Value::Str(self.zlib_version_string().unwrap_or_else(|| "unknown".to_string())),
+                ),
+                ("MAX_WBITS", Value::Int(15)),
+                ("DEFLATED", Value::Int(8)),
+                ("DEF_MEM_LEVEL", Value::Int(8)),
+                ("Z_NO_FLUSH", Value::Int(0)),
+                ("Z_SYNC_FLUSH", Value::Int(2)),
+                ("Z_FINISH", Value::Int(4)),
+                ("Z_DEFAULT_COMPRESSION", Value::Int(-1)),
+                ("Z_BEST_SPEED", Value::Int(1)),
+                ("Z_BEST_COMPRESSION", Value::Int(9)),
+                ("Z_DEFAULT_STRATEGY", Value::Int(0)),
+            ],
+        );
+        let bz2_compressor_type = match self
+            .heap
+            .alloc_class(ClassObject::new("BZ2Compressor".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *bz2_compressor_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_bz2".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::Bz2CompressorInit),
+            );
+            class_data.attrs.insert(
+                "compress".to_string(),
+                Value::Builtin(BuiltinFunction::Bz2CompressorCompress),
+            );
+            class_data.attrs.insert(
+                "flush".to_string(),
+                Value::Builtin(BuiltinFunction::Bz2CompressorFlush),
+            );
+        }
+        let bz2_decompressor_type = match self
+            .heap
+            .alloc_class(ClassObject::new("BZ2Decompressor".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *bz2_decompressor_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_bz2".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::Bz2DecompressorInit),
+            );
+            class_data.attrs.insert(
+                "decompress".to_string(),
+                Value::Builtin(BuiltinFunction::Bz2DecompressorDecompress),
+            );
+        }
+        self.install_builtin_module(
+            "_bz2",
+            &[],
+            vec![
+                ("BZ2Compressor", Value::Class(bz2_compressor_type)),
+                ("BZ2Decompressor", Value::Class(bz2_decompressor_type)),
+            ],
+        );
+        let lzma_compressor_type = match self
+            .heap
+            .alloc_class(ClassObject::new("LZMACompressor".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *lzma_compressor_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_lzma".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::LzmaCompressorInit),
+            );
+            class_data.attrs.insert(
+                "compress".to_string(),
+                Value::Builtin(BuiltinFunction::LzmaCompressorCompress),
+            );
+            class_data.attrs.insert(
+                "flush".to_string(),
+                Value::Builtin(BuiltinFunction::LzmaCompressorFlush),
+            );
+        }
+        let lzma_decompressor_type = match self
+            .heap
+            .alloc_class(ClassObject::new("LZMADecompressor".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *lzma_decompressor_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_lzma".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::LzmaDecompressorInit),
+            );
+            class_data.attrs.insert(
+                "decompress".to_string(),
+                Value::Builtin(BuiltinFunction::LzmaDecompressorDecompress),
+            );
+        }
+        let mut lzma_values = vec![
+            ("LZMACompressor", Value::Class(lzma_compressor_type)),
+            ("LZMADecompressor", Value::Class(lzma_decompressor_type)),
+            ("LZMAError", Value::ExceptionType("Exception".to_string())),
+        ];
+        lzma_values.extend(Self::lzma_constants());
+        self.install_builtin_module(
+            "_lzma",
+            &[
+                ("is_check_supported", BuiltinFunction::LzmaIsCheckSupported),
+                (
+                    "_encode_filter_properties",
+                    BuiltinFunction::LzmaEncodeFilterProperties,
+                ),
+                (
+                    "_decode_filter_properties",
+                    BuiltinFunction::LzmaDecodeFilterProperties,
+                ),
+            ],
+            lzma_values,
+        );
+        let ssl_context_type = match self
+            .heap
+            .alloc_class(ClassObject::new("_SSLContext".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *ssl_context_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_ssl".to_string()));
+            class_data
+                .attrs
+                .insert("__new__".to_string(), Value::Builtin(BuiltinFunction::SslContextNew));
+        }
+        let ssl_memory_bio_type = match self
+            .heap
+            .alloc_class(ClassObject::new("MemoryBIO".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *ssl_memory_bio_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_ssl".to_string()));
+        }
+        let ssl_session_type = match self
+            .heap
+            .alloc_class(ClassObject::new("SSLSession".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *ssl_session_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_ssl".to_string()));
+        }
+        let mut ssl_values = vec![
+            ("_SSLContext", Value::Class(ssl_context_type)),
+            ("MemoryBIO", Value::Class(ssl_memory_bio_type)),
+            ("SSLSession", Value::Class(ssl_session_type)),
+            ("SSLError", Value::ExceptionType("SSLError".to_string())),
+            (
+                "SSLZeroReturnError",
+                Value::ExceptionType("SSLZeroReturnError".to_string()),
+            ),
+            (
+                "SSLWantReadError",
+                Value::ExceptionType("SSLWantReadError".to_string()),
+            ),
+            (
+                "SSLWantWriteError",
+                Value::ExceptionType("SSLWantWriteError".to_string()),
+            ),
+            (
+                "SSLSyscallError",
+                Value::ExceptionType("SSLSyscallError".to_string()),
+            ),
+            ("SSLEOFError", Value::ExceptionType("SSLEOFError".to_string())),
+            (
+                "SSLCertVerificationError",
+                Value::ExceptionType("SSLCertVerificationError".to_string()),
+            ),
+        ];
+        ssl_values.extend(self.ssl_module_constants());
+        self.install_builtin_module(
+            "_ssl",
+            &[
+                ("txt2obj", BuiltinFunction::SslTxt2Obj),
+                ("nid2obj", BuiltinFunction::SslNid2Obj),
+                ("RAND_status", BuiltinFunction::SslRandStatus),
+                ("RAND_add", BuiltinFunction::SslRandAdd),
+                ("RAND_bytes", BuiltinFunction::SslRandBytes),
+                ("RAND_egd", BuiltinFunction::SslRandEgd),
+            ],
+            ssl_values,
+        );
+        let ssl_public_context_type = match self
+            .heap
+            .alloc_class(ClassObject::new("SSLContext".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *ssl_public_context_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("ssl".to_string()));
+            class_data
+                .attrs
+                .insert("__new__".to_string(), Value::Builtin(BuiltinFunction::SslContextNew));
+            class_data
+                .attrs
+                .insert("__init__".to_string(), Value::Builtin(BuiltinFunction::SslContextInit));
+        }
+        let ssl_socket_type = match self
+            .heap
+            .alloc_class(ClassObject::new("SSLSocket".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *ssl_socket_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("ssl".to_string()));
+        }
+        self.install_builtin_module(
+            "ssl",
+            &[
+                (
+                    "create_default_context",
+                    BuiltinFunction::SslCreateDefaultContext,
+                ),
+                (
+                    "_create_stdlib_context",
+                    BuiltinFunction::SslCreateDefaultContext,
+                ),
+            ],
+            vec![
+                ("SSLContext", Value::Class(ssl_public_context_type)),
+                ("SSLSocket", Value::Class(ssl_socket_type)),
+                ("PROTOCOL_TLS", Value::Int(2)),
+                ("PROTOCOL_TLS_CLIENT", Value::Int(16)),
+                ("PROTOCOL_TLS_SERVER", Value::Int(17)),
+                ("CERT_NONE", Value::Int(0)),
+                ("CERT_OPTIONAL", Value::Int(1)),
+                ("CERT_REQUIRED", Value::Int(2)),
+                ("VERIFY_DEFAULT", Value::Int(0)),
+                ("VERIFY_X509_STRICT", Value::Int(32)),
+                ("VERIFY_X509_PARTIAL_CHAIN", Value::Int(0x80000)),
+                ("SSLError", Value::ExceptionType("SSLError".to_string())),
+                (
+                    "SSLZeroReturnError",
+                    Value::ExceptionType("SSLZeroReturnError".to_string()),
+                ),
+                (
+                    "SSLWantReadError",
+                    Value::ExceptionType("SSLWantReadError".to_string()),
+                ),
+                (
+                    "SSLWantWriteError",
+                    Value::ExceptionType("SSLWantWriteError".to_string()),
+                ),
+                (
+                    "SSLSyscallError",
+                    Value::ExceptionType("SSLSyscallError".to_string()),
+                ),
+                ("SSLEOFError", Value::ExceptionType("SSLEOFError".to_string())),
+                (
+                    "SSLCertVerificationError",
+                    Value::ExceptionType("SSLCertVerificationError".to_string()),
+                ),
+            ],
+        );
         self.install_builtin_module(
             "_json",
             &[
@@ -4852,6 +5203,7 @@ impl Vm {
                 ("SOCK_DGRAM", Value::Int(2)),
                 ("SOCK_RAW", Value::Int(3)),
                 ("SOL_SOCKET", Value::Int(1)),
+                ("SO_TYPE", Value::Int(3)),
                 ("SCM_RIGHTS", Value::Int(1)),
                 ("AI_PASSIVE", Value::Int(1)),
                 ("AI_CANONNAME", Value::Int(2)),

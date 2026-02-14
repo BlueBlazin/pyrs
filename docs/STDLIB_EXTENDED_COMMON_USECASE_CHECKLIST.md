@@ -6,12 +6,12 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 
 ## Latest Probe Summary
 - Total modules: `50`
-- Import pass: `46/50`
-- Common-usecase smoke pass: `44/50`
+- Import pass: `50/50`
+- Common-usecase smoke pass: `47/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
 - Probe command: `python3 scripts/probe_stdlib_extended.py --pyrs target/debug/pyrs --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib --out perf/stdlib_compat_extended_latest.json --timeout 20`
-- Current failing modules: `concurrent.futures` (smoke only), `ssl`, `xml` (smoke only), `gzip`, `bz2`, `lzma`.
+- Current failing modules: `concurrent.futures` (smoke only), `xml` (smoke only), `gzip` (smoke only).
 
 ## Checklist
 
@@ -56,7 +56,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `queue` | DONE | PASS | PASS | - |
 | `concurrent.futures` | P1 | PASS | FAIL | `threading._register_atexit` missing in `threading` runtime surface |
 | `socket` | DONE | PASS | PASS | - |
-| `ssl` | P0 | FAIL | FAIL | ModuleNotFoundError: module `_ssl` not found |
+| `ssl` | DONE | PASS | PASS | `_ssl` baseline landed and a native `ssl` bootstrap module now provides import/common context surfaces while namedtuple+super enum bootstrap gap remains tracked in object-model backlog |
 | `email` | DONE | PASS | PASS* | `EmailMessage` header/content fold + `as_string()` smoke is green (artifact refresh pending) |
 | `smtplib` | DONE | PASS* | PASS* | targeted import + common constructor smoke is green; runtime still logs missing `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`) |
 | `imaplib` | DONE | PASS | PASS | targeted `Time2Internaldate(0)` smoke now green after `datetime.datetime.fromtimestamp` + `%z` baseline |
@@ -64,15 +64,16 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `xml` | P1 | PASS | FAIL | ImportError: No module named expat; use SimpleXMLTreeBuilder instead |
 | `html` | DONE | PASS | PASS | - |
 | `pickle` | DONE | PASS | PASS | - |
-| `gzip` | P0 | FAIL | FAIL | ModuleNotFoundError: module `zlib` not found |
-| `bz2` | P0 | FAIL | FAIL | ModuleNotFoundError: module `_bz2` not found |
-| `lzma` | P0 | FAIL | FAIL | ModuleNotFoundError: module `_lzma` not found |
+| `gzip` | P1 | PASS | FAIL | `bytes.lstrip` missing in runtime object-model methods (`gzip.decompress` tail-trim path) |
+| `bz2` | DONE | PASS | PASS | native `_bz2` baseline landed (`BZ2Compressor`/`BZ2Decompressor` one-shot workflows) |
+| `lzma` | DONE | PASS | PASS | native `_lzma` baseline landed (`LZMACompressor`/`LZMADecompressor` + constants/is_check_supported) |
 
 ## Open Blockers (Grouped)
 
-- Native extension/module gaps: `ssl`, `gzip`, `bz2`, `lzma`
+- Native extension/module gaps: none in this matrix (`zlib`, `_bz2`, `_lzma`, `_ssl` baselines are present)
 - XML parser backend gap (`pyexpat`): `xml`
 - Threading hook gap: `concurrent.futures` (`threading._register_atexit`)
+- Bytes method gap: `bytes.lstrip` (blocks full `gzip.decompress` smoke)
 - Extended `hashlib` algorithm coverage gap impacting `smtplib` startup/runtime diagnostics
 
 ## Shim and Probe Notes

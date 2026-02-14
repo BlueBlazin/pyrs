@@ -168,6 +168,37 @@ impl Vm {
             BuiltinFunction::SreAsciiToLower => "ascii_tolower".to_string(),
             BuiltinFunction::SreUnicodeIsCased => "unicode_iscased".to_string(),
             BuiltinFunction::SreUnicodeToLower => "unicode_tolower".to_string(),
+            BuiltinFunction::ZlibCompress => "compress".to_string(),
+            BuiltinFunction::ZlibDecompress => "decompress".to_string(),
+            BuiltinFunction::ZlibCompressObj => "compressobj".to_string(),
+            BuiltinFunction::ZlibDecompressObj => "decompressobj".to_string(),
+            BuiltinFunction::ZlibCrc32 => "crc32".to_string(),
+            BuiltinFunction::ZlibCompressObjectCompress => "compress".to_string(),
+            BuiltinFunction::ZlibCompressObjectFlush => "flush".to_string(),
+            BuiltinFunction::ZlibDecompressObjectDecompress => "decompress".to_string(),
+            BuiltinFunction::ZlibDecompressObjectFlush => "flush".to_string(),
+            BuiltinFunction::Bz2CompressorInit => "__init__".to_string(),
+            BuiltinFunction::Bz2CompressorCompress => "compress".to_string(),
+            BuiltinFunction::Bz2CompressorFlush => "flush".to_string(),
+            BuiltinFunction::Bz2DecompressorInit => "__init__".to_string(),
+            BuiltinFunction::Bz2DecompressorDecompress => "decompress".to_string(),
+            BuiltinFunction::LzmaCompressorInit => "__init__".to_string(),
+            BuiltinFunction::LzmaCompressorCompress => "compress".to_string(),
+            BuiltinFunction::LzmaCompressorFlush => "flush".to_string(),
+            BuiltinFunction::LzmaDecompressorInit => "__init__".to_string(),
+            BuiltinFunction::LzmaDecompressorDecompress => "decompress".to_string(),
+            BuiltinFunction::LzmaIsCheckSupported => "is_check_supported".to_string(),
+            BuiltinFunction::LzmaEncodeFilterProperties => "_encode_filter_properties".to_string(),
+            BuiltinFunction::LzmaDecodeFilterProperties => "_decode_filter_properties".to_string(),
+            BuiltinFunction::SslTxt2Obj => "txt2obj".to_string(),
+            BuiltinFunction::SslNid2Obj => "nid2obj".to_string(),
+            BuiltinFunction::SslRandStatus => "RAND_status".to_string(),
+            BuiltinFunction::SslRandAdd => "RAND_add".to_string(),
+            BuiltinFunction::SslRandBytes => "RAND_bytes".to_string(),
+            BuiltinFunction::SslRandEgd => "RAND_egd".to_string(),
+            BuiltinFunction::SslContextNew => "__new__".to_string(),
+            BuiltinFunction::SslContextInit => "__init__".to_string(),
+            BuiltinFunction::SslCreateDefaultContext => "create_default_context".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_runtime_name(builtin),
@@ -296,6 +327,47 @@ impl Vm {
             BuiltinFunction::SqliteRowIter => "_sqlite3.Row.__iter__".to_string(),
             BuiltinFunction::SqliteRowEq => "_sqlite3.Row.__eq__".to_string(),
             BuiltinFunction::SqliteRowHash => "_sqlite3.Row.__hash__".to_string(),
+            BuiltinFunction::ZlibCompress => "zlib.compress".to_string(),
+            BuiltinFunction::ZlibDecompress => "zlib.decompress".to_string(),
+            BuiltinFunction::ZlibCompressObj => "zlib.compressobj".to_string(),
+            BuiltinFunction::ZlibDecompressObj => "zlib.decompressobj".to_string(),
+            BuiltinFunction::ZlibCrc32 => "zlib.crc32".to_string(),
+            BuiltinFunction::ZlibCompressObjectCompress => "zlib.Compress.compress".to_string(),
+            BuiltinFunction::ZlibCompressObjectFlush => "zlib.Compress.flush".to_string(),
+            BuiltinFunction::ZlibDecompressObjectDecompress => {
+                "zlib.Decompress.decompress".to_string()
+            }
+            BuiltinFunction::ZlibDecompressObjectFlush => "zlib.Decompress.flush".to_string(),
+            BuiltinFunction::Bz2CompressorInit => "_bz2.BZ2Compressor.__init__".to_string(),
+            BuiltinFunction::Bz2CompressorCompress => "_bz2.BZ2Compressor.compress".to_string(),
+            BuiltinFunction::Bz2CompressorFlush => "_bz2.BZ2Compressor.flush".to_string(),
+            BuiltinFunction::Bz2DecompressorInit => "_bz2.BZ2Decompressor.__init__".to_string(),
+            BuiltinFunction::Bz2DecompressorDecompress => {
+                "_bz2.BZ2Decompressor.decompress".to_string()
+            }
+            BuiltinFunction::LzmaCompressorInit => "_lzma.LZMACompressor.__init__".to_string(),
+            BuiltinFunction::LzmaCompressorCompress => "_lzma.LZMACompressor.compress".to_string(),
+            BuiltinFunction::LzmaCompressorFlush => "_lzma.LZMACompressor.flush".to_string(),
+            BuiltinFunction::LzmaDecompressorInit => "_lzma.LZMADecompressor.__init__".to_string(),
+            BuiltinFunction::LzmaDecompressorDecompress => {
+                "_lzma.LZMADecompressor.decompress".to_string()
+            }
+            BuiltinFunction::LzmaIsCheckSupported => "_lzma.is_check_supported".to_string(),
+            BuiltinFunction::LzmaEncodeFilterProperties => {
+                "_lzma._encode_filter_properties".to_string()
+            }
+            BuiltinFunction::LzmaDecodeFilterProperties => {
+                "_lzma._decode_filter_properties".to_string()
+            }
+            BuiltinFunction::SslTxt2Obj => "_ssl.txt2obj".to_string(),
+            BuiltinFunction::SslNid2Obj => "_ssl.nid2obj".to_string(),
+            BuiltinFunction::SslRandStatus => "_ssl.RAND_status".to_string(),
+            BuiltinFunction::SslRandAdd => "_ssl.RAND_add".to_string(),
+            BuiltinFunction::SslRandBytes => "_ssl.RAND_bytes".to_string(),
+            BuiltinFunction::SslRandEgd => "_ssl.RAND_egd".to_string(),
+            BuiltinFunction::SslContextNew => "_ssl._SSLContext.__new__".to_string(),
+            BuiltinFunction::SslContextInit => "ssl.SSLContext.__init__".to_string(),
+            BuiltinFunction::SslCreateDefaultContext => "ssl.create_default_context".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),
@@ -450,6 +522,36 @@ impl Vm {
             | BuiltinFunction::SqliteRowIter
             | BuiltinFunction::SqliteRowEq
             | BuiltinFunction::SqliteRowHash => "_sqlite3",
+            BuiltinFunction::ZlibCompress
+            | BuiltinFunction::ZlibDecompress
+            | BuiltinFunction::ZlibCompressObj
+            | BuiltinFunction::ZlibDecompressObj
+            | BuiltinFunction::ZlibCrc32
+            | BuiltinFunction::ZlibCompressObjectCompress
+            | BuiltinFunction::ZlibCompressObjectFlush
+            | BuiltinFunction::ZlibDecompressObjectDecompress
+            | BuiltinFunction::ZlibDecompressObjectFlush => "zlib",
+            BuiltinFunction::Bz2CompressorInit
+            | BuiltinFunction::Bz2CompressorCompress
+            | BuiltinFunction::Bz2CompressorFlush
+            | BuiltinFunction::Bz2DecompressorInit
+            | BuiltinFunction::Bz2DecompressorDecompress => "_bz2",
+            BuiltinFunction::LzmaCompressorInit
+            | BuiltinFunction::LzmaCompressorCompress
+            | BuiltinFunction::LzmaCompressorFlush
+            | BuiltinFunction::LzmaDecompressorInit
+            | BuiltinFunction::LzmaDecompressorDecompress
+            | BuiltinFunction::LzmaIsCheckSupported
+            | BuiltinFunction::LzmaEncodeFilterProperties
+            | BuiltinFunction::LzmaDecodeFilterProperties => "_lzma",
+            BuiltinFunction::SslTxt2Obj
+            | BuiltinFunction::SslNid2Obj
+            | BuiltinFunction::SslRandStatus
+            | BuiltinFunction::SslRandAdd
+            | BuiltinFunction::SslRandBytes
+            | BuiltinFunction::SslRandEgd
+            | BuiltinFunction::SslContextNew => "_ssl",
+            BuiltinFunction::SslContextInit | BuiltinFunction::SslCreateDefaultContext => "ssl",
             BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate
             | BuiltinFunction::SreAsciiIsCased

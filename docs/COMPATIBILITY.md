@@ -37,6 +37,9 @@ Status:
 - `[x]` Top-stdlib common-usecase baseline (`26/26` import + smoke; enforced in `tests/stdlib_common_usecases.rs`)
 - `[x]` Builtin surface parity gate (`145/145`, no allowlist entries)
 - `[x]` `hashlib` md5/sha2 baseline path (`_md5`, `_sha2`)
+- `[x]` Native compression baseline modules (`zlib`, `_bz2`, `_lzma`) for common import + one-shot workflows
+- `[~]` Native SSL baseline (`_ssl` + bootstrap `ssl`) is in place; full CPython `Lib/ssl.py` path remains blocked by namedtuple/super object-model parity
+- `[~]` Extended stdlib matrix: `50/50` import, `47/50` smoke (`docs/STDLIB_EXTENDED_COMMON_USECASE_CHECKLIST.md`)
 - `[~]` P0 closure still pending for `json`, `_csv`/`csv`, `pickle`/`pickletools`/`copyreg`, `_io`, and `_sre`
 - `[~]` Deferred strict pickle harness lane closure
 

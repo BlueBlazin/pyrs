@@ -12494,3 +12494,85 @@ ok = (hasattr(http, "HTTPStatus") and http.client.HTTPConnection is not None)
         .join()
         .expect("http-client-import thread should complete");
 }
+
+#[test]
+fn zlib_builtin_supports_gzip_wbits_and_crc32() {
+    let source = r#"import zlib
+c = zlib.compress(b"abc", wbits=31)
+d = zlib.decompress(c, wbits=31)
+crc = zlib.crc32(b"abc")
+ok = (d == b"abc" and crc == 891568578)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn stdlib_bz2_and_lzma_one_shot_paths_round_trip() {
+    let Some(lib) = cpython_lib_path() else {
+        eprintln!("skipping bz2/lzma stdlib round-trip test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import bz2, lzma
+b = bz2.decompress(bz2.compress(b"abc"))
+l = lzma.decompress(lzma.compress(b"abc"))
+ok = (b == b"abc" and l == b"abc")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn stdlib_gzip_import_and_compress_path_runs() {
+    let Some(lib) = cpython_lib_path() else {
+        eprintln!("skipping gzip import/compress test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import gzip
+payload = gzip.compress(b"abc")
+ok = isinstance(payload, bytes) and len(payload) > 0
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn ssl_builtin_import_and_default_context_smoke() {
+    let source = r#"import ssl
+ctx = ssl.create_default_context()
+ok = isinstance(ctx, ssl.SSLContext) and ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn ftplib_import_chain_works_with_ssl_baseline() {
+    let Some(lib) = cpython_lib_path() else {
+        eprintln!("skipping ftplib import-chain test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import ftplib
+ok = (ftplib.FTP is not None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

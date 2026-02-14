@@ -2498,6 +2498,37 @@ pub enum BuiltinFunction {
     HashlibHashDigest,
     HashlibHashHexDigest,
     HashlibHashCopy,
+    ZlibCompress,
+    ZlibDecompress,
+    ZlibCompressObj,
+    ZlibDecompressObj,
+    ZlibCrc32,
+    ZlibCompressObjectCompress,
+    ZlibCompressObjectFlush,
+    ZlibDecompressObjectDecompress,
+    ZlibDecompressObjectFlush,
+    Bz2CompressorInit,
+    Bz2CompressorCompress,
+    Bz2CompressorFlush,
+    Bz2DecompressorInit,
+    Bz2DecompressorDecompress,
+    LzmaCompressorInit,
+    LzmaCompressorCompress,
+    LzmaCompressorFlush,
+    LzmaDecompressorInit,
+    LzmaDecompressorDecompress,
+    LzmaIsCheckSupported,
+    LzmaEncodeFilterProperties,
+    LzmaDecodeFilterProperties,
+    SslTxt2Obj,
+    SslNid2Obj,
+    SslRandStatus,
+    SslRandAdd,
+    SslRandBytes,
+    SslRandEgd,
+    SslContextNew,
+    SslContextInit,
+    SslCreateDefaultContext,
     PickleDump,
     PickleDumps,
     PickleLoad,
@@ -5615,6 +5646,37 @@ impl BuiltinFunction {
             | BuiltinFunction::SqliteRowIter
             | BuiltinFunction::SqliteRowEq
             | BuiltinFunction::SqliteRowHash
+            | BuiltinFunction::ZlibCompress
+            | BuiltinFunction::ZlibDecompress
+            | BuiltinFunction::ZlibCompressObj
+            | BuiltinFunction::ZlibDecompressObj
+            | BuiltinFunction::ZlibCrc32
+            | BuiltinFunction::ZlibCompressObjectCompress
+            | BuiltinFunction::ZlibCompressObjectFlush
+            | BuiltinFunction::ZlibDecompressObjectDecompress
+            | BuiltinFunction::ZlibDecompressObjectFlush
+            | BuiltinFunction::Bz2CompressorInit
+            | BuiltinFunction::Bz2CompressorCompress
+            | BuiltinFunction::Bz2CompressorFlush
+            | BuiltinFunction::Bz2DecompressorInit
+            | BuiltinFunction::Bz2DecompressorDecompress
+            | BuiltinFunction::LzmaCompressorInit
+            | BuiltinFunction::LzmaCompressorCompress
+            | BuiltinFunction::LzmaCompressorFlush
+            | BuiltinFunction::LzmaDecompressorInit
+            | BuiltinFunction::LzmaDecompressorDecompress
+            | BuiltinFunction::LzmaIsCheckSupported
+            | BuiltinFunction::LzmaEncodeFilterProperties
+            | BuiltinFunction::LzmaDecodeFilterProperties
+            | BuiltinFunction::SslTxt2Obj
+            | BuiltinFunction::SslNid2Obj
+            | BuiltinFunction::SslRandStatus
+            | BuiltinFunction::SslRandAdd
+            | BuiltinFunction::SslRandBytes
+            | BuiltinFunction::SslRandEgd
+            | BuiltinFunction::SslContextNew
+            | BuiltinFunction::SslContextInit
+            | BuiltinFunction::SslCreateDefaultContext
             | BuiltinFunction::CollectionsCountElements
             | BuiltinFunction::AtexitRegister
             | BuiltinFunction::AtexitUnregister

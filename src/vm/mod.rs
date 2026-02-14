@@ -47,8 +47,11 @@ use self::ops::{
     mod_values, mul_values, neg_value, or_values, ordering_from_cmp_value, pos_value, pow_values,
     rshift_values, sub_values, xor_values,
 };
+use self::stdlib::bz2::{Bz2CompressorState, Bz2DecompressorState};
 use self::stdlib::hashlib::HashState;
+use self::stdlib::lzma::{LzmaCompressorState, LzmaDecompressorState};
 use self::stdlib::sqlite3::{SqliteBlobState, SqliteConnectionState, SqliteCursorState};
+use self::stdlib::zlib::{ZlibCompressObjectState, ZlibDecompressObjectState};
 use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
@@ -646,6 +649,12 @@ pub struct Vm {
     csv_dialects: HashMap<String, Value>,
     csv_field_size_limit: i64,
     hash_states: HashMap<u64, HashState>,
+    zlib_compress_objects: HashMap<u64, ZlibCompressObjectState>,
+    zlib_decompress_objects: HashMap<u64, ZlibDecompressObjectState>,
+    bz2_compressors: HashMap<u64, Bz2CompressorState>,
+    bz2_decompressors: HashMap<u64, Bz2DecompressorState>,
+    lzma_compressors: HashMap<u64, LzmaCompressorState>,
+    lzma_decompressors: HashMap<u64, LzmaDecompressorState>,
     sqlite_connections: HashMap<u64, SqliteConnectionState>,
     sqlite_cursors: HashMap<u64, SqliteCursorState>,
     sqlite_blobs: HashMap<u64, SqliteBlobState>,
@@ -721,6 +730,12 @@ impl Vm {
             csv_dialects: HashMap::new(),
             csv_field_size_limit: 131_072,
             hash_states: HashMap::new(),
+            zlib_compress_objects: HashMap::new(),
+            zlib_decompress_objects: HashMap::new(),
+            bz2_compressors: HashMap::new(),
+            bz2_decompressors: HashMap::new(),
+            lzma_compressors: HashMap::new(),
+            lzma_decompressors: HashMap::new(),
             sqlite_connections: HashMap::new(),
             sqlite_cursors: HashMap::new(),
             sqlite_blobs: HashMap::new(),
@@ -1778,6 +1793,12 @@ impl Vm {
             let obj_id = obj.id();
             self.pending_del_instances.remove(&obj_id);
             self.hash_states.remove(&obj_id);
+            self.zlib_compress_objects.remove(&obj_id);
+            self.zlib_decompress_objects.remove(&obj_id);
+            self.bz2_compressors.remove(&obj_id);
+            self.bz2_decompressors.remove(&obj_id);
+            self.lzma_compressors.remove(&obj_id);
+            self.lzma_decompressors.remove(&obj_id);
             self.sqlite_cursors.remove(&obj_id);
             self.sqlite_blobs.remove(&obj_id);
             if let Some(mut connection_state) = self.sqlite_connections.remove(&obj_id) {
@@ -6405,6 +6426,13 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "PickleError" => Some("Exception"),
         "PicklingError" => Some("PickleError"),
         "UnpicklingError" => Some("PickleError"),
+        "SSLError" => Some("OSError"),
+        "SSLZeroReturnError" => Some("SSLError"),
+        "SSLWantReadError" => Some("SSLError"),
+        "SSLWantWriteError" => Some("SSLError"),
+        "SSLSyscallError" => Some("SSLError"),
+        "SSLEOFError" => Some("SSLError"),
+        "SSLCertVerificationError" => Some("SSLError"),
         "Error" => Some("Exception"),
         "Warning" => Some("Exception"),
         "UserWarning" => Some("Warning"),
