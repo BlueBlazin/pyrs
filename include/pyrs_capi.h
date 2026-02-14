@@ -85,6 +85,8 @@ struct PyrsApiV1 {
     int (*object_set_attr)(void* module_ctx, PyrsObjectHandle object_handle, const char* attr_name, PyrsObjectHandle value_handle);
     int (*object_del_attr)(void* module_ctx, PyrsObjectHandle object_handle, const char* attr_name);
     int (*object_has_attr)(void* module_ctx, PyrsObjectHandle object_handle, const char* attr_name);
+    int (*object_call_noargs)(void* module_ctx, PyrsObjectHandle callable_handle, PyrsObjectHandle* out_handle);
+    int (*object_call_onearg)(void* module_ctx, PyrsObjectHandle callable_handle, PyrsObjectHandle arg_handle, PyrsObjectHandle* out_handle);
     int (*object_call)(
         void* module_ctx,
         PyrsObjectHandle callable_handle,
@@ -98,6 +100,7 @@ struct PyrsApiV1 {
     const char* (*object_get_string)(void* module_ctx, PyrsObjectHandle handle);
 
     int (*error_set)(void* module_ctx, const char* message);
+    const char* (*error_get_message)(void* module_ctx);
     int (*error_clear)(void* module_ctx);
     int (*error_occurred)(void* module_ctx);
 };

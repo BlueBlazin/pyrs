@@ -544,6 +544,21 @@ impl ModuleCapiContext {
         }
     }
 
+    fn object_call_noargs(
+        &mut self,
+        callable_handle: PyrsObjectHandle,
+    ) -> Result<PyrsObjectHandle, String> {
+        self.object_call(callable_handle, &[], &[])
+    }
+
+    fn object_call_onearg(
+        &mut self,
+        callable_handle: PyrsObjectHandle,
+        arg_handle: PyrsObjectHandle,
+    ) -> Result<PyrsObjectHandle, String> {
+        self.object_call(callable_handle, &[arg_handle], &[])
+    }
+
     fn object_call(
         &mut self,
         callable_handle: PyrsObjectHandle,
@@ -589,6 +604,22 @@ impl ModuleCapiContext {
             }
         };
         Ok(self.alloc_object(result))
+    }
+
+    fn error_get_message_ptr(&mut self) -> *const c_char {
+        let Some(message) = self.last_error.as_deref() else {
+            return std::ptr::null();
+        };
+        let cstring = match CString::new(message) {
+            Ok(value) => value,
+            Err(_) => CString::new("error message contains interior NUL")
+                .expect("fallback error message has no interior NUL"),
+        };
+        self.scratch_strings.push(cstring);
+        self.scratch_strings
+            .last()
+            .map(|value| value.as_ptr())
+            .unwrap_or(std::ptr::null())
     }
 
     fn object_get_string_ptr(&mut self, handle: PyrsObjectHandle) -> Result<*const c_char, String> {
@@ -693,7 +724,10 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_has_attr"
             | "object_is_instance"
             | "object_is_subclass"
+            | "object_call_noargs"
+            | "object_call_onearg"
             | "object_call"
+            | "error_get_message"
             | "error_state"
             | "extension_symbol_metadata"
     );
@@ -1591,6 +1625,61 @@ unsafe extern "C" fn capi_object_has_attr(
     }
 }
 
+unsafe extern "C" fn capi_object_call_noargs(
+    module_ctx: *mut c_void,
+    callable_handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_call_noargs received null output pointer");
+        return -1;
+    }
+    match context.object_call_noargs(callable_handle) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_call_onearg(
+    module_ctx: *mut c_void,
+    callable_handle: PyrsObjectHandle,
+    arg_handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_call_onearg received null output pointer");
+        return -1;
+    }
+    match context.object_call_onearg(callable_handle, arg_handle) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_call(
     module_ctx: *mut c_void,
     callable_handle: PyrsObjectHandle,
@@ -1689,6 +1778,13 @@ unsafe extern "C" fn capi_error_set(module_ctx: *mut c_void, message: *const c_c
     }
 }
 
+unsafe extern "C" fn capi_error_get_message(module_ctx: *mut c_void) -> *const c_char {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return std::ptr::null();
+    };
+    context.error_get_message_ptr()
+}
+
 unsafe extern "C" fn capi_error_clear(module_ctx: *mut c_void) -> i32 {
     let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
         return -1;
@@ -1766,9 +1862,12 @@ impl Vm {
             object_set_attr: capi_object_set_attr,
             object_del_attr: capi_object_del_attr,
             object_has_attr: capi_object_has_attr,
+            object_call_noargs: capi_object_call_noargs,
+            object_call_onearg: capi_object_call_onearg,
             object_call: capi_object_call,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,
+            error_get_message: capi_error_get_message,
             error_clear: capi_error_clear,
             error_occurred: capi_error_occurred,
         }

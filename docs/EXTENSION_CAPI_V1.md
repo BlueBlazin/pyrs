@@ -55,9 +55,12 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_set_attr(void* module_ctx, PyrsObjectHandle object_handle, const char* attr_name, PyrsObjectHandle value_handle)`
 - `object_del_attr(void* module_ctx, PyrsObjectHandle object_handle, const char* attr_name)`
 - `object_has_attr(void* module_ctx, PyrsObjectHandle object_handle, const char* attr_name)` (`1`/`0` on success, `-1` on error)
+- `object_call_noargs(void* module_ctx, PyrsObjectHandle callable_handle, PyrsObjectHandle* out_handle)`
+- `object_call_onearg(void* module_ctx, PyrsObjectHandle callable_handle, PyrsObjectHandle arg_handle, PyrsObjectHandle* out_handle)`
 - `object_call(void* module_ctx, PyrsObjectHandle callable_handle, uintptr_t argc, const PyrsObjectHandle* argv, uintptr_t kwargc, const char* const* kwarg_names, const PyrsObjectHandle* kwarg_values, PyrsObjectHandle* out_handle)`
 - `object_get_string(void* module_ctx, PyrsObjectHandle handle)`
 - `error_set(void* module_ctx, const char* message)`
+- `error_get_message(void* module_ctx)` (null when no error is set)
 - `error_clear(void* module_ctx)`
 - `error_occurred(void* module_ctx)`
 
@@ -87,7 +90,9 @@ Return semantics:
 - list/dict mutation through handles is available (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`).
 - handle-based object attribute access/mutation is available (`object_get_attr`, `object_set_attr`, `object_del_attr`, `object_has_attr`).
 - extension callbacks can invoke Python callables through `object_call(...)` using handle-based positional/keyword argument arrays.
-- `object_call(...)` now returns explicit non-callable errors and surfaces active Python exceptions via runtime error text.
+- call fast paths are available for common forms (`object_call_noargs`, `object_call_onearg`).
+- `object_call*` now returns explicit non-callable errors and surfaces active Python exceptions via runtime error text.
+- last error text can be queried via `error_get_message(...)` before `error_clear(...)`.
 - capability checks are available via `api_has_capability(...)` for runtime feature probing.
 - ABI mismatch must be handled by extension code and reflected via non-zero return.
 
@@ -99,3 +104,16 @@ Return semantics:
 - Multi-phase module lifecycle APIs.
 
 These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
+
+## Smoke Coverage Map
+
+| Surface Group | Primary Smoke Evidence |
+|---|---|
+| module setters/getters/import/attr-load | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_can_import_module_and_export_attribute`, `dynamic_extension_mixed_surface_roundtrip` |
+| handle constructors + typed getters | `dynamic_extension_can_set_module_values_via_object_handles` |
+| list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
+| object attribute helpers (`get`/`set`/`del`/`has`) | `dynamic_extension_can_get_set_and_del_object_attributes` |
+| callable invocation (`object_call`, fast helpers) | `dynamic_extension_can_call_python_callable_handles`, `dynamic_extension_can_use_object_call_fastpaths`, `dynamic_extension_mixed_surface_roundtrip` |
+| type relation checks (`isinstance`/`issubclass`) | `dynamic_extension_can_check_isinstance_and_issubclass`, `dynamic_extension_mixed_surface_roundtrip` |
+| error state + message retrieval | `dynamic_extension_error_state_is_propagated_to_import_failure`, `dynamic_extension_can_read_and_clear_error_message` |
+| capability introspection | `dynamic_extension_can_query_capabilities` |
