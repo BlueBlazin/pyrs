@@ -53,6 +53,7 @@ Supported dynamic init symbol contract (v1):
 - can invoke Python callables from native code via handle-based `object_call(...)` and fast helpers (`object_call_noargs`, `object_call_onearg`).
 - can query last error text via `error_get_message(...)` and clear state with `error_clear(...)`.
 - can report import-time failure details via `error_set(...)`.
+- can export/import named native capsules across extensions via `capsule_export(...)` and `capsule_import(...)`.
 
 Example:
 

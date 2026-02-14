@@ -50,7 +50,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 generic item helpers now include mutation (`object_set_item`, `object_del_item`) with dict/list/bytearray direct semantics and special-method fallback for custom containers.
   - C-API v1 now includes generic membership and dict-view helpers (`object_contains`, `object_dict_keys`, `object_dict_items`) for native-side probe/inspection paths.
   - C-API v1 now includes bytes-like buffer helpers (`object_get_buffer`, `object_release_buffer`) exposing pointer/len/readonly buffer views for `bytes`/`bytearray`/`memoryview` handles.
-  - C-API v1 now includes capsule baseline helpers (`capsule_new`, `capsule_get_pointer`, `capsule_get_name`, `capsule_set_context`, `capsule_get_context`, `capsule_set_destructor`, `capsule_get_destructor`, `capsule_set_name`, `capsule_is_valid`) for opaque native-pointer interop in extension handle space.
+  - C-API v1 now includes capsule baseline helpers (`capsule_new`, `capsule_get_pointer`, `capsule_get_name`, `capsule_set_context`, `capsule_get_context`, `capsule_set_destructor`, `capsule_get_destructor`, `capsule_set_name`, `capsule_is_valid`, `capsule_export`, `capsule_import`) for opaque native-pointer interop in extension handle space.
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
   - C-API v1 now includes handle-based object attribute access (`object_get_attr`, `object_set_attr`, `object_del_attr`) with native extension smoke coverage.
   - C-API v1 attribute helpers now include presence checks (`object_has_attr`) for exception-free attr probes in native code.
@@ -72,6 +72,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes memoryview-slice + release failure-path coverage for buffer APIs (`dynamic_extension_buffer_api_handles_memoryview_slices_and_release`).
   - extension smoke now includes capsule API coverage for create/name/pointer/context/destructor/refcount paths (`dynamic_extension_can_use_capsule_apis`).
   - capsule destructor callbacks now run on final handle decref and on module C-API context drop, with dedicated smoke coverage (`dynamic_extension_runs_capsule_destructor_on_context_drop`).
+  - extension smoke now includes cross-extension named capsule export/import coverage (`dynamic_extension_can_import_exported_capsule_by_name`).
   - extension smoke now includes buffer/capsule interop bridge coverage (`dynamic_extension_can_bridge_buffer_pointer_through_capsule`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
