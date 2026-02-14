@@ -1063,6 +1063,98 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_can_call_python_callable_handles() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping object-call extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping object-call extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_object_call");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_object_call.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int native_invoke(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    uintptr_t kwargc,
+    const char* const* kwarg_names,
+    const PyrsObjectHandle* kwarg_values,
+    PyrsObjectHandle* result
+) {
+    if (!api || !argv || !result) {
+        return -1;
+    }
+    if (argc != 2) {
+        api->error_set(module_ctx, "invoke expects callable and one positional argument");
+        return -2;
+    }
+    if (api->object_call(module_ctx, argv[0], 1, &argv[1], kwargc, kwarg_names, kwarg_values, result) != 0) {
+        if (api->error_occurred(module_ctx) == 0) {
+            api->error_set(module_ctx, "object_call failed");
+        }
+        return -3;
+    }
+    if (!*result) {
+        api->error_set(module_ctx, "object_call returned null result handle");
+        return -4;
+    }
+    return 0;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    if (api->module_add_function_kw(module_ctx, "invoke", native_invoke) != 0) {
+        return -2;
+    }
+    if (api->module_set_string(module_ctx, "API_KIND", "object-call") != 0) {
+        return -3;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_object_call");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_object_call.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_object_call\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_object_call\nassert native_object_call.API_KIND == 'object-call'\ndef py_scale(value, scale=1):\n    return value * scale\nassert native_object_call.invoke(py_scale, 7) == 7\nassert native_object_call.invoke(py_scale, 7, scale=3) == 21",
+    )
+    .expect("object-call extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_query_capabilities() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping capability-query extension smoke (pyrs binary not found)");
@@ -1091,9 +1183,10 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_list_set_item = api->api_has_capability(module_ctx, "object_list_set_item");
     int has_dict_contains = api->api_has_capability(module_ctx, "object_dict_contains");
     int has_dict_del_item = api->api_has_capability(module_ctx, "object_dict_del_item");
+    int has_object_call = api->api_has_capability(module_ctx, "object_call");
     int has_missing = api->api_has_capability(module_ctx, "does_not_exist");
     if (has_dict != 1 || has_kw != 1 || has_list_append != 1 || has_list_set_item != 1 ||
-        has_dict_contains != 1 || has_dict_del_item != 1 || has_missing != 0) {
+        has_dict_contains != 1 || has_dict_del_item != 1 || has_object_call != 1 || has_missing != 0) {
         return -2;
     }
     if (api->module_set_bool(module_ctx, "HAS_DICT", has_dict) != 0) {
@@ -1113,6 +1206,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_bool(module_ctx, "HAS_DICT_DEL_ITEM", has_dict_del_item) != 0) {
         return -9;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_OBJECT_CALL", has_object_call) != 0) {
+        return -10;
     }
     if (api->module_set_bool(module_ctx, "HAS_MISSING", has_missing) != 0) {
         return -5;
@@ -1140,7 +1236,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 

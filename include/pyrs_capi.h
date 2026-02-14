@@ -76,6 +76,16 @@ struct PyrsApiV1 {
     int (*object_dict_get_item)(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle, PyrsObjectHandle* out_handle);
     int (*object_dict_contains)(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle);
     int (*object_dict_del_item)(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle);
+    int (*object_call)(
+        void* module_ctx,
+        PyrsObjectHandle callable_handle,
+        uintptr_t argc,
+        const PyrsObjectHandle* argv,
+        uintptr_t kwargc,
+        const char* const* kwarg_names,
+        const PyrsObjectHandle* kwarg_values,
+        PyrsObjectHandle* out_handle
+    );
     const char* (*object_get_string)(void* module_ctx, PyrsObjectHandle handle);
 
     int (*error_set)(void* module_ctx, const char* message);

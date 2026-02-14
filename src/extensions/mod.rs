@@ -415,6 +415,16 @@ pub struct PyrsApiV1 {
         dict_handle: PyrsObjectHandle,
         key_handle: PyrsObjectHandle,
     ) -> i32,
+    pub object_call: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        callable_handle: PyrsObjectHandle,
+        argc: usize,
+        argv: *const PyrsObjectHandle,
+        kwargc: usize,
+        kwarg_names: *const *const c_char,
+        kwarg_values: *const PyrsObjectHandle,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
     pub object_get_string:
         unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> *const c_char,
     pub error_set: unsafe extern "C" fn(module_ctx: *mut c_void, message: *const c_char) -> i32,

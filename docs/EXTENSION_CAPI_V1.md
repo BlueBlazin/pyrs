@@ -46,6 +46,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_dict_get_item(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle, PyrsObjectHandle* out_handle)`
 - `object_dict_contains(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle)` (`1`/`0` on success, `-1` on error)
 - `object_dict_del_item(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle key_handle)`
+- `object_call(void* module_ctx, PyrsObjectHandle callable_handle, uintptr_t argc, const PyrsObjectHandle* argv, uintptr_t kwargc, const char* const* kwarg_names, const PyrsObjectHandle* kwarg_values, PyrsObjectHandle* out_handle)`
 - `object_get_string(void* module_ctx, PyrsObjectHandle handle)`
 - `error_set(void* module_ctx, const char* message)`
 - `error_clear(void* module_ctx)`
@@ -71,6 +72,7 @@ Return semantics:
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
 - callable registration via `module_add_function_kw(...)` is supported for callbacks receiving keyword-name/value arrays.
 - list/dict mutation through handles is available (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`).
+- extension callbacks can invoke Python callables through `object_call(...)` using handle-based positional/keyword argument arrays.
 - capability checks are available via `api_has_capability(...)` for runtime feature probing.
 - ABI mismatch must be handled by extension code and reflected via non-zero return.
 

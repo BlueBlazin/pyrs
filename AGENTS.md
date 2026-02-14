@@ -42,6 +42,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`) and now includes module setters, native callable registration (`module_add_function`, `module_add_function_kw`), init-scoped object handles + type/getter introspection (`object_new_*`, `module_set_object`, `object_incref/decref`, `object_type`, `object_get_*`), and import-time error state (`error_set/clear/occurred`).
   - C-API handle constructors/getters now include `None`/`float`/`bytes`/`tuple`/`list`/`dict` in addition to `bool`/`int`/`str`, with smoke coverage through native handle and sequence+mapping round-trip.
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
+  - C-API v1 now includes handle-based callable invocation (`object_call`) so native callbacks can call Python callables with positional/keyword payloads.
   - C-API baseline now includes runtime feature probing via `api_has_capability(...)` (covered in extension smoke).
   - builtin `_sysconfigdata__*` now provides extension-build baseline keys (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.
   - extension smoke includes compile+import validation driven by `_sysconfigdata__*` build vars (`sysconfig_build_vars_can_compile_and_import_extension`).

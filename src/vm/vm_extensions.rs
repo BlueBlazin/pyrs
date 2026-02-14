@@ -14,8 +14,8 @@ use crate::runtime::{
 };
 
 use super::{
-    ExtensionCallableKind, NativeCallResult, ObjRef, Vm, dict_contains_key_checked, dict_get_value,
-    dict_remove_value, dict_set_value_checked,
+    ExtensionCallableKind, InternalCallOutcome, NativeCallResult, ObjRef, Vm,
+    dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value_checked,
 };
 
 struct CapiObjectSlot {
@@ -345,6 +345,48 @@ impl ModuleCapiContext {
         Ok(())
     }
 
+    fn object_call(
+        &mut self,
+        callable_handle: PyrsObjectHandle,
+        arg_handles: &[PyrsObjectHandle],
+        kwarg_handles: &[(String, PyrsObjectHandle)],
+    ) -> Result<PyrsObjectHandle, String> {
+        if self.vm.is_null() {
+            return Err("object_call missing VM context".to_string());
+        }
+        let callable = self
+            .object_value(callable_handle)
+            .ok_or_else(|| format!("invalid callable handle {}", callable_handle))?;
+        let mut args = Vec::with_capacity(arg_handles.len());
+        for handle in arg_handles {
+            let value = self
+                .object_value(*handle)
+                .ok_or_else(|| format!("invalid argument handle {}", handle))?;
+            args.push(value);
+        }
+        let mut kwargs = HashMap::with_capacity(kwarg_handles.len());
+        for (name, handle) in kwarg_handles {
+            let value = self
+                .object_value(*handle)
+                .ok_or_else(|| format!("invalid keyword argument handle {}", handle))?;
+            if kwargs.insert(name.clone(), value).is_some() {
+                return Err(format!("duplicate keyword argument '{}'", name));
+            }
+        }
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let result = match vm
+            .call_internal(callable, args, kwargs)
+            .map_err(|err| err.message)?
+        {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err("callable raised an exception".to_string());
+            }
+        };
+        Ok(self.alloc_object(result))
+    }
+
     fn object_get_string_ptr(&mut self, handle: PyrsObjectHandle) -> Result<*const c_char, String> {
         let Some(slot) = self.object_slot(handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -438,6 +480,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_dict_get_item"
             | "object_dict_contains"
             | "object_dict_del_item"
+            | "object_call"
             | "error_state"
             | "extension_symbol_metadata"
     );
@@ -1090,6 +1133,72 @@ unsafe extern "C" fn capi_object_dict_del_item(
     }
 }
 
+unsafe extern "C" fn capi_object_call(
+    module_ctx: *mut c_void,
+    callable_handle: PyrsObjectHandle,
+    argc: usize,
+    argv: *const PyrsObjectHandle,
+    kwargc: usize,
+    kwarg_names: *const *const c_char,
+    kwarg_values: *const PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_call received null output pointer");
+        return -1;
+    }
+    if argc > 0 && argv.is_null() {
+        context.set_error("object_call received null argv pointer");
+        return -1;
+    }
+    if kwargc > 0 && (kwarg_names.is_null() || kwarg_values.is_null()) {
+        context.set_error("object_call received null keyword payload");
+        return -1;
+    }
+    let arg_handles = if argc == 0 {
+        &[][..]
+    } else {
+        // SAFETY: validated above; caller guarantees array length by `argc`.
+        unsafe { std::slice::from_raw_parts(argv, argc) }
+    };
+    let mut kwarg_handles = Vec::with_capacity(kwargc);
+    if kwargc > 0 {
+        // SAFETY: validated above; caller guarantees array lengths by `kwargc`.
+        let kw_names = unsafe { std::slice::from_raw_parts(kwarg_names, kwargc) };
+        // SAFETY: validated above; caller guarantees array lengths by `kwargc`.
+        let kw_values = unsafe { std::slice::from_raw_parts(kwarg_values, kwargc) };
+        for idx in 0..kwargc {
+            let name_ptr = kw_names[idx];
+            let name = match unsafe { c_name_to_string(name_ptr) } {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(format!(
+                        "object_call invalid keyword name at index {idx}: {err}"
+                    ));
+                    return -1;
+                }
+            };
+            kwarg_handles.push((name, kw_values[idx]));
+        }
+    }
+    match context.object_call(callable_handle, arg_handles, &kwarg_handles) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_get_string(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -1190,6 +1299,7 @@ impl Vm {
             object_dict_get_item: capi_object_dict_get_item,
             object_dict_contains: capi_object_dict_contains,
             object_dict_del_item: capi_object_dict_del_item,
+            object_call: capi_object_call,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,
             error_clear: capi_error_clear,
