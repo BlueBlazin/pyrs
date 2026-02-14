@@ -123,7 +123,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | module setters/getters/import/attr-load | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_can_import_module_and_export_attribute`, `dynamic_extension_mixed_surface_roundtrip` |
 | handle constructors + typed getters | `dynamic_extension_can_set_module_values_via_object_handles` |
 | module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
-| generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items` |
+| generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
 | object attribute helpers (`get`/`set`/`del`/`has`) | `dynamic_extension_can_get_set_and_del_object_attributes` |

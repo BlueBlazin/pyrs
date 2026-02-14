@@ -2332,6 +2332,135 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_item_mutation_falls_back_to_special_methods() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping item fallback extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping item fallback extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_item_fallback");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let helper_module_path = temp_root.join("item_target.py");
+    fs::write(
+        &helper_module_path,
+        r#"class Box:
+    def __init__(self):
+        self._data = {}
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __setitem__(self, key, value):
+        self._data[key] = value
+
+    def __delitem__(self, key):
+        del self._data[key]
+
+    def size(self):
+        return len(self._data)
+"#,
+    )
+    .expect("helper module should be written");
+
+    let source_path = temp_root.join("native_item_fallback.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    PyrsObjectHandle helper_mod = 0;
+    if (api->module_import(module_ctx, "item_target", &helper_mod) != 0 || !helper_mod) {
+        return -2;
+    }
+    PyrsObjectHandle box_cls = 0;
+    if (api->module_get_attr(module_ctx, helper_mod, "Box", &box_cls) != 0 || !box_cls) {
+        return -3;
+    }
+    PyrsObjectHandle box = 0;
+    if (api->object_call_noargs(module_ctx, box_cls, &box) != 0 || !box) {
+        return -4;
+    }
+    PyrsObjectHandle key = api->object_new_string(module_ctx, "k");
+    PyrsObjectHandle value = api->object_new_int(module_ctx, 77);
+    if (!key || !value) {
+        return -5;
+    }
+    if (api->object_set_item(module_ctx, box, key, value) != 0) {
+        return -6;
+    }
+    PyrsObjectHandle out = 0;
+    if (api->object_get_item(module_ctx, box, key, &out) != 0 || !out) {
+        return -7;
+    }
+    int64_t out_int = 0;
+    if (api->object_get_int(module_ctx, out, &out_int) != 0 || out_int != 77) {
+        return -8;
+    }
+    if (api->object_del_item(module_ctx, box, key) != 0) {
+        return -9;
+    }
+    if (api->object_del_item(module_ctx, box, key) == 0 ||
+        api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
+        return -10;
+    }
+    PyrsObjectHandle size_fn = 0;
+    if (api->object_get_attr(module_ctx, box, "size", &size_fn) != 0 || !size_fn) {
+        return -11;
+    }
+    PyrsObjectHandle size_out = 0;
+    if (api->object_call_noargs(module_ctx, size_fn, &size_out) != 0 || !size_out) {
+        return -12;
+    }
+    int64_t size = -1;
+    if (api->object_get_int(module_ctx, size_out, &size) != 0 || size != 0) {
+        return -13;
+    }
+    if (api->module_set_bool(module_ctx, "ITEM_FALLBACK_OK", 1) != 0) {
+        return -14;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_item_fallback");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_item_fallback.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_item_fallback\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_item_fallback\nassert native_item_fallback.ITEM_FALLBACK_OK is True",
+    )
+    .expect("item fallback extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_file(helper_module_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_query_capabilities() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping capability-query extension smoke (pyrs binary not found)");

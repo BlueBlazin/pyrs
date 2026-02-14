@@ -62,6 +62,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes a mixed-surface cross-API fixture exercising module import/attr-load, type checks, list+dict mutation, callable invocation, and module-global round-trips in one extension init path.
   - extension smoke now includes an invalid-handle resilience fixture to enforce consistent error-message + error-clear behavior across C-API calls.
   - extension smoke now includes a module/item helper fixture covering module attr set/del/has and generic item set/del paths (`dynamic_extension_can_set_module_attrs_and_items`).
+  - extension smoke now includes a special-method fallback fixture proving `object_set_item`/`object_del_item` dispatch on custom `__setitem__`/`__delitem__` containers (`dynamic_extension_item_mutation_falls_back_to_special_methods`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
