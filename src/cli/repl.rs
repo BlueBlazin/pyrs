@@ -9,11 +9,12 @@ use std::time::Instant;
 
 use nu_ansi_term::{Color as AnsiColor, Style};
 use reedline::{
-    ColumnarMenu, Completer, DefaultHinter, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
-    MenuBuilder, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
-    ReedlineEvent, ReedlineMenu, Signal, Span, StyledText, Suggestion, default_emacs_keybindings,
+    ColumnarMenu, Completer, DefaultHinter, Emacs, FileBackedHistory, History, KeyCode,
+    KeyModifiers, MenuBuilder, Prompt, PromptEditMode, PromptHistorySearch,
+    PromptHistorySearchStatus, Reedline, ReedlineEvent, ReedlineMenu, Signal, Span, StyledText,
+    Suggestion, default_emacs_keybindings,
 };
-use reedline::{EditCommand, Highlighter};
+use reedline::{EditCommand, Highlighter, Hinter};
 
 use crate::VERSION;
 use crate::ast::{Module, StmtKind};
@@ -26,6 +27,7 @@ use crate::vm::Vm;
 const HISTORY_CAPACITY: usize = 10_000;
 const INDENT_WIDTH: usize = 4;
 const COMPLETION_MENU_NAME: &str = "pyrs_repl_completion";
+const REPL_ESC_DISMISS_HINT_COMMAND: &str = "__pyrs_repl_dismiss_hint__";
 const REPL_COMMANDS: &[&str] = &[
     ":help", ".help", ":clear", ".clear", ":paste", ":timing", ":reset", ":exit", ":quit", ".exit",
     ".quit",
@@ -76,8 +78,9 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
     println!("Type :help for REPL commands, Ctrl-D to exit.");
 
     let completion_state = Arc::new(Mutex::new(build_completion_state(vm)));
+    let hint_control = Arc::new(Mutex::new(HintControl::default()));
     load_repl_startup_script(vm, &completion_state)?;
-    let mut line_editor = build_editor(Arc::clone(&completion_state))?;
+    let mut line_editor = build_editor(Arc::clone(&completion_state), Arc::clone(&hint_control))?;
     let primary_prompt = ReplPrompt::primary();
     let continuation_prompt = ReplPrompt::continuation();
 
@@ -93,6 +96,10 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
 
         match line_editor.read_line(prompt) {
             Ok(Signal::Success(line)) => {
+                if line == REPL_ESC_DISMISS_HINT_COMMAND {
+                    dismiss_current_hint(&hint_control);
+                    continue;
+                }
                 let trimmed = line.trim();
                 if paste_mode {
                     if parse_meta_command(trimmed) == Some(MetaCommand::TogglePaste) {
@@ -205,7 +212,76 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
     Ok(())
 }
 
-fn build_editor(completion_state: Arc<Mutex<CompletionState>>) -> Result<Reedline, String> {
+#[derive(Default)]
+struct HintControl {
+    suppress_until_edit: bool,
+    last_line: String,
+}
+
+fn dismiss_current_hint(control: &Arc<Mutex<HintControl>>) {
+    if let Ok(mut guard) = control.lock() {
+        guard.suppress_until_edit = true;
+    }
+}
+
+struct ReplHinter {
+    inner: DefaultHinter,
+    control: Arc<Mutex<HintControl>>,
+}
+
+impl ReplHinter {
+    fn new(control: Arc<Mutex<HintControl>>, style: Style) -> Self {
+        Self {
+            inner: DefaultHinter::default().with_style(style),
+            control,
+        }
+    }
+
+    fn should_suppress_hint(&self, line: &str) -> bool {
+        let Ok(mut guard) = self.control.lock() else {
+            return false;
+        };
+        if guard.suppress_until_edit {
+            if guard.last_line == line {
+                return true;
+            }
+            guard.suppress_until_edit = false;
+        }
+        guard.last_line.clear();
+        guard.last_line.push_str(line);
+        false
+    }
+}
+
+impl Hinter for ReplHinter {
+    fn handle(
+        &mut self,
+        line: &str,
+        pos: usize,
+        history: &dyn History,
+        use_ansi_coloring: bool,
+        cwd: &str,
+    ) -> String {
+        if self.should_suppress_hint(line) {
+            return String::new();
+        }
+        self.inner
+            .handle(line, pos, history, use_ansi_coloring, cwd)
+    }
+
+    fn complete_hint(&self) -> String {
+        self.inner.complete_hint()
+    }
+
+    fn next_hint_token(&self) -> String {
+        self.inner.next_hint_token()
+    }
+}
+
+fn build_editor(
+    completion_state: Arc<Mutex<CompletionState>>,
+    hint_control: Arc<Mutex<HintControl>>,
+) -> Result<Reedline, String> {
     let completion_menu = Box::new(ColumnarMenu::default().with_name(COMPLETION_MENU_NAME));
     let mut keybindings = default_emacs_keybindings();
     keybindings.add_binding(
@@ -229,13 +305,18 @@ fn build_editor(completion_state: Arc<Mutex<CompletionState>>) -> Result<Reedlin
             ReedlineEvent::MenuNext,
         ]),
     );
-    keybindings.add_binding(KeyModifiers::NONE, KeyCode::Esc, ReedlineEvent::Esc);
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Esc,
+        ReedlineEvent::Multiple(vec![
+            ReedlineEvent::Esc,
+            ReedlineEvent::ExecuteHostCommand(REPL_ESC_DISMISS_HINT_COMMAND.to_string()),
+        ]),
+    );
     let edit_mode = Box::new(Emacs::new(keybindings));
     let history_hint_style = Style::new().italic().fg(AnsiColor::DarkGray);
     let mut editor = Reedline::create()
-        .with_hinter(Box::new(
-            DefaultHinter::default().with_style(history_hint_style),
-        ))
+        .with_hinter(Box::new(ReplHinter::new(hint_control, history_hint_style)))
         .with_highlighter(Box::new(PythonHighlighter::default()))
         .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
