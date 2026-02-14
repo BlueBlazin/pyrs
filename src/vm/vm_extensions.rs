@@ -324,6 +324,38 @@ unsafe fn capi_module_insert_value(
     0
 }
 
+unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *const c_char) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    let name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    let supported = matches!(
+        name.as_str(),
+        "module_add_function"
+            | "module_add_function_kw"
+            | "object_new_none"
+            | "object_new_float"
+            | "object_new_bytes"
+            | "object_new_tuple"
+            | "object_new_list"
+            | "object_new_dict"
+            | "object_sequence_len"
+            | "object_sequence_get_item"
+            | "object_dict_len"
+            | "object_dict_set_item"
+            | "object_dict_get_item"
+            | "error_state"
+            | "extension_symbol_metadata"
+    );
+    if supported { 1 } else { 0 }
+}
+
 unsafe extern "C" fn capi_module_set_int(
     module_ctx: *mut c_void,
     name: *const c_char,
@@ -969,6 +1001,7 @@ impl Vm {
     fn capi_api_v1(&self) -> PyrsApiV1 {
         PyrsApiV1 {
             abi_version: PYRS_CAPI_ABI_VERSION,
+            api_has_capability: capi_api_has_capability,
             module_set_int: capi_module_set_int,
             module_set_bool: capi_module_set_bool,
             module_set_string: capi_module_set_string,

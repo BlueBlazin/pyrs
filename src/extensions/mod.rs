@@ -289,6 +289,8 @@ pub fn path_is_shared_library(path: &Path) -> bool {
 #[repr(C)]
 pub struct PyrsApiV1 {
     pub abi_version: u32,
+    pub api_has_capability:
+        unsafe extern "C" fn(module_ctx: *mut c_void, name: *const c_char) -> i32,
     pub module_set_int:
         unsafe extern "C" fn(module_ctx: *mut c_void, name: *const c_char, value: i64) -> i32,
     pub module_set_bool:

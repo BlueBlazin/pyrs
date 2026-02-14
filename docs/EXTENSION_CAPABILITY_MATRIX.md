@@ -40,7 +40,7 @@ Legend:
 |---|---|---|---|---|
 | Buffer protocol producer/consumer parity | PLANNED | runtime/object-model | - | High-priority dependency for NumPy. |
 | Capsule/callback interop primitives | PLANNED | runtime/ffi | - | Needed by ecosystem modules that pass opaque handles. |
-| ABI capability introspection API | PLANNED | runtime/ffi | - | Needed for precise unsupported-surface diagnostics. |
+| ABI capability introspection API | IN PROGRESS | runtime/ffi | `tests/extension_smoke.rs::dynamic_extension_can_query_capabilities` | Baseline `api_has_capability(...)` probe is landed for key v1 surfaces; richer capability taxonomy/versioning is still open. |
 
 ## Ecosystem Gates
 

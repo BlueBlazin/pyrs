@@ -41,6 +41,7 @@ typedef int (*PyrsCFunctionKwV1)(
 
 struct PyrsApiV1 {
     uint32_t abi_version;
+    int (*api_has_capability)(void* module_ctx, const char* name);
 
     int (*module_set_int)(void* module_ctx, const char* name, int64_t value);
     int (*module_set_bool)(void* module_ctx, const char* name, int value);

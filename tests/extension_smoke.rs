@@ -999,3 +999,74 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);
 }
+
+#[test]
+fn dynamic_extension_can_query_capabilities() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping capability-query extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping capability-query extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_capabilities");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_capabilities.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    int has_dict = api->api_has_capability(module_ctx, "object_new_dict");
+    int has_kw = api->api_has_capability(module_ctx, "module_add_function_kw");
+    int has_missing = api->api_has_capability(module_ctx, "does_not_exist");
+    if (has_dict != 1 || has_kw != 1 || has_missing != 0) {
+        return -2;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_DICT", has_dict) != 0) {
+        return -3;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_KW", has_kw) != 0) {
+        return -4;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_MISSING", has_missing) != 0) {
+        return -5;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_capabilities");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_capabilities.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_capabilities\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MISSING is False",
+    )
+    .expect("capability-query extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}

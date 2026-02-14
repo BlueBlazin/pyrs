@@ -14,6 +14,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 
 ## Exposed API Table (`PyrsApiV1`)
 
+- `api_has_capability(void* module_ctx, const char* name)` (`1` supported, `0` unsupported)
 - `module_set_int(void* module_ctx, const char* name, int64_t value)`
 - `module_set_bool(void* module_ctx, const char* name, int value)`
 - `module_set_string(void* module_ctx, const char* name, const char* value)`
@@ -65,6 +66,7 @@ Return semantics:
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
 - callable registration via `module_add_function_kw(...)` is supported for callbacks receiving keyword-name/value arrays.
+- capability checks are available via `api_has_capability(...)` for runtime feature probing.
 - ABI mismatch must be handled by extension code and reflected via non-zero return.
 
 ## Out of Scope (not yet implemented)
