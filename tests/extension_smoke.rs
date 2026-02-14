@@ -3103,6 +3103,81 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_unreleased_buffer_pin_is_cleared_on_context_drop() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping leaked-buffer-pin cleanup smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping leaked-buffer-pin cleanup smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_buffer_pin_drop_cleanup");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_buffer_pin_drop_cleanup.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    const uint8_t payload[] = {97, 98, 99}; /* abc */
+    PyrsObjectHandle bytearray_obj = api->object_new_bytearray(module_ctx, payload, 3);
+    if (!bytearray_obj) {
+        return -2;
+    }
+    if (api->module_set_object(module_ctx, "BUF", bytearray_obj) != 0) {
+        return -3;
+    }
+    PyrsBufferViewV1 view;
+    if (api->object_get_buffer(module_ctx, bytearray_obj, &view) != 0) {
+        return -4;
+    }
+    if (!view.data || view.len != 3 || view.readonly != 0) {
+        return -5;
+    }
+    /* Intentionally skip object_release_buffer(...): context-drop cleanup should unpin. */
+    if (api->module_set_bool(module_ctx, "BUFFER_PIN_DROP_CLEANUP_OK", 1) != 0) {
+        return -6;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_buffer_pin_drop_cleanup");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_buffer_pin_drop_cleanup.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_buffer_pin_drop_cleanup\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import sys\nimport native_buffer_pin_drop_cleanup as mod\nassert mod.BUFFER_PIN_DROP_CLEANUP_OK is True\nmod.BUF.extend(b'x')\nassert bytes(mod.BUF) == b'abcx'\nfor _ in range(5):\n    del sys.modules['native_buffer_pin_drop_cleanup']\n    import native_buffer_pin_drop_cleanup as mod\n    mod.BUF.extend(b'x')\n    assert bytes(mod.BUF) == b'abcx'",
+    )
+    .expect("leaked-buffer-pin cleanup extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_buffer_api_handles_memoryview_slices_and_release() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping buffer slice/release extension smoke (pyrs binary not found)");
