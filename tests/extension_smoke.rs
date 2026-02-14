@@ -1460,6 +1460,197 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_mixed_surface_roundtrip() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping mixed-surface extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping mixed-surface extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_mixed_surface");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_mixed_surface.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    PyrsObjectHandle math_mod = 0;
+    if (api->module_import(module_ctx, "math", &math_mod) != 0 || !math_mod) {
+        return -2;
+    }
+    PyrsObjectHandle pi = 0;
+    if (api->module_get_attr(module_ctx, math_mod, "pi", &pi) != 0 || !pi) {
+        return -3;
+    }
+    if (api->module_set_object(module_ctx, "PI", pi) != 0) {
+        return -4;
+    }
+    PyrsObjectHandle pi_roundtrip = 0;
+    if (api->module_get_object(module_ctx, "PI", &pi_roundtrip) != 0 || !pi_roundtrip) {
+        return -5;
+    }
+    if (api->object_type(module_ctx, pi_roundtrip) != PYRS_TYPE_FLOAT) {
+        return -6;
+    }
+
+    PyrsObjectHandle builtins_mod = 0;
+    if (api->module_import(module_ctx, "builtins", &builtins_mod) != 0 || !builtins_mod) {
+        return -7;
+    }
+    PyrsObjectHandle len_fn = 0;
+    if (api->module_get_attr(module_ctx, builtins_mod, "len", &len_fn) != 0 || !len_fn) {
+        return -8;
+    }
+    PyrsObjectHandle list_items[1];
+    list_items[0] = pi;
+    PyrsObjectHandle value_list = api->object_new_list(module_ctx, 1, list_items);
+    if (!value_list) {
+        return -9;
+    }
+    PyrsObjectHandle zero = api->object_new_int(module_ctx, 0);
+    if (!zero) {
+        return -10;
+    }
+    if (api->object_list_append(module_ctx, value_list, zero) != 0) {
+        return -11;
+    }
+    PyrsObjectHandle len_args[1];
+    len_args[0] = value_list;
+    PyrsObjectHandle len_value = 0;
+    if (api->object_call(module_ctx, len_fn, 1, len_args, 0, 0, 0, &len_value) != 0 || !len_value) {
+        return -12;
+    }
+    int64_t len_int = 0;
+    if (api->object_get_int(module_ctx, len_value, &len_int) != 0 || len_int != 2) {
+        return -13;
+    }
+    PyrsObjectHandle float_cls = 0;
+    if (api->module_get_attr(module_ctx, builtins_mod, "float", &float_cls) != 0 || !float_cls) {
+        return -14;
+    }
+    if (api->object_is_instance(module_ctx, pi, float_cls) != 1) {
+        return -15;
+    }
+    if (api->object_is_subclass(module_ctx, float_cls, float_cls) != 1) {
+        return -16;
+    }
+
+    PyrsObjectHandle mapping = api->object_new_dict(module_ctx);
+    if (!mapping) {
+        return -17;
+    }
+    PyrsObjectHandle key_pi = api->object_new_string(module_ctx, "pi");
+    if (!key_pi) {
+        return -18;
+    }
+    if (api->object_dict_set_item(module_ctx, mapping, key_pi, pi) != 0) {
+        return -19;
+    }
+    if (api->object_dict_contains(module_ctx, mapping, key_pi) != 1) {
+        return -20;
+    }
+    PyrsObjectHandle fetched = 0;
+    if (api->object_dict_get_item(module_ctx, mapping, key_pi, &fetched) != 0 || !fetched) {
+        return -21;
+    }
+    if (api->object_type(module_ctx, fetched) != PYRS_TYPE_FLOAT) {
+        return -22;
+    }
+    if (api->object_decref(module_ctx, fetched) != 0) {
+        return -23;
+    }
+    if (api->object_dict_del_item(module_ctx, mapping, key_pi) != 0) {
+        return -24;
+    }
+    if (api->object_dict_contains(module_ctx, mapping, key_pi) != 0) {
+        return -25;
+    }
+
+    if (api->module_set_bool(module_ctx, "MIXED_OK", 1) != 0) {
+        return -26;
+    }
+    if (api->module_set_int(module_ctx, "LEN_VALUE", len_int) != 0) {
+        return -27;
+    }
+    if (api->module_set_string(module_ctx, "API_KIND", "mixed-surface") != 0) {
+        return -28;
+    }
+
+    if (api->object_decref(module_ctx, key_pi) != 0) {
+        return -29;
+    }
+    if (api->object_decref(module_ctx, mapping) != 0) {
+        return -30;
+    }
+    if (api->object_decref(module_ctx, float_cls) != 0) {
+        return -31;
+    }
+    if (api->object_decref(module_ctx, len_value) != 0) {
+        return -32;
+    }
+    if (api->object_decref(module_ctx, zero) != 0) {
+        return -33;
+    }
+    if (api->object_decref(module_ctx, value_list) != 0) {
+        return -34;
+    }
+    if (api->object_decref(module_ctx, len_fn) != 0) {
+        return -35;
+    }
+    if (api->object_decref(module_ctx, builtins_mod) != 0) {
+        return -36;
+    }
+    if (api->object_decref(module_ctx, pi_roundtrip) != 0) {
+        return -37;
+    }
+    if (api->object_decref(module_ctx, pi) != 0) {
+        return -38;
+    }
+    if (api->object_decref(module_ctx, math_mod) != 0) {
+        return -39;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_mixed_surface");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_mixed_surface.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_mixed_surface\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_mixed_surface\nassert native_mixed_surface.API_KIND == 'mixed-surface'\nassert native_mixed_surface.MIXED_OK is True\nassert native_mixed_surface.LEN_VALUE == 2\nassert abs(native_mixed_surface.PI - 3.141592653589793) < 1e-12",
+    )
+    .expect("mixed-surface extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_query_capabilities() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping capability-query extension smoke (pyrs binary not found)");

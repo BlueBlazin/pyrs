@@ -46,7 +46,7 @@ Legend:
 
 | Gate | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
-| Extension smoke gate (compiled native fixture + `hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | CI covers manifest-only, compiled-manifest, direct shared-object, tagged-filename, and error-path fixtures. |
+| Extension smoke gate (compiled native fixture + `hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | CI covers manifest-only, compiled-manifest, direct shared-object, tagged-filename, mixed-surface cross-API fixture, and error-path fixtures. |
 | NumPy import gate (`import numpy`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Probe scaffold is landed; gate currently expected-red until C-extension substrate matures. |
 | NumPy ndarray smoke (`np.array([...]).sum()`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Same as above. |
 | Pandas/matplotlib/scipy smoke gates | PLANNED | milestone-15 bring-up | - | Starts after NumPy substrate closure. |
