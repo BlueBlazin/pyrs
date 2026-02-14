@@ -37,6 +37,8 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `module_get_object(void* module_ctx, const char* name, PyrsObjectHandle* out_handle)`
 - `module_import(void* module_ctx, const char* module_name, PyrsObjectHandle* out_handle)`
 - `module_get_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name, PyrsObjectHandle* out_handle)`
+- `module_set_state(void* module_ctx, void* state, PyrsModuleStateFreeV1 free_func)`
+- `module_get_state(void* module_ctx)`
 - `module_set_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name, PyrsObjectHandle value_handle)`
 - `module_del_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name)`
 - `module_has_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name)` (`1`/`0` on success, `-1` on error)
@@ -110,6 +112,7 @@ Return semantics:
 - extension code can re-read module globals as handles via `module_get_object(...)`.
 - extension code can import modules during init/call paths via `module_import(...)`.
 - extension code can load/mutate module attributes via `module_get_attr(...)`, `module_set_attr(...)`, `module_del_attr(...)`, and `module_has_attr(...)`.
+- extension code can persist module-owned native state via `module_set_state(...)`/`module_get_state(...)`; replacement and clear paths run prior free callbacks.
 - extension code can perform type relation checks via `object_is_instance(...)` and `object_is_subclass(...)`.
 - generic length/subscript helpers are available through `object_len(...)`, `object_get_item(...)`, `object_set_item(...)`, and `object_del_item(...)`.
 - generic membership probes are available through `object_contains(...)`.
@@ -149,6 +152,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | Surface Group | Primary Smoke Evidence |
 |---|---|
 | module setters/getters/import/attr-load | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_can_import_module_and_export_attribute`, `dynamic_extension_mixed_surface_roundtrip` |
+| module-state lifecycle (`module_set_state`/`module_get_state`) | `dynamic_extension_can_manage_module_state_lifecycle` |
 | handle constructors + typed getters | `dynamic_extension_can_set_module_values_via_object_handles` |
 | module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
 | generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
