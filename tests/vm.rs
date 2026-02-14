@@ -4968,6 +4968,40 @@ ok = missing and multi and unknown
 }
 
 #[test]
+fn memoryview_cast_supports_extended_formats_and_tolist() {
+    let source = r#"import sys
+buf = memoryview(bytearray([255, 254, 253, 252, 251, 250, 249, 248]))
+ok = True
+base_bytes = bytes(buf)
+def unpack_ints(size, signed):
+    return [
+        int.from_bytes(base_bytes[i:i + size], byteorder=sys.byteorder, signed=signed)
+        for i in range(0, len(base_bytes), size)
+    ]
+ok = ok and (buf.cast("b").tolist() == [-1, -2, -3, -4, -5, -6, -7, -8])
+ok = ok and (buf.cast("c").tolist() == [bytes([x]) for x in buf.cast("B").tolist()])
+ok = ok and (buf.cast("H").itemsize == 2 and buf.cast("H").tolist() == unpack_ints(2, False))
+ok = ok and (buf.cast("h").itemsize == 2 and buf.cast("h").tolist() == unpack_ints(2, True))
+ok = ok and (buf.cast("I").itemsize == 4 and buf.cast("I").tolist() == unpack_ints(4, False))
+ok = ok and (buf.cast("i").itemsize == 4 and buf.cast("i").tolist() == unpack_ints(4, True))
+lsize = buf.cast("L").itemsize
+ok = ok and (lsize in (4, 8) and buf.cast("L").tolist() == unpack_ints(lsize, False))
+ok = ok and (buf.cast("l").itemsize == lsize and buf.cast("l").tolist() == unpack_ints(lsize, True))
+ok = ok and (buf.cast("Q").itemsize == 8 and buf.cast("Q").tolist() == unpack_ints(8, False))
+ok = ok and (buf.cast("q").itemsize == 8 and buf.cast("q").tolist() == unpack_ints(8, True))
+f_values = buf.cast("f").tolist()
+d_values = buf.cast("d").tolist()
+ok = ok and (buf.cast("f").itemsize == 4 and len(f_values) == 2 and all(type(v) is float for v in f_values))
+ok = ok and (buf.cast("d").itemsize == 8 and len(d_values) == 1 and type(d_values[0]) is float)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn json_loads_accepts_utf8_bytes_and_bytearray() {
     let source = r#"import json
 a = json.loads(b'{"x": 1, "y": [2, 3]}')
