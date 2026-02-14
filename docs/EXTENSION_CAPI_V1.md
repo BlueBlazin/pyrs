@@ -35,6 +35,9 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `module_get_object(void* module_ctx, const char* name, PyrsObjectHandle* out_handle)`
 - `module_import(void* module_ctx, const char* module_name, PyrsObjectHandle* out_handle)`
 - `module_get_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name, PyrsObjectHandle* out_handle)`
+- `module_set_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name, PyrsObjectHandle value_handle)`
+- `module_del_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name)`
+- `module_has_attr(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name)` (`1`/`0` on success, `-1` on error)
 - `object_type(void* module_ctx, PyrsObjectHandle handle)`
 - `object_is_instance(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle classinfo_handle)` (`1`/`0` on success, `-1` on error)
 - `object_is_subclass(void* module_ctx, PyrsObjectHandle class_handle, PyrsObjectHandle classinfo_handle)` (`1`/`0` on success, `-1` on error)
@@ -44,6 +47,8 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_get_bytes(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len)`
 - `object_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
 - `object_get_item(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle, PyrsObjectHandle* out_handle)`
+- `object_set_item(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle, PyrsObjectHandle value_handle)`
+- `object_del_item(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle)`
 - `object_sequence_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
 - `object_sequence_get_item(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle)`
 - `object_get_iter(void* module_ctx, PyrsObjectHandle handle, PyrsObjectHandle* out_handle)`
@@ -86,9 +91,9 @@ Return semantics:
 - object handles are init-call scoped; module globals retain values after handle release.
 - extension code can re-read module globals as handles via `module_get_object(...)`.
 - extension code can import modules during init/call paths via `module_import(...)`.
-- extension code can load module attributes via `module_get_attr(...)`.
+- extension code can load/mutate module attributes via `module_get_attr(...)`, `module_set_attr(...)`, `module_del_attr(...)`, and `module_has_attr(...)`.
 - extension code can perform type relation checks via `object_is_instance(...)` and `object_is_subclass(...)`.
-- generic length/subscript helpers are available through `object_len(...)` and `object_get_item(...)`.
+- generic length/subscript helpers are available through `object_len(...)`, `object_get_item(...)`, `object_set_item(...)`, and `object_del_item(...)`.
 - iterator helpers are available through `object_get_iter(...)` and `object_iter_next(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
@@ -117,7 +122,8 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 |---|---|
 | module setters/getters/import/attr-load | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_can_import_module_and_export_attribute`, `dynamic_extension_mixed_surface_roundtrip` |
 | handle constructors + typed getters | `dynamic_extension_can_set_module_values_via_object_handles` |
-| generic len/getitem helpers | `dynamic_extension_can_use_len_and_getitem_apis` |
+| module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
+| generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
 | object attribute helpers (`get`/`set`/`del`/`has`) | `dynamic_extension_can_get_set_and_del_object_attributes` |

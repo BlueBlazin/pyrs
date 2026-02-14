@@ -43,9 +43,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 now includes `module_get_object(...)` for handle-based reads of module globals during extension init/call paths.
   - C-API v1 now includes `module_import(...)` for native-side module loading during extension init/call paths.
   - C-API v1 now includes `module_get_attr(...)` for module-handle attribute extraction with explicit module-type checks.
+  - C-API v1 now includes module-handle attribute mutation helpers (`module_set_attr`, `module_del_attr`, `module_has_attr`) for native-side module mutation/probe flows without Python-level glue.
   - C-API handle constructors/getters now include `None`/`float`/`bytes`/`tuple`/`list`/`dict` in addition to `bool`/`int`/`str`, with smoke coverage through native handle and sequence+mapping round-trip.
   - C-API v1 now includes native iterator helpers (`object_get_iter`, `object_iter_next`) for extension-side iteration without Python-level dispatch glue.
   - C-API v1 now includes generic object helpers (`object_len`, `object_get_item`) for native-side length/subscript paths.
+  - C-API v1 generic item helpers now include mutation (`object_set_item`, `object_del_item`) with dict/list/bytearray direct semantics and special-method fallback for custom containers.
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
   - C-API v1 now includes handle-based object attribute access (`object_get_attr`, `object_set_attr`, `object_del_attr`) with native extension smoke coverage.
   - C-API v1 attribute helpers now include presence checks (`object_has_attr`) for exception-free attr probes in native code.
@@ -59,6 +61,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke path now includes compiled native fixtures for manifest dynamic load, direct shared-object import, tagged filename resolution, object-handle flow, positional+keyword callable registration/invocation, and error-state propagation (`tests/extension_smoke.rs`).
   - extension smoke now includes a mixed-surface cross-API fixture exercising module import/attr-load, type checks, list+dict mutation, callable invocation, and module-global round-trips in one extension init path.
   - extension smoke now includes an invalid-handle resilience fixture to enforce consistent error-message + error-clear behavior across C-API calls.
+  - extension smoke now includes a module/item helper fixture covering module attr set/del/has and generic item set/del paths (`dynamic_extension_can_set_module_attrs_and_items`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
