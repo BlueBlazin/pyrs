@@ -7,8 +7,8 @@ use crate::extensions::{
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
     PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferViewV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
-    PyrsCapsuleDestructorV1, PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest,
-    path_is_shared_library,
+    PyrsCapsuleDestructorV1, PyrsModuleStateFreeV1, PyrsObjectHandle, load_dynamic_initializer,
+    parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -267,6 +267,65 @@ impl ModuleCapiContext {
         } else {
             0
         })
+    }
+
+    fn module_set_state(
+        &mut self,
+        state: *mut c_void,
+        free_func: Option<PyrsModuleStateFreeV1>,
+    ) -> Result<(), String> {
+        if self.vm.is_null() {
+            return Err("module_set_state missing VM context".to_string());
+        }
+        let module_id = self.module.id();
+        // SAFETY: VM pointer is valid for the context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        if state.is_null() {
+            if let Some(previous) = vm.extension_module_state_registry.remove(&module_id)
+                && previous.state != 0
+                && let Some(previous_free) = previous.free_func
+            {
+                // SAFETY: free function pointer was provided by extension code.
+                unsafe {
+                    previous_free(previous.state as *mut c_void);
+                }
+            }
+            return Ok(());
+        }
+        let entry = super::ExtensionModuleStateEntry {
+            state: state as usize,
+            free_func,
+        };
+        let previous = vm.extension_module_state_registry.insert(module_id, entry);
+        if let Some(previous) = previous {
+            let replaced_state = previous.state != state as usize;
+            let replaced_free =
+                previous.free_func.map(|func| func as usize) != free_func.map(|func| func as usize);
+            if (replaced_state || replaced_free)
+                && previous.state != 0
+                && let Some(previous_free) = previous.free_func
+            {
+                // SAFETY: free function pointer was provided by extension code.
+                unsafe {
+                    previous_free(previous.state as *mut c_void);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn module_get_state(&mut self) -> Result<*mut c_void, String> {
+        if self.vm.is_null() {
+            return Err("module_get_state missing VM context".to_string());
+        }
+        let module_id = self.module.id();
+        // SAFETY: VM pointer is valid for the context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let state = vm
+            .extension_module_state_registry
+            .get(&module_id)
+            .map_or(std::ptr::null_mut(), |entry| entry.state as *mut c_void);
+        Ok(state)
     }
 
     fn sync_exported_capsule(
@@ -1546,6 +1605,8 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "module_get_object"
             | "module_import"
             | "module_get_attr"
+            | "module_set_state"
+            | "module_get_state"
             | "module_set_attr"
             | "module_del_attr"
             | "module_has_attr"
@@ -2026,6 +2087,36 @@ unsafe extern "C" fn capi_module_get_attr(
         Err(err) => {
             context.set_error(err);
             -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_module_set_state(
+    module_ctx: *mut c_void,
+    state: *mut c_void,
+    free_func: Option<PyrsModuleStateFreeV1>,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.module_set_state(state, free_func) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_module_get_state(module_ctx: *mut c_void) -> *mut c_void {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return std::ptr::null_mut();
+    };
+    match context.module_get_state() {
+        Ok(state) => state,
+        Err(err) => {
+            context.set_error(err);
+            std::ptr::null_mut()
         }
     }
 }
@@ -3225,6 +3316,8 @@ impl Vm {
             module_get_object: capi_module_get_object,
             module_import: capi_module_import,
             module_get_attr: capi_module_get_attr,
+            module_set_state: capi_module_set_state,
+            module_get_state: capi_module_get_state,
             object_type: capi_object_type,
             object_is_instance: capi_object_is_instance,
             object_is_subclass: capi_object_is_subclass,

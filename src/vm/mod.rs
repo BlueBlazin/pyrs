@@ -60,7 +60,8 @@ use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::extensions::{
-    PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, SharedLibraryHandle,
+    PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFreeV1,
+    SharedLibraryHandle,
 };
 use crate::parser;
 use crate::runtime::{
@@ -112,6 +113,12 @@ struct ExtensionCapsuleRegistryEntry {
     pointer: usize,
     context: usize,
     destructor: Option<PyrsCapsuleDestructorV1>,
+}
+
+#[derive(Clone, Copy)]
+struct ExtensionModuleStateEntry {
+    state: usize,
+    free_func: Option<PyrsModuleStateFreeV1>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -744,6 +751,7 @@ pub struct Vm {
     extension_libraries: Vec<SharedLibraryHandle>,
     extension_callable_registry: HashMap<u64, ExtensionCallableEntry>,
     extension_capsule_registry: HashMap<String, ExtensionCapsuleRegistryEntry>,
+    extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     next_extension_callable_id: u64,
     local_shim_fallback_enabled: bool,
     prefer_pure_json_when_available: bool,
@@ -768,6 +776,18 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        for state in self.extension_module_state_registry.values() {
+            if state.state != 0
+                && let Some(free_func) = state.free_func
+            {
+                // SAFETY: free function pointers come from loaded extension modules and
+                // are invoked before extension libraries are dropped.
+                unsafe {
+                    free_func(state.state as *mut c_void);
+                }
+            }
+        }
+        self.extension_module_state_registry.clear();
         for capsule in self.extension_capsule_registry.values() {
             if let Some(destructor) = capsule.destructor {
                 // SAFETY: destructor pointers come from loaded extension modules and
@@ -867,6 +887,7 @@ impl Vm {
             extension_libraries: Vec::new(),
             extension_callable_registry: HashMap::new(),
             extension_capsule_registry: HashMap::new(),
+            extension_module_state_registry: HashMap::new(),
             next_extension_callable_id: 1,
             // Shim fallback is restricted by LOCAL_SHIM_MODULES and only used when normal
             // path resolution fails, so keep it enabled by default (allow explicit opt-out).
