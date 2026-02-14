@@ -28,6 +28,25 @@ python3 scripts/probe_numpy_gate.py \
 
 Optional strict mode (`--strict`) returns non-zero if any gate fails.
 
+## Local-Install Probe Mode
+
+To distinguish environment absence (`module-not-found`) from runtime ABI issues, you can probe a local Python for an installed NumPy and reuse its site-packages root:
+
+```bash
+python3 scripts/probe_numpy_gate.py \
+  --pyrs target/debug/pyrs \
+  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --probe-local-numpy \
+  --python-probe-bin python3 \
+  --out perf/numpy_gate_local_probe_latest.json \
+  --timeout 20
+```
+
+Report field:
+- `local_numpy_probe.status = FOUND|NOT_FOUND|ERROR|SKIP`
+
+When `FOUND`, the probe injects the detected site-packages root into `PYTHONPATH` for gate cases.
+
 ## Source-Build Bring-Up Command
 
 When a local NumPy source checkout is available, run:
@@ -53,6 +72,7 @@ If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the r
 
 - Before real C-extension substrate closure, this probe is expected to report failures.
 - Import-probe and source-build mode both produce actionable failure diagnostics in JSON.
+- Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`abi-mode-mismatch`, `missing-symbol`, etc.).
 - Probe output now classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `abi-mode-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Failures are signal, not noise; they should be used to drive substrate work in:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`

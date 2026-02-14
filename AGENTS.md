@@ -78,11 +78,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes module-state lifecycle coverage (`dynamic_extension_can_manage_module_state_lifecycle`).
   - extension smoke now includes module-state drop ordering coverage (`dynamic_extension_module_state_drop_runs_finalize_before_free`), asserting finalize callbacks run before free callbacks on VM teardown.
   - extension smoke now includes finalize-disable coverage (`dynamic_extension_can_disable_module_state_finalize_callback`), asserting `module_set_finalize(..., NULL)` suppresses finalize callbacks while preserving free callbacks.
+  - extension smoke now includes null-context guard coverage (`dynamic_extension_module_state_apis_guard_null_module_ctx`), asserting module-state C-API calls handle `module_ctx == NULL` without crashing.
   - module-state registry now prunes stale module entries during `sys.modules` churn and executes associated finalize+free callbacks (covered by module-state smoke reimport path).
   - extension smoke now includes buffer/capsule interop bridge coverage (`dynamic_extension_can_bridge_buffer_pointer_through_capsule`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
+  - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
   - NumPy probe diagnostics now distinguish ABI-mode mismatches (`pyrs_extension_init_v1` vs CPython `PyInit_*`) from generic missing-symbol failures.
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
