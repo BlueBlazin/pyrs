@@ -5094,6 +5094,7 @@ fn memoryview_multidim_slice_preserves_shape_and_nested_tolist() {
 view = memoryview(buf).cast("B", [3, 4])
 head = view[0:1]
 stride = view[::2]
+empty = view[1:1]
 before = stride.tolist()
 buf[8] = 99
 after = stride.tolist()
@@ -5107,6 +5108,12 @@ ok = (
     and stride.strides == (8, 1)
     and before == [[0, 1, 2, 3], [8, 9, 10, 11]]
     and after == [[0, 1, 2, 3], [99, 9, 10, 11]]
+    and empty.shape == (0, 4)
+    and empty.strides == (4, 1)
+    and empty.tolist() == []
+    and empty.contiguous
+    and empty.c_contiguous
+    and empty.f_contiguous
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");

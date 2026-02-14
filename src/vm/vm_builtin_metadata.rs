@@ -39,6 +39,12 @@ fn memoryview_contiguity(
     if shape.len() != strides.len() {
         return (false, false, false);
     }
+    if shape.iter().any(|dim| *dim < 0) {
+        return (false, false, false);
+    }
+    if shape.iter().any(|dim| *dim == 0) {
+        return (true, true, true);
+    }
     let mut c_expected = itemsize;
     let mut c_contiguous = true;
     for index in (0..shape.len()).rev() {
