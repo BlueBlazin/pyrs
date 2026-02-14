@@ -94,6 +94,14 @@ override: PYRS_REPL_INIT=/path/to/init.py
 disable: PYRS_REPL_INIT=""
 ```
 
+REPL theme:
+
+```text
+auto detect (default): PYRS_REPL_THEME=auto
+force dark palette:    PYRS_REPL_THEME=dark
+force light palette:   PYRS_REPL_THEME=light
+```
+
 Run from piped stdin (non-interactive mode):
 
 ```bash

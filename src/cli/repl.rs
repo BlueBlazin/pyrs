@@ -28,6 +28,7 @@ const HISTORY_CAPACITY: usize = 10_000;
 const INDENT_WIDTH: usize = 4;
 const COMPLETION_MENU_NAME: &str = "pyrs_repl_completion";
 const REPL_ESC_DISMISS_HINT_COMMAND: &str = "__pyrs_repl_dismiss_hint__";
+const REPL_THEME_ENV: &str = "PYRS_REPL_THEME";
 const REPL_COMMANDS: &[&str] = &[
     ":help", ".help", ":clear", ".clear", ":paste", ":timing", ":reset", ":exit", ":quit", ".exit",
     ".quit",
@@ -38,6 +39,96 @@ const REPL_KEYWORDS: &[&str] = &[
     "import", "in", "is", "lambda", "match", "nonlocal", "not", "or", "pass", "raise", "return",
     "try", "while", "with", "yield",
 ];
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ReplThemeMode {
+    Auto,
+    Dark,
+    Light,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ResolvedReplTheme {
+    Dark,
+    Light,
+}
+
+#[derive(Debug, Copy, Clone)]
+struct ReplPalette {
+    keyword_style: Style,
+    number_style: Style,
+    string_style: Style,
+    comment_style: Style,
+    hint_style: Style,
+}
+
+fn parse_repl_theme_mode(value: &str) -> Option<ReplThemeMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => Some(ReplThemeMode::Auto),
+        "dark" => Some(ReplThemeMode::Dark),
+        "light" => Some(ReplThemeMode::Light),
+        _ => None,
+    }
+}
+
+fn parse_colorfgbg_background_code(value: &str) -> Option<u8> {
+    value.rsplit(';').next()?.trim().parse::<u8>().ok()
+}
+
+fn is_light_background_code(code: u8) -> bool {
+    matches!(code, 7 | 9 | 10 | 11 | 12 | 13 | 14 | 15)
+}
+
+fn resolve_repl_theme(mode: ReplThemeMode, colorfgbg: Option<&str>) -> ResolvedReplTheme {
+    match mode {
+        ReplThemeMode::Dark => ResolvedReplTheme::Dark,
+        ReplThemeMode::Light => ResolvedReplTheme::Light,
+        ReplThemeMode::Auto => {
+            if let Some(code) = colorfgbg.and_then(parse_colorfgbg_background_code) {
+                if is_light_background_code(code) {
+                    ResolvedReplTheme::Light
+                } else {
+                    ResolvedReplTheme::Dark
+                }
+            } else {
+                ResolvedReplTheme::Dark
+            }
+        }
+    }
+}
+
+fn resolve_repl_theme_from_env() -> ReplThemeMode {
+    let Some(raw_value) = env::var(REPL_THEME_ENV).ok() else {
+        return ReplThemeMode::Auto;
+    };
+    let Some(parsed) = parse_repl_theme_mode(&raw_value) else {
+        eprintln!(
+            "warning: invalid {REPL_THEME_ENV} value '{}'; expected auto|dark|light",
+            raw_value
+        );
+        return ReplThemeMode::Auto;
+    };
+    parsed
+}
+
+fn repl_palette(theme: ResolvedReplTheme) -> ReplPalette {
+    match theme {
+        ResolvedReplTheme::Dark => ReplPalette {
+            keyword_style: Style::new().fg(AnsiColor::Cyan).bold(),
+            number_style: Style::new().fg(AnsiColor::Purple),
+            string_style: Style::new().fg(AnsiColor::Green),
+            comment_style: Style::new().fg(AnsiColor::LightGreen),
+            hint_style: Style::new().italic().fg(AnsiColor::LightGray),
+        },
+        ResolvedReplTheme::Light => ReplPalette {
+            keyword_style: Style::new().fg(AnsiColor::Blue).bold(),
+            number_style: Style::new().fg(AnsiColor::Purple),
+            string_style: Style::new().fg(AnsiColor::Fixed(22)),
+            comment_style: Style::new().fg(AnsiColor::Fixed(28)),
+            hint_style: Style::new().italic().fg(AnsiColor::DarkGray),
+        },
+    }
+}
 
 pub(super) fn run_repl(import_site: bool) -> Result<(), String> {
     let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
@@ -77,10 +168,19 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
     println!("RSPYTHON {VERSION} (CPython 3.14 compatible)");
     println!("Type :help for REPL commands, Ctrl-D to exit.");
 
+    let theme_mode = resolve_repl_theme_from_env();
+    let colorfgbg = env::var("COLORFGBG").ok();
+    let resolved_theme = resolve_repl_theme(theme_mode, colorfgbg.as_deref());
+    let palette = repl_palette(resolved_theme);
+
     let completion_state = Arc::new(Mutex::new(build_completion_state(vm)));
     let hint_control = Arc::new(Mutex::new(HintControl::default()));
     load_repl_startup_script(vm, &completion_state)?;
-    let mut line_editor = build_editor(Arc::clone(&completion_state), Arc::clone(&hint_control))?;
+    let mut line_editor = build_editor(
+        Arc::clone(&completion_state),
+        Arc::clone(&hint_control),
+        palette,
+    )?;
     let primary_prompt = ReplPrompt::primary();
     let continuation_prompt = ReplPrompt::continuation();
 
@@ -281,6 +381,7 @@ impl Hinter for ReplHinter {
 fn build_editor(
     completion_state: Arc<Mutex<CompletionState>>,
     hint_control: Arc<Mutex<HintControl>>,
+    palette: ReplPalette,
 ) -> Result<Reedline, String> {
     let completion_menu = Box::new(ColumnarMenu::default().with_name(COMPLETION_MENU_NAME));
     let mut keybindings = default_emacs_keybindings();
@@ -314,10 +415,9 @@ fn build_editor(
         ]),
     );
     let edit_mode = Box::new(Emacs::new(keybindings));
-    let history_hint_style = Style::new().italic().fg(AnsiColor::DarkGray);
     let mut editor = Reedline::create()
-        .with_hinter(Box::new(ReplHinter::new(hint_control, history_hint_style)))
-        .with_highlighter(Box::new(PythonHighlighter::default()))
+        .with_hinter(Box::new(ReplHinter::new(hint_control, palette.hint_style)))
+        .with_highlighter(Box::new(PythonHighlighter::new(palette)))
         .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
         .with_edit_mode(edit_mode)
         .with_completer(Box::new(ReplCompleter::new(completion_state)));
@@ -1068,8 +1168,16 @@ fn path_suggestions(start: usize, end: usize, token: &str) -> Vec<Suggestion> {
     suggestions
 }
 
-#[derive(Default)]
-struct PythonHighlighter;
+#[derive(Clone, Copy)]
+struct PythonHighlighter {
+    palette: ReplPalette,
+}
+
+impl PythonHighlighter {
+    fn new(palette: ReplPalette) -> Self {
+        Self { palette }
+    }
+}
 
 impl Highlighter for PythonHighlighter {
     fn highlight(&self, line: &str, _cursor: usize) -> StyledText {
@@ -1095,11 +1203,11 @@ impl Highlighter for PythonHighlighter {
                 .min(line.len());
 
             if token_start > cursor {
-                push_plain_or_comment(&mut styled, &line[cursor..token_start]);
+                push_plain_or_comment(&mut styled, &line[cursor..token_start], self.palette);
             }
             if token_end > token_start {
                 styled.push((
-                    style_for_token_kind(&token.kind),
+                    style_for_token_kind(self.palette, &token.kind),
                     line[token_start..token_end].to_string(),
                 ));
             }
@@ -1107,7 +1215,7 @@ impl Highlighter for PythonHighlighter {
         }
 
         if cursor < line.len() {
-            push_plain_or_comment(&mut styled, &line[cursor..]);
+            push_plain_or_comment(&mut styled, &line[cursor..], self.palette);
         }
         if styled.buffer.is_empty() {
             styled.push((Style::new(), line.to_string()));
@@ -1116,19 +1224,19 @@ impl Highlighter for PythonHighlighter {
     }
 }
 
-fn style_for_token_kind(token_kind: &parser::token::TokenKind) -> Style {
+fn style_for_token_kind(palette: ReplPalette, token_kind: &parser::token::TokenKind) -> Style {
     match token_kind {
-        parser::token::TokenKind::Keyword(_) => Style::new().fg(AnsiColor::Cyan).bold(),
-        parser::token::TokenKind::Number => Style::new().fg(AnsiColor::Purple),
+        parser::token::TokenKind::Keyword(_) => palette.keyword_style,
+        parser::token::TokenKind::Number => palette.number_style,
         parser::token::TokenKind::String
         | parser::token::TokenKind::Bytes
-        | parser::token::TokenKind::FString => Style::new().fg(AnsiColor::Green),
-        parser::token::TokenKind::Name => Style::new().fg(AnsiColor::White),
-        _ => Style::new().fg(AnsiColor::White),
+        | parser::token::TokenKind::FString => palette.string_style,
+        parser::token::TokenKind::Name => Style::new(),
+        _ => Style::new(),
     }
 }
 
-fn push_plain_or_comment(styled: &mut StyledText, segment: &str) {
+fn push_plain_or_comment(styled: &mut StyledText, segment: &str, palette: ReplPalette) {
     if segment.is_empty() {
         return;
     }
@@ -1137,7 +1245,7 @@ fn push_plain_or_comment(styled: &mut StyledText, segment: &str) {
         if !plain.is_empty() {
             styled.push((Style::new(), plain.to_string()));
         }
-        styled.push((Style::new().fg(AnsiColor::LightGreen), comment.to_string()));
+        styled.push((palette.comment_style, comment.to_string()));
     } else {
         styled.push((Style::new(), segment.to_string()));
     }
@@ -1413,6 +1521,7 @@ fn apply_meta_command(
             println!("Tab               insert {} spaces", INDENT_WIDTH);
             println!("Shift-Tab/Ctrl-Space  completion menu");
             println!("Esc               dismiss completion menu/current suggestion");
+            println!("env: PYRS_REPL_THEME=auto|dark|light");
             Ok(false)
         }
         MetaCommand::Clear => {
@@ -1678,8 +1787,9 @@ mod tests {
 
     use super::{
         CompletionState, MetaCommand, PythonHighlighter, ReplCompleter, ReplMagicCommand,
-        TimeItRequest, completion_fragment, format_parse_error, is_path_like, parse_magic_command,
-        parse_meta_command, repl_input_is_incomplete,
+        ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment, format_parse_error,
+        is_path_like, parse_colorfgbg_background_code, parse_magic_command, parse_meta_command,
+        parse_repl_theme_mode, repl_input_is_incomplete, repl_palette, resolve_repl_theme,
     };
     use crate::parser;
 
@@ -1754,6 +1864,56 @@ mod tests {
         assert_eq!(parse_magic_command("%timeit"), None);
         assert_eq!(parse_magic_command("%time"), None);
         assert_eq!(parse_magic_command("print(1)"), None);
+    }
+
+    #[test]
+    fn parses_repl_theme_mode_values_case_insensitively() {
+        assert_eq!(parse_repl_theme_mode("auto"), Some(ReplThemeMode::Auto));
+        assert_eq!(parse_repl_theme_mode("Dark"), Some(ReplThemeMode::Dark));
+        assert_eq!(parse_repl_theme_mode("LIGHT"), Some(ReplThemeMode::Light));
+        assert_eq!(parse_repl_theme_mode("unknown"), None);
+    }
+
+    #[test]
+    fn resolves_repl_theme_with_explicit_override() {
+        assert_eq!(
+            resolve_repl_theme(ReplThemeMode::Dark, Some("15;7")),
+            ResolvedReplTheme::Dark
+        );
+        assert_eq!(
+            resolve_repl_theme(ReplThemeMode::Light, Some("15;0")),
+            ResolvedReplTheme::Light
+        );
+    }
+
+    #[test]
+    fn resolves_repl_theme_auto_from_colorfgbg() {
+        assert_eq!(
+            parse_colorfgbg_background_code("15;7"),
+            Some(7),
+            "parses light background code"
+        );
+        assert_eq!(
+            parse_colorfgbg_background_code("15;0"),
+            Some(0),
+            "parses dark background code"
+        );
+        assert_eq!(
+            resolve_repl_theme(ReplThemeMode::Auto, Some("15;7")),
+            ResolvedReplTheme::Light
+        );
+        assert_eq!(
+            resolve_repl_theme(ReplThemeMode::Auto, Some("15;0")),
+            ResolvedReplTheme::Dark
+        );
+        assert_eq!(
+            resolve_repl_theme(ReplThemeMode::Auto, Some("invalid")),
+            ResolvedReplTheme::Dark
+        );
+        assert_eq!(
+            resolve_repl_theme(ReplThemeMode::Auto, None),
+            ResolvedReplTheme::Dark
+        );
     }
 
     #[test]
@@ -1847,9 +2007,32 @@ mod tests {
 
     #[test]
     fn python_highlighter_styles_keywords_strings_and_comments() {
-        let highlighter = PythonHighlighter;
+        let highlighter = PythonHighlighter::new(repl_palette(ResolvedReplTheme::Dark));
         let styled = highlighter.highlight("if x == 'a': # comment", 0);
         assert_eq!(styled.raw_string(), "if x == 'a': # comment");
         assert!(styled.buffer.len() > 1);
+    }
+
+    #[test]
+    fn python_highlighter_uses_terminal_default_for_plain_identifiers() {
+        let highlighter = PythonHighlighter::new(repl_palette(ResolvedReplTheme::Dark));
+        let styled = highlighter.highlight("identifier", 0);
+        assert_eq!(styled.raw_string(), "identifier");
+        assert!(!styled.buffer.is_empty());
+        assert_eq!(styled.buffer[0].0, nu_ansi_term::Style::new());
+    }
+
+    #[test]
+    fn repl_palette_differs_between_dark_and_light_modes() {
+        let dark = repl_palette(ResolvedReplTheme::Dark);
+        let light = repl_palette(ResolvedReplTheme::Light);
+        assert_ne!(
+            format!("{:?}", dark.hint_style),
+            format!("{:?}", light.hint_style)
+        );
+        assert_ne!(
+            format!("{:?}", dark.keyword_style),
+            format!("{:?}", light.keyword_style)
+        );
     }
 }
