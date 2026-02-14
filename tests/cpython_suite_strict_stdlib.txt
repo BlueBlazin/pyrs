@@ -11,3 +11,4 @@ test/test_sqlite3/test_backup.py
 test/test_sqlite3/test_factory.py
 test/test_sqlite3/test_dump.py
 test/test_sqlite3/test_transactions.py
+test/test_sqlite3/test_hooks.py

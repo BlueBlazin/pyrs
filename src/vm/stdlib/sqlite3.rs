@@ -1,8 +1,9 @@
 use super::super::*;
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_int, c_uchar, c_void};
+use std::os::raw::{c_char, c_int, c_uchar, c_uint, c_void};
 use std::ptr::{self, NonNull};
+use std::sync::Arc;
 
 #[repr(C)]
 pub(in crate::vm) struct Sqlite3Db {
@@ -39,6 +40,21 @@ type SqliteExecCallback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, *mut *mut c_char, *mut *mut c_char) -> c_int>;
 type SqliteFunctionCallback =
     Option<unsafe extern "C" fn(*mut Sqlite3Context, c_int, *mut *mut Sqlite3Value)>;
+type SqliteAuthorizerCallback = Option<
+    unsafe extern "C" fn(
+        *mut c_void,
+        c_int,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+    ) -> c_int,
+>;
+type SqliteProgressCallback = Option<unsafe extern "C" fn(*mut c_void) -> c_int>;
+type SqliteTraceCallback =
+    Option<unsafe extern "C" fn(c_uint, *mut c_void, *mut c_void, *mut c_void) -> c_int>;
+type SqliteCollationCallback =
+    Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_void, c_int, *const c_void) -> c_int>;
 
 #[link(name = "sqlite3")]
 unsafe extern "C" {
@@ -148,6 +164,34 @@ unsafe extern "C" {
         x_final: SqliteFunctionCallback,
         x_destroy: SqliteDestructor,
     ) -> c_int;
+    fn sqlite3_create_collation_v2(
+        db: *mut Sqlite3Db,
+        z_name: *const c_char,
+        e_text_rep: c_int,
+        p_arg: *mut c_void,
+        x_compare: SqliteCollationCallback,
+        x_destroy: SqliteDestructor,
+    ) -> c_int;
+    fn sqlite3_set_authorizer(
+        db: *mut Sqlite3Db,
+        x_auth: SqliteAuthorizerCallback,
+        p_user_data: *mut c_void,
+    ) -> c_int;
+    fn sqlite3_progress_handler(
+        db: *mut Sqlite3Db,
+        n_ops: c_int,
+        x_progress: SqliteProgressCallback,
+        p_user_data: *mut c_void,
+    );
+    fn sqlite3_trace_v2(
+        db: *mut Sqlite3Db,
+        mask: c_uint,
+        callback: SqliteTraceCallback,
+        p_user_data: *mut c_void,
+    ) -> c_int;
+    fn sqlite3_expanded_sql(stmt: *mut Sqlite3Stmt) -> *mut c_char;
+    fn sqlite3_db_handle(stmt: *mut Sqlite3Stmt) -> *mut Sqlite3Db;
+    fn sqlite3_free(ptr: *mut c_void);
     fn sqlite3_user_data(context: *mut Sqlite3Context) -> *mut c_void;
     fn sqlite3_value_type(value: *mut Sqlite3Value) -> c_int;
     fn sqlite3_value_int64(value: *mut Sqlite3Value) -> i64;
@@ -182,6 +226,8 @@ const SQLITE_TEXT: c_int = 3;
 const SQLITE_BLOB: c_int = 4;
 const SQLITE_UTF8: c_int = 1;
 const SQLITE_DETERMINISTIC: c_int = 0x0000_0800;
+const SQLITE_TRACE_STMT: c_uint = 0x01;
+const SQLITE_DENY: c_int = 1;
 const SQLITE_ERROR: c_int = 1;
 const SQLITE_INTERNAL: c_int = 2;
 const SQLITE_PERM: c_int = 3;
@@ -254,16 +300,30 @@ struct SqliteScalarFunctionCallbackState {
     callable: Value,
 }
 
+#[derive(Clone)]
+struct SqliteVmCallbackState {
+    callable: Value,
+}
+
 #[derive(Debug)]
 pub(in crate::vm) struct SqliteConnectionState {
     handle: Option<NonNull<Sqlite3Db>>,
     check_same_thread: bool,
     creator_thread_ident: i64,
     autocommit_mode: SqliteAutocommitMode,
-    trace_callback: Option<Value>,
+    trace_callback: Option<NonNull<Arc<SqliteVmCallbackState>>>,
+    progress_callback: Option<NonNull<Arc<SqliteVmCallbackState>>>,
+    authorizer_callback: Option<NonNull<Arc<SqliteVmCallbackState>>>,
 }
 
 impl SqliteConnectionState {
+    fn drop_vm_callback_ptr(handle: Option<NonNull<Arc<SqliteVmCallbackState>>>) {
+        if let Some(handle) = handle {
+            // SAFETY: pointer was allocated with Box::into_raw(Box<Arc<_>>).
+            unsafe { drop(Box::from_raw(handle.as_ptr())) };
+        }
+    }
+
     fn new(
         handle: *mut Sqlite3Db,
         check_same_thread: bool,
@@ -275,6 +335,8 @@ impl SqliteConnectionState {
             creator_thread_ident: sqlite_current_thread_ident(),
             autocommit_mode,
             trace_callback: None,
+            progress_callback: None,
+            authorizer_callback: None,
         }
     }
 
@@ -282,10 +344,25 @@ impl SqliteConnectionState {
         self.handle.map(NonNull::as_ptr)
     }
 
+    fn clear_vm_callbacks(&mut self) {
+        Self::drop_vm_callback_ptr(self.trace_callback.take());
+        Self::drop_vm_callback_ptr(self.progress_callback.take());
+        Self::drop_vm_callback_ptr(self.authorizer_callback.take());
+    }
+
     pub(in crate::vm) fn close(&mut self) -> Result<(), String> {
         let Some(handle) = self.handle.take() else {
+            self.clear_vm_callbacks();
             return Ok(());
         };
+        // SAFETY: handle is a valid sqlite connection; disabling callbacks before close
+        // prevents callback invocations from touching stale VM callback context.
+        unsafe {
+            let _ = sqlite3_trace_v2(handle.as_ptr(), SQLITE_TRACE_STMT, None, ptr::null_mut());
+            sqlite3_progress_handler(handle.as_ptr(), 0, None, ptr::null_mut());
+            let _ = sqlite3_set_authorizer(handle.as_ptr(), None, ptr::null_mut());
+        }
+        self.clear_vm_callbacks();
         // SAFETY: handle was created by sqlite3_open_v2 and is owned by this state.
         let rc = unsafe { sqlite3_close_v2(handle.as_ptr()) };
         if rc == SQLITE_OK {
@@ -664,6 +741,408 @@ unsafe extern "C" fn sqlite_scalar_function_callback(
     }
 }
 
+fn sqlite_callback_state_from_ptr(ctx: *mut c_void) -> Option<Arc<SqliteVmCallbackState>> {
+    let ptr = ctx as *const Arc<SqliteVmCallbackState>;
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: pointer originates from Box<Arc<_>> registration and remains valid for callback.
+        Some(unsafe { (*ptr).clone() })
+    }
+}
+
+fn sqlite_opt_cstr_to_value(text: *const c_char) -> Value {
+    if text.is_null() {
+        Value::None
+    } else {
+        // SAFETY: sqlite callback arguments are valid NUL-terminated strings when non-null.
+        let text = unsafe { CStr::from_ptr(text) }
+            .to_string_lossy()
+            .into_owned();
+        Value::Str(text)
+    }
+}
+
+fn sqlite_callback_error_to_exception(vm: &mut Vm, err: RuntimeError) -> Value {
+    for frame in vm.frames.iter_mut().rev() {
+        if let Some(active) = frame.active_exception.take() {
+            return active;
+        }
+    }
+    vm.runtime_error_to_exception_value(err)
+}
+
+fn sqlite_callback_display_name(callable: &Value) -> Option<String> {
+    match callable {
+        Value::Function(function) => match &*function.kind() {
+            Object::Function(function_data) => Some(function_data.code.name.clone()),
+            _ => None,
+        },
+        Value::BoundMethod(method) => match &*method.kind() {
+            Object::BoundMethod(method_data) => match &*method_data.function.kind() {
+                Object::Function(function_data) => Some(function_data.code.name.clone()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn sqlite_callback_argument_mismatch_error(
+    callable: &Value,
+    given_positional: usize,
+) -> Option<RuntimeError> {
+    let (name, required_positional) = match callable {
+        Value::Function(function) => match &*function.kind() {
+            Object::Function(function_data) => {
+                let total_positional =
+                    function_data.code.posonly_params.len() + function_data.code.params.len();
+                let default_count = function_data.defaults.len();
+                let required = total_positional.saturating_sub(default_count);
+                (function_data.code.name.clone(), required)
+            }
+            _ => return None,
+        },
+        Value::BoundMethod(method) => match &*method.kind() {
+            Object::BoundMethod(method_data) => match &*method_data.function.kind() {
+                Object::Function(function_data) => {
+                    let total_positional =
+                        function_data.code.posonly_params.len() + function_data.code.params.len();
+                    let default_count = function_data.defaults.len();
+                    let required = total_positional.saturating_sub(default_count);
+                    (function_data.code.name.clone(), required)
+                }
+                _ => return None,
+            },
+            _ => return None,
+        },
+        _ => return None,
+    };
+    if given_positional < required_positional {
+        let missing = required_positional - given_positional;
+        Some(RuntimeError::new(format!(
+            "TypeError: {name}() missing {missing} required positional arguments"
+        )))
+    } else {
+        None
+    }
+}
+
+fn sqlite_report_callback_exception(vm: &mut Vm, callable: &Value, err: RuntimeError) {
+    let exception = sqlite_callback_error_to_exception(vm, err);
+    if vm.sqlite_callback_tracebacks_enabled {
+        let callback_label = sqlite_callback_display_name(callable)
+            .map(|name| format!("<function {name}>"))
+            .unwrap_or_else(|| format_repr(callable));
+        let message = format!("Exception ignored on sqlite3 callback {callback_label}");
+        vm.emit_unraisable_exception(exception, Some(callable.clone()), Some(message.as_str()));
+    }
+    for frame in &mut vm.frames {
+        frame.active_exception = None;
+    }
+}
+
+unsafe extern "C" fn sqlite_vm_callback_destroy(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: sqlite callback userdata was allocated as Box<Arc<SqliteVmCallbackState>>.
+    unsafe {
+        drop(Box::from_raw(ptr as *mut Arc<SqliteVmCallbackState>));
+    }
+}
+
+unsafe extern "C" fn sqlite_authorizer_callback(
+    ctx: *mut c_void,
+    action: c_int,
+    arg1: *const c_char,
+    arg2: *const c_char,
+    dbname: *const c_char,
+    source: *const c_char,
+) -> c_int {
+    let Some(state) = sqlite_callback_state_from_ptr(ctx) else {
+        return SQLITE_DENY;
+    };
+    let vm_ptr = SQLITE_CALLBACK_VM.with(|slot| slot.get());
+    if vm_ptr.is_null() {
+        return SQLITE_DENY;
+    }
+    // SAFETY: callback executes under SqliteCallbackVmGuard.
+    let vm = unsafe { &mut *vm_ptr };
+    let args = vec![
+        Value::Int(action as i64),
+        sqlite_opt_cstr_to_value(arg1),
+        sqlite_opt_cstr_to_value(arg2),
+        sqlite_opt_cstr_to_value(dbname),
+        sqlite_opt_cstr_to_value(source),
+    ];
+    match vm.call_internal_preserving_caller(state.callable.clone(), args, HashMap::new()) {
+        Ok(InternalCallOutcome::Value(value)) => match value_to_int(value) {
+            Ok(result) => match i32::try_from(result) {
+                Ok(result) => result,
+                Err(_) => {
+                    sqlite_report_callback_exception(
+                        vm,
+                        &state.callable,
+                        RuntimeError::new(
+                            "OverflowError: Python int too large to convert to SQLite integer",
+                        ),
+                    );
+                    SQLITE_DENY
+                }
+            },
+            Err(err) => {
+                let err = if err.message.contains("integer overflow") {
+                    RuntimeError::new(
+                        "OverflowError: Python int too large to convert to SQLite integer",
+                    )
+                } else {
+                    err
+                };
+                sqlite_report_callback_exception(vm, &state.callable, err);
+                SQLITE_DENY
+            }
+        },
+        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+            let err = vm.runtime_error_from_active_exception("authorizer callback failed");
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            SQLITE_DENY
+        }
+        Err(err) => {
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            SQLITE_DENY
+        }
+    }
+}
+
+unsafe extern "C" fn sqlite_progress_callback(ctx: *mut c_void) -> c_int {
+    let Some(state) = sqlite_callback_state_from_ptr(ctx) else {
+        return -1;
+    };
+    let vm_ptr = SQLITE_CALLBACK_VM.with(|slot| slot.get());
+    if vm_ptr.is_null() {
+        return -1;
+    }
+    // SAFETY: callback executes under SqliteCallbackVmGuard.
+    let vm = unsafe { &mut *vm_ptr };
+    match vm.call_internal_preserving_caller(state.callable.clone(), Vec::new(), HashMap::new()) {
+        Ok(InternalCallOutcome::Value(value)) => {
+            let truthy = match &value {
+                Value::None
+                | Value::Bool(_)
+                | Value::Int(_)
+                | Value::BigInt(_)
+                | Value::Float(_)
+                | Value::Complex { .. }
+                | Value::Str(_)
+                | Value::List(_)
+                | Value::Tuple(_)
+                | Value::Dict(_)
+                | Value::DictKeys(_)
+                | Value::Set(_)
+                | Value::FrozenSet(_)
+                | Value::Bytes(_)
+                | Value::ByteArray(_)
+                | Value::MemoryView(_)
+                | Value::Cell(_)
+                | Value::Iterator(_)
+                | Value::Generator(_)
+                | Value::Slice { .. } => is_truthy(&value),
+                _ => match vm.lookup_bound_special_method(&value, "__bool__") {
+                    Ok(Some(bool_method)) => {
+                        match vm.call_internal_preserving_caller(
+                            bool_method,
+                            Vec::new(),
+                            HashMap::new(),
+                        ) {
+                            Ok(InternalCallOutcome::Value(Value::Bool(flag))) => flag,
+                            Ok(InternalCallOutcome::Value(non_bool)) => {
+                                sqlite_report_callback_exception(
+                                    vm,
+                                    &state.callable,
+                                    RuntimeError::new(format!(
+                                        "TypeError: __bool__ should return bool, returned {}",
+                                        vm.value_type_name_for_error(&non_bool)
+                                    )),
+                                );
+                                return -1;
+                            }
+                            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                                let err =
+                                    vm.runtime_error_from_active_exception("__bool__() failed");
+                                sqlite_report_callback_exception(vm, &state.callable, err);
+                                return -1;
+                            }
+                            Err(err) => {
+                                sqlite_report_callback_exception(vm, &state.callable, err);
+                                return -1;
+                            }
+                        }
+                    }
+                    Ok(None) => is_truthy(&value),
+                    Err(err) => {
+                        sqlite_report_callback_exception(vm, &state.callable, err);
+                        return -1;
+                    }
+                },
+            };
+            i32::from(truthy)
+        }
+        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+            let err = vm.runtime_error_from_active_exception("progress callback failed");
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            -1
+        }
+        Err(err) => {
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn sqlite_trace_callback(
+    callback_type: c_uint,
+    ctx: *mut c_void,
+    stmt: *mut c_void,
+    sql: *mut c_void,
+) -> c_int {
+    if callback_type != SQLITE_TRACE_STMT {
+        return 0;
+    }
+    let Some(state) = sqlite_callback_state_from_ptr(ctx) else {
+        return 0;
+    };
+    let vm_ptr = SQLITE_CALLBACK_VM.with(|slot| slot.get());
+    if vm_ptr.is_null() {
+        return 0;
+    }
+    // SAFETY: callback executes under SqliteCallbackVmGuard.
+    let vm = unsafe { &mut *vm_ptr };
+
+    let statement = if stmt.is_null() {
+        sqlite_opt_cstr_to_value(sql as *const c_char)
+    } else {
+        // SAFETY: sqlite returns either an owned expanded SQL buffer (to free with sqlite3_free)
+        // or null; statement/sql pointers are provided by sqlite trace callback contract.
+        let expanded = unsafe { sqlite3_expanded_sql(stmt as *mut Sqlite3Stmt) };
+        if expanded.is_null() {
+            // SAFETY: stmt points to sqlite3_stmt in TRACE_STMT callbacks.
+            let db = unsafe { sqlite3_db_handle(stmt as *mut Sqlite3Stmt) };
+            if !db.is_null() {
+                // SAFETY: db is valid for error-code inspection.
+                let code = unsafe { sqlite3_extended_errcode(db) };
+                if code == SQLITE_NOMEM {
+                    sqlite_report_callback_exception(
+                        vm,
+                        &state.callable,
+                        RuntimeError::new("MemoryError"),
+                    );
+                } else {
+                    sqlite_report_callback_exception(
+                        vm,
+                        &state.callable,
+                        RuntimeError::new(
+                            "DataError: Expanded SQL string exceeds the maximum string length",
+                        ),
+                    );
+                }
+            } else {
+                sqlite_report_callback_exception(
+                    vm,
+                    &state.callable,
+                    RuntimeError::new(
+                        "DataError: Expanded SQL string exceeds the maximum string length",
+                    ),
+                );
+            }
+            sqlite_opt_cstr_to_value(sql as *const c_char)
+        } else {
+            // SAFETY: expanded is a NUL-terminated UTF-8-ish buffer owned by sqlite.
+            let text = unsafe { CStr::from_ptr(expanded) }
+                .to_string_lossy()
+                .into_owned();
+            // SAFETY: expanded came from sqlite3_expanded_sql.
+            unsafe { sqlite3_free(expanded as *mut c_void) };
+            Value::Str(text)
+        }
+    };
+    match vm.call_internal_preserving_caller(
+        state.callable.clone(),
+        vec![statement],
+        HashMap::new(),
+    ) {
+        Ok(InternalCallOutcome::Value(_)) => 0,
+        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+            let err = vm.runtime_error_from_active_exception("trace callback failed");
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            0
+        }
+        Err(err) => {
+            let err = if err.message.contains("argument count mismatch") {
+                sqlite_callback_argument_mismatch_error(&state.callable, 1).unwrap_or(err)
+            } else {
+                err
+            };
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            0
+        }
+    }
+}
+
+unsafe extern "C" fn sqlite_collation_callback(
+    ctx: *mut c_void,
+    text1_len: c_int,
+    text1_data: *const c_void,
+    text2_len: c_int,
+    text2_data: *const c_void,
+) -> c_int {
+    let Some(state) = sqlite_callback_state_from_ptr(ctx) else {
+        return 0;
+    };
+    let vm_ptr = SQLITE_CALLBACK_VM.with(|slot| slot.get());
+    if vm_ptr.is_null() {
+        return 0;
+    }
+    // SAFETY: callback executes under SqliteCallbackVmGuard.
+    let vm = unsafe { &mut *vm_ptr };
+
+    let text1_len = usize::try_from(text1_len.max(0)).unwrap_or(0);
+    let text2_len = usize::try_from(text2_len.max(0)).unwrap_or(0);
+    let s1 = if text1_data.is_null() {
+        String::new()
+    } else {
+        // SAFETY: sqlite passes valid pointer/length pairs.
+        let bytes = unsafe { std::slice::from_raw_parts(text1_data as *const u8, text1_len) };
+        String::from_utf8_lossy(bytes).into_owned()
+    };
+    let s2 = if text2_data.is_null() {
+        String::new()
+    } else {
+        // SAFETY: sqlite passes valid pointer/length pairs.
+        let bytes = unsafe { std::slice::from_raw_parts(text2_data as *const u8, text2_len) };
+        String::from_utf8_lossy(bytes).into_owned()
+    };
+    let args = vec![Value::Str(s1), Value::Str(s2)];
+    match vm.call_internal_preserving_caller(state.callable.clone(), args, HashMap::new()) {
+        Ok(InternalCallOutcome::Value(result)) => match value_to_int(result) {
+            Ok(n) if n > 0 => 1,
+            Ok(n) if n < 0 => -1,
+            Ok(_) => 0,
+            Err(_) => 0,
+        },
+        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+            let err = vm.runtime_error_from_active_exception("collation callback failed");
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            0
+        }
+        Err(err) => {
+            sqlite_report_callback_exception(vm, &state.callable, err);
+            0
+        }
+    }
+}
+
 fn sqlite_error_name_for_code(code: c_int) -> &'static str {
     match code {
         SQLITE_OK => "SQLITE_OK",
@@ -835,9 +1314,7 @@ fn sqlite_normalize_isolation_level(level: Value) -> Result<Value, RuntimeError>
     }
 }
 
-fn sqlite_normalize_autocommit(
-    value: Option<Value>,
-) -> Result<SqliteAutocommitMode, RuntimeError> {
+fn sqlite_normalize_autocommit(value: Option<Value>) -> Result<SqliteAutocommitMode, RuntimeError> {
     let Some(value) = value else {
         return Ok(SqliteAutocommitMode::Legacy);
     };
@@ -1225,6 +1702,40 @@ impl Vm {
         }
     }
 
+    fn sqlite_emit_manual_trace_callback(
+        &mut self,
+        connection_id: u64,
+        statement: &str,
+    ) -> Result<(), RuntimeError> {
+        let callback_state = self
+            .sqlite_connections
+            .get(&connection_id)
+            .and_then(|state| state.trace_callback)
+            .map(|ptr| {
+                // SAFETY: pointer originates from Box<Arc<...>> callback registration.
+                unsafe { (*ptr.as_ptr()).clone() }
+            });
+        let Some(callback_state) = callback_state else {
+            return Ok(());
+        };
+        match self.call_internal_preserving_caller(
+            callback_state.callable.clone(),
+            vec![Value::Str(statement.to_string())],
+            HashMap::new(),
+        ) {
+            Ok(InternalCallOutcome::Value(_)) => Ok(()),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                let err = self.runtime_error_from_active_exception("trace callback failed");
+                sqlite_report_callback_exception(self, &callback_state.callable, err);
+                Ok(())
+            }
+            Err(err) => {
+                sqlite_report_callback_exception(self, &callback_state.callable, err);
+                Ok(())
+            }
+        }
+    }
+
     fn sqlite_transition_autocommit_mode(
         &mut self,
         connection_id: u64,
@@ -1260,35 +1771,6 @@ impl Vm {
         }
         self.sqlite_set_connection_autocommit_mode(connection_id, new_mode);
         Ok(())
-    }
-
-    fn sqlite_emit_trace_callback(
-        &mut self,
-        connection_id: u64,
-        statement: &str,
-    ) -> Result<(), RuntimeError> {
-        let callback = self
-            .sqlite_connections
-            .get(&connection_id)
-            .and_then(|state| state.trace_callback.clone());
-        let Some(callback) = callback else {
-            return Ok(());
-        };
-        match self.call_internal_preserving_caller(
-            callback,
-            vec![Value::Str(statement.to_string())],
-            HashMap::new(),
-        ) {
-            Ok(InternalCallOutcome::Value(_)) => Ok(()),
-            Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                self.clear_active_exception();
-                Ok(())
-            }
-            Err(_) => {
-                self.clear_active_exception();
-                Ok(())
-            }
-        }
     }
 
     fn sqlite_limit_category(value: Value) -> Result<c_int, RuntimeError> {
@@ -1375,6 +1857,26 @@ impl Vm {
                 Value::Str(message.to_string()),
                 Value::ExceptionType("DeprecationWarning".to_string()),
                 Value::Int(stacklevel),
+            ],
+            HashMap::new(),
+        )?;
+        Ok(())
+    }
+
+    fn sqlite_warn_keyword_deprecation(
+        &mut self,
+        method_name: &str,
+        parameter_name: &str,
+    ) -> Result<(), RuntimeError> {
+        let message = format!(
+            "Passing keyword argument '{parameter_name}' to _sqlite3.Connection.{method_name}() is deprecated. \
+Parameter '{parameter_name}' will become positional-only in Python 3.15."
+        );
+        let _ = self.builtin_warnings_warn(
+            vec![
+                Value::Str(message),
+                Value::ExceptionType("DeprecationWarning".to_string()),
+                Value::Int(1),
             ],
             HashMap::new(),
         )?;
@@ -1753,6 +2255,7 @@ impl Vm {
         sql: &str,
         params: SqliteParams,
     ) -> Result<SqliteQueryResult, RuntimeError> {
+        let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
         let db = self.sqlite_open_db_handle(connection_id)?;
         // Match CPython statement.c preflight: SQL length over the sqlite limit
         // is surfaced as DataError with a stable message.
@@ -1761,7 +2264,6 @@ impl Vm {
         if max_sql_length >= 0 && sql.len() > max_sql_length as usize {
             return Err(sqlite_error("DataError", "query string is too large"));
         }
-        self.sqlite_emit_trace_callback(connection_id, sql)?;
         let sql_c = CString::new(sql.as_bytes())
             .map_err(|_| sqlite_error("ProgrammingError", "SQL contains embedded NUL"))?;
         let mut raw_stmt: *mut Sqlite3Stmt = ptr::null_mut();
@@ -1954,19 +2456,16 @@ impl Vm {
         let column_count = unsafe { sqlite3_column_count(statement.as_ptr()) };
         let description = self.sqlite_collect_description(statement.as_ptr(), column_count);
         let mut rows = Vec::new();
-        {
-            let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
-            loop {
-                // SAFETY: statement pointer is valid while statement wrapper is alive.
-                let step_rc = unsafe { sqlite3_step(statement.as_ptr()) };
-                match step_rc {
-                    SQLITE_ROW => {
-                        rows.push(self.sqlite_collect_row(statement.as_ptr(), column_count)?);
-                    }
-                    SQLITE_DONE => break,
-                    _ => {
-                        return Err(sqlite_error_from_db_status(db, "OperationalError"));
-                    }
+        loop {
+            // SAFETY: statement pointer is valid while statement wrapper is alive.
+            let step_rc = unsafe { sqlite3_step(statement.as_ptr()) };
+            match step_rc {
+                SQLITE_ROW => {
+                    rows.push(self.sqlite_collect_row(statement.as_ptr(), column_count)?);
+                }
+                SQLITE_DONE => break,
+                _ => {
+                    return Err(sqlite_error_from_db_status(db, "OperationalError"));
                 }
             }
         }
@@ -1994,7 +2493,7 @@ impl Vm {
         if self.sqlite_connection_autocommit_mode(connection_id)? == SqliteAutocommitMode::Legacy
             && unsafe { sqlite3_get_autocommit(db) == 0 }
         {
-            self.sqlite_emit_trace_callback(connection_id, "COMMIT")?;
+            self.sqlite_emit_manual_trace_callback(connection_id, "COMMIT")?;
             let commit_sql = CString::new("COMMIT").expect("static SQL should be valid C string");
             let mut err_out: *mut c_char = ptr::null_mut();
             // SAFETY: db is live and commit_sql is a valid C string.
@@ -2007,7 +2506,6 @@ impl Vm {
         }
         let sql_c = CString::new(script.as_bytes())
             .map_err(|_| sqlite_error("ValueError", "embedded null character"))?;
-        self.sqlite_emit_trace_callback(connection_id, script)?;
         let mut err_out: *mut c_char = ptr::null_mut();
         let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
         // SAFETY: db is live, sql_c is valid, callback is null, and err_out is a valid out pointer.
@@ -2302,11 +2800,7 @@ impl Vm {
         } else {
             self.sqlite_connections.insert(
                 receiver_id,
-                SqliteConnectionState::new(
-                    ptr::null_mut(),
-                    check_same_thread,
-                    autocommit_mode,
-                ),
+                SqliteConnectionState::new(ptr::null_mut(), check_same_thread, autocommit_mode),
             );
         }
 
@@ -2348,8 +2842,11 @@ impl Vm {
             SqliteConnectionState::new(handle, check_same_thread, autocommit_mode),
         );
         if autocommit_mode == SqliteAutocommitMode::Disabled {
-            let _ =
-                self.sqlite_execute_query(receiver_id, "BEGIN", SqliteParams::Positional(Vec::new()))?;
+            let _ = self.sqlite_execute_query(
+                receiver_id,
+                "BEGIN",
+                SqliteParams::Positional(Vec::new()),
+            )?;
         }
         let _ = Self::instance_attr_set(
             &receiver,
@@ -2462,7 +2959,7 @@ impl Vm {
 
     pub(in crate::vm) fn builtin_sqlite_enable_callback_tracebacks(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
@@ -2471,6 +2968,8 @@ impl Vm {
                 "enable_callback_tracebacks() expects exactly one argument",
             ));
         }
+        let enabled = self.truthy_from_value(&args.remove(0))?;
+        self.sqlite_callback_tracebacks_enabled = enabled;
         Ok(Value::None)
     }
 
@@ -2514,12 +3013,18 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.is_empty() {
-            return Err(sqlite_error("TypeError", "Connection.cursor() missing self"));
+            return Err(sqlite_error(
+                "TypeError",
+                "Connection.cursor() missing self",
+            ));
         }
         if args.len() > 2 {
             return Err(sqlite_error(
                 "TypeError",
-                format!("cursor() takes at most 1 argument ({} given)", args.len() - 1),
+                format!(
+                    "cursor() takes at most 1 argument ({} given)",
+                    args.len() - 1
+                ),
             ));
         }
         let receiver = args.remove(0);
@@ -2540,7 +3045,10 @@ impl Vm {
         if !kwargs.is_empty() {
             return Err(sqlite_error(
                 "TypeError",
-                format!("cursor() takes at most 1 keyword argument ({} given)", kwargs.len()),
+                format!(
+                    "cursor() takes at most 1 keyword argument ({} given)",
+                    kwargs.len()
+                ),
             ));
         }
         let default_cursor_class = self.sqlite_cursor_class()?;
@@ -2621,8 +3129,7 @@ impl Vm {
                 ),
             ));
         }
-        let connection_id =
-            self.sqlite_connection_id_from_value(&connection, "Cursor.__init__")?;
+        let connection_id = self.sqlite_connection_id_from_value(&connection, "Cursor.__init__")?;
         let _ = self.sqlite_open_db_handle(connection_id)?;
         self.sqlite_initialize_cursor_instance(&receiver, &connection, connection_id);
         Ok(Value::None)
@@ -2657,7 +3164,8 @@ impl Vm {
                 )
             }
             "autocommit" => {
-                let connection_id = self.sqlite_connection_id_from_value(&receiver, "autocommit")?;
+                let connection_id =
+                    self.sqlite_connection_id_from_value(&receiver, "autocommit")?;
                 let _ = self.sqlite_open_db_handle(connection_id)?;
                 let mode = self.sqlite_connection_autocommit_mode(connection_id)?;
                 Ok(sqlite_autocommit_mode_to_value(mode))
@@ -2717,7 +3225,8 @@ impl Vm {
                 Ok(Value::None)
             }
             "autocommit" => {
-                let connection_id = self.sqlite_connection_id_from_value(&receiver, "autocommit")?;
+                let connection_id =
+                    self.sqlite_connection_id_from_value(&receiver, "autocommit")?;
                 let _ = self.sqlite_open_db_handle(connection_id)?;
                 let mode = sqlite_normalize_autocommit(Some(value))?;
                 self.sqlite_transition_autocommit_mode(connection_id, mode)?;
@@ -2747,10 +3256,10 @@ impl Vm {
             _ => return Err(sqlite_error("TypeError", "attribute name must be string")),
         };
         match name.as_str() {
-            SQLITE_CONNECTION_ISOLATION_LEVEL_ATTR | "autocommit" | "in_transaction"
-            | "total_changes" => {
-                Err(sqlite_error("AttributeError", "cannot delete attribute"))
-            }
+            SQLITE_CONNECTION_ISOLATION_LEVEL_ATTR
+            | "autocommit"
+            | "in_transaction"
+            | "total_changes" => Err(sqlite_error("AttributeError", "cannot delete attribute")),
             _ => self.builtin_object_delattr(vec![receiver, Value::Str(name)], HashMap::new()),
         }
     }
@@ -2776,7 +3285,8 @@ impl Vm {
             .and_then(|state| state.db_handle())
             .is_some();
         if is_open
-            && self.sqlite_connection_autocommit_mode(connection_id)? == SqliteAutocommitMode::Disabled
+            && self.sqlite_connection_autocommit_mode(connection_id)?
+                == SqliteAutocommitMode::Disabled
         {
             let db = self.sqlite_open_db_handle(connection_id)?;
             // SAFETY: db is a valid sqlite handle.
@@ -3115,7 +3625,10 @@ impl Vm {
             other => {
                 return Err(sqlite_error(
                     "TypeError",
-                    format!("name must be str, not {}", self.value_type_name_for_error(&other)),
+                    format!(
+                        "name must be str, not {}",
+                        self.value_type_name_for_error(&other)
+                    ),
                 ));
             }
         };
@@ -3130,10 +3643,7 @@ impl Vm {
                 }
             }
             other => value_to_f64(other).map_err(|_| {
-                sqlite_error(
-                    "TypeError",
-                    "sleep must be a real number (int or float)",
-                )
+                sqlite_error("TypeError", "sleep must be a real number (int or float)")
             })?,
         };
         if let Some(unexpected) = kwargs.keys().next() {
@@ -3143,7 +3653,10 @@ impl Vm {
             ));
         }
         if !self.sqlite_value_is_connection_instance(&target) {
-            return Err(sqlite_error("TypeError", "target must be a sqlite3.Connection"));
+            return Err(sqlite_error(
+                "TypeError",
+                "target must be a sqlite3.Connection",
+            ));
         }
         if !matches!(progress, Value::None) && !self.is_callable_value(&progress) {
             return Err(sqlite_error(
@@ -3181,13 +3694,19 @@ impl Vm {
         let source_db = self.sqlite_open_db_handle(source_id)?;
         let target_db = self.sqlite_open_db_handle(target_id)?;
         let dest_name = CString::new("main").expect("valid static sqlite db name");
-        let source_name =
-            CString::new(name).map_err(|_| sqlite_error("ValueError", "embedded null character"))?;
+        let source_name = CString::new(name)
+            .map_err(|_| sqlite_error("ValueError", "embedded null character"))?;
 
         let _callback_vm_guard = SqliteCallbackVmGuard::enter(self);
         // SAFETY: handles and C strings are valid for backup initialization.
-        let backup =
-            unsafe { sqlite3_backup_init(target_db, dest_name.as_ptr(), source_db, source_name.as_ptr()) };
+        let backup = unsafe {
+            sqlite3_backup_init(
+                target_db,
+                dest_name.as_ptr(),
+                source_db,
+                source_name.as_ptr(),
+            )
+        };
         if backup.is_null() {
             return Err(sqlite_error_from_db_status(target_db, "OperationalError"));
         }
@@ -3265,8 +3784,8 @@ impl Vm {
         }
         let connection_id = self.sqlite_connection_id_from_value(&receiver, "iterdump")?;
         let _ = self.sqlite_open_db_handle(connection_id)?;
-        let dump_module =
-            self.builtin_import_module(vec![Value::Str("sqlite3.dump".to_string())], HashMap::new())?;
+        let dump_module = self
+            .builtin_import_module(vec![Value::Str("sqlite3.dump".to_string())], HashMap::new())?;
         let iterdump_callable = self.builtin_getattr(
             vec![dump_module, Value::Str("_iterdump".to_string())],
             HashMap::new(),
@@ -3275,8 +3794,11 @@ impl Vm {
         if let Some(filter_value) = filter {
             call_kwargs.insert("filter".to_string(), filter_value);
         }
-        match self.call_internal_preserving_caller(iterdump_callable, vec![receiver], call_kwargs)?
-        {
+        match self.call_internal_preserving_caller(
+            iterdump_callable,
+            vec![receiver],
+            call_kwargs,
+        )? {
             InternalCallOutcome::Value(value) => Ok(value),
             InternalCallOutcome::CallerExceptionHandled => {
                 Err(self.runtime_error_from_active_exception("iterdump() failed"))
@@ -3483,9 +4005,9 @@ impl Vm {
     pub(in crate::vm) fn builtin_sqlite_connection_set_trace_callback(
         &mut self,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 2 {
+        if args.is_empty() || args.len() > 2 {
             return Err(sqlite_error(
                 "TypeError",
                 "set_trace_callback() expects trace_callback",
@@ -3494,21 +4016,65 @@ impl Vm {
         let receiver = args.remove(0);
         let connection_id =
             self.sqlite_connection_id_from_value(&receiver, "set_trace_callback")?;
-        let _ = self.sqlite_open_db_handle(connection_id)?;
-        let callback = args.remove(0);
+        let db = self.sqlite_open_db_handle(connection_id)?;
+
+        let callback = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("trace_callback") {
+            self.sqlite_warn_keyword_deprecation("set_trace_callback", "trace_callback")?;
+            value
+        } else {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_trace_callback() expects trace_callback",
+            ));
+        };
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("set_trace_callback() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
         if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
             return Err(sqlite_error(
                 "TypeError",
                 "set_trace_callback() expected a callable or None",
             ));
         }
-        let trace_callback = if matches!(callback, Value::None) {
+
+        let replacement = if matches!(callback, Value::None) {
+            // SAFETY: db handle is valid and callbacks are disabled by sqlite.
+            let rc = unsafe { sqlite3_trace_v2(db, SQLITE_TRACE_STMT, None, ptr::null_mut()) };
+            if rc != SQLITE_OK {
+                return Err(sqlite_error_from_db_status(db, "OperationalError"));
+            }
             None
         } else {
-            Some(callback)
+            let callback_state = Box::new(Arc::new(SqliteVmCallbackState { callable: callback }));
+            let callback_ptr = Box::into_raw(callback_state);
+            // SAFETY: db is valid and callback_ptr remains alive until we drop it on reconfigure/close.
+            let rc = unsafe {
+                sqlite3_trace_v2(
+                    db,
+                    SQLITE_TRACE_STMT,
+                    Some(sqlite_trace_callback),
+                    callback_ptr as *mut c_void,
+                )
+            };
+            if rc != SQLITE_OK {
+                // SAFETY: sqlite did not take ownership because registration failed.
+                unsafe { drop(Box::from_raw(callback_ptr)) };
+                return Err(sqlite_error_from_db_status(db, "OperationalError"));
+            }
+            Some(
+                NonNull::new(callback_ptr)
+                    .expect("sqlite trace callback pointer should never be null"),
+            )
         };
         if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
-            state.trace_callback = trace_callback;
+            let previous = state.trace_callback.take();
+            state.trace_callback = replacement;
+            SqliteConnectionState::drop_vm_callback_ptr(previous);
         }
         Ok(Value::None)
     }
@@ -3526,20 +4092,66 @@ impl Vm {
         }
         let receiver = args.remove(0);
         let connection_id = self.sqlite_connection_id_from_value(&receiver, "create_collation")?;
-        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
         let name = args.remove(0);
         let callback = args.remove(0);
-        if !matches!(name, Value::Str(_)) {
+        let name = if let Value::Str(text) = name {
+            text
+        } else if let Value::Instance(_) = &name {
+            match self.builtin_str(vec![name], HashMap::new())? {
+                Value::Str(text) => text,
+                _ => {
+                    return Err(sqlite_error(
+                        "TypeError",
+                        "create_collation() name must be str",
+                    ));
+                }
+            }
+        } else {
             return Err(sqlite_error(
                 "TypeError",
                 "create_collation() name must be str",
             ));
-        }
+        };
         if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
-            return Err(sqlite_error(
-                "TypeError",
-                "create_collation() expected a callable or None",
-            ));
+            return Err(sqlite_error("TypeError", "parameter must be callable"));
+        }
+        let name_c = CString::new(name.as_bytes())
+            .map_err(|_| sqlite_error("ProgrammingError", "function name contains embedded NUL"))?;
+        let rc = if matches!(callback, Value::None) {
+            // SAFETY: db/name are valid and this unregisters any prior collation callback.
+            unsafe {
+                sqlite3_create_collation_v2(
+                    db,
+                    name_c.as_ptr(),
+                    SQLITE_UTF8,
+                    ptr::null_mut(),
+                    None,
+                    None,
+                )
+            }
+        } else {
+            let callback_state = Box::new(Arc::new(SqliteVmCallbackState { callable: callback }));
+            let callback_ptr = Box::into_raw(callback_state);
+            // SAFETY: db/name are valid and callback_ptr is owned by sqlite via destroy callback.
+            let rc = unsafe {
+                sqlite3_create_collation_v2(
+                    db,
+                    name_c.as_ptr(),
+                    SQLITE_UTF8,
+                    callback_ptr as *mut c_void,
+                    Some(sqlite_collation_callback),
+                    Some(sqlite_vm_callback_destroy),
+                )
+            };
+            if rc != SQLITE_OK {
+                // SAFETY: sqlite docs: collation destroy callback is not called on failed registration.
+                unsafe { drop(Box::from_raw(callback_ptr)) };
+            }
+            rc
+        };
+        if rc != SQLITE_OK {
+            return Err(sqlite_error_from_db_status(db, "OperationalError"));
         }
         Ok(Value::None)
     }
@@ -3557,7 +4169,7 @@ impl Vm {
         }
         let receiver = args.remove(0);
         let connection_id = self.sqlite_connection_id_from_value(&receiver, "set_authorizer")?;
-        let _ = self.sqlite_open_db_handle(connection_id)?;
+        let db = self.sqlite_open_db_handle(connection_id)?;
         let callback = args.remove(0);
         if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
             return Err(sqlite_error(
@@ -3565,15 +4177,54 @@ impl Vm {
                 "set_authorizer() expected a callable or None",
             ));
         }
+        if matches!(callback, Value::None) {
+            // SAFETY: db is valid and callback removal is explicit.
+            let rc = unsafe { sqlite3_set_authorizer(db, None, ptr::null_mut()) };
+            if rc != SQLITE_OK {
+                return Err(sqlite_error(
+                    "OperationalError",
+                    "Error setting authorizer callback",
+                ));
+            }
+            if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+                SqliteConnectionState::drop_vm_callback_ptr(state.authorizer_callback.take());
+            }
+            return Ok(Value::None);
+        }
+        let callback_state = Box::new(Arc::new(SqliteVmCallbackState { callable: callback }));
+        let callback_ptr = Box::into_raw(callback_state);
+        // SAFETY: db is valid and callback_ptr is retained in connection state.
+        let rc = unsafe {
+            sqlite3_set_authorizer(
+                db,
+                Some(sqlite_authorizer_callback),
+                callback_ptr as *mut c_void,
+            )
+        };
+        if rc != SQLITE_OK {
+            // SAFETY: sqlite did not take ownership on failed registration.
+            unsafe { drop(Box::from_raw(callback_ptr)) };
+            return Err(sqlite_error(
+                "OperationalError",
+                "Error setting authorizer callback",
+            ));
+        }
+        if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+            let replacement = NonNull::new(callback_ptr)
+                .expect("sqlite authorizer callback pointer should never be null");
+            SqliteConnectionState::drop_vm_callback_ptr(
+                state.authorizer_callback.replace(replacement),
+            );
+        }
         Ok(Value::None)
     }
 
     pub(in crate::vm) fn builtin_sqlite_connection_set_progress_handler(
         &mut self,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 3 {
+        if args.is_empty() || args.len() > 3 {
             return Err(sqlite_error(
                 "TypeError",
                 "set_progress_handler() expects callback and n",
@@ -3582,9 +4233,37 @@ impl Vm {
         let receiver = args.remove(0);
         let connection_id =
             self.sqlite_connection_id_from_value(&receiver, "set_progress_handler")?;
-        let _ = self.sqlite_open_db_handle(connection_id)?;
-        let callback = args.remove(0);
-        let _ = value_to_int(args.remove(0)).map_err(|_| {
+        let db = self.sqlite_open_db_handle(connection_id)?;
+
+        let callback = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("progress_handler") {
+            self.sqlite_warn_keyword_deprecation("set_progress_handler", "progress_handler")?;
+            value
+        } else {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_progress_handler() expects callback and n",
+            ));
+        };
+        let n_value = if !args.is_empty() {
+            args.remove(0)
+        } else if let Some(value) = kwargs.remove("n") {
+            self.sqlite_warn_keyword_deprecation("set_progress_handler", "n")?;
+            value
+        } else {
+            return Err(sqlite_error(
+                "TypeError",
+                "set_progress_handler() expects callback and n",
+            ));
+        };
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(sqlite_error(
+                "TypeError",
+                format!("set_progress_handler() got an unexpected keyword argument '{unexpected}'"),
+            ));
+        }
+        let n = value_to_int(n_value).map_err(|_| {
             sqlite_error("TypeError", "set_progress_handler() n must be an integer")
         })?;
         if !matches!(callback, Value::None) && !self.is_callable_value(&callback) {
@@ -3592,6 +4271,35 @@ impl Vm {
                 "TypeError",
                 "set_progress_handler() expected a callable or None",
             ));
+        }
+        let disable = matches!(callback, Value::None) || n == 0;
+        if disable {
+            // SAFETY: db is valid and disabling progress callback is explicit.
+            unsafe { sqlite3_progress_handler(db, 0, None, ptr::null_mut()) };
+            if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+                SqliteConnectionState::drop_vm_callback_ptr(state.progress_callback.take());
+            }
+            return Ok(Value::None);
+        }
+        let n = i32::try_from(n)
+            .map_err(|_| sqlite_error("OverflowError", "signed integer is greater than maximum"))?;
+        let callback_state = Box::new(Arc::new(SqliteVmCallbackState { callable: callback }));
+        let callback_ptr = Box::into_raw(callback_state);
+        // SAFETY: db is valid and callback_ptr is retained in connection state.
+        unsafe {
+            sqlite3_progress_handler(
+                db,
+                n,
+                Some(sqlite_progress_callback),
+                callback_ptr as *mut c_void,
+            );
+        }
+        if let Some(state) = self.sqlite_connections.get_mut(&connection_id) {
+            let replacement = NonNull::new(callback_ptr)
+                .expect("sqlite progress callback pointer should never be null");
+            SqliteConnectionState::drop_vm_callback_ptr(
+                state.progress_callback.replace(replacement),
+            );
         }
         Ok(Value::None)
     }

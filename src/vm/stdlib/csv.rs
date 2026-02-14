@@ -746,10 +746,13 @@ impl Vm {
         &mut self,
         fallback: &str,
     ) -> RuntimeError {
-        let active = self
-            .frames
-            .last_mut()
-            .and_then(|frame| frame.active_exception.take());
+        let mut active = None;
+        for frame in self.frames.iter_mut().rev() {
+            if let Some(value) = frame.active_exception.take() {
+                active = Some(value);
+                break;
+            }
+        }
         match active {
             Some(Value::Exception(exception)) => {
                 RuntimeError::new(self.format_exception_object(&exception))
