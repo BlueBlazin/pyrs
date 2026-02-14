@@ -113,6 +113,7 @@ Return semantics:
 - extension code can import modules during init/call paths via `module_import(...)`.
 - extension code can load/mutate module attributes via `module_get_attr(...)`, `module_set_attr(...)`, `module_del_attr(...)`, and `module_has_attr(...)`.
 - extension code can persist module-owned native state via `module_set_state(...)`/`module_get_state(...)`; replacement and clear paths run prior free callbacks.
+- stale module-state entries are pruned (with free-callback execution) when modules are evicted/reloaded via `sys.modules` churn.
 - extension code can perform type relation checks via `object_is_instance(...)` and `object_is_subclass(...)`.
 - generic length/subscript helpers are available through `object_len(...)`, `object_get_item(...)`, `object_set_item(...)`, and `object_del_item(...)`.
 - generic membership probes are available through `object_contains(...)`.
