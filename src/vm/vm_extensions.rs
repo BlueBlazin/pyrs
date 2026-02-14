@@ -35,6 +35,17 @@ struct CapiCapsuleSlot {
     refcount: usize,
 }
 
+struct BufferInfoSnapshot {
+    data: *const u8,
+    len: usize,
+    readonly: bool,
+    itemsize: usize,
+    shape: Vec<isize>,
+    strides: Vec<isize>,
+    contiguous: bool,
+    format_text: String,
+}
+
 struct ModuleCapiContext {
     vm: *mut Vm,
     module: ObjRef,
@@ -1391,93 +1402,11 @@ impl ModuleCapiContext {
         let value = self
             .object_value(object_handle)
             .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
-        let (data, len, readonly, itemsize, shape0, stride0, contiguous, format_text) = match &value
-        {
-            Value::Bytes(obj) => match &*obj.kind() {
-                Object::Bytes(values) => (
-                    values.as_ptr(),
-                    values.len(),
-                    true,
-                    1usize,
-                    values.len() as isize,
-                    1isize,
-                    true,
-                    "B".to_string(),
-                ),
-                _ => {
-                    return Err(format!(
-                        "object handle {} has invalid bytes storage",
-                        object_handle
-                    ));
-                }
-            },
-            Value::ByteArray(obj) => match &*obj.kind() {
-                Object::ByteArray(values) => (
-                    values.as_ptr(),
-                    values.len(),
-                    false,
-                    1usize,
-                    values.len() as isize,
-                    1isize,
-                    true,
-                    "B".to_string(),
-                ),
-                _ => {
-                    return Err(format!(
-                        "object handle {} has invalid bytearray storage",
-                        object_handle
-                    ));
-                }
-            },
-            Value::MemoryView(obj) => {
-                let (source, start, length, itemsize, contiguous, format, released) =
-                    match &*obj.kind() {
-                        Object::MemoryView(view) => (
-                            view.source.clone(),
-                            view.start,
-                            view.length,
-                            view.itemsize,
-                            view.contiguous,
-                            view.format.clone(),
-                            view.released,
-                        ),
-                        _ => {
-                            return Err(format!(
-                                "object handle {} has invalid memoryview storage",
-                                object_handle
-                            ));
-                        }
-                    };
-                if released {
-                    return Err("memoryview is released".to_string());
-                }
-                let (data, len, readonly) =
-                    Self::readable_buffer_from_source(&source, start, length)?;
-                let itemsize = itemsize.max(1);
-                let shape0 = if len % itemsize == 0 {
-                    (len / itemsize) as isize
-                } else {
-                    len as isize
-                };
-                (
-                    data,
-                    len,
-                    readonly,
-                    itemsize,
-                    shape0,
-                    itemsize as isize,
-                    contiguous,
-                    format.unwrap_or_else(|| "B".to_string()),
-                )
-            }
-            _ => {
-                return Err(format!(
-                    "object handle {} does not support buffer info access",
-                    object_handle
-                ));
-            }
-        };
-        let format_ptr = self.scratch_c_string_ptr(&format_text)?;
+        let snapshot = self.buffer_info_snapshot_from_value(object_handle, &value)?;
+        let format_ptr = self.scratch_c_string_ptr(&snapshot.format_text)?;
+        let ndim = snapshot.shape.len();
+        let shape0 = snapshot.shape.first().copied().unwrap_or(0);
+        let stride0 = snapshot.strides.first().copied().unwrap_or(0);
         if let Some(source) = Self::mutable_buffer_source_from_value(&value) {
             // SAFETY: the VM pointer is initialized for the extension context lifetime.
             let vm = unsafe { &mut *self.vm };
@@ -1486,15 +1415,15 @@ impl ModuleCapiContext {
         self.incref(object_handle)?;
         *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
         Ok(PyrsBufferInfoV1 {
-            data,
-            len,
-            readonly: if readonly { 1 } else { 0 },
-            itemsize,
-            ndim: 1,
+            data: snapshot.data,
+            len: snapshot.len,
+            readonly: if snapshot.readonly { 1 } else { 0 },
+            itemsize: snapshot.itemsize,
+            ndim,
             shape0,
             stride0,
             format: format_ptr,
-            contiguous: if contiguous { 1 } else { 0 },
+            contiguous: if snapshot.contiguous { 1 } else { 0 },
         })
     }
 
@@ -1502,20 +1431,147 @@ impl ModuleCapiContext {
         &mut self,
         object_handle: PyrsObjectHandle,
     ) -> Result<PyrsBufferInfoV2, String> {
-        let info_v1 = self.object_get_buffer_info(object_handle)?;
-        let shape_ptr = self.scratch_isize_ptr(&[info_v1.shape0])?;
-        let strides_ptr = self.scratch_isize_ptr(&[info_v1.stride0])?;
+        let value = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let snapshot = self.buffer_info_snapshot_from_value(object_handle, &value)?;
+        let format_ptr = self.scratch_c_string_ptr(&snapshot.format_text)?;
+        let shape_ptr = self.scratch_isize_ptr(&snapshot.shape)?;
+        let strides_ptr = self.scratch_isize_ptr(&snapshot.strides)?;
+        if let Some(source) = Self::mutable_buffer_source_from_value(&value) {
+            // SAFETY: the VM pointer is initialized for the extension context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.heap.pin_external_buffer_source(&source);
+        }
+        self.incref(object_handle)?;
+        *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
         Ok(PyrsBufferInfoV2 {
-            data: info_v1.data,
-            len: info_v1.len,
-            readonly: info_v1.readonly,
-            itemsize: info_v1.itemsize,
-            ndim: info_v1.ndim,
+            data: snapshot.data,
+            len: snapshot.len,
+            readonly: if snapshot.readonly { 1 } else { 0 },
+            itemsize: snapshot.itemsize,
+            ndim: snapshot.shape.len(),
             shape: shape_ptr,
             strides: strides_ptr,
-            format: info_v1.format,
-            contiguous: info_v1.contiguous,
+            format: format_ptr,
+            contiguous: if snapshot.contiguous { 1 } else { 0 },
         })
+    }
+
+    fn default_buffer_shape_and_strides(len: usize, itemsize: usize) -> (Vec<isize>, Vec<isize>) {
+        let safe_itemsize = itemsize.max(1);
+        let logical_len = if len % safe_itemsize == 0 {
+            len / safe_itemsize
+        } else {
+            len
+        };
+        (vec![logical_len as isize], vec![safe_itemsize as isize])
+    }
+
+    fn buffer_info_snapshot_from_value(
+        &self,
+        object_handle: PyrsObjectHandle,
+        value: &Value,
+    ) -> Result<BufferInfoSnapshot, String> {
+        match value {
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => {
+                    let (shape, strides) = Self::default_buffer_shape_and_strides(values.len(), 1);
+                    Ok(BufferInfoSnapshot {
+                        data: values.as_ptr(),
+                        len: values.len(),
+                        readonly: true,
+                        itemsize: 1,
+                        shape,
+                        strides,
+                        contiguous: true,
+                        format_text: "B".to_string(),
+                    })
+                }
+                _ => Err(format!(
+                    "object handle {} has invalid bytes storage",
+                    object_handle
+                )),
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => {
+                    let (shape, strides) = Self::default_buffer_shape_and_strides(values.len(), 1);
+                    Ok(BufferInfoSnapshot {
+                        data: values.as_ptr(),
+                        len: values.len(),
+                        readonly: false,
+                        itemsize: 1,
+                        shape,
+                        strides,
+                        contiguous: true,
+                        format_text: "B".to_string(),
+                    })
+                }
+                _ => Err(format!(
+                    "object handle {} has invalid bytearray storage",
+                    object_handle
+                )),
+            },
+            Value::MemoryView(obj) => {
+                let (
+                    source,
+                    start,
+                    length,
+                    itemsize,
+                    contiguous,
+                    format,
+                    shape_override,
+                    strides_override,
+                    released,
+                ) = match &*obj.kind() {
+                    Object::MemoryView(view) => (
+                        view.source.clone(),
+                        view.start,
+                        view.length,
+                        view.itemsize.max(1),
+                        view.contiguous,
+                        view.format.clone(),
+                        view.shape.clone(),
+                        view.strides.clone(),
+                        view.released,
+                    ),
+                    _ => {
+                        return Err(format!(
+                            "object handle {} has invalid memoryview storage",
+                            object_handle
+                        ));
+                    }
+                };
+                if released {
+                    return Err("memoryview is released".to_string());
+                }
+                let (data, len, readonly) =
+                    Self::readable_buffer_from_source(&source, start, length)?;
+                let (shape, strides) = match (shape_override, strides_override) {
+                    (Some(shape_values), Some(stride_values))
+                        if !shape_values.is_empty()
+                            && shape_values.len() == stride_values.len() =>
+                    {
+                        (shape_values, stride_values)
+                    }
+                    _ => Self::default_buffer_shape_and_strides(len, itemsize),
+                };
+                Ok(BufferInfoSnapshot {
+                    data,
+                    len,
+                    readonly,
+                    itemsize,
+                    shape,
+                    strides,
+                    contiguous,
+                    format_text: format.unwrap_or_else(|| "B".to_string()),
+                })
+            }
+            _ => Err(format!(
+                "object handle {} does not support buffer info access",
+                object_handle
+            )),
+        }
     }
 
     fn object_release_buffer(&mut self, object_handle: PyrsObjectHandle) -> Result<(), String> {

@@ -4877,6 +4877,55 @@ ok = (got is buf)
 }
 
 #[test]
+fn memoryview_cast_shape_exposes_layout_metadata() {
+    let source = r#"buf = bytearray(b"abcdefgh")
+view = memoryview(buf).cast("B", [2, 4])
+ok = (
+    view.ndim == 2
+    and view.shape == (2, 4)
+    and view.strides == (4, 1)
+    and view.format == "B"
+    and view.itemsize == 1
+    and view.contiguous
+    and view.c_contiguous
+    and not view.f_contiguous
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn memoryview_cast_shape_validation_matches_cpython_errors() {
+    let source = r#"buf = memoryview(bytearray(b"abcd"))
+err_type = False
+err_value = False
+err_product = False
+try:
+    buf.cast("B", None)
+except Exception as exc:
+    err_type = "shape must be a list or a tuple" in str(exc)
+try:
+    buf.cast("B", [0, 4])
+except Exception as exc:
+    err_value = "elements of shape must be integers > 0" in str(exc)
+try:
+    buf.cast("B", [3])
+except Exception as exc:
+    err_product = "product(shape) * itemsize != buffer size" in str(exc)
+ok = err_type and err_value and err_product
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn json_loads_accepts_utf8_bytes_and_bytearray() {
     let source = r#"import json
 a = json.loads(b'{"x": 1, "y": [2, 3]}')

@@ -12,6 +12,73 @@ use super::{
     memoryview_bounds, value_from_bigint, with_bytes_like_source,
 };
 
+fn memoryview_shape_and_strides(
+    view: &crate::runtime::MemoryViewObject,
+    byte_len: usize,
+) -> (Vec<isize>, Vec<isize>) {
+    if let (Some(shape), Some(strides)) = (&view.shape, &view.strides)
+        && shape.len() == strides.len()
+        && !shape.is_empty()
+    {
+        return (shape.clone(), strides.clone());
+    }
+    let itemsize = view.itemsize.max(1);
+    let logical_len = if byte_len % itemsize == 0 {
+        byte_len / itemsize
+    } else {
+        byte_len
+    };
+    (vec![logical_len as isize], vec![itemsize as isize])
+}
+
+fn memoryview_contiguity(
+    shape: &[isize],
+    strides: &[isize],
+    itemsize: isize,
+) -> (bool, bool, bool) {
+    if shape.len() != strides.len() {
+        return (false, false, false);
+    }
+    let mut c_expected = itemsize;
+    let mut c_contiguous = true;
+    for index in (0..shape.len()).rev() {
+        if shape[index] <= 0 {
+            return (false, false, false);
+        }
+        if shape[index] != 1 {
+            if strides[index] != c_expected {
+                c_contiguous = false;
+                break;
+            }
+            let Some(next_expected) = c_expected.checked_mul(shape[index]) else {
+                c_contiguous = false;
+                break;
+            };
+            c_expected = next_expected;
+        }
+    }
+    let mut f_expected = itemsize;
+    let mut f_contiguous = true;
+    for index in 0..shape.len() {
+        if shape[index] <= 0 {
+            return (false, false, false);
+        }
+        if shape[index] != 1 {
+            if strides[index] != f_expected {
+                f_contiguous = false;
+                break;
+            }
+            let Some(next_expected) = f_expected.checked_mul(shape[index]) else {
+                f_contiguous = false;
+                break;
+            };
+            f_expected = next_expected;
+        }
+    }
+    let contiguous = c_contiguous || f_contiguous;
+    (contiguous, c_contiguous, f_contiguous)
+}
+
 impl Vm {
     fn builtin_module_binding(&self, builtin: BuiltinFunction) -> Option<(String, String)> {
         for (module_name, module) in &self.modules {
@@ -1296,7 +1363,33 @@ impl Vm {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::MemoryViewRelease, view))
             }
             "tobytes" => Ok(self.alloc_builtin_bound_method(BuiltinFunction::Bytes, view)),
-            "contiguous" | "c_contiguous" | "f_contiguous" => Ok(Value::Bool(true)),
+            "contiguous" | "c_contiguous" | "f_contiguous" => match &*view.kind() {
+                Object::MemoryView(view_data) => {
+                    with_bytes_like_source(&view_data.source, |values| {
+                        let (start, end) =
+                            memoryview_bounds(view_data.start, view_data.length, values.len());
+                        let byte_len = end.saturating_sub(start);
+                        let (shape, strides) = memoryview_shape_and_strides(view_data, byte_len);
+                        let (_, c_contiguous, f_contiguous) = if view_data.contiguous {
+                            memoryview_contiguity(
+                                &shape,
+                                &strides,
+                                view_data.itemsize.max(1) as isize,
+                            )
+                        } else {
+                            (false, false, false)
+                        };
+                        let contiguous = c_contiguous || f_contiguous;
+                        Value::Bool(match attr_name {
+                            "c_contiguous" => c_contiguous,
+                            "f_contiguous" => f_contiguous,
+                            _ => contiguous,
+                        })
+                    })
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                }
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
             "readonly" => match &*view.kind() {
                 Object::MemoryView(view_data) => bytes_like_source_is_readonly(&view_data.source)
                     .map(Value::Bool)
@@ -1314,6 +1407,59 @@ impl Vm {
             },
             "itemsize" => match &*view.kind() {
                 Object::MemoryView(view_data) => Ok(Value::Int(view_data.itemsize as i64)),
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
+            "format" => match &*view.kind() {
+                Object::MemoryView(view_data) => Ok(Value::Str(
+                    view_data.format.clone().unwrap_or_else(|| "B".to_string()),
+                )),
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
+            "ndim" => match &*view.kind() {
+                Object::MemoryView(view_data) => {
+                    with_bytes_like_source(&view_data.source, |values| {
+                        let (start, end) =
+                            memoryview_bounds(view_data.start, view_data.length, values.len());
+                        let byte_len = end.saturating_sub(start);
+                        let (shape, _strides) = memoryview_shape_and_strides(view_data, byte_len);
+                        Value::Int(shape.len() as i64)
+                    })
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                }
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
+            "shape" => match &*view.kind() {
+                Object::MemoryView(view_data) => {
+                    with_bytes_like_source(&view_data.source, |values| {
+                        let (start, end) =
+                            memoryview_bounds(view_data.start, view_data.length, values.len());
+                        let byte_len = end.saturating_sub(start);
+                        let (shape, _strides) = memoryview_shape_and_strides(view_data, byte_len);
+                        let tuple_values = shape
+                            .into_iter()
+                            .map(|dim| Value::Int(dim as i64))
+                            .collect::<Vec<Value>>();
+                        self.heap.alloc_tuple(tuple_values)
+                    })
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                }
+                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+            },
+            "strides" => match &*view.kind() {
+                Object::MemoryView(view_data) => {
+                    with_bytes_like_source(&view_data.source, |values| {
+                        let (start, end) =
+                            memoryview_bounds(view_data.start, view_data.length, values.len());
+                        let byte_len = end.saturating_sub(start);
+                        let (_shape, strides) = memoryview_shape_and_strides(view_data, byte_len);
+                        let tuple_values = strides
+                            .into_iter()
+                            .map(|dim| Value::Int(dim as i64))
+                            .collect::<Vec<Value>>();
+                        self.heap.alloc_tuple(tuple_values)
+                    })
+                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                }
                 _ => Err(RuntimeError::new("memoryview receiver is invalid")),
             },
             "nbytes" => match &*view.kind() {

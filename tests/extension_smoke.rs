@@ -3030,6 +3030,117 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_buffer_info_v2_reports_invalid_and_null_output_errors() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping buffer-info-v2 negative-path smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping buffer-info-v2 negative-path smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_buffer_info_v2_negative_paths");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_buffer_info_v2_negative_paths.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <string.h>
+
+static int expect_error_contains(const PyrsApiV1* api, void* module_ctx, const char* needle) {
+    const char* msg = api->error_get_message(module_ctx);
+    if (!msg || !msg[0] || !needle || !needle[0]) {
+        return 0;
+    }
+    if (!strstr(msg, needle)) {
+        return 0;
+    }
+    if (api->error_clear(module_ctx) != 0) {
+        return 0;
+    }
+    return api->error_occurred(module_ctx) == 0;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+
+    PyrsBufferInfoV2 info2;
+    PyrsObjectHandle invalid = 999999;
+    if (api->object_get_buffer_info_v2(module_ctx, invalid, &info2) == 0 ||
+        !expect_error_contains(api, module_ctx, "invalid object handle")) {
+        return -2;
+    }
+
+    PyrsObjectHandle int_obj = api->object_new_int(module_ctx, 7);
+    if (!int_obj) {
+        return -3;
+    }
+    if (api->object_get_buffer_info_v2(module_ctx, int_obj, &info2) == 0 ||
+        !expect_error_contains(api, module_ctx, "does not support buffer info access")) {
+        return -4;
+    }
+
+    const uint8_t payload[] = {1, 2, 3, 4};
+    PyrsObjectHandle bytearray_obj = api->object_new_bytearray(module_ctx, payload, 4);
+    if (!bytearray_obj) {
+        return -5;
+    }
+    if (api->object_get_buffer_info_v2(module_ctx, bytearray_obj, 0) == 0 ||
+        !expect_error_contains(api, module_ctx, "object_get_buffer_info_v2 received null output pointer")) {
+        return -6;
+    }
+
+    if (api->object_get_buffer_info_v2(module_ctx, bytearray_obj, &info2) != 0) {
+        return -7;
+    }
+    if (!info2.data || info2.len != 4 || info2.ndim != 1 || !info2.shape || !info2.strides) {
+        return -8;
+    }
+    if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
+        return -9;
+    }
+
+    if (api->module_set_bool(module_ctx, "BUFFER_INFO_V2_NEGATIVE_PATHS_OK", 1) != 0) {
+        return -10;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_buffer_info_v2_negative_paths");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_buffer_info_v2_negative_paths.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_buffer_info_v2_negative_paths\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_buffer_info_v2_negative_paths\nassert native_buffer_info_v2_negative_paths.BUFFER_INFO_V2_NEGATIVE_PATHS_OK is True",
+    )
+    .expect("buffer-info-v2 negative-path extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_buffer_info_marks_noncontiguous_slice_views() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping non-contiguous buffer-info smoke (pyrs binary not found)");
@@ -3228,31 +3339,72 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         return -12;
     }
 
-    PyrsWritableBufferViewV1 writable;
-    if (api->object_get_writable_buffer(module_ctx, casted, &writable) != 0) {
+    PyrsObjectHandle fmt_b = api->object_new_string(module_ctx, "B");
+    PyrsObjectHandle dim_values[2];
+    dim_values[0] = api->object_new_int(module_ctx, 2);
+    dim_values[1] = api->object_new_int(module_ctx, 4);
+    if (!fmt_b || !dim_values[0] || !dim_values[1]) {
         return -13;
     }
-    if (!writable.data || writable.len != 8) {
+    PyrsObjectHandle shape_list = api->object_new_list(module_ctx, 2, dim_values);
+    if (!shape_list) {
         return -14;
+    }
+    PyrsObjectHandle cast_args[2] = {fmt_b, shape_list};
+    PyrsObjectHandle casted_shaped = 0;
+    if (api->object_call(module_ctx, cast_fn, 2, cast_args, 0, 0, 0, &casted_shaped) != 0 || !casted_shaped) {
+        return -15;
+    }
+    if (api->object_get_buffer_info(module_ctx, casted_shaped, &info) != 0) {
+        return -16;
+    }
+    if (!info.data || info.len != 8 || info.readonly != 0 || info.itemsize != 1 ||
+        info.ndim != 2 || info.shape0 != 2 || info.stride0 != 4 || info.contiguous != 1 ||
+        !info.format || strcmp(info.format, "B") != 0) {
+        return -17;
+    }
+    if (api->object_release_buffer(module_ctx, casted_shaped) != 0) {
+        return -18;
+    }
+    if (api->object_get_buffer_info_v2(module_ctx, casted_shaped, &info2) != 0) {
+        return -19;
+    }
+    if (!info2.data || info2.len != 8 || info2.readonly != 0 || info2.itemsize != 1 ||
+        info2.ndim != 2 || !info2.shape || !info2.strides ||
+        info2.shape[0] != 2 || info2.shape[1] != 4 ||
+        info2.strides[0] != 4 || info2.strides[1] != 1 ||
+        info2.contiguous != 1 || !info2.format || strcmp(info2.format, "B") != 0) {
+        return -20;
+    }
+    if (api->object_release_buffer(module_ctx, casted_shaped) != 0) {
+        return -21;
+    }
+
+    PyrsWritableBufferViewV1 writable;
+    if (api->object_get_writable_buffer(module_ctx, casted, &writable) != 0) {
+        return -22;
+    }
+    if (!writable.data || writable.len != 8) {
+        return -23;
     }
     writable.data[0] = 42;
     if (api->object_release_buffer(module_ctx, casted) != 0) {
-        return -15;
+        return -24;
     }
 
     PyrsBufferViewV1 readonly;
     if (api->object_get_buffer(module_ctx, bytearray_obj, &readonly) != 0) {
-        return -16;
+        return -25;
     }
     if (!readonly.data || readonly.len != 8 || readonly.data[0] != 42) {
-        return -17;
+        return -26;
     }
     if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
-        return -18;
+        return -27;
     }
 
     if (api->module_set_bool(module_ctx, "BUFFER_INFO_CAST_ITEMSIZE_OK", 1) != 0) {
-        return -19;
+        return -28;
     }
     return 0;
 }

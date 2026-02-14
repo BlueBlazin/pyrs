@@ -13,6 +13,73 @@ use super::{
     value_to_bigint, value_to_int, with_bytes_like_source,
 };
 
+fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
+    let shape_items = match value {
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(values) => values.clone(),
+            _ => {
+                return Err(RuntimeError::new("shape must be a list or a tuple"));
+            }
+        },
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(values) => values.clone(),
+            _ => {
+                return Err(RuntimeError::new("shape must be a list or a tuple"));
+            }
+        },
+        _ => {
+            return Err(RuntimeError::new("shape must be a list or a tuple"));
+        }
+    };
+    let mut shape = Vec::with_capacity(shape_items.len());
+    for item in shape_items {
+        let dim = value_to_int(item).map_err(|_| {
+            RuntimeError::new("memoryview.cast(): elements of shape must be integers")
+        })?;
+        if dim <= 0 {
+            return Err(RuntimeError::new(
+                "memoryview.cast(): elements of shape must be integers > 0",
+            ));
+        }
+        shape.push(dim as usize);
+    }
+    Ok(shape)
+}
+
+fn shape_product_matches_buffer_len(shape: &[usize], itemsize: usize, buffer_len: usize) -> bool {
+    let mut total_elems = 1usize;
+    for dim in shape {
+        let Some(next_total) = total_elems.checked_mul(*dim) else {
+            return false;
+        };
+        total_elems = next_total;
+    }
+    let Some(expected_len) = total_elems.checked_mul(itemsize.max(1)) else {
+        return false;
+    };
+    expected_len == buffer_len
+}
+
+fn c_contiguous_strides_for_shape(
+    shape: &[usize],
+    itemsize: usize,
+) -> Result<Vec<isize>, RuntimeError> {
+    if shape.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut strides = vec![0isize; shape.len()];
+    let mut stride = itemsize.max(1);
+    for index in (0..shape.len()).rev() {
+        let stride_isize = isize::try_from(stride)
+            .map_err(|_| RuntimeError::new("memoryview.cast() shape is too large"))?;
+        strides[index] = stride_isize;
+        stride = stride
+            .checked_mul(shape[index])
+            .ok_or_else(|| RuntimeError::new("memoryview.cast() shape is too large"))?;
+    }
+    Ok(strides)
+}
+
 impl Vm {
     pub(super) fn call_native_method(
         &mut self,
@@ -2373,11 +2440,6 @@ impl Vm {
                         "cast() expects format and optional shape",
                     ));
                 }
-                if args.len() == 2 && !matches!(args[1], Value::None) {
-                    return Err(RuntimeError::new(
-                        "memoryview.cast() shape argument is not supported",
-                    ));
-                }
                 let format = match &args[0] {
                     Value::Str(value) => value.clone(),
                     _ => {
@@ -2391,22 +2453,52 @@ impl Vm {
                         return Err(RuntimeError::new("memoryview.cast() unsupported format"));
                     }
                 };
-                let (source, start, length) = match &*receiver.kind() {
-                    Object::MemoryView(view_data) => {
-                        (view_data.source.clone(), view_data.start, view_data.length)
-                    }
+                let (source, start, length, contiguous) = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => (
+                        view_data.source.clone(),
+                        view_data.start,
+                        view_data.length,
+                        view_data.contiguous,
+                    ),
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
+                if !contiguous {
+                    return Err(RuntimeError::new(
+                        "memoryview: casts are restricted to C-contiguous views",
+                    ));
+                }
                 let byte_len = with_bytes_like_source(&source, |values| {
                     let (start, end) = memoryview_bounds(start, length, values.len());
                     end.saturating_sub(start)
                 })
                 .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
-                if byte_len % itemsize != 0 {
-                    return Err(RuntimeError::new(
-                        "memoryview.cast() length is not a multiple of itemsize",
-                    ));
-                }
+                let shape_override = if args.len() == 2 {
+                    let shape_dims = parse_memoryview_cast_shape(&args[1])?;
+                    if shape_dims.is_empty() {
+                        return Err(RuntimeError::new(
+                            "memoryview: product(shape) * itemsize != buffer size",
+                        ));
+                    }
+                    if !shape_product_matches_buffer_len(&shape_dims, itemsize, byte_len) {
+                        return Err(RuntimeError::new(
+                            "memoryview: product(shape) * itemsize != buffer size",
+                        ));
+                    }
+                    Some((
+                        shape_dims
+                            .iter()
+                            .map(|dim| *dim as isize)
+                            .collect::<Vec<isize>>(),
+                        c_contiguous_strides_for_shape(&shape_dims, itemsize)?,
+                    ))
+                } else {
+                    if byte_len % itemsize != 0 {
+                        return Err(RuntimeError::new(
+                            "memoryview.cast() length is not a multiple of itemsize",
+                        ));
+                    }
+                    None
+                };
                 let view = self
                     .heap
                     .alloc_memoryview_with(source, itemsize, Some(format));
@@ -2415,6 +2507,10 @@ impl Vm {
                 {
                     view_data.start = start;
                     view_data.length = length;
+                    if let Some((shape, strides)) = shape_override {
+                        view_data.shape = Some(shape);
+                        view_data.strides = Some(strides);
+                    }
                 }
                 Ok(NativeCallResult::Value(view))
             }
