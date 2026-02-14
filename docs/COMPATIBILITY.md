@@ -25,7 +25,7 @@ Status:
 - `[x]` Identity/refcount/cycle-GC foundations
 - `[x]` Core object/class/function/frame foundations
 - `[x]` Core truthiness and membership fallback baselines
-- `[x]` `memoryview` typed scalar index/store baseline (`cast('b'/'H'/'f'/'c')` semantics + scalar multidim `NotImplementedError` parity) and first-axis multidim slice/tolist shape preservation (`view[0:1]`, `view[::2]`)
+- `[x]` `memoryview` typed scalar index/store baseline (`cast('b'/'H'/'f'/'c')` semantics + scalar multidim `NotImplementedError` parity), first-axis multidim slice/tolist shape preservation (`view[0:1]`, `view[::2]`), and strided byte-export/iteration parity (`bytes(view[::2])`, `bytes(view[::-1])`, typed 1-D iter decode)
 - `[~]` Descriptor/attribute/metaclass/slots long-tail parity
 - `[~]` Numeric long-tail parity (big-int conversion/formatting/error edges)
 - `[~]` Hash-container semantic/perf closure (`dict`/`set`/`frozenset`)
