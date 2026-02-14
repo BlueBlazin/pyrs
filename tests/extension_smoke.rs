@@ -3223,7 +3223,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capsule_provider as p\nassert p.EXPORTED is True\nimport native_capsule_consumer as c\nassert c.IMPORTED is True",
+        "import sys\nimport native_capsule_provider as p\nassert p.EXPORTED is True\nimport native_capsule_consumer as c\nassert c.IMPORTED is True\nfor _ in range(25):\n    del sys.modules['native_capsule_provider']\n    del sys.modules['native_capsule_consumer']\n    import native_capsule_provider as p\n    assert p.EXPORTED is True\n    import native_capsule_consumer as c\n    assert c.IMPORTED is True",
     )
     .expect("capsule import/export extension flow should succeed");
 
