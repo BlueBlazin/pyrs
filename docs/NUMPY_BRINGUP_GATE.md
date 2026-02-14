@@ -16,7 +16,7 @@ Purpose: track first real extension-ecosystem execution gates for NumPy.
 
 These are intentionally small but strict: they verify import path + first ndarray runtime path.
 
-## Probe Command
+## Import-Probe Command
 
 ```bash
 python3 scripts/probe_numpy_gate.py \
@@ -28,9 +28,31 @@ python3 scripts/probe_numpy_gate.py \
 
 Optional strict mode (`--strict`) returns non-zero if any gate fails.
 
+## Source-Build Bring-Up Command
+
+When a local NumPy source checkout is available, run:
+
+```bash
+python3 scripts/probe_numpy_gate.py \
+  --pyrs target/debug/pyrs \
+  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --numpy-src /path/to/numpy/source/tree \
+  --python-build-bin python3 \
+  --build-timeout 1800 \
+  --out perf/numpy_gate_source_build_latest.json \
+  --timeout 30
+```
+
+This performs:
+1. Source-build attempt (`pip install --target ...`) from the provided NumPy source tree.
+2. `import numpy` + first ndarray smoke against the resulting site-packages path.
+
+If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the report still captures runtime probe results.
+
 ## Current Expected State
 
 - Before real C-extension substrate closure, this probe is expected to report failures.
+- Import-probe and source-build mode both produce actionable failure diagnostics in JSON.
 - Failures are signal, not noise; they should be used to drive substrate work in:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`
   - `docs/EXTENSION_PACKAGING_CONTRACT.md`

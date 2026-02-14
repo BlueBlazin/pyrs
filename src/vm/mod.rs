@@ -58,6 +58,7 @@ use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
+use crate::extensions::SharedLibraryHandle;
 use crate::parser;
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
@@ -717,6 +718,7 @@ pub struct Vm {
     pending_del_instances: HashMap<u64, ObjRef>,
     weakref_finalizers: HashMap<u64, (Weak<Obj>, Vec<ObjRef>)>,
     atexit_handlers: Vec<AtexitHandler>,
+    extension_libraries: Vec<SharedLibraryHandle>,
     local_shim_fallback_enabled: bool,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
@@ -823,6 +825,7 @@ impl Vm {
             pending_del_instances: HashMap::new(),
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
+            extension_libraries: Vec::new(),
             // Shim fallback is restricted by LOCAL_SHIM_MODULES and only used when normal
             // path resolution fails, so keep it enabled by default (allow explicit opt-out).
             local_shim_fallback_enabled: !env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),

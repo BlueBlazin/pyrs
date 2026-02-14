@@ -36,10 +36,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:
   - extension manifest parser + suffix baseline (`.pyrs-ext`, ABI `pyrs314`) is landed (`src/extensions/mod.rs`).
-  - import loader now recognizes extension manifests and executes them through `pyrs.ExtensionFileLoader`.
-  - minimal extension smoke path (`hello_ext`) is wired and tested in `tests/extension_smoke.rs`.
+  - import loader now recognizes extension manifests and direct shared objects (`.so`/`.dylib`/`.pyd`) and executes them through `pyrs.ExtensionFileLoader`.
+  - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`).
+  - extension smoke path now includes compiled native fixtures and direct shared-object import coverage in `tests/extension_smoke.rs`.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
-  - NumPy bring-up probe scaffold is landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifact `perf/numpy_gate_latest.json`).
+  - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
   - `threading.Condition.__enter__/__exit__` baseline.
@@ -155,6 +156,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Extension ecosystem architecture plan: `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
 - Extension capability matrix: `docs/EXTENSION_CAPABILITY_MATRIX.md`
 - Extension packaging/build contract: `docs/EXTENSION_PACKAGING_CONTRACT.md`
+- Extension C-API v1 slice: `docs/EXTENSION_CAPI_V1.md`
 - NumPy bring-up tracker: `docs/NUMPY_BRINGUP_GATE.md`
 - Partial/stub ledger: `docs/STUB_ACCOUNTING.md`
 - Top stdlib common-usecase tracker: `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`

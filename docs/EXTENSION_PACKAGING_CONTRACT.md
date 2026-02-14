@@ -16,9 +16,11 @@ This document defines how native-extension packaging/build will work for `pyrs` 
 
 - Import path can discover extension manifests with suffix `.pyrs-ext`.
 - Loader can instantiate a manifest-backed extension module via `pyrs.ExtensionFileLoader`.
-- Minimal `hello_ext` registry entry is available for smoke testing.
+- Manifest dynamic entrypoint is supported via `entrypoint=dynamic:<symbol>` + `library=<path>`.
+- Direct shared-object imports are supported (`module.so` / `module.dylib` / `module.pyd`) using default init symbol `pyrs_extension_init_v1`.
+- First C-API header/symbol slice is shipped in `/Users/$USER/pyrs/include/pyrs_capi.h`.
 
-This is scaffolding only; it is not full C-extension support.
+This is still an early substrate, not full C-extension compatibility.
 
 ## Manifest Contract (`.pyrs-ext`)
 
@@ -27,7 +29,12 @@ Manifest format is line-based key/value (`key=value`) with comments (`#`) allowe
 Required keys:
 - `module`: fully-qualified module name.
 - `abi`: currently must be `pyrs314`.
-- `entrypoint`: currently supported values: `hello_ext`.
+- `entrypoint`: supported values:
+  - `hello_ext` (internal smoke entrypoint),
+  - `dynamic:<symbol>` (shared-library symbol).
+
+Conditional keys:
+- `library`: required when using `entrypoint=dynamic:<symbol>`; may be absolute or manifest-relative.
 
 Example:
 
@@ -35,6 +42,15 @@ Example:
 module=hello_ext
 abi=pyrs314
 entrypoint=hello_ext
+```
+
+Dynamic example:
+
+```text
+module=native_mod
+abi=pyrs314
+entrypoint=dynamic:pyrs_extension_init_v1
+library=libnative_mod.so
 ```
 
 ## Planned Build Contract (next phases)
@@ -58,6 +74,7 @@ No silent fallback is allowed for native-extension errors.
 ## CI and Quality Gates
 
 - `hello_ext` smoke path is required green in CI.
+- compiled native extension smoke path is required green in CI.
 - NumPy bring-up probe artifacts are generated and tracked separately.
 - Any extension-surface change must update:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`

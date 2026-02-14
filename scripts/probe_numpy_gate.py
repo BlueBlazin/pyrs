@@ -9,6 +9,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 
@@ -27,10 +28,15 @@ def run_case(
     source: str,
     timeout_secs: int,
     cpython_lib: pathlib.Path | None,
+    python_paths: list[pathlib.Path],
 ) -> dict[str, Any]:
     env = os.environ.copy()
     if cpython_lib is not None:
         env["PYRS_CPYTHON_LIB"] = str(cpython_lib)
+    if python_paths:
+        existing = env.get("PYTHONPATH", "")
+        prefix = os.pathsep.join(str(path) for path in python_paths)
+        env["PYTHONPATH"] = f"{prefix}{os.pathsep}{existing}" if existing else prefix
     start = time.perf_counter()
     try:
         completed = subprocess.run(
@@ -60,6 +66,72 @@ def run_case(
         }
 
 
+def build_numpy_from_source(
+    python_build_bin: str,
+    numpy_src: pathlib.Path,
+    timeout_secs: int,
+) -> tuple[dict[str, Any], pathlib.Path | None]:
+    if not numpy_src.exists():
+        return (
+            {
+                "status": "SKIP",
+                "ok": False,
+                "reason": f"numpy source path '{numpy_src}' does not exist",
+            },
+            None,
+        )
+
+    target_dir = pathlib.Path(tempfile.mkdtemp(prefix="pyrs_numpy_target_"))
+    cmd = [
+        python_build_bin,
+        "-m",
+        "pip",
+        "install",
+        "--no-deps",
+        "--no-build-isolation",
+        "--target",
+        str(target_dir),
+        str(numpy_src),
+    ]
+    start = time.perf_counter()
+    try:
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_secs,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        elapsed = round(time.perf_counter() - start, 4)
+        return (
+            {
+                "status": "FAIL",
+                "ok": False,
+                "elapsed_secs": elapsed,
+                "cmd": cmd,
+                "reason": f"timeout after {timeout_secs}s",
+            },
+            None,
+        )
+
+    elapsed = round(time.perf_counter() - start, 4)
+    ok = completed.returncode == 0
+    return (
+        {
+            "status": "PASS" if ok else "FAIL",
+            "ok": ok,
+            "elapsed_secs": elapsed,
+            "cmd": cmd,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+            "target_dir": str(target_dir),
+        },
+        target_dir if ok else None,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -71,6 +143,22 @@ def main() -> int:
         "--cpython-lib",
         default=os.environ.get("PYRS_CPYTHON_LIB", ""),
         help="Optional PYRS_CPYTHON_LIB path to pass through to pyrs",
+    )
+    parser.add_argument(
+        "--numpy-src",
+        default=os.environ.get("PYRS_NUMPY_SRC", ""),
+        help="Optional NumPy source tree path for source-build bring-up",
+    )
+    parser.add_argument(
+        "--python-build-bin",
+        default=os.environ.get("PYRS_NUMPY_BUILD_PYTHON", "python3"),
+        help="Python executable used for source-build phase (default: python3)",
+    )
+    parser.add_argument(
+        "--build-timeout",
+        type=int,
+        default=900,
+        help="Source-build timeout in seconds when --numpy-src is set (default: 900)",
     )
     parser.add_argument(
         "--timeout",
@@ -93,13 +181,17 @@ def main() -> int:
     pyrs_bin = pathlib.Path(args.pyrs)
     out_path = pathlib.Path(args.out)
     cpython_lib = pathlib.Path(args.cpython_lib) if args.cpython_lib else None
+    numpy_src = pathlib.Path(args.numpy_src) if args.numpy_src else None
 
     report: dict[str, Any] = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "pyrs_bin": str(pyrs_bin),
         "cpython_lib": str(cpython_lib) if cpython_lib else None,
+        "numpy_src": str(numpy_src) if numpy_src else None,
+        "mode": "source-build" if numpy_src else "import-probe",
         "timeout_secs": args.timeout,
         "cases": [],
+        "build": None,
         "summary": {
             "total": len(CASES),
             "passed": 0,
@@ -126,8 +218,26 @@ def main() -> int:
         )
         return 0
 
+    python_paths: list[pathlib.Path] = []
+    if numpy_src:
+        build_report, build_target = build_numpy_from_source(
+            args.python_build_bin,
+            numpy_src,
+            args.build_timeout,
+        )
+        report["build"] = build_report
+        if build_target is not None:
+            python_paths.append(build_target)
+        print(f"[numpy-gate] source-build: {build_report['status']}")
+    else:
+        report["build"] = {
+            "status": "SKIP",
+            "ok": False,
+            "reason": "--numpy-src not provided",
+        }
+
     for case_name, source in CASES:
-        result = run_case(pyrs_bin, source, args.timeout, cpython_lib)
+        result = run_case(pyrs_bin, source, args.timeout, cpython_lib, python_paths)
         status = "PASS" if result["ok"] else "FAIL"
         if status == "PASS":
             report["summary"]["passed"] += 1

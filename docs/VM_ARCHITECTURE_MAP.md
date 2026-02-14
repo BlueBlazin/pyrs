@@ -31,6 +31,8 @@ This document defines the current structure and ownership boundaries for the VM 
   - import-system construction and import-path foundations
 - `/Users/$USER/pyrs/src/vm/vm_extensions.rs`
   - extension manifest loader execution path (`.pyrs-ext` scaffolding)
+  - direct shared-library extension execution path (`.so/.dylib/.pyd`)
+  - v1 C-API callback bridge (`include/pyrs_capi.h`)
   - extension module metadata/entrypoint wiring
   - owns extension-loader behavior inside VM import execution
 

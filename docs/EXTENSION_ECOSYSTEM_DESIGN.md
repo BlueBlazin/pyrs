@@ -20,6 +20,7 @@ This design is the source of truth for extension architecture and delivery gates
 Companion execution trackers:
 - `docs/EXTENSION_CAPABILITY_MATRIX.md`
 - `docs/EXTENSION_PACKAGING_CONTRACT.md`
+- `docs/EXTENSION_CAPI_V1.md`
 - `docs/NUMPY_BRINGUP_GATE.md`
 
 ## Scope and Compatibility Contract

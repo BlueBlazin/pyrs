@@ -79,6 +79,9 @@ Deliverables:
 - extension capability matrix and packaging/build contract:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`
   - `docs/EXTENSION_PACKAGING_CONTRACT.md`
+- first C-API header/symbol slice and compiled-extension fixture:
+  - `include/pyrs_capi.h`
+  - `docs/EXTENSION_CAPI_V1.md`
 - extension-backed ecosystem smoke suites + explicit unsupported-surface diagnostics
 - baseline extension loader smoke gate (`hello_ext`) in CI
 - NumPy bring-up gate scaffold (`import numpy` + first ndarray smoke)

@@ -14,10 +14,11 @@ Legend:
 
 | Surface | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
-| `.pyrs-ext` extension manifest discovery on import path | DONE | VM/import | `tests/extension_smoke.rs::imports_manifest_backed_hello_extension` | Scaffolding format for milestone bring-up; native `.so/.dylib/.pyd` loading remains planned. |
+| `.pyrs-ext` extension manifest discovery on import path | DONE | VM/import | `tests/extension_smoke.rs::imports_manifest_backed_hello_extension` | Supports static (`hello_ext`) and dynamic (`dynamic:<symbol>` + `library=...`) entrypoints. |
 | Extension module loader dispatch (`pyrs.ExtensionFileLoader`) | DONE | VM/import | `tests/extension_smoke.rs::imports_manifest_backed_hello_extension` | Module metadata includes extension ABI + entrypoint markers. |
 | Minimal extension entrypoint registry (`hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs::imports_manifest_backed_hello_extension` | Smoke substrate only; not a user-facing compatibility claim. |
-| Dynamic shared-library loader (`.so/.dylib/.pyd`) | PLANNED | VM/extensions | - | No loader crate added yet; explicit follow-up for real C-extension ingestion. |
+| Dynamic shared-library loader (`.so/.dylib/.pyd`) | DONE | VM/extensions | `tests/extension_smoke.rs::imports_compiled_dynamic_extension_from_manifest` | Runtime loads shared objects via native loader (`dlopen`/`dlsym` on unix) and executes extension init symbols. |
+| Direct shared-object import without manifest | DONE | VM/import + VM/extensions | `tests/extension_smoke.rs::imports_direct_shared_object_extension_without_manifest` | Importer detects `module.so` / `module.dylib` / `module.pyd` on `sys.path` and uses default symbol `pyrs_extension_init_v1`. |
 | PEP 489 multi-phase init | PLANNED | VM/extensions | - | Required for production extension parity. |
 | Extension module state lifecycle hooks | PLANNED | VM/extensions | - | Needs finalize/teardown semantics. |
 
@@ -25,8 +26,8 @@ Legend:
 
 | Surface | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
-| Exported C ABI artifact (`libpyrs-capi`) | PLANNED | runtime/ffi | - | Not started. |
-| Header surface + versioned symbol manifest | PLANNED | runtime/ffi | - | Required before external extension builds. |
+| Exported C ABI artifact (`libpyrs-capi`) | IN PROGRESS | runtime/ffi | `include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md` | Header/symbol slice is landed and consumed by compiled-extension smoke; distributable ABI artifact packaging is pending. |
+| Header surface + versioned symbol manifest | IN PROGRESS | runtime/ffi | `include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md` | v1 includes module-global setters (`int`, `bool`, `string`) and init symbol contract. |
 | `PyObject`/refcount ownership APIs | PLANNED | runtime/ffi | - | Must follow CPython semantics. |
 | Exception indicator/thread-local error state APIs | PLANNED | runtime/ffi | - | Required for extension correctness. |
 | GIL attach/detach APIs (`PyGILState_*`) | PLANNED | runtime/threading | - | Required for threaded native callers. |
@@ -43,7 +44,7 @@ Legend:
 
 | Gate | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
-| Extension smoke gate (`hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | Baseline CI guard for extension import path. |
+| Extension smoke gate (compiled native fixture + `hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | CI now covers both manifest-only and compiled native extension paths. |
 | NumPy import gate (`import numpy`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Probe scaffold is landed; gate currently expected-red until C-extension substrate matures. |
 | NumPy ndarray smoke (`np.array([...]).sum()`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Same as above. |
 | Pandas/matplotlib/scipy smoke gates | PLANNED | milestone-15 bring-up | - | Starts after NumPy substrate closure. |

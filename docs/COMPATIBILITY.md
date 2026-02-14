@@ -51,9 +51,10 @@ Status:
 
 ## Extension Ecosystem (Milestone 15)
 - `[~]` Extension subsystem scaffolding landed (`.pyrs-ext` manifest discovery + `pyrs.ExtensionFileLoader` + `hello_ext` smoke test)
-- `[~]` NumPy bring-up probe scaffold landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`)
-- `[ ]` Native shared-library loader (`.so/.dylib/.pyd`) and PEP 489 multi-phase init
-- `[ ]` `libpyrs-capi` symbol/header/runtime contract
+- `[x]` Native shared-library loader baseline (`.so/.dylib/.pyd`) with compiled-extension smoke coverage
+- `[~]` `libpyrs-capi` v1 header/symbol slice landed (`include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md`); broader runtime contract still pending
+- `[~]` NumPy bring-up import + source-build probes landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`)
+- `[ ]` PEP 489 multi-phase init and module lifecycle closure
 - `[ ]` NumPy/SciPy/Pandas/Matplotlib production import + functional gate closure
 
 ## Notes

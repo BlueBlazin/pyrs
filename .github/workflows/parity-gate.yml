@@ -61,12 +61,30 @@ jobs:
             --out perf/numpy_gate_latest.json \
             --timeout 20
 
+      - name: NumPy source-build bring-up probe (non-blocking)
+        continue-on-error: true
+        run: |
+          python3 scripts/probe_numpy_gate.py \
+            --pyrs target/debug/pyrs \
+            --cpython-lib "$PYRS_CPYTHON_LIB" \
+            --numpy-src "${PYRS_NUMPY_SRC:-/tmp/pyrs_numpy_source_not_configured}" \
+            --out perf/numpy_gate_source_build_latest.json \
+            --timeout 20
+
       - name: Upload NumPy bring-up artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: numpy-bringup-gate
           path: perf/numpy_gate_latest.json
+          if-no-files-found: ignore
+
+      - name: Upload NumPy source-build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: numpy-source-build-gate
+          path: perf/numpy_gate_source_build_latest.json
           if-no-files-found: ignore
 
       - name: Dispatch hotpath benchmark smoke (non-blocking)

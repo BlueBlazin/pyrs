@@ -10,6 +10,7 @@ Use this file to find canonical ownership quickly.
 - `docs/EXTENSION_ECOSYSTEM_DESIGN.md`: architecture and quality gates for NumPy/SciPy/Pandas/Matplotlib support.
 - `docs/EXTENSION_CAPABILITY_MATRIX.md`: source-of-truth status table for extension API/loader surfaces.
 - `docs/EXTENSION_PACKAGING_CONTRACT.md`: extension build/package contract (`pyrs314` mode first).
+- `docs/EXTENSION_CAPI_V1.md`: first shipped C-API header/symbol slice for compiled-extension bring-up.
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
