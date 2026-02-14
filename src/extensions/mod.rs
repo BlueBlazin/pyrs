@@ -15,6 +15,7 @@ pub const PYRS_TYPE_FLOAT: i32 = 5;
 pub const PYRS_TYPE_BYTES: i32 = 6;
 pub const PYRS_TYPE_TUPLE: i32 = 7;
 pub const PYRS_TYPE_LIST: i32 = 8;
+pub const PYRS_TYPE_DICT: i32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionEntrypoint {
@@ -329,6 +330,7 @@ pub struct PyrsApiV1 {
         len: usize,
         items: *const PyrsObjectHandle,
     ) -> PyrsObjectHandle,
+    pub object_new_dict: unsafe extern "C" fn(module_ctx: *mut c_void) -> PyrsObjectHandle,
     pub object_new_string:
         unsafe extern "C" fn(module_ctx: *mut c_void, value: *const c_char) -> PyrsObjectHandle,
     pub object_incref:
@@ -371,6 +373,23 @@ pub struct PyrsApiV1 {
         module_ctx: *mut c_void,
         handle: PyrsObjectHandle,
         index: usize,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
+    pub object_dict_len: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        handle: PyrsObjectHandle,
+        out_len: *mut usize,
+    ) -> i32,
+    pub object_dict_set_item: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+        value_handle: PyrsObjectHandle,
+    ) -> i32,
+    pub object_dict_get_item: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
         out_handle: *mut PyrsObjectHandle,
     ) -> i32,
     pub object_get_string:

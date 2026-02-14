@@ -535,8 +535,10 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     sequence_items[1] = ratio;
     PyrsObjectHandle pair_tuple = api->object_new_tuple(module_ctx, 2, sequence_items);
     PyrsObjectHandle pair_list = api->object_new_list(module_ctx, 2, sequence_items);
+    PyrsObjectHandle mapping = api->object_new_dict(module_ctx);
+    PyrsObjectHandle key_ratio = api->object_new_string(module_ctx, "ratio");
     PyrsObjectHandle text = api->object_new_string(module_ctx, "from-object-handle");
-    if (!answer || !none_value || !ratio || !blob || !pair_tuple || !pair_list || !text) {
+    if (!answer || !none_value || !ratio || !blob || !pair_tuple || !pair_list || !mapping || !key_ratio || !text) {
         return -2;
     }
     double ratio_check = 0.0;
@@ -564,6 +566,24 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_decref(module_ctx, list_second) != 0) {
         return -20;
     }
+    if (api->object_dict_set_item(module_ctx, mapping, key_ratio, ratio) != 0) {
+        return -25;
+    }
+    uintptr_t mapping_len = 0;
+    if (api->object_dict_len(module_ctx, mapping, &mapping_len) != 0 || mapping_len != 1) {
+        return -26;
+    }
+    PyrsObjectHandle fetched_ratio = 0;
+    if (api->object_dict_get_item(module_ctx, mapping, key_ratio, &fetched_ratio) != 0 || !fetched_ratio) {
+        return -27;
+    }
+    double fetched_ratio_value = 0.0;
+    if (api->object_get_float(module_ctx, fetched_ratio, &fetched_ratio_value) != 0 || fetched_ratio_value != 3.5) {
+        return -28;
+    }
+    if (api->object_decref(module_ctx, fetched_ratio) != 0) {
+        return -29;
+    }
     if (api->module_set_object(module_ctx, "ANSWER", answer) != 0) {
         return -3;
     }
@@ -581,6 +601,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_object(module_ctx, "PAIR_LIST", pair_list) != 0) {
         return -22;
+    }
+    if (api->module_set_object(module_ctx, "MAPPING", mapping) != 0) {
+        return -30;
     }
     if (api->module_set_object(module_ctx, "TEXT", text) != 0) {
         return -4;
@@ -609,6 +632,12 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_decref(module_ctx, pair_list) != 0) {
         return -24;
     }
+    if (api->object_decref(module_ctx, mapping) != 0) {
+        return -31;
+    }
+    if (api->object_decref(module_ctx, key_ratio) != 0) {
+        return -32;
+    }
     if (api->object_decref(module_ctx, text) != 0) {
         return -8;
     }
@@ -635,7 +664,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.NONE_VALUE is None\nassert abs(native_handles.RATIO - 3.5) < 1e-12\nassert native_handles.BLOB == b'hi'\nassert native_handles.PAIR_TUPLE == (99, 3.5)\nassert native_handles.PAIR_LIST == [99, 3.5]\nassert native_handles.TEXT == 'from-object-handle'",
+        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.NONE_VALUE is None\nassert abs(native_handles.RATIO - 3.5) < 1e-12\nassert native_handles.BLOB == b'hi'\nassert native_handles.PAIR_TUPLE == (99, 3.5)\nassert native_handles.PAIR_LIST == [99, 3.5]\nassert native_handles.MAPPING['ratio'] == 3.5\nassert native_handles.TEXT == 'from-object-handle'",
     )
     .expect("object-handle dynamic extension import should succeed");
 

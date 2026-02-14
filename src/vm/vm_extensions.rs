@@ -5,15 +5,17 @@ use std::path::{Path, PathBuf};
 use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
-    PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR, PYRS_TYPE_TUPLE,
-    PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsObjectHandle, load_dynamic_initializer,
-    parse_extension_manifest, path_is_shared_library,
+    PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
+    PYRS_TYPE_TUPLE, PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsObjectHandle,
+    load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
 };
 
-use super::{ExtensionCallableKind, NativeCallResult, ObjRef, Vm};
+use super::{
+    ExtensionCallableKind, NativeCallResult, ObjRef, Vm, dict_get_value, dict_set_value_checked,
+};
 
 struct CapiObjectSlot {
     value: Value,
@@ -104,6 +106,7 @@ impl ModuleCapiContext {
             Value::Bytes(_) | Value::ByteArray(_) => PYRS_TYPE_BYTES,
             Value::Tuple(_) => PYRS_TYPE_TUPLE,
             Value::List(_) => PYRS_TYPE_LIST,
+            Value::Dict(_) => PYRS_TYPE_DICT,
             _ => 0,
         };
         Ok(ty)
@@ -208,6 +211,54 @@ impl ModuleCapiContext {
             },
             _ => Err(format!("object handle {} is not tuple/list", handle)),
         }
+    }
+
+    fn object_dict_obj(&self, handle: PyrsObjectHandle) -> Result<ObjRef, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match &slot.value {
+            Value::Dict(obj) => Ok(obj.clone()),
+            _ => Err(format!("object handle {} is not dict", handle)),
+        }
+    }
+
+    fn object_dict_len(&self, handle: PyrsObjectHandle) -> Result<usize, String> {
+        let dict_obj = self.object_dict_obj(handle)?;
+        match &*dict_obj.kind() {
+            Object::Dict(entries) => Ok(entries.len()),
+            _ => Err(format!("object handle {} has invalid dict storage", handle)),
+        }
+    }
+
+    fn object_dict_set_item(
+        &mut self,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+        value_handle: PyrsObjectHandle,
+    ) -> Result<(), String> {
+        let dict_obj = self.object_dict_obj(dict_handle)?;
+        let key = self
+            .object_value(key_handle)
+            .ok_or_else(|| format!("invalid key handle {}", key_handle))?;
+        let value = self
+            .object_value(value_handle)
+            .ok_or_else(|| format!("invalid value handle {}", value_handle))?;
+        dict_set_value_checked(&dict_obj, key, value).map_err(|err| err.message)
+    }
+
+    fn object_dict_get_item(
+        &mut self,
+        dict_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+    ) -> Result<PyrsObjectHandle, String> {
+        let dict_obj = self.object_dict_obj(dict_handle)?;
+        let key = self
+            .object_value(key_handle)
+            .ok_or_else(|| format!("invalid key handle {}", key_handle))?;
+        let value =
+            dict_get_value(&dict_obj, &key).ok_or_else(|| "dict key not found".to_string())?;
+        Ok(self.alloc_object(value))
     }
 
     fn object_get_string_ptr(&mut self, handle: PyrsObjectHandle) -> Result<*const c_char, String> {
@@ -527,6 +578,19 @@ unsafe extern "C" fn capi_object_new_list(
     context.alloc_object(vm.heap.alloc_list(values))
 }
 
+unsafe extern "C" fn capi_object_new_dict(module_ctx: *mut c_void) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    if context.vm.is_null() {
+        context.set_error("object_new_dict missing VM context");
+        return 0;
+    }
+    // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
+    let vm = unsafe { &mut *context.vm };
+    context.alloc_object(vm.heap.alloc_dict(Vec::new()))
+}
+
 unsafe extern "C" fn capi_object_new_string(
     module_ctx: *mut c_void,
     value: *const c_char,
@@ -764,6 +828,79 @@ unsafe extern "C" fn capi_object_sequence_get_item(
     }
 }
 
+unsafe extern "C" fn capi_object_dict_len(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out_len: *mut usize,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_len.is_null() {
+        context.set_error("object_dict_len received null output pointer");
+        return -1;
+    }
+    match context.object_dict_len(handle) {
+        Ok(len) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_len = len;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_dict_set_item(
+    module_ctx: *mut c_void,
+    dict_handle: PyrsObjectHandle,
+    key_handle: PyrsObjectHandle,
+    value_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_dict_set_item(dict_handle, key_handle, value_handle) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_dict_get_item(
+    module_ctx: *mut c_void,
+    dict_handle: PyrsObjectHandle,
+    key_handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_dict_get_item received null output pointer");
+        return -1;
+    }
+    match context.object_dict_get_item(dict_handle, key_handle) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_get_string(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -844,6 +981,7 @@ impl Vm {
             object_new_bytes: capi_object_new_bytes,
             object_new_tuple: capi_object_new_tuple,
             object_new_list: capi_object_new_list,
+            object_new_dict: capi_object_new_dict,
             object_new_string: capi_object_new_string,
             object_incref: capi_object_incref,
             object_decref: capi_object_decref,
@@ -855,6 +993,9 @@ impl Vm {
             object_get_bytes: capi_object_get_bytes,
             object_sequence_len: capi_object_sequence_len,
             object_sequence_get_item: capi_object_sequence_get_item,
+            object_dict_len: capi_object_dict_len,
+            object_dict_set_item: capi_object_dict_set_item,
+            object_dict_get_item: capi_object_dict_get_item,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,
             error_clear: capi_error_clear,
