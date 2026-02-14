@@ -141,6 +141,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Docs index and ownership map: `docs/README.md`
 - Milestones and sequencing: `docs/ROADMAP.md`
 - Production blockers and release criteria: `docs/PRODUCTION_READINESS.md`
+- Beta release checkpoint plan: `docs/RELEASE_PLAN_BETA.md`
 - Partial/stub ledger: `docs/STUB_ACCOUNTING.md`
 - Top stdlib common-usecase tracker: `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`
 - Object-model parity audit: `docs/OBJECT_MODEL_AUDIT.md`

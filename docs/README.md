@@ -6,6 +6,7 @@ Use this file to find canonical ownership quickly.
 - `docs/ROADMAP.md`: milestone order, execution strategy, and exit criteria.
 - `docs/PRODUCTION_READINESS.md`: release blockers and completion requirements.
 - `docs/COMPATIBILITY.md`: subsystem-level compatibility summary.
+- `docs/RELEASE_PLAN_BETA.md`: staged beta release plan (tracked, not yet active execution).
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
