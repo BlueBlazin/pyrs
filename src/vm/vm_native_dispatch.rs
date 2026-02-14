@@ -25,6 +25,7 @@ impl Vm {
             && !matches!(
                 kind,
                 NativeMethodKind::FunctoolsPartialCall
+                    | NativeMethodKind::ExtensionFunctionCall(_)
                     | NativeMethodKind::DictUpdateMethod
                     | NativeMethodKind::IntToBytes
                     | NativeMethodKind::StrFormat

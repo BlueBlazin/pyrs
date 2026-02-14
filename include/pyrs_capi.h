@@ -23,6 +23,16 @@ typedef int (*PyrsCFunctionV1)(
     const PyrsObjectHandle* argv,
     PyrsObjectHandle* result
 );
+typedef int (*PyrsCFunctionKwV1)(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    uintptr_t kwargc,
+    const char* const* kwarg_names,
+    const PyrsObjectHandle* kwarg_values,
+    PyrsObjectHandle* result
+);
 
 struct PyrsApiV1 {
     uint32_t abi_version;
@@ -31,6 +41,7 @@ struct PyrsApiV1 {
     int (*module_set_bool)(void* module_ctx, const char* name, int value);
     int (*module_set_string)(void* module_ctx, const char* name, const char* value);
     int (*module_add_function)(void* module_ctx, const char* name, PyrsCFunctionV1 callback);
+    int (*module_add_function_kw)(void* module_ctx, const char* name, PyrsCFunctionKwV1 callback);
 
     PyrsObjectHandle (*object_new_int)(void* module_ctx, int64_t value);
     PyrsObjectHandle (*object_new_bool)(void* module_ctx, int value);

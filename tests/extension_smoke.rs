@@ -641,3 +641,122 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);
 }
+
+#[test]
+fn dynamic_extension_can_register_kw_callable() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping kw-callable extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping kw-callable extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_kw_callable");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_kw_callable.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <string.h>
+
+int native_add_scaled(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    uintptr_t kwargc,
+    const char* const* kwarg_names,
+    const PyrsObjectHandle* kwarg_values,
+    PyrsObjectHandle* result
+) {
+    if (!api || !argv || !result) {
+        return -1;
+    }
+    if (argc != 2) {
+        api->error_set(module_ctx, "native_add_scaled expects exactly 2 positional arguments");
+        return -2;
+    }
+    if (api->object_type(module_ctx, argv[0]) != PYRS_TYPE_INT ||
+        api->object_type(module_ctx, argv[1]) != PYRS_TYPE_INT) {
+        api->error_set(module_ctx, "native_add_scaled only accepts ints");
+        return -3;
+    }
+
+    int64_t scale = 1;
+    if (kwargc > 1) {
+        api->error_set(module_ctx, "native_add_scaled accepts at most one keyword");
+        return -4;
+    }
+    if (kwargc == 1) {
+        if (!kwarg_names || !kwarg_values) {
+            api->error_set(module_ctx, "native_add_scaled missing keyword payload");
+            return -5;
+        }
+        if (!kwarg_names[0] || strcmp(kwarg_names[0], "scale") != 0) {
+            api->error_set(module_ctx, "native_add_scaled only accepts keyword 'scale'");
+            return -6;
+        }
+        if (api->object_get_int(module_ctx, kwarg_values[0], &scale) != 0) {
+            api->error_set(module_ctx, "native_add_scaled keyword 'scale' must be int");
+            return -7;
+        }
+    }
+
+    int64_t left = 0;
+    int64_t right = 0;
+    if (api->object_get_int(module_ctx, argv[0], &left) != 0 ||
+        api->object_get_int(module_ctx, argv[1], &right) != 0) {
+        return -8;
+    }
+    *result = api->object_new_int(module_ctx, (left + right) * scale);
+    if (*result == 0) {
+        return -9;
+    }
+    return 0;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    if (api->module_add_function_kw(module_ctx, "add_scaled", native_add_scaled) != 0) {
+        return -2;
+    }
+    if (api->module_set_string(module_ctx, "API_KIND", "kw-callable") != 0) {
+        return -3;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_kw_callable");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_kw_callable.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_kw_callable\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_kw_callable\nassert native_kw_callable.API_KIND == 'kw-callable'\nassert native_kw_callable.add_scaled(2, 3) == 5\nassert native_kw_callable.add_scaled(2, 3, scale=10) == 50",
+    )
+    .expect("kw-callable extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}

@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_INT,
-    PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionV1, PyrsObjectHandle,
+    PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsObjectHandle,
     load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
 };
 
-use super::{NativeCallResult, ObjRef, Vm};
+use super::{ExtensionCallableKind, NativeCallResult, ObjRef, Vm};
 
 struct CapiObjectSlot {
     value: Value,
@@ -252,7 +252,55 @@ unsafe extern "C" fn capi_module_add_function(
     }
     // SAFETY: VM pointer is set by `exec_extension_module` and valid during init callback.
     let vm = unsafe { &mut *context.vm };
-    let callable = match vm.register_extension_callable(context.module.clone(), &name, callback) {
+    let callable = match vm.register_extension_callable(
+        context.module.clone(),
+        &name,
+        ExtensionCallableKind::Positional(callback),
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err.message);
+            return -1;
+        }
+    };
+    let Object::Module(module_data) = &mut *context.module.kind_mut() else {
+        context.set_error("module context no longer points to a module");
+        return -1;
+    };
+    module_data.globals.insert(name, callable);
+    0
+}
+
+unsafe extern "C" fn capi_module_add_function_kw(
+    module_ctx: *mut c_void,
+    name: *const c_char,
+    callback: Option<PyrsCFunctionKwV1>,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    let Some(callback) = callback else {
+        context.set_error("module_add_function_kw requires a non-null callback");
+        return -1;
+    };
+    let name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    if context.vm.is_null() {
+        context.set_error("module_add_function_kw missing VM context");
+        return -1;
+    }
+    // SAFETY: VM pointer is set by `exec_extension_module` and valid during init callback.
+    let vm = unsafe { &mut *context.vm };
+    let callable = match vm.register_extension_callable(
+        context.module.clone(),
+        &name,
+        ExtensionCallableKind::WithKeywords(callback),
+    ) {
         Ok(value) => value,
         Err(err) => {
             context.set_error(err.message);
@@ -478,6 +526,7 @@ impl Vm {
             module_set_bool: capi_module_set_bool,
             module_set_string: capi_module_set_string,
             module_add_function: capi_module_add_function,
+            module_add_function_kw: capi_module_add_function_kw,
             object_new_int: capi_object_new_int,
             object_new_bool: capi_object_new_bool,
             object_new_string: capi_object_new_string,
@@ -498,7 +547,7 @@ impl Vm {
         &mut self,
         module: ObjRef,
         name: &str,
-        callback: PyrsCFunctionV1,
+        kind: ExtensionCallableKind,
     ) -> Result<Value, RuntimeError> {
         let id = self.next_extension_callable_id;
         self.next_extension_callable_id = self.next_extension_callable_id.wrapping_add(1);
@@ -510,7 +559,7 @@ impl Vm {
             super::ExtensionCallableEntry {
                 module: module.clone(),
                 name: name.to_string(),
-                callback,
+                kind,
             },
         );
 
@@ -533,11 +582,6 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<NativeCallResult, RuntimeError> {
-        if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "extension callables do not accept keyword arguments yet",
-            ));
-        }
         let Some(entry) = self.extension_callable_registry.get(&function_id).cloned() else {
             return Err(RuntimeError::new(format!(
                 "unknown extension callable id {}",
@@ -551,16 +595,62 @@ impl Vm {
         }
         let api = self.capi_api_v1();
         let mut result_handle: PyrsObjectHandle = 0;
-        // SAFETY: callback pointer comes from extension registration and the API/context
-        // pointers remain valid for the duration of this call.
-        let status = unsafe {
-            (entry.callback)(
-                &api as *const PyrsApiV1,
-                (&mut call_ctx as *mut ModuleCapiContext).cast(),
-                arg_handles.len(),
-                arg_handles.as_ptr(),
-                &mut result_handle as *mut PyrsObjectHandle,
-            )
+        let status = match entry.kind {
+            ExtensionCallableKind::Positional(callback) => {
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(format!(
+                        "extension function '{}.{}' does not accept keyword arguments",
+                        match &*entry.module.kind() {
+                            Object::Module(module_data) => module_data.name.clone(),
+                            _ => "<extension>".to_string(),
+                        },
+                        entry.name
+                    )));
+                }
+                // SAFETY: callback pointer comes from extension registration and the API/context
+                // pointers remain valid for the duration of this call.
+                unsafe {
+                    callback(
+                        &api as *const PyrsApiV1,
+                        (&mut call_ctx as *mut ModuleCapiContext).cast(),
+                        arg_handles.len(),
+                        arg_handles.as_ptr(),
+                        &mut result_handle as *mut PyrsObjectHandle,
+                    )
+                }
+            }
+            ExtensionCallableKind::WithKeywords(callback) => {
+                let mut kw_name_storage = Vec::with_capacity(kwargs.len());
+                let mut kw_name_ptrs = Vec::with_capacity(kwargs.len());
+                let mut kw_value_handles = Vec::with_capacity(kwargs.len());
+                for (name, value) in kwargs {
+                    let c_name = CString::new(name.as_str()).map_err(|_| {
+                        RuntimeError::new("extension call keyword name contains interior NUL byte")
+                    })?;
+                    kw_name_storage.push(c_name);
+                    let ptr = kw_name_storage
+                        .last()
+                        .map(|name| name.as_ptr())
+                        .unwrap_or(std::ptr::null());
+                    kw_name_ptrs.push(ptr);
+                    kw_value_handles.push(call_ctx.alloc_object(value));
+                }
+                // SAFETY: callback pointer comes from extension registration and the API/context
+                // pointers remain valid for the duration of this call. Keyword C strings and
+                // value handles remain alive for the callback duration.
+                unsafe {
+                    callback(
+                        &api as *const PyrsApiV1,
+                        (&mut call_ctx as *mut ModuleCapiContext).cast(),
+                        arg_handles.len(),
+                        arg_handles.as_ptr(),
+                        kw_name_ptrs.len(),
+                        kw_name_ptrs.as_ptr(),
+                        kw_value_handles.as_ptr(),
+                        &mut result_handle as *mut PyrsObjectHandle,
+                    )
+                }
+            }
         };
         if status != 0 {
             let detail = call_ctx

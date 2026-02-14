@@ -298,6 +298,11 @@ pub struct PyrsApiV1 {
         name: *const c_char,
         callback: Option<PyrsCFunctionV1>,
     ) -> i32,
+    pub module_add_function_kw: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        name: *const c_char,
+        callback: Option<PyrsCFunctionKwV1>,
+    ) -> i32,
     pub object_new_int:
         unsafe extern "C" fn(module_ctx: *mut c_void, value: i64) -> PyrsObjectHandle,
     pub object_new_bool:
@@ -336,6 +341,17 @@ pub type PyrsCFunctionV1 = unsafe extern "C" fn(
     module_ctx: *mut c_void,
     argc: usize,
     argv: *const PyrsObjectHandle,
+    result: *mut PyrsObjectHandle,
+) -> i32;
+
+pub type PyrsCFunctionKwV1 = unsafe extern "C" fn(
+    api: *const PyrsApiV1,
+    module_ctx: *mut c_void,
+    argc: usize,
+    argv: *const PyrsObjectHandle,
+    kwargc: usize,
+    kwarg_names: *const *const c_char,
+    kwarg_values: *const PyrsObjectHandle,
     result: *mut PyrsObjectHandle,
 ) -> i32;
 

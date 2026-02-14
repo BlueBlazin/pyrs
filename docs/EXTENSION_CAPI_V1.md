@@ -18,6 +18,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `module_set_bool(void* module_ctx, const char* name, int value)`
 - `module_set_string(void* module_ctx, const char* name, const char* value)`
 - `module_add_function(void* module_ctx, const char* name, PyrsCFunctionV1 callback)`
+- `module_add_function_kw(void* module_ctx, const char* name, PyrsCFunctionKwV1 callback)`
 - `object_new_int(void* module_ctx, int64_t value)`
 - `object_new_bool(void* module_ctx, int value)`
 - `object_new_string(void* module_ctx, const char* value)`
@@ -49,13 +50,14 @@ Return semantics:
 - `module_ctx` points to the target Python module object context.
 - object handles are init-call scoped; module globals retain values after handle release.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
-- callable registration via `module_add_function(...)` is supported for positional-argument callbacks.
+- callable registration via `module_add_function(...)` is supported for positional-only callbacks.
+- callable registration via `module_add_function_kw(...)` is supported for callbacks receiving keyword-name/value arrays.
 - ABI mismatch must be handled by extension code and reflected via non-zero return.
 
 ## Out of Scope (not yet implemented)
 
 - General `PyObject` constructors/surfaces beyond int/bool/string and module-global assignment path.
-- Keyword-argument parsing helpers for native callables.
+- Full CPython-style argument parsing helpers/signature metadata for native callables.
 - Thread/GIL APIs.
 - Multi-phase module lifecycle APIs.
 

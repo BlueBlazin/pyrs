@@ -58,7 +58,7 @@ use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
-use crate::extensions::{PyrsCFunctionV1, SharedLibraryHandle};
+use crate::extensions::{PyrsCFunctionKwV1, PyrsCFunctionV1, SharedLibraryHandle};
 use crate::parser;
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
@@ -92,10 +92,16 @@ struct ModuleSourceInfo {
 }
 
 #[derive(Clone)]
+enum ExtensionCallableKind {
+    Positional(PyrsCFunctionV1),
+    WithKeywords(PyrsCFunctionKwV1),
+}
+
+#[derive(Clone)]
 struct ExtensionCallableEntry {
     module: ObjRef,
     name: String,
-    callback: PyrsCFunctionV1,
+    kind: ExtensionCallableKind,
 }
 
 #[derive(Default, Clone, Copy)]
