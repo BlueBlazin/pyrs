@@ -14,6 +14,8 @@ extern "C" {
 #define PYRS_TYPE_STR 4
 #define PYRS_TYPE_FLOAT 5
 #define PYRS_TYPE_BYTES 6
+#define PYRS_TYPE_TUPLE 7
+#define PYRS_TYPE_LIST 8
 
 typedef uint64_t PyrsObjectHandle;
 typedef struct PyrsApiV1 PyrsApiV1;
@@ -50,6 +52,8 @@ struct PyrsApiV1 {
     PyrsObjectHandle (*object_new_bool)(void* module_ctx, int value);
     PyrsObjectHandle (*object_new_float)(void* module_ctx, double value);
     PyrsObjectHandle (*object_new_bytes)(void* module_ctx, const uint8_t* data, uintptr_t len);
+    PyrsObjectHandle (*object_new_tuple)(void* module_ctx, uintptr_t len, const PyrsObjectHandle* items);
+    PyrsObjectHandle (*object_new_list)(void* module_ctx, uintptr_t len, const PyrsObjectHandle* items);
     PyrsObjectHandle (*object_new_string)(void* module_ctx, const char* value);
 
     int (*object_incref)(void* module_ctx, PyrsObjectHandle handle);
@@ -60,6 +64,8 @@ struct PyrsApiV1 {
     int (*object_get_float)(void* module_ctx, PyrsObjectHandle handle, double* out);
     int (*object_get_bool)(void* module_ctx, PyrsObjectHandle handle, int* out);
     int (*object_get_bytes)(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len);
+    int (*object_sequence_len)(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len);
+    int (*object_sequence_get_item)(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle);
     const char* (*object_get_string)(void* module_ctx, PyrsObjectHandle handle);
 
     int (*error_set)(void* module_ctx, const char* message);

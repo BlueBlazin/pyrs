@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
-    PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionKwV1,
-    PyrsCFunctionV1, PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest,
-    path_is_shared_library,
+    PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR, PYRS_TYPE_TUPLE,
+    PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsObjectHandle, load_dynamic_initializer,
+    parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -102,6 +102,8 @@ impl ModuleCapiContext {
             Value::Str(_) => PYRS_TYPE_STR,
             Value::Float(_) => PYRS_TYPE_FLOAT,
             Value::Bytes(_) | Value::ByteArray(_) => PYRS_TYPE_BYTES,
+            Value::Tuple(_) => PYRS_TYPE_TUPLE,
+            Value::List(_) => PYRS_TYPE_LIST,
             _ => 0,
         };
         Ok(ty)
@@ -155,6 +157,56 @@ impl ModuleCapiContext {
                 )),
             },
             _ => Err(format!("object handle {} is not bytes-like", handle)),
+        }
+    }
+
+    fn object_sequence_len(&self, handle: PyrsObjectHandle) -> Result<usize, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match &slot.value {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => Ok(values.len()),
+                _ => Err(format!(
+                    "object handle {} has invalid tuple storage",
+                    handle
+                )),
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => Ok(values.len()),
+                _ => Err(format!("object handle {} has invalid list storage", handle)),
+            },
+            _ => Err(format!("object handle {} is not tuple/list", handle)),
+        }
+    }
+
+    fn object_sequence_get_item(
+        &self,
+        handle: PyrsObjectHandle,
+        index: usize,
+    ) -> Result<Value, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match &slot.value {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| format!("sequence index {} out of range", index)),
+                _ => Err(format!(
+                    "object handle {} has invalid tuple storage",
+                    handle
+                )),
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| format!("sequence index {} out of range", index)),
+                _ => Err(format!("object handle {} has invalid list storage", handle)),
+            },
+            _ => Err(format!("object handle {} is not tuple/list", handle)),
         }
     }
 
@@ -407,6 +459,74 @@ unsafe extern "C" fn capi_object_new_bytes(
     context.alloc_object(vm.heap.alloc_bytes(bytes))
 }
 
+unsafe extern "C" fn capi_object_new_tuple(
+    module_ctx: *mut c_void,
+    len: usize,
+    items: *const PyrsObjectHandle,
+) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    if len != 0 && items.is_null() {
+        context.set_error("object_new_tuple received null items pointer with non-zero len");
+        return 0;
+    }
+    if context.vm.is_null() {
+        context.set_error("object_new_tuple missing VM context");
+        return 0;
+    }
+    let mut values = Vec::with_capacity(len);
+    for idx in 0..len {
+        // SAFETY: caller-provided pointer/len pair is assumed valid for read.
+        let handle = unsafe { *items.add(idx) };
+        let Some(value) = context.object_value(handle) else {
+            context.set_error(format!(
+                "object_new_tuple received invalid item handle {} at index {}",
+                handle, idx
+            ));
+            return 0;
+        };
+        values.push(value);
+    }
+    // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
+    let vm = unsafe { &mut *context.vm };
+    context.alloc_object(vm.heap.alloc_tuple(values))
+}
+
+unsafe extern "C" fn capi_object_new_list(
+    module_ctx: *mut c_void,
+    len: usize,
+    items: *const PyrsObjectHandle,
+) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    if len != 0 && items.is_null() {
+        context.set_error("object_new_list received null items pointer with non-zero len");
+        return 0;
+    }
+    if context.vm.is_null() {
+        context.set_error("object_new_list missing VM context");
+        return 0;
+    }
+    let mut values = Vec::with_capacity(len);
+    for idx in 0..len {
+        // SAFETY: caller-provided pointer/len pair is assumed valid for read.
+        let handle = unsafe { *items.add(idx) };
+        let Some(value) = context.object_value(handle) else {
+            context.set_error(format!(
+                "object_new_list received invalid item handle {} at index {}",
+                handle, idx
+            ));
+            return 0;
+        };
+        values.push(value);
+    }
+    // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
+    let vm = unsafe { &mut *context.vm };
+    context.alloc_object(vm.heap.alloc_list(values))
+}
+
 unsafe extern "C" fn capi_object_new_string(
     module_ctx: *mut c_void,
     value: *const c_char,
@@ -588,6 +708,62 @@ unsafe extern "C" fn capi_object_get_bytes(
     }
 }
 
+unsafe extern "C" fn capi_object_sequence_len(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out_len: *mut usize,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_len.is_null() {
+        context.set_error("object_sequence_len received null output pointer");
+        return -1;
+    }
+    match context.object_sequence_len(handle) {
+        Ok(len) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_len = len;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_sequence_get_item(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    index: usize,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_sequence_get_item received null output pointer");
+        return -1;
+    }
+    match context.object_sequence_get_item(handle, index) {
+        Ok(value) => {
+            let item_handle = context.alloc_object(value);
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = item_handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_get_string(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -666,6 +842,8 @@ impl Vm {
             object_new_bool: capi_object_new_bool,
             object_new_float: capi_object_new_float,
             object_new_bytes: capi_object_new_bytes,
+            object_new_tuple: capi_object_new_tuple,
+            object_new_list: capi_object_new_list,
             object_new_string: capi_object_new_string,
             object_incref: capi_object_incref,
             object_decref: capi_object_decref,
@@ -675,6 +853,8 @@ impl Vm {
             object_get_float: capi_object_get_float,
             object_get_bool: capi_object_get_bool,
             object_get_bytes: capi_object_get_bytes,
+            object_sequence_len: capi_object_sequence_len,
+            object_sequence_get_item: capi_object_sequence_get_item,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,
             error_clear: capi_error_clear,
