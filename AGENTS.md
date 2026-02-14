@@ -69,6 +69,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes a special-method fallback fixture proving `object_set_item`/`object_del_item` dispatch on custom `__setitem__`/`__delitem__` containers (`dynamic_extension_item_mutation_falls_back_to_special_methods`).
   - extension smoke now includes membership + dict-view fixture coverage for `object_contains` + `object_dict_keys`/`object_dict_items` APIs (`dynamic_extension_can_use_contains_and_dict_view_apis`).
   - extension smoke now includes buffer API coverage for pointer/len/readonly views and release semantics (`dynamic_extension_can_use_buffer_apis`).
+  - extension smoke now includes memoryview-slice + release failure-path coverage for buffer APIs (`dynamic_extension_buffer_api_handles_memoryview_slices_and_release`).
   - extension smoke now includes capsule API coverage for create/name/pointer/mismatch/refcount paths (`dynamic_extension_can_use_capsule_apis`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).

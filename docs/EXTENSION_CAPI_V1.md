@@ -141,7 +141,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
 | generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
 | membership + dict-view helpers (`contains`/`dict_keys`/`dict_items`) | `dynamic_extension_can_use_contains_and_dict_view_apis` |
-| buffer helpers (`get_buffer`/`release_buffer`) | `dynamic_extension_can_use_buffer_apis` |
+| buffer helpers (`get_buffer`/`release_buffer`) | `dynamic_extension_can_use_buffer_apis`, `dynamic_extension_buffer_api_handles_memoryview_slices_and_release` |
 | capsule helpers (`capsule_new`/`capsule_get_pointer`/`capsule_get_name`) | `dynamic_extension_can_use_capsule_apis` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
