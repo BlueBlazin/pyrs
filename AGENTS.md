@@ -76,6 +76,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes buffer API coverage for pointer/len/readonly views and release semantics (`dynamic_extension_can_use_buffer_apis`).
   - extension smoke now includes writable buffer API coverage (`dynamic_extension_can_use_writable_buffer_apis`) validating in-place mutation through `bytearray` and writable `memoryview` handles plus read-only rejection paths.
   - extension smoke now includes buffer metadata coverage (`dynamic_extension_can_read_buffer_info_metadata`) for baseline 1-D buffer descriptor fields.
+  - extension smoke now includes non-contiguous metadata coverage (`dynamic_extension_buffer_info_marks_noncontiguous_slice_views`) for stepped memoryview slice behavior.
   - extension smoke now includes resize-blocking export-pin coverage (`dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release`).
   - extension smoke now includes leaked-pin cleanup coverage (`dynamic_extension_unreleased_buffer_pin_is_cleared_on_context_drop`) for context-drop unpin behavior.
   - extension smoke now includes memoryview-slice + release failure-path coverage for buffer APIs (`dynamic_extension_buffer_api_handles_memoryview_slices_and_release`).
