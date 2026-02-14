@@ -16,6 +16,7 @@ use crate::runtime::{
 use super::{
     ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome, NativeCallResult, ObjRef,
     Vm, dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value_checked,
+    value_to_int,
 };
 
 struct CapiObjectSlot {
@@ -122,6 +123,76 @@ impl ModuleCapiContext {
             .load_attr_module(&module_obj, attr_name)
             .map_err(|err| err.message)?;
         Ok(self.alloc_object(value))
+    }
+
+    fn module_obj(&self, module_handle: PyrsObjectHandle) -> Result<ObjRef, String> {
+        let module = self
+            .object_value(module_handle)
+            .ok_or_else(|| format!("invalid module handle {}", module_handle))?;
+        match module {
+            Value::Module(module_obj) => Ok(module_obj),
+            _ => Err(format!("object handle {} is not a module", module_handle)),
+        }
+    }
+
+    fn module_set_attr(
+        &mut self,
+        module_handle: PyrsObjectHandle,
+        attr_name: &str,
+        value_handle: PyrsObjectHandle,
+    ) -> Result<(), String> {
+        let module_obj = self.module_obj(module_handle)?;
+        let value = self
+            .object_value(value_handle)
+            .ok_or_else(|| format!("invalid value handle {}", value_handle))?;
+        let mut module_kind = module_obj.kind_mut();
+        let Object::Module(module_data) = &mut *module_kind else {
+            return Err(format!(
+                "object handle {} has invalid module storage",
+                module_handle
+            ));
+        };
+        module_data.globals.insert(attr_name.to_string(), value);
+        Ok(())
+    }
+
+    fn module_del_attr(
+        &mut self,
+        module_handle: PyrsObjectHandle,
+        attr_name: &str,
+    ) -> Result<(), String> {
+        let module_obj = self.module_obj(module_handle)?;
+        let mut module_kind = module_obj.kind_mut();
+        let Object::Module(module_data) = &mut *module_kind else {
+            return Err(format!(
+                "object handle {} has invalid module storage",
+                module_handle
+            ));
+        };
+        if module_data.globals.remove(attr_name).is_none() {
+            return Err(format!("module attribute '{}' not found", attr_name));
+        }
+        Ok(())
+    }
+
+    fn module_has_attr(
+        &mut self,
+        module_handle: PyrsObjectHandle,
+        attr_name: &str,
+    ) -> Result<i32, String> {
+        let module_obj = self.module_obj(module_handle)?;
+        let module_kind = module_obj.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return Err(format!(
+                "object handle {} has invalid module storage",
+                module_handle
+            ));
+        };
+        Ok(if module_data.globals.contains_key(attr_name) {
+            1
+        } else {
+            0
+        })
     }
 
     fn incref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
@@ -313,6 +384,167 @@ impl ModuleCapiContext {
         let vm = unsafe { &mut *self.vm };
         let value = vm.getitem_value(object, key).map_err(|err| err.message)?;
         Ok(self.alloc_object(value))
+    }
+
+    fn object_set_item(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+        value_handle: PyrsObjectHandle,
+    ) -> Result<(), String> {
+        if self.vm.is_null() {
+            return Err("object_set_item missing VM context".to_string());
+        }
+        let target = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let key = self
+            .object_value(key_handle)
+            .ok_or_else(|| format!("invalid key handle {}", key_handle))?;
+        let value = self
+            .object_value(value_handle)
+            .ok_or_else(|| format!("invalid value handle {}", value_handle))?;
+        match &target {
+            Value::Dict(dict_obj) => {
+                return dict_set_value_checked(dict_obj, key, value).map_err(|err| err.message);
+            }
+            Value::List(list_obj) => {
+                let mut list_kind = list_obj.kind_mut();
+                let Object::List(values) = &mut *list_kind else {
+                    return Err(format!(
+                        "object handle {} has invalid list storage",
+                        object_handle
+                    ));
+                };
+                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
+                if idx < 0 {
+                    idx += values.len() as isize;
+                }
+                if idx < 0 || idx as usize >= values.len() {
+                    return Err("index out of range".to_string());
+                }
+                values[idx as usize] = value;
+                return Ok(());
+            }
+            Value::ByteArray(bytearray_obj) => {
+                let mut bytes_kind = bytearray_obj.kind_mut();
+                let Object::ByteArray(values) = &mut *bytes_kind else {
+                    return Err(format!(
+                        "object handle {} has invalid bytearray storage",
+                        object_handle
+                    ));
+                };
+                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
+                if idx < 0 {
+                    idx += values.len() as isize;
+                }
+                if idx < 0 || idx as usize >= values.len() {
+                    return Err("index out of range".to_string());
+                }
+                let byte = value_to_int(value).map_err(|err| err.message)?;
+                if !(0..=255).contains(&byte) {
+                    return Err("byte must be in range(0, 256)".to_string());
+                }
+                values[idx as usize] = byte as u8;
+                return Ok(());
+            }
+            _ => {}
+        }
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let Some(setitem) = vm
+            .lookup_bound_special_method(&target, "__setitem__")
+            .map_err(|err| err.message)?
+        else {
+            return Err("object does not support item assignment".to_string());
+        };
+        match vm
+            .call_internal(setitem, vec![key, value], HashMap::new())
+            .map_err(|err| err.message)?
+        {
+            InternalCallOutcome::Value(_) => Ok(()),
+            InternalCallOutcome::CallerExceptionHandled => Err(vm
+                .runtime_error_from_active_exception("object_set_item() failed")
+                .message),
+        }
+    }
+
+    fn object_del_item(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+    ) -> Result<(), String> {
+        if self.vm.is_null() {
+            return Err("object_del_item missing VM context".to_string());
+        }
+        let target = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let key = self
+            .object_value(key_handle)
+            .ok_or_else(|| format!("invalid key handle {}", key_handle))?;
+        match &target {
+            Value::Dict(dict_obj) => {
+                if dict_remove_value(dict_obj, &key).is_none() {
+                    return Err("dict key not found".to_string());
+                }
+                return Ok(());
+            }
+            Value::List(list_obj) => {
+                let mut list_kind = list_obj.kind_mut();
+                let Object::List(values) = &mut *list_kind else {
+                    return Err(format!(
+                        "object handle {} has invalid list storage",
+                        object_handle
+                    ));
+                };
+                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
+                if idx < 0 {
+                    idx += values.len() as isize;
+                }
+                if idx < 0 || idx as usize >= values.len() {
+                    return Err("index out of range".to_string());
+                }
+                values.remove(idx as usize);
+                return Ok(());
+            }
+            Value::ByteArray(bytearray_obj) => {
+                let mut bytes_kind = bytearray_obj.kind_mut();
+                let Object::ByteArray(values) = &mut *bytes_kind else {
+                    return Err(format!(
+                        "object handle {} has invalid bytearray storage",
+                        object_handle
+                    ));
+                };
+                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
+                if idx < 0 {
+                    idx += values.len() as isize;
+                }
+                if idx < 0 || idx as usize >= values.len() {
+                    return Err("index out of range".to_string());
+                }
+                values.remove(idx as usize);
+                return Ok(());
+            }
+            _ => {}
+        }
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let Some(delitem) = vm
+            .lookup_bound_special_method(&target, "__delitem__")
+            .map_err(|err| err.message)?
+        else {
+            return Err("object does not support item deletion".to_string());
+        };
+        match vm
+            .call_internal(delitem, vec![key], HashMap::new())
+            .map_err(|err| err.message)?
+        {
+            InternalCallOutcome::Value(_) => Ok(()),
+            InternalCallOutcome::CallerExceptionHandled => Err(vm
+                .runtime_error_from_active_exception("object_del_item() failed")
+                .message),
+        }
     }
 
     fn object_sequence_len(&self, handle: PyrsObjectHandle) -> Result<usize, String> {
@@ -788,6 +1020,9 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "module_get_object"
             | "module_import"
             | "module_get_attr"
+            | "module_set_attr"
+            | "module_del_attr"
+            | "module_has_attr"
             | "object_new_none"
             | "object_new_float"
             | "object_new_bytes"
@@ -796,6 +1031,8 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_new_dict"
             | "object_len"
             | "object_get_item"
+            | "object_set_item"
+            | "object_del_item"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -1251,6 +1488,79 @@ unsafe extern "C" fn capi_module_get_attr(
     }
 }
 
+unsafe extern "C" fn capi_module_set_attr(
+    module_ctx: *mut c_void,
+    module_handle: PyrsObjectHandle,
+    attr_name: *const c_char,
+    value_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    let attr_name = match unsafe { c_name_to_string(attr_name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    match context.module_set_attr(module_handle, &attr_name, value_handle) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_module_del_attr(
+    module_ctx: *mut c_void,
+    module_handle: PyrsObjectHandle,
+    attr_name: *const c_char,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    let attr_name = match unsafe { c_name_to_string(attr_name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    match context.module_del_attr(module_handle, &attr_name) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_module_has_attr(
+    module_ctx: *mut c_void,
+    module_handle: PyrsObjectHandle,
+    attr_name: *const c_char,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    let attr_name = match unsafe { c_name_to_string(attr_name) } {
+        Ok(name) => name,
+        Err(err) => {
+            context.set_error(err);
+            return -1;
+        }
+    };
+    match context.module_has_attr(module_handle, &attr_name) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_type(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32 {
     let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
         return 0;
@@ -1456,6 +1766,41 @@ unsafe extern "C" fn capi_object_get_item(
             }
             0
         }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_set_item(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    key_handle: PyrsObjectHandle,
+    value_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_set_item(object_handle, key_handle, value_handle) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_del_item(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    key_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_del_item(object_handle, key_handle) {
+        Ok(()) => 0,
         Err(err) => {
             context.set_error(err);
             -1
@@ -2073,6 +2418,11 @@ impl Vm {
             error_get_message: capi_error_get_message,
             error_clear: capi_error_clear,
             error_occurred: capi_error_occurred,
+            module_set_attr: capi_module_set_attr,
+            module_del_attr: capi_module_del_attr,
+            module_has_attr: capi_module_has_attr,
+            object_set_item: capi_object_set_item,
+            object_del_item: capi_object_del_item,
         }
     }
 

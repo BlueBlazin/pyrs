@@ -107,6 +107,11 @@ struct PyrsApiV1 {
     const char* (*error_get_message)(void* module_ctx);
     int (*error_clear)(void* module_ctx);
     int (*error_occurred)(void* module_ctx);
+    int (*module_set_attr)(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name, PyrsObjectHandle value_handle);
+    int (*module_del_attr)(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name);
+    int (*module_has_attr)(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name);
+    int (*object_set_item)(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle, PyrsObjectHandle value_handle);
+    int (*object_del_item)(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle);
 };
 
 typedef int (*PyrsExtensionInitV1)(const PyrsApiV1* api, void* module_ctx);

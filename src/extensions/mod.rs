@@ -511,6 +511,33 @@ pub struct PyrsApiV1 {
     pub error_get_message: unsafe extern "C" fn(module_ctx: *mut c_void) -> *const c_char,
     pub error_clear: unsafe extern "C" fn(module_ctx: *mut c_void) -> i32,
     pub error_occurred: unsafe extern "C" fn(module_ctx: *mut c_void) -> i32,
+    pub module_set_attr: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        module_handle: PyrsObjectHandle,
+        attr_name: *const c_char,
+        value_handle: PyrsObjectHandle,
+    ) -> i32,
+    pub module_del_attr: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        module_handle: PyrsObjectHandle,
+        attr_name: *const c_char,
+    ) -> i32,
+    pub module_has_attr: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        module_handle: PyrsObjectHandle,
+        attr_name: *const c_char,
+    ) -> i32,
+    pub object_set_item: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        object_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+        value_handle: PyrsObjectHandle,
+    ) -> i32,
+    pub object_del_item: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        object_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+    ) -> i32,
 }
 
 pub type PyrsCFunctionV1 = unsafe extern "C" fn(
