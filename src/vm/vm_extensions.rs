@@ -45,6 +45,21 @@ struct ModuleCapiContext {
     buffer_pins: HashMap<PyrsObjectHandle, usize>,
 }
 
+impl Drop for ModuleCapiContext {
+    fn drop(&mut self) {
+        let mut capsules = HashMap::new();
+        std::mem::swap(&mut capsules, &mut self.capsules);
+        for slot in capsules.into_values() {
+            if let Some(destructor) = slot.destructor {
+                // SAFETY: destructor pointer was provided by extension code.
+                unsafe {
+                    destructor(slot.pointer as *mut c_void, slot.context as *mut c_void);
+                }
+            }
+        }
+    }
+}
+
 impl ModuleCapiContext {
     fn new(vm: *mut Vm, module: ObjRef) -> Self {
         Self {

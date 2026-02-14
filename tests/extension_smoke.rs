@@ -2978,6 +2978,131 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_runs_capsule_destructor_on_context_drop() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping capsule destructor drop smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping capsule destructor drop smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_capsule_drop_destructor");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_capsule_drop_destructor.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <stdint.h>
+
+static int g_drop_calls = 0;
+static int g_drop_ok = 0;
+
+static void capsule_drop(void* pointer, void* context) {
+    g_drop_calls += 1;
+    if ((uintptr_t)pointer == (uintptr_t)0xCAFE &&
+        (uintptr_t)context == (uintptr_t)0xBEEF) {
+        g_drop_ok = 1;
+    }
+}
+
+static int get_drop_calls(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    PyrsObjectHandle* result
+) {
+    (void)argv;
+    if (argc != 0 || !result) {
+        return -1;
+    }
+    PyrsObjectHandle value = api->object_new_int(module_ctx, g_drop_calls);
+    if (!value) {
+        return -2;
+    }
+    *result = value;
+    return 0;
+}
+
+static int get_drop_ok(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    PyrsObjectHandle* result
+) {
+    (void)argv;
+    if (argc != 0 || !result) {
+        return -3;
+    }
+    PyrsObjectHandle value = api->object_new_int(module_ctx, g_drop_ok);
+    if (!value) {
+        return -4;
+    }
+    *result = value;
+    return 0;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -10;
+    }
+    PyrsObjectHandle cap = api->capsule_new(module_ctx, (void*)(uintptr_t)0xCAFE, "drop.cap");
+    if (!cap) {
+        return -11;
+    }
+    if (api->capsule_set_context(module_ctx, cap, (void*)(uintptr_t)0xBEEF) != 0) {
+        return -12;
+    }
+    if (api->capsule_set_destructor(module_ctx, cap, capsule_drop) != 0) {
+        return -13;
+    }
+    if (api->module_add_function(module_ctx, "drop_calls", get_drop_calls) != 0) {
+        return -14;
+    }
+    if (api->module_add_function(module_ctx, "drop_ok", get_drop_ok) != 0) {
+        return -15;
+    }
+    if (api->module_set_bool(module_ctx, "INIT_OK", 1) != 0) {
+        return -16;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_capsule_drop_destructor");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_capsule_drop_destructor.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_capsule_drop_destructor\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_capsule_drop_destructor as m\nassert m.INIT_OK is True\nassert m.drop_calls() == 1\nassert m.drop_ok() == 1",
+    )
+    .expect("capsule destructor drop import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_bridge_buffer_pointer_through_capsule() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping buffer/capsule bridge extension smoke (pyrs binary not found)");
