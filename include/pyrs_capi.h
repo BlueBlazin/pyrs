@@ -41,6 +41,7 @@ typedef int (*PyrsCFunctionKwV1)(
 );
 typedef void (*PyrsCapsuleDestructorV1)(void* pointer, void* context);
 typedef void (*PyrsModuleStateFreeV1)(void* state);
+typedef void (*PyrsModuleStateFinalizeV1)(void* state);
 
 struct PyrsBufferViewV1 {
     const uint8_t* data;
@@ -76,6 +77,7 @@ struct PyrsApiV1 {
     int (*module_get_attr)(void* module_ctx, PyrsObjectHandle module_handle, const char* attr_name, PyrsObjectHandle* out_handle);
     int (*module_set_state)(void* module_ctx, void* state, PyrsModuleStateFreeV1 free_func);
     void* (*module_get_state)(void* module_ctx);
+    int (*module_set_finalize)(void* module_ctx, PyrsModuleStateFinalizeV1 finalize_func);
     int (*object_type)(void* module_ctx, PyrsObjectHandle handle);
     int (*object_is_instance)(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle classinfo_handle);
     int (*object_is_subclass)(void* module_ctx, PyrsObjectHandle class_handle, PyrsObjectHandle classinfo_handle);

@@ -373,6 +373,10 @@ pub struct PyrsApiV1 {
         free_func: Option<PyrsModuleStateFreeV1>,
     ) -> i32,
     pub module_get_state: unsafe extern "C" fn(module_ctx: *mut c_void) -> *mut c_void,
+    pub module_set_finalize: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        finalize_func: Option<PyrsModuleStateFinalizeV1>,
+    ) -> i32,
     pub object_type: unsafe extern "C" fn(module_ctx: *mut c_void, handle: PyrsObjectHandle) -> i32,
     pub object_is_instance: unsafe extern "C" fn(
         module_ctx: *mut c_void,
@@ -650,6 +654,7 @@ pub type PyrsCFunctionKwV1 = unsafe extern "C" fn(
 
 pub type PyrsCapsuleDestructorV1 = unsafe extern "C" fn(pointer: *mut c_void, context: *mut c_void);
 pub type PyrsModuleStateFreeV1 = unsafe extern "C" fn(state: *mut c_void);
+pub type PyrsModuleStateFinalizeV1 = unsafe extern "C" fn(state: *mut c_void);
 
 pub type PyrsExtensionInitV1 =
     unsafe extern "C" fn(api: *const PyrsApiV1, module_ctx: *mut c_void) -> i32;

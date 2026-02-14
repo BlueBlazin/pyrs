@@ -60,8 +60,8 @@ use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
 use crate::extensions::{
-    PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFreeV1,
-    SharedLibraryHandle,
+    PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1,
+    PyrsModuleStateFreeV1, SharedLibraryHandle,
 };
 use crate::parser;
 use crate::runtime::{
@@ -119,6 +119,7 @@ struct ExtensionCapsuleRegistryEntry {
 struct ExtensionModuleStateEntry {
     state: usize,
     free_func: Option<PyrsModuleStateFreeV1>,
+    finalize_func: Option<PyrsModuleStateFinalizeV1>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -777,13 +778,20 @@ pub struct Vm {
 impl Drop for Vm {
     fn drop(&mut self) {
         for state in self.extension_module_state_registry.values() {
-            if state.state != 0
-                && let Some(free_func) = state.free_func
-            {
-                // SAFETY: free function pointers come from loaded extension modules and
-                // are invoked before extension libraries are dropped.
-                unsafe {
-                    free_func(state.state as *mut c_void);
+            if state.state != 0 {
+                if let Some(finalize_func) = state.finalize_func {
+                    // SAFETY: finalize function pointers come from loaded extension modules and
+                    // are invoked before extension libraries are dropped.
+                    unsafe {
+                        finalize_func(state.state as *mut c_void);
+                    }
+                }
+                if let Some(free_func) = state.free_func {
+                    // SAFETY: free function pointers come from loaded extension modules and
+                    // are invoked before extension libraries are dropped.
+                    unsafe {
+                        free_func(state.state as *mut c_void);
+                    }
                 }
             }
         }

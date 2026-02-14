@@ -7,8 +7,8 @@ use crate::extensions::{
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
     PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferViewV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
-    PyrsCapsuleDestructorV1, PyrsModuleStateFreeV1, PyrsObjectHandle, load_dynamic_initializer,
-    parse_extension_manifest, path_is_shared_library,
+    PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1, PyrsModuleStateFreeV1, PyrsObjectHandle,
+    load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -282,35 +282,93 @@ impl ModuleCapiContext {
         let vm = unsafe { &mut *self.vm };
         vm.prune_extension_module_state_registry();
         if state.is_null() {
-            if let Some(previous) = vm.extension_module_state_registry.remove(&module_id)
-                && previous.state != 0
-                && let Some(previous_free) = previous.free_func
-            {
-                // SAFETY: free function pointer was provided by extension code.
-                unsafe {
-                    previous_free(previous.state as *mut c_void);
+            if let Some(previous) = vm.extension_module_state_registry.remove(&module_id) {
+                if previous.state != 0 {
+                    if let Some(previous_finalize) = previous.finalize_func {
+                        // SAFETY: finalize function pointer was provided by extension code.
+                        unsafe {
+                            previous_finalize(previous.state as *mut c_void);
+                        }
+                    }
+                    if let Some(previous_free) = previous.free_func {
+                        // SAFETY: free function pointer was provided by extension code.
+                        unsafe {
+                            previous_free(previous.state as *mut c_void);
+                        }
+                    }
+                }
+                if let Some(previous_finalize) = previous.finalize_func {
+                    vm.extension_module_state_registry.insert(
+                        module_id,
+                        super::ExtensionModuleStateEntry {
+                            state: 0,
+                            free_func: None,
+                            finalize_func: Some(previous_finalize),
+                        },
+                    );
                 }
             }
             return Ok(());
         }
+        let finalize_func = vm
+            .extension_module_state_registry
+            .get(&module_id)
+            .and_then(|entry| entry.finalize_func);
         let entry = super::ExtensionModuleStateEntry {
             state: state as usize,
             free_func,
+            finalize_func,
         };
         let previous = vm.extension_module_state_registry.insert(module_id, entry);
         if let Some(previous) = previous {
             let replaced_state = previous.state != state as usize;
             let replaced_free =
                 previous.free_func.map(|func| func as usize) != free_func.map(|func| func as usize);
-            if (replaced_state || replaced_free)
-                && previous.state != 0
-                && let Some(previous_free) = previous.free_func
-            {
-                // SAFETY: free function pointer was provided by extension code.
-                unsafe {
-                    previous_free(previous.state as *mut c_void);
+            if (replaced_state || replaced_free) && previous.state != 0 {
+                if let Some(previous_finalize) = previous.finalize_func {
+                    // SAFETY: finalize function pointer was provided by extension code.
+                    unsafe {
+                        previous_finalize(previous.state as *mut c_void);
+                    }
+                }
+                if let Some(previous_free) = previous.free_func {
+                    // SAFETY: free function pointer was provided by extension code.
+                    unsafe {
+                        previous_free(previous.state as *mut c_void);
+                    }
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn module_set_finalize(
+        &mut self,
+        finalize_func: Option<PyrsModuleStateFinalizeV1>,
+    ) -> Result<(), String> {
+        if self.vm.is_null() {
+            return Err("module_set_finalize missing VM context".to_string());
+        }
+        let module_id = self.module.id();
+        // SAFETY: VM pointer is valid for the context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        vm.prune_extension_module_state_registry();
+        if let Some(entry) = vm.extension_module_state_registry.get_mut(&module_id) {
+            entry.finalize_func = finalize_func;
+            if entry.state == 0 && entry.free_func.is_none() && entry.finalize_func.is_none() {
+                vm.extension_module_state_registry.remove(&module_id);
+            }
+            return Ok(());
+        }
+        if let Some(finalize_func) = finalize_func {
+            vm.extension_module_state_registry.insert(
+                module_id,
+                super::ExtensionModuleStateEntry {
+                    state: 0,
+                    free_func: None,
+                    finalize_func: Some(finalize_func),
+                },
+            );
         }
         Ok(())
     }
@@ -1669,6 +1727,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "module_get_attr"
             | "module_set_state"
             | "module_get_state"
+            | "module_set_finalize"
             | "module_set_attr"
             | "module_del_attr"
             | "module_has_attr"
@@ -2180,6 +2239,22 @@ unsafe extern "C" fn capi_module_get_state(module_ctx: *mut c_void) -> *mut c_vo
         Err(err) => {
             context.set_error(err);
             std::ptr::null_mut()
+        }
+    }
+}
+
+unsafe extern "C" fn capi_module_set_finalize(
+    module_ctx: *mut c_void,
+    finalize_func: Option<PyrsModuleStateFinalizeV1>,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.module_set_finalize(finalize_func) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
         }
     }
 }
@@ -3373,13 +3448,20 @@ impl Vm {
             .filter(|id| !live_module_ids.contains(id))
             .collect();
         for stale_id in stale_ids {
-            if let Some(entry) = self.extension_module_state_registry.remove(&stale_id)
-                && entry.state != 0
-                && let Some(free_func) = entry.free_func
-            {
-                // SAFETY: free function pointer was provided by extension code.
-                unsafe {
-                    free_func(entry.state as *mut c_void);
+            if let Some(entry) = self.extension_module_state_registry.remove(&stale_id) {
+                if entry.state != 0 {
+                    if let Some(finalize_func) = entry.finalize_func {
+                        // SAFETY: finalize function pointer was provided by extension code.
+                        unsafe {
+                            finalize_func(entry.state as *mut c_void);
+                        }
+                    }
+                    if let Some(free_func) = entry.free_func {
+                        // SAFETY: free function pointer was provided by extension code.
+                        unsafe {
+                            free_func(entry.state as *mut c_void);
+                        }
+                    }
                 }
             }
         }
@@ -3420,6 +3502,7 @@ impl Vm {
             module_get_attr: capi_module_get_attr,
             module_set_state: capi_module_set_state,
             module_get_state: capi_module_get_state,
+            module_set_finalize: capi_module_set_finalize,
             object_type: capi_object_type,
             object_is_instance: capi_object_is_instance,
             object_is_subclass: capi_object_is_subclass,
