@@ -284,7 +284,7 @@ impl ModuleCapiContext {
         }
         // SAFETY: VM pointer is valid for the context lifetime.
         let vm = unsafe { &mut *self.vm };
-        vm.extension_capsule_registry.insert(
+        let previous = vm.extension_capsule_registry.insert(
             name.to_string(),
             super::ExtensionCapsuleRegistryEntry {
                 pointer,
@@ -292,6 +292,22 @@ impl ModuleCapiContext {
                 destructor,
             },
         );
+        if let Some(previous) = previous {
+            let replaced_pointer = previous.pointer != pointer || previous.context != context;
+            let replaced_destructor = previous.destructor.map(|func| func as usize)
+                != destructor.map(|func| func as usize);
+            if (replaced_pointer || replaced_destructor)
+                && let Some(previous_destructor) = previous.destructor
+            {
+                // SAFETY: destructor pointer came from a previously registered capsule.
+                unsafe {
+                    previous_destructor(
+                        previous.pointer as *mut c_void,
+                        previous.context as *mut c_void,
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
