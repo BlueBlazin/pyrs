@@ -10248,15 +10248,24 @@ fn executes_pure_decimal_getcontext_and_addition() {
         eprintln!("skipping pure decimal test (CPython Lib path not available)");
         return;
     };
-    let lib_path = lib_path.to_string_lossy().replace('\\', "\\\\");
-    let source = format!(
-        "import sys\nsys.path = ['{lib_path}']\nimport decimal\nctx = decimal.getcontext()\na = decimal.Decimal('1.25')\nb = decimal.Decimal('2')\ns = str(a + b)\nok = (ctx is not None and s == '3.25' and decimal.__file__.endswith('_pydecimal.py'))\n"
-    );
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    let handle = std::thread::Builder::new()
+        .name("pure-decimal-getcontext".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let lib_path = lib_path.to_string_lossy().replace('\\', "\\\\");
+            let source = format!(
+                "import sys\nsys.path = ['{lib_path}']\nimport decimal\nctx = decimal.getcontext()\na = decimal.Decimal('1.25')\nb = decimal.Decimal('2')\ns = str(a + b)\nok = (ctx is not None and s == '3.25' and decimal.__file__.endswith('_pydecimal.py'))\n"
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn pure-decimal-getcontext thread");
+    handle
+        .join()
+        .expect("pure-decimal-getcontext thread should complete");
 }
 
 #[test]
