@@ -6,11 +6,12 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 
 ## Latest Probe Summary
 - Total modules: `50`
-- Import pass: `44/50`
-- Common-usecase smoke pass: `39/50`
+- Import pass: `46/50`
+- Common-usecase smoke pass: `44/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
-- Note: targeted closures landed after this snapshot (`queue`, `smtplib` import chain, `imaplib` common `Time2Internaldate(0)` path, email `Content-Type` fold/as_string smoke after str-subclass + regex match indexing parity fixes, `statistics.mean([1,2,3,4])` smoke after numeric ABC + binary add + `float(__float__)` parity fixes, `_sre` named-group fast path for CPython `_pydecimal` parser pattern, import binding parity when `sys.modules[name]` is replaced, and pure `decimal` preference over bootstrap stubs). Refresh artifact pending.
+- Probe command: `python3 scripts/probe_stdlib_extended.py --pyrs target/debug/pyrs --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib --out perf/stdlib_compat_extended_latest.json --timeout 20`
+- Current failing modules: `concurrent.futures` (smoke only), `ssl`, `xml` (smoke only), `gzip`, `bz2`, `lzma`.
 
 ## Checklist
 
@@ -53,9 +54,9 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `contextlib` | DONE | PASS | PASS | - |
 | `weakref` | DONE | PASS | PASS | - |
 | `queue` | DONE | PASS | PASS | - |
-| `concurrent.futures` | DONE | PASS | PASS | - |
+| `concurrent.futures` | P1 | PASS | FAIL | `threading._register_atexit` missing in `threading` runtime surface |
 | `socket` | DONE | PASS | PASS | - |
-| `ssl` | DONE | PASS* | PASS* | targeted import/smoke probe now green; full matrix artifact refresh pending |
+| `ssl` | P0 | FAIL | FAIL | ModuleNotFoundError: module `_ssl` not found |
 | `email` | DONE | PASS | PASS* | `EmailMessage` header/content fold + `as_string()` smoke is green (artifact refresh pending) |
 | `smtplib` | DONE | PASS* | PASS* | targeted import + common constructor smoke is green; runtime still logs missing `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`) |
 | `imaplib` | DONE | PASS | PASS | targeted `Time2Internaldate(0)` smoke now green after `datetime.datetime.fromtimestamp` + `%z` baseline |
@@ -63,14 +64,15 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `xml` | P1 | PASS | FAIL | ImportError: No module named expat; use SimpleXMLTreeBuilder instead |
 | `html` | DONE | PASS | PASS | - |
 | `pickle` | DONE | PASS | PASS | - |
-| `gzip` | P0 | FAIL | FAIL | ModuleNotFoundError: module 'zlib' not found |
-| `bz2` | P0 | FAIL | FAIL | ModuleNotFoundError: module '_bz2' not found |
-| `lzma` | P0 | FAIL | FAIL | ModuleNotFoundError: module '_lzma' not found |
+| `gzip` | P0 | FAIL | FAIL | ModuleNotFoundError: module `zlib` not found |
+| `bz2` | P0 | FAIL | FAIL | ModuleNotFoundError: module `_bz2` not found |
+| `lzma` | P0 | FAIL | FAIL | ModuleNotFoundError: module `_lzma` not found |
 
 ## Open Blockers (Grouped)
 
-- Native extension/module gaps: `gzip`, `bz2`, `lzma`
+- Native extension/module gaps: `ssl`, `gzip`, `bz2`, `lzma`
 - XML parser backend gap (`pyexpat`): `xml`
+- Threading hook gap: `concurrent.futures` (`threading._register_atexit`)
 - Extended `hashlib` algorithm coverage gap impacting `smtplib` startup/runtime diagnostics
 
 ## Shim and Probe Notes

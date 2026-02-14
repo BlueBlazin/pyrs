@@ -33,7 +33,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 
 ## Current Snapshot (2026-02-13)
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
-- Extended stdlib probe: `44/50` import, `39/50` smoke (`perf/stdlib_compat_extended_latest.json`).
+- Extended stdlib probe: `46/50` import, `44/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
   - `threading.Condition.__enter__/__exit__` baseline.
