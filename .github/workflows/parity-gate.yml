@@ -49,6 +49,26 @@ jobs:
       - name: Run full test suite
         run: cargo test -q
 
+      - name: Extension smoke lane
+        run: cargo test -q --test extension_smoke
+
+      - name: NumPy bring-up probe (non-blocking)
+        continue-on-error: true
+        run: |
+          python3 scripts/probe_numpy_gate.py \
+            --pyrs target/debug/pyrs \
+            --cpython-lib "$PYRS_CPYTHON_LIB" \
+            --out perf/numpy_gate_latest.json \
+            --timeout 20
+
+      - name: Upload NumPy bring-up artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: numpy-bringup-gate
+          path: perf/numpy_gate_latest.json
+          if-no-files-found: ignore
+
       - name: Dispatch hotpath benchmark smoke (non-blocking)
         continue-on-error: true
         run: ./scripts/bench_dispatch_hotpath.sh 5

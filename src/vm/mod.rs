@@ -13,6 +13,7 @@ mod stdlib;
 mod vm_bootstrap_import;
 mod vm_builtin_metadata;
 mod vm_execution;
+mod vm_extensions;
 mod vm_native_dispatch;
 mod vm_runtime_methods;
 
@@ -86,6 +87,7 @@ struct ModuleSourceInfo {
     package_dirs: Vec<PathBuf>,
     is_namespace: bool,
     is_bytecode: bool,
+    is_extension: bool,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -107,6 +109,7 @@ const DEFAULT_PATH_HOOK: &str = "pyrs.FileFinder";
 const SOURCE_FILE_LOADER: &str = "pyrs.SourceFileLoader";
 const SOURCELESS_FILE_LOADER: &str = "pyrs.SourcelessFileLoader";
 const NAMESPACE_LOADER: &str = "pyrs.NamespaceLoader";
+const EXTENSION_FILE_LOADER: &str = "pyrs.ExtensionFileLoader";
 const BUILTIN_MODULE_LOADER: &str = "pyrs.BuiltinLoader";
 const PURE_STDLIB_JSON_MODULES: &[&str] = &["json", "json.decoder", "json.scanner"];
 const PURE_STDLIB_PICKLE_MODULES: &[&str] = &["pickle", "pickletools", "copyreg"];

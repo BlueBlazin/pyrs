@@ -1,14 +1,15 @@
 use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
-    DEFAULT_PATH_HOOK, DefaultHasher, Frame, Hash, HashMap, HashSet, Hasher, InstanceObject,
-    LOCAL_SHIM_MODULES, ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object,
-    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
+    DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
+    InstanceObject, LOCAL_SHIM_MODULES, ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef,
+    Object, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
     PURE_STDLIB_RE_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
     SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
     dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
     source_path_from_cache_path,
 };
+use crate::extensions::PYRS_EXTENSION_MANIFEST_SUFFIX;
 
 impl Vm {
     fn sys_list_obj(&self, name: &str) -> Option<ObjRef> {
@@ -5751,6 +5752,8 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new(format!("module '{name}' not found")))?;
         let loader_name = if source_info.is_namespace {
             NAMESPACE_LOADER
+        } else if source_info.is_extension {
+            EXTENSION_FILE_LOADER
         } else if source_info.is_bytecode {
             SOURCELESS_FILE_LOADER
         } else {
@@ -5785,12 +5788,13 @@ impl Vm {
         loader_name: &str,
     ) -> Result<ObjRef, RuntimeError> {
         match loader_name {
-            SOURCE_FILE_LOADER | SOURCELESS_FILE_LOADER | NAMESPACE_LOADER => {
-                match self.heap.alloc_module(ModuleObject::new(name)) {
-                    Value::Module(obj) => Ok(obj),
-                    _ => unreachable!(),
-                }
-            }
+            SOURCE_FILE_LOADER
+            | SOURCELESS_FILE_LOADER
+            | NAMESPACE_LOADER
+            | EXTENSION_FILE_LOADER => match self.heap.alloc_module(ModuleObject::new(name)) {
+                Value::Module(obj) => Ok(obj),
+                _ => unreachable!(),
+            },
             _ => Err(RuntimeError::new(format!(
                 "unsupported loader for module creation: {loader_name}"
             ))),
@@ -5809,6 +5813,7 @@ impl Vm {
             SOURCE_FILE_LOADER => {
                 self.queue_source_module_execution(module, name, &source_info.path)
             }
+            EXTENSION_FILE_LOADER => self.exec_extension_module(module, name, &source_info.path),
             SOURCELESS_FILE_LOADER => {
                 if self.import_perf_enabled {
                     self.import_perf_counters.pyc_load_attempts = self
@@ -5973,6 +5978,7 @@ impl Vm {
                 package_dirs: namespace_dirs,
                 is_namespace: true,
                 is_bytecode: false,
+                is_extension: false,
             });
         }
         None
@@ -6075,6 +6081,7 @@ impl Vm {
                     package_dirs: Vec::new(),
                     is_namespace: false,
                     is_bytecode: true,
+                    is_extension: false,
                 });
             }
             if self.prefer_pyc_when_source_available
@@ -6087,6 +6094,7 @@ impl Vm {
                     package_dirs: Vec::new(),
                     is_namespace: false,
                     is_bytecode: true,
+                    is_extension: false,
                 });
             }
             return cache_positive(ModuleSourceInfo {
@@ -6095,6 +6103,7 @@ impl Vm {
                 package_dirs: Vec::new(),
                 is_namespace: false,
                 is_bytecode: false,
+                is_extension: false,
             });
         }
         // CPython's __pycache__ entries are source-bound; do not treat them as
@@ -6106,6 +6115,18 @@ impl Vm {
                 package_dirs: Vec::new(),
                 is_namespace: false,
                 is_bytecode: true,
+                is_extension: false,
+            });
+        }
+        let extension_manifest = root.join(format!("{rel_name}{PYRS_EXTENSION_MANIFEST_SUFFIX}"));
+        if extension_manifest.exists() {
+            return cache_positive(ModuleSourceInfo {
+                path: extension_manifest,
+                is_package: false,
+                package_dirs: Vec::new(),
+                is_namespace: false,
+                is_bytecode: false,
+                is_extension: true,
             });
         }
         let package_dir = root.join(&rel_name);
@@ -6125,6 +6146,7 @@ impl Vm {
                     package_dirs: vec![package_dir],
                     is_namespace: false,
                     is_bytecode: true,
+                    is_extension: false,
                 });
             }
             if self.prefer_pyc_when_source_available
@@ -6137,6 +6159,7 @@ impl Vm {
                     package_dirs: vec![package_dir],
                     is_namespace: false,
                     is_bytecode: true,
+                    is_extension: false,
                 });
             }
             return cache_positive(ModuleSourceInfo {
@@ -6145,6 +6168,7 @@ impl Vm {
                 package_dirs: vec![package_dir],
                 is_namespace: false,
                 is_bytecode: false,
+                is_extension: false,
             });
         }
         // Likewise for package __pycache__/__init__.pyc: only valid with source.
@@ -6155,6 +6179,19 @@ impl Vm {
                 package_dirs: vec![package_dir],
                 is_namespace: false,
                 is_bytecode: true,
+                is_extension: false,
+            });
+        }
+        let package_extension_manifest =
+            package_dir.join(format!("__init__{PYRS_EXTENSION_MANIFEST_SUFFIX}"));
+        if package_extension_manifest.exists() {
+            return cache_positive(ModuleSourceInfo {
+                path: package_extension_manifest,
+                is_package: true,
+                package_dirs: vec![package_dir],
+                is_namespace: false,
+                is_bytecode: false,
+                is_extension: true,
             });
         }
         if package_dir.is_dir() {
@@ -6164,6 +6201,7 @@ impl Vm {
                 package_dirs: vec![package_dir],
                 is_namespace: true,
                 is_bytecode: false,
+                is_extension: false,
             });
         }
         None

@@ -17,6 +17,11 @@ Define an engineering-first plan to support the real extension-backed Python eco
 
 This design is the source of truth for extension architecture and delivery gates.
 
+Companion execution trackers:
+- `docs/EXTENSION_CAPABILITY_MATRIX.md`
+- `docs/EXTENSION_PACKAGING_CONTRACT.md`
+- `docs/NUMPY_BRINGUP_GATE.md`
+
 ## Scope and Compatibility Contract
 
 ### Primary Goal
@@ -306,4 +311,3 @@ All conditions must hold:
 - no open P0 blockers in extension capability matrix for exercised paths
 - clear unsupported-surface diagnostics for out-of-scope features
 - reproducible CI evidence and docs updated in same checkpoint
-

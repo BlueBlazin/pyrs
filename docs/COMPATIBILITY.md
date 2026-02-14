@@ -49,6 +49,13 @@ Status:
 - `[x]` Coverage/no-op inventory/builtin parity gates active
 - `[~]` Full strict stdlib closure pending deferred pickle harness lane
 
+## Extension Ecosystem (Milestone 15)
+- `[~]` Extension subsystem scaffolding landed (`.pyrs-ext` manifest discovery + `pyrs.ExtensionFileLoader` + `hello_ext` smoke test)
+- `[~]` NumPy bring-up probe scaffold landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`)
+- `[ ]` Native shared-library loader (`.so/.dylib/.pyd`) and PEP 489 multi-phase init
+- `[ ]` `libpyrs-capi` symbol/header/runtime contract
+- `[ ]` NumPy/SciPy/Pandas/Matplotlib production import + functional gate closure
+
 ## Notes
 - Active strict harness lane suite: `tests/cpython_suite_strict_stdlib.txt`
 - Deferred strict pickle harness lane suite: `tests/cpython_suite_deferred_pickle.txt`

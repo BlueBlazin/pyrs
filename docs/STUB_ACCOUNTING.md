@@ -36,6 +36,7 @@ Status values:
 
 | Surface | Gap summary | Closure criteria | Status | Milestone |
 |---|---|---|---|---|
+| Extension ecosystem substrate (`.pyrs-ext` scaffolding) | Manifest-backed loader baseline and `hello_ext` smoke gate are landed; real shared-library loading (`.so/.dylib/.pyd`), C-ABI surface, and PEP 489 lifecycle are not yet implemented. | `docs/EXTENSION_CAPABILITY_MATRIX.md` marks dynamic loader + C runtime + lifecycle surfaces `DONE` with deterministic tests, and NumPy/Pandas/Matplotlib/SciPy bring-up gates are green in CI. | IN_PROGRESS | 15 |
 | Importlib/resources/pkgutil helpers | `pkgutil` fallback is now native (`get_data`, `resolve_name`, `iter_modules`, `walk_packages`) and local `pkgutil` shim is removed; long-tail `importlib.resources` behavior remains partial. | In-scope CPython compatibility for packaging/resource paths. | IN_PROGRESS | 13 |
 | `inspect`/`types` | Foundational behavior exists; stdlib-required edges remain. | Full stdlib-required behavior parity in scope. | IN_PROGRESS | 13 |
 | `threading`/`signal`/`_thread`/`_warnings` | Foundations exist; behavior depth is incomplete. `concurrent.futures` common smoke is now green after iterator protocol + semaphore bound fixes. | Full in-scope behavioral parity in strict/curated suites beyond common smoke paths. | IN_PROGRESS | 13/16 |

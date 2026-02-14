@@ -4,6 +4,7 @@ pub mod ast;
 pub mod bytecode;
 pub mod cli;
 pub mod compiler;
+pub mod extensions;
 pub mod parser;
 pub mod runtime;
 pub mod stdlib;

@@ -29,6 +29,10 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_bootstrap_import.rs`
   - VM/module bootstrap wiring
   - import-system construction and import-path foundations
+- `/Users/$USER/pyrs/src/vm/vm_extensions.rs`
+  - extension manifest loader execution path (`.pyrs-ext` scaffolding)
+  - extension module metadata/entrypoint wiring
+  - owns extension-loader behavior inside VM import execution
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -69,6 +73,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New opcode execution behavior: `vm_execution.rs` (or `ops.rs` if pure operator kernel).
 - New builtin function dispatch path: `vm_native_dispatch.rs` + owning `builtins_*.rs` implementation.
 - New import/bootstrap wiring: `vm_bootstrap_import.rs`.
+- New extension-loader runtime behavior: `vm_extensions.rs` (and `src/extensions/` for manifest/types).
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 

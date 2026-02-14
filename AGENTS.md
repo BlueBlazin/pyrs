@@ -34,6 +34,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 ## Current Snapshot (2026-02-14)
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
+- Extension scaffolding checkpoint:
+  - extension manifest parser + suffix baseline (`.pyrs-ext`, ABI `pyrs314`) is landed (`src/extensions/mod.rs`).
+  - import loader now recognizes extension manifests and executes them through `pyrs.ExtensionFileLoader`.
+  - minimal extension smoke path (`hello_ext`) is wired and tested in `tests/extension_smoke.rs`.
+  - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
+  - NumPy bring-up probe scaffold is landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifact `perf/numpy_gate_latest.json`).
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
   - `threading.Condition.__enter__/__exit__` baseline.
@@ -147,6 +153,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Production blockers and release criteria: `docs/PRODUCTION_READINESS.md`
 - Beta release checkpoint plan: `docs/RELEASE_PLAN_BETA.md`
 - Extension ecosystem architecture plan: `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
+- Extension capability matrix: `docs/EXTENSION_CAPABILITY_MATRIX.md`
+- Extension packaging/build contract: `docs/EXTENSION_PACKAGING_CONTRACT.md`
+- NumPy bring-up tracker: `docs/NUMPY_BRINGUP_GATE.md`
 - Partial/stub ledger: `docs/STUB_ACCOUNTING.md`
 - Top stdlib common-usecase tracker: `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`
 - Object-model parity audit: `docs/OBJECT_MODEL_AUDIT.md`
