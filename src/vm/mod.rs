@@ -88,6 +88,13 @@ struct ModuleSourceInfo {
     is_bytecode: bool,
 }
 
+#[derive(Default, Clone, Copy)]
+struct ImportPerfCounters {
+    fs_source_compiles: u64,
+    pyc_load_attempts: u64,
+    pyc_load_fallback_to_source: u64,
+}
+
 #[derive(Clone)]
 struct AtexitHandler {
     callable: Value,
@@ -654,6 +661,13 @@ pub struct Vm {
     module_paths: Vec<PathBuf>,
     module_source_positive_cache: HashMap<(PathBuf, String), ModuleSourceInfo>,
     preferred_filesystem_module_cache: HashMap<String, bool>,
+    import_sys_path_signature: u64,
+    import_meta_path_signature: u64,
+    import_path_hooks_signature: u64,
+    import_meta_path_has_default_finder: bool,
+    import_path_hooks_has_default_hook: bool,
+    import_perf_enabled: bool,
+    import_perf_counters: ImportPerfCounters,
     heap: Heap,
     random: Mt19937,
     generator_states: HashMap<u64, Box<Frame>>,
@@ -697,6 +711,7 @@ pub struct Vm {
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
     prefer_pure_re_when_available: bool,
+    prefer_pyc_when_source_available: bool,
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
     recursion_limit: i64,
@@ -750,6 +765,13 @@ impl Vm {
             module_paths,
             module_source_positive_cache: HashMap::new(),
             preferred_filesystem_module_cache: HashMap::new(),
+            import_sys_path_signature: 0,
+            import_meta_path_signature: 0,
+            import_path_hooks_signature: 0,
+            import_meta_path_has_default_finder: true,
+            import_path_hooks_has_default_hook: true,
+            import_perf_enabled: env_flag_enabled("PYRS_IMPORT_PERF"),
+            import_perf_counters: ImportPerfCounters::default(),
             heap,
             random: Mt19937::new(5489),
             generator_states: HashMap::new(),
@@ -795,6 +817,7 @@ impl Vm {
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
+            prefer_pyc_when_source_available: env_flag_enabled("PYRS_IMPORT_PREFER_PYC"),
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             recursion_limit: 1000,
@@ -820,6 +843,7 @@ impl Vm {
         vm.install_stdlib_modules();
         vm.install_builtins();
         vm.install_builtins_module();
+        vm.refresh_import_resolver_state();
         vm.gc_last_allocation_count = vm.heap.total_allocations();
         vm
     }
@@ -1282,6 +1306,14 @@ impl Vm {
             let _ = self.frames.pop();
         }
         self.run_pending_del_finalizers();
+        if self.import_perf_enabled {
+            eprintln!(
+                "[import-perf] source_compiles={} pyc_attempts={} pyc_fallbacks={}",
+                self.import_perf_counters.fs_source_compiles,
+                self.import_perf_counters.pyc_load_attempts,
+                self.import_perf_counters.pyc_load_fallback_to_source,
+            );
+        }
         shutdown_result.map(|_| ())
     }
 
@@ -1293,6 +1325,7 @@ impl Vm {
         self.module_paths.push(path);
         self.module_source_positive_cache.clear();
         self.preferred_filesystem_module_cache.clear();
+        self.import_sys_path_signature = 0;
         self.sync_sys_path_from_module_paths();
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
@@ -1303,6 +1336,7 @@ impl Vm {
         self.module_paths.insert(0, path);
         self.module_source_positive_cache.clear();
         self.preferred_filesystem_module_cache.clear();
+        self.import_sys_path_signature = 0;
         self.sync_sys_path_from_module_paths();
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
@@ -1320,6 +1354,11 @@ impl Vm {
     pub fn enable_pure_re_preference(&mut self) {
         self.prefer_pure_re_when_available = true;
         self.maybe_prefer_cpython_pure_stdlib_modules();
+    }
+
+    pub fn enable_source_bound_pyc_preference(&mut self) {
+        self.prefer_pyc_when_source_available = true;
+        self.module_source_positive_cache.clear();
     }
 
     pub fn enable_local_shim_fallback(&mut self) {

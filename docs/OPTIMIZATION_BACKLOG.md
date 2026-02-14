@@ -106,7 +106,10 @@ Do not rely on stale point-in-time numbers in this document.
   - tightened `CompareLt`/`CompareLtConst` jump path truthiness handling to avoid temporary `Value::Bool` materialization when the result is used only for branch control.
   - release profile now uses `lto = "fat"` (from thin) to improve cross-function optimization in hot VM call/dispatch paths.
   - dispatch hotpath benchmark remains non-regressing after terminal-op fusion extension (`scripts/bench_dispatch_hotpath.sh`: `0.8493s` at `bfeba79` vs `0.8470s` current in local runs; lower is better).
-  - startup/import optimization wave started: positive module-source lookup cache keyed by `(root, module_name)` and `sys.path` sync short-circuit/invalidation landed.
-  - startup gate delta vs `0efdd20` baseline (`WARMUP=2 scripts/bench_startup_gate.sh 12`):
-    - `startup pass (site)`: `0.0275s -> 0.0225s` (~18% faster).
-    - `startup import-bundle`: `0.0600s -> 0.0592s` (small improvement; more work needed).
+  - startup/import optimization wave: positive module-source lookup cache (`(root, module_name)`), `sys.path` sync short-circuit, and resolver-state signatures for `meta_path`/`path_hooks` are landed; default CPython stdlib auto-detection now selects one canonical fallback root to cut startup/import search churn.
+  - startup benchmark methodology now uses wall-clock `perf_counter` in `scripts/bench_startup_gate.sh` (replacing coarse `/usr/bin/time -p` user-time sampling).
+  - latest local startup gate (`scripts/bench_startup_gate.sh 20`, warmup `1`):
+    - `pass(site)`: `0.0097s`
+    - `pass(-S)`: `0.0055s`
+    - `import-bundle`: `0.0663s`
+    - reference `python3.10 import-bundle`: `0.0282s` (current pyrs gap ~`2.35x`, primarily import/compile-path work).

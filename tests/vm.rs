@@ -1,4 +1,5 @@
 use pyrs::{
+    bytecode::pyc::{PycHeader, write_pyc_header},
     compiler, parser,
     runtime::{BuiltinFunction, Object, Value},
     vm::Vm,
@@ -6659,6 +6660,59 @@ ok = (first == 11 and second == 29)\n"
     let _ = std::fs::remove_dir(&temp_dir_a);
     let _ = std::fs::remove_dir(&temp_dir_b);
     let _ = std::fs::remove_dir(&temp_root);
+}
+
+#[test]
+fn prefers_valid_timestamped_pyc_and_falls_back_to_source_on_invalid_payload() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_pyc_fallback_{unique}"));
+    let pycache_dir = temp_dir.join("__pycache__");
+    std::fs::create_dir_all(&pycache_dir).expect("create pycache dir");
+    let source_path = temp_dir.join("mod.py");
+    std::fs::write(&source_path, "value = 53\n").expect("write source module");
+    let metadata = std::fs::metadata(&source_path).expect("source metadata");
+    let timestamp = metadata
+        .modified()
+        .expect("modified time")
+        .duration_since(UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_secs();
+    let timestamp = u32::try_from(timestamp).expect("timestamp fits u32");
+    let source_size = u32::try_from(metadata.len()).expect("source size fits u32");
+    let mut pyc_bytes = Vec::new();
+    write_pyc_header(
+        &PycHeader {
+            magic: 0,
+            bitfield: 0,
+            timestamp: Some(timestamp),
+            source_size: Some(source_size),
+            hash: None,
+        },
+        &mut pyc_bytes,
+    )
+    .expect("write pyc header");
+    pyc_bytes.push(b'>');
+    std::fs::write(pycache_dir.join("mod.cpython-314.pyc"), pyc_bytes).expect("write pyc module");
+
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nimport mod\nok = (mod.value == 53 and mod.__file__.endswith('mod.py'))\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.enable_source_bound_pyc_preference();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(pycache_dir.join("mod.cpython-314.pyc"));
+    let _ = std::fs::remove_file(&source_path);
+    let _ = std::fs::remove_dir(&pycache_dir);
+    let _ = std::fs::remove_dir(&temp_dir);
 }
 
 #[test]

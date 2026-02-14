@@ -229,7 +229,14 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         "/usr/local/lib/python3.14",
         "/usr/lib/python3.14",
     ] {
-        register(PathBuf::from(candidate));
+        let candidate_path = PathBuf::from(candidate);
+        let normalized = std::fs::canonicalize(&candidate_path).unwrap_or(candidate_path);
+        if normalized.join("site.py").is_file() {
+            if seen.insert(normalized.clone()) {
+                out.push(normalized);
+            }
+            break;
+        }
     }
 
     (out, strict_site_import)

@@ -1,15 +1,171 @@
 use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
-    DEFAULT_PATH_HOOK, Frame, HashMap, HashSet, InstanceObject, LOCAL_SHIM_MODULES, ModuleObject,
-    ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object, PURE_STDLIB_JSON_MODULES,
-    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PathBuf, Rc,
-    RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER,
-    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler,
-    cpython, dict_get_value, dict_remove_value, dict_set_value, matches_finder_kind,
-    parse_uuid_like_string, parser,
+    DEFAULT_PATH_HOOK, DefaultHasher, Frame, Hash, HashMap, HashSet, Hasher, InstanceObject,
+    LOCAL_SHIM_MODULES, ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object,
+    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
+    PURE_STDLIB_RE_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
+    SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
+    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
+    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
+    source_path_from_cache_path,
 };
 
 impl Vm {
+    fn sys_list_obj(&self, name: &str) -> Option<ObjRef> {
+        let sys_module = self.modules.get("sys")?.clone();
+        let module_kind = sys_module.kind();
+        let module_data = match &*module_kind {
+            Object::Module(module_data) => module_data,
+            _ => return None,
+        };
+        match module_data.globals.get(name) {
+            Some(Value::List(list)) => Some(list.clone()),
+            _ => None,
+        }
+    }
+
+    fn list_has_default_finder(&self, list_name: &str, default_kind: &str) -> bool {
+        let Some(list_obj) = self.sys_list_obj(list_name) else {
+            return false;
+        };
+        let list_kind = list_obj.kind();
+        let Object::List(values) = &*list_kind else {
+            return false;
+        };
+        for value in values {
+            if matches_finder_kind(value, default_kind) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn list_signature(values: &[Value]) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        values.len().hash(&mut hasher);
+        for value in values {
+            match value {
+                Value::Str(path) => {
+                    1u8.hash(&mut hasher);
+                    path.hash(&mut hasher);
+                }
+                other => {
+                    0u8.hash(&mut hasher);
+                    std::mem::discriminant(other).hash(&mut hasher);
+                }
+            }
+        }
+        hasher.finish()
+    }
+
+    fn sys_list_signature(&self, name: &str) -> Option<u64> {
+        let list_obj = self.sys_list_obj(name)?;
+        let list_kind = list_obj.kind();
+        let Object::List(values) = &*list_kind else {
+            return None;
+        };
+        Some(Self::list_signature(values))
+    }
+
+    pub(super) fn refresh_import_resolver_state(&mut self) {
+        self.sync_module_paths_from_sys();
+        match self.sys_list_signature("meta_path") {
+            Some(signature) if signature != self.import_meta_path_signature => {
+                self.import_meta_path_signature = signature;
+                self.import_meta_path_has_default_finder =
+                    self.list_has_default_finder("meta_path", DEFAULT_META_PATH_FINDER);
+            }
+            None => {
+                self.import_meta_path_signature = 0;
+                self.import_meta_path_has_default_finder = false;
+            }
+            _ => {}
+        }
+        match self.sys_list_signature("path_hooks") {
+            Some(signature) if signature != self.import_path_hooks_signature => {
+                self.import_path_hooks_signature = signature;
+                self.import_path_hooks_has_default_hook =
+                    self.list_has_default_finder("path_hooks", DEFAULT_PATH_HOOK);
+            }
+            None => {
+                self.import_path_hooks_signature = 0;
+                self.import_path_hooks_has_default_hook = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn source_timestamp_and_size(path: &Path) -> Option<(u32, u32)> {
+        let metadata = std::fs::metadata(path).ok()?;
+        let modified = metadata.modified().ok()?;
+        let timestamp = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .and_then(|duration| u32::try_from(duration.as_secs()).ok())?;
+        let size = u32::try_from(metadata.len()).ok()?;
+        Some((timestamp, size))
+    }
+
+    fn pyc_matches_source(pyc_path: &Path, source_path: &Path) -> bool {
+        let (source_timestamp, source_size) = match Self::source_timestamp_and_size(source_path) {
+            Some(value) => value,
+            None => return false,
+        };
+        let mut header = [0u8; 16];
+        let Ok(mut file) = std::fs::File::open(pyc_path) else {
+            return false;
+        };
+        use std::io::Read;
+        if file.read_exact(&mut header).is_err() {
+            return false;
+        }
+        let parsed = match crate::bytecode::pyc::parse_pyc_header(&header) {
+            Ok((parsed, _)) => parsed,
+            Err(_) => return false,
+        };
+        if parsed.bitfield & 0x01 != 0 {
+            return false;
+        }
+        matches!(
+            (parsed.timestamp, parsed.source_size),
+            (Some(ts), Some(sz)) if ts == source_timestamp && sz == source_size
+        )
+    }
+
+    fn queue_source_module_execution(
+        &mut self,
+        module: &ObjRef,
+        name: &str,
+        source_path: &Path,
+    ) -> Result<(), RuntimeError> {
+        if self.import_perf_enabled {
+            self.import_perf_counters.fs_source_compiles = self
+                .import_perf_counters
+                .fs_source_compiles
+                .saturating_add(1);
+        }
+        let source = std::fs::read_to_string(source_path)
+            .map_err(|err| RuntimeError::new(format!("failed to read module '{name}': {err}")))?;
+
+        let module_ast = parser::parse_module(&source).map_err(|err| {
+            RuntimeError::new(format!(
+                "parse error in module '{name}' at {}: {}",
+                err.offset, err.message
+            ))
+        })?;
+        let code =
+            compiler::compile_module_with_filename(&module_ast, &source_path.to_string_lossy())
+                .map_err(|err| {
+                    RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
+                })?;
+        let code = Rc::new(code);
+        let cells = self.build_cells(&code, Vec::new());
+        let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
+        frame.discard_result = true;
+        self.frames.push(Box::new(frame));
+        Ok(())
+    }
+
     pub(super) fn set_module_class_bases(
         &mut self,
         module_name: &str,
@@ -5358,24 +5514,22 @@ impl Vm {
     }
 
     pub(super) fn sync_module_paths_from_sys(&mut self) {
-        let sys_module = match self.modules.get("sys").cloned() {
-            Some(module) => module,
-            None => return,
-        };
-        let path_value = match &*sys_module.kind() {
-            Object::Module(module_data) => module_data.globals.get("path").cloned(),
-            _ => None,
-        };
-        let Some(Value::List(path_list)) = path_value else {
+        let Some(path_list) = self.sys_list_obj("path") else {
             return;
         };
-
+        let list_kind = path_list.kind();
+        let Object::List(values) = &*list_kind else {
+            return;
+        };
+        let signature = Self::list_signature(values);
+        if signature == self.import_sys_path_signature {
+            return;
+        }
+        self.import_sys_path_signature = signature;
         let mut new_paths = Vec::new();
-        if let Object::List(values) = &*path_list.kind() {
-            for value in values {
-                if let Value::Str(path) = value {
-                    new_paths.push(PathBuf::from(path));
-                }
+        for value in values {
+            if let Value::Str(path) = value {
+                new_paths.push(PathBuf::from(path));
             }
         }
         if new_paths == self.module_paths {
@@ -5653,45 +5807,69 @@ impl Vm {
         match loader_name {
             NAMESPACE_LOADER => Ok(()),
             SOURCE_FILE_LOADER => {
-                let source = std::fs::read_to_string(&source_info.path).map_err(|err| {
-                    RuntimeError::new(format!("failed to read module '{name}': {err}"))
-                })?;
-
-                let module_ast = parser::parse_module(&source).map_err(|err| {
-                    RuntimeError::new(format!(
-                        "parse error in module '{name}' at {}: {}",
-                        err.offset, err.message
-                    ))
-                })?;
-                let code = compiler::compile_module_with_filename(
-                    &module_ast,
-                    &source_info.path.to_string_lossy(),
-                )
-                .map_err(|err| {
-                    RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
-                })?;
-                let code = Rc::new(code);
-                let cells = self.build_cells(&code, Vec::new());
-                let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
-                frame.discard_result = true;
-                self.frames.push(Box::new(frame));
-                Ok(())
+                self.queue_source_module_execution(module, name, &source_info.path)
             }
             SOURCELESS_FILE_LOADER => {
+                if self.import_perf_enabled {
+                    self.import_perf_counters.pyc_load_attempts = self
+                        .import_perf_counters
+                        .pyc_load_attempts
+                        .saturating_add(1);
+                }
                 let bytes = std::fs::read(&source_info.path).map_err(|err| {
                     RuntimeError::new(format!("failed to read module '{name}': {err}"))
                 })?;
-                let pyc = cpython::load_pyc(&bytes)
-                    .map_err(|err| RuntimeError::new(format!("pyc load error: {}", err.message)))?;
-                let code = cpython::translate_code(&pyc, &mut self.heap).map_err(|err| {
-                    RuntimeError::new(format!("pyc translate error: {}", err.message))
-                })?;
-                let code = Rc::new(code);
-                let cells = self.build_cells(&code, Vec::new());
-                let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
-                frame.discard_result = true;
-                self.frames.push(Box::new(frame));
-                Ok(())
+                let pyc_result = cpython::load_pyc(&bytes)
+                    .map_err(|err| RuntimeError::new(format!("pyc load error: {}", err.message)))
+                    .and_then(|pyc| {
+                        cpython::translate_code(&pyc, &mut self.heap).map_err(|err| {
+                            RuntimeError::new(format!("pyc translate error: {}", err.message))
+                        })
+                    });
+                match pyc_result {
+                    Ok(code) => {
+                        let code = Rc::new(code);
+                        let cells = self.build_cells(&code, Vec::new());
+                        let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
+                        frame.discard_result = true;
+                        self.frames.push(Box::new(frame));
+                        Ok(())
+                    }
+                    Err(pyc_err) => {
+                        let source_path = PathBuf::from(source_path_from_cache_path(
+                            &source_info.path.to_string_lossy(),
+                        ));
+                        if std::env::var_os("PYRS_IMPORT_PERF_VERBOSE").is_some() {
+                            eprintln!(
+                                "[import-perf] pyc-fallback module={name} pyc={} source={} source_exists={} reason={}",
+                                source_info.path.display(),
+                                source_path.display(),
+                                source_path.is_file(),
+                                pyc_err.message
+                            );
+                        }
+                        if source_path.is_file() {
+                            if self.import_perf_enabled {
+                                self.import_perf_counters.pyc_load_fallback_to_source = self
+                                    .import_perf_counters
+                                    .pyc_load_fallback_to_source
+                                    .saturating_add(1);
+                            }
+                            self.set_module_metadata(
+                                module,
+                                name,
+                                Some(&source_path),
+                                Some(SOURCE_FILE_LOADER),
+                                source_info.is_package,
+                                source_info.package_dirs.clone(),
+                                source_info.is_namespace,
+                            );
+                            self.queue_source_module_execution(module, name, &source_path)
+                        } else {
+                            Err(pyc_err)
+                        }
+                    }
+                }
             }
             _ => Err(RuntimeError::new(format!(
                 "unsupported loader for module execution: {loader_name}"
@@ -5700,25 +5878,11 @@ impl Vm {
     }
 
     pub(super) fn find_module_source(&mut self, name: &str) -> Option<ModuleSourceInfo> {
-        self.sync_module_paths_from_sys();
-        let meta_path = self.sys_list_values("meta_path").unwrap_or_default();
-        for finder in &meta_path {
-            if let Some(source) = self.find_module_source_with_meta_finder(name, finder) {
-                return Some(source);
-            }
+        self.refresh_import_resolver_state();
+        if !self.import_meta_path_has_default_finder {
+            return None;
         }
-        None
-    }
-
-    pub(super) fn find_module_source_with_meta_finder(
-        &mut self,
-        name: &str,
-        finder: &Value,
-    ) -> Option<ModuleSourceInfo> {
-        if matches_finder_kind(finder, DEFAULT_META_PATH_FINDER) {
-            return self.path_finder_find_spec(name);
-        }
-        None
+        self.path_finder_find_spec(name)
     }
 
     pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
@@ -5838,13 +6002,11 @@ impl Vm {
     }
 
     pub(super) fn run_path_hooks_for_root(&mut self, root: &std::path::Path) -> Option<Value> {
-        let hooks = self.sys_list_values("path_hooks").unwrap_or_default();
-        for hook in hooks {
-            if matches_finder_kind(&hook, DEFAULT_PATH_HOOK) {
-                return Some(self.make_file_finder_importer(root));
-            }
+        if self.import_path_hooks_has_default_hook {
+            Some(self.make_file_finder_importer(root))
+        } else {
+            None
         }
-        None
     }
 
     pub(super) fn make_file_finder_importer(&self, root: &std::path::Path) -> Value {
@@ -5900,7 +6062,33 @@ impl Vm {
         };
         let rel_name = module_name.replace('.', "/");
         let candidate = root.join(format!("{rel_name}.py"));
+        let pyc_candidate = cached_module_path(root, &rel_name);
+        let direct_pyc = root.join(format!("{rel_name}.pyc"));
         if candidate.exists() {
+            if self.prefer_pyc_when_source_available
+                && pyc_candidate.exists()
+                && Self::pyc_matches_source(&pyc_candidate, &candidate)
+            {
+                return cache_positive(ModuleSourceInfo {
+                    path: pyc_candidate,
+                    is_package: false,
+                    package_dirs: Vec::new(),
+                    is_namespace: false,
+                    is_bytecode: true,
+                });
+            }
+            if self.prefer_pyc_when_source_available
+                && direct_pyc.exists()
+                && Self::pyc_matches_source(&direct_pyc, &candidate)
+            {
+                return cache_positive(ModuleSourceInfo {
+                    path: direct_pyc,
+                    is_package: false,
+                    package_dirs: Vec::new(),
+                    is_namespace: false,
+                    is_bytecode: true,
+                });
+            }
             return cache_positive(ModuleSourceInfo {
                 path: candidate,
                 is_package: false,
@@ -5909,17 +6097,8 @@ impl Vm {
                 is_bytecode: false,
             });
         }
-        let pyc_candidate = cached_module_path(root, &rel_name);
-        if pyc_candidate.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: pyc_candidate,
-                is_package: false,
-                package_dirs: Vec::new(),
-                is_namespace: false,
-                is_bytecode: true,
-            });
-        }
-        let direct_pyc = root.join(format!("{rel_name}.pyc"));
+        // CPython's __pycache__ entries are source-bound; do not treat them as
+        // standalone sourceless imports when source is absent.
         if direct_pyc.exists() {
             return cache_positive(ModuleSourceInfo {
                 path: direct_pyc,
@@ -5931,7 +6110,35 @@ impl Vm {
         }
         let package_dir = root.join(&rel_name);
         let package_init = package_dir.join("__init__.py");
+        let package_init_pyc = package_dir
+            .join("__pycache__")
+            .join("__init__.cpython-314.pyc");
+        let direct_package_init_pyc = package_dir.join("__init__.pyc");
         if package_init.exists() {
+            if self.prefer_pyc_when_source_available
+                && package_init_pyc.exists()
+                && Self::pyc_matches_source(&package_init_pyc, &package_init)
+            {
+                return cache_positive(ModuleSourceInfo {
+                    path: package_init_pyc,
+                    is_package: true,
+                    package_dirs: vec![package_dir],
+                    is_namespace: false,
+                    is_bytecode: true,
+                });
+            }
+            if self.prefer_pyc_when_source_available
+                && direct_package_init_pyc.exists()
+                && Self::pyc_matches_source(&direct_package_init_pyc, &package_init)
+            {
+                return cache_positive(ModuleSourceInfo {
+                    path: direct_package_init_pyc,
+                    is_package: true,
+                    package_dirs: vec![package_dir],
+                    is_namespace: false,
+                    is_bytecode: true,
+                });
+            }
             return cache_positive(ModuleSourceInfo {
                 path: package_init,
                 is_package: true,
@@ -5940,19 +6147,7 @@ impl Vm {
                 is_bytecode: false,
             });
         }
-        let package_init_pyc = package_dir
-            .join("__pycache__")
-            .join("__init__.cpython-314.pyc");
-        if package_init_pyc.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: package_init_pyc,
-                is_package: true,
-                package_dirs: vec![package_dir],
-                is_namespace: false,
-                is_bytecode: true,
-            });
-        }
-        let direct_package_init_pyc = package_dir.join("__init__.pyc");
+        // Likewise for package __pycache__/__init__.pyc: only valid with source.
         if direct_package_init_pyc.exists() {
             return cache_positive(ModuleSourceInfo {
                 path: direct_package_init_pyc,
@@ -5972,23 +6167,6 @@ impl Vm {
             });
         }
         None
-    }
-
-    pub(super) fn sys_list_values(&self, name: &str) -> Option<Vec<Value>> {
-        let sys_module = self.modules.get("sys")?.clone();
-        let module_kind = sys_module.kind();
-        let module_data = match &*module_kind {
-            Object::Module(module_data) => module_data,
-            _ => return None,
-        };
-        let list_obj = match module_data.globals.get(name) {
-            Some(Value::List(list)) => list.clone(),
-            _ => return None,
-        };
-        match &*list_obj.kind() {
-            Object::List(values) => Some(values.clone()),
-            _ => None,
-        }
     }
 
     pub(super) fn sys_dict_obj(&self, name: &str) -> Option<ObjRef> {
