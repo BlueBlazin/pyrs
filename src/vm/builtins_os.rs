@@ -1283,9 +1283,7 @@ impl Vm {
                 let file_type = entry
                     .file_type()
                     .map_err(|err| RuntimeError::new(format!("walk failed: {err}")))?;
-                if file_type.is_dir() {
-                    dir_entries.push((name, path));
-                } else if file_type.is_symlink() && followlinks {
+                if file_type.is_dir() || (file_type.is_symlink() && followlinks) {
                     dir_entries.push((name, path));
                 } else {
                     file_entries.push(name);

@@ -587,7 +587,7 @@ impl Vm {
          -> Result<Value, RuntimeError> {
             match key {
                 None => Ok(item),
-                Some(callable) if matches!(callable, Value::None) => Ok(item),
+                Some(Value::None) => Ok(item),
                 Some(callable) => match vm.call_internal(callable, vec![item], HashMap::new())? {
                     InternalCallOutcome::Value(value) => Ok(value),
                     InternalCallOutcome::CallerExceptionHandled => {

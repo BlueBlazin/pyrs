@@ -787,8 +787,13 @@ impl Vm {
                 if stop < start {
                     stop = start;
                 }
-                for idx in (start as usize)..(stop as usize) {
-                    if values[idx] == target {
+                for (idx, value) in values
+                    .iter()
+                    .enumerate()
+                    .take(stop as usize)
+                    .skip(start as usize)
+                {
+                    if *value == target {
                         return Ok(NativeCallResult::Value(Value::Int(idx as i64)));
                     }
                 }
@@ -827,8 +832,13 @@ impl Vm {
                 if stop < start {
                     stop = start;
                 }
-                for idx in (start as usize)..(stop as usize) {
-                    if values[idx] == target {
+                for (idx, value) in values
+                    .iter()
+                    .enumerate()
+                    .take(stop as usize)
+                    .skip(start as usize)
+                {
+                    if *value == target {
                         return Ok(NativeCallResult::Value(Value::Int(idx as i64)));
                     }
                 }

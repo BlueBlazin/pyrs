@@ -5743,7 +5743,7 @@ impl Vm {
         None
     }
 
-    pub(super) fn path_importer_for_root(&mut self, root: &PathBuf) -> Option<Value> {
+    pub(super) fn path_importer_for_root(&mut self, root: &std::path::Path) -> Option<Value> {
         let key = Value::Str(root.to_string_lossy().to_string());
         if let Some(cache_dict) = self.sys_dict_obj("path_importer_cache") {
             if let Some(cached) = dict_get_value(&cache_dict, &key) {
@@ -5766,7 +5766,7 @@ impl Vm {
         self.run_path_hooks_for_root(root)
     }
 
-    pub(super) fn run_path_hooks_for_root(&mut self, root: &PathBuf) -> Option<Value> {
+    pub(super) fn run_path_hooks_for_root(&mut self, root: &std::path::Path) -> Option<Value> {
         let hooks = self.sys_list_values("path_hooks").unwrap_or_default();
         for hook in hooks {
             if matches_finder_kind(&hook, DEFAULT_PATH_HOOK) {
@@ -5776,7 +5776,7 @@ impl Vm {
         None
     }
 
-    pub(super) fn make_file_finder_importer(&self, root: &PathBuf) -> Value {
+    pub(super) fn make_file_finder_importer(&self, root: &std::path::Path) -> Value {
         self.heap.alloc_dict(vec![
             (
                 Value::Str("kind".to_string()),
@@ -5816,7 +5816,7 @@ impl Vm {
     pub(super) fn find_module_source_in_single_root(
         &self,
         module_name: &str,
-        root: &PathBuf,
+        root: &std::path::Path,
     ) -> Option<ModuleSourceInfo> {
         let rel_name = module_name.replace('.', "/");
         let candidate = root.join(format!("{rel_name}.py"));

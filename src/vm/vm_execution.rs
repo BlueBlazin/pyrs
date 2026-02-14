@@ -8022,9 +8022,7 @@ impl Vm {
         instance: &ObjRef,
         attr_name: &str,
     ) -> Option<Value> {
-        let Some((fget, fset, fdel, doc)) = self.property_descriptor_parts(instance) else {
-            return None;
-        };
+        let (fget, fset, fdel, doc) = self.property_descriptor_parts(instance)?;
         match attr_name {
             "fget" => Some(fget),
             "fset" => Some(fset),
@@ -8058,10 +8056,7 @@ impl Vm {
         instance: &ObjRef,
         attr_name: &str,
     ) -> Option<Value> {
-        let Some((func, attr_name_value, doc)) = self.cached_property_descriptor_parts(instance)
-        else {
-            return None;
-        };
+        let (func, attr_name_value, doc) = self.cached_property_descriptor_parts(instance)?;
         match attr_name {
             "func" => Some(func),
             "attrname" => Some(attr_name_value.map(Value::Str).unwrap_or(Value::None)),

@@ -5852,7 +5852,7 @@ fn value_to_float(value: Value) -> Result<f64, RuntimeError> {
         Value::Int(value) => Ok(value as f64),
         Value::BigInt(value) => Ok(value.to_f64()),
         Value::Bool(value) => Ok(if value { 1.0 } else { 0.0 }),
-        Value::Complex { real, imag } if imag == 0.0 => Ok(real),
+        Value::Complex { real, imag: 0.0 } => Ok(real),
         Value::Str(value) => value
             .trim()
             .parse::<f64>()

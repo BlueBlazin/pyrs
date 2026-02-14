@@ -6202,8 +6202,8 @@ fn day_of_year(year: i32, month: u32, day: u32) -> u32 {
         31,
     ];
     let mut total = day;
-    for idx in 0..month.saturating_sub(1) as usize {
-        total += month_days[idx];
+    for month_day in month_days.iter().take(month.saturating_sub(1) as usize) {
+        total += *month_day;
     }
     total
 }
@@ -6560,13 +6560,13 @@ fn bind_arguments(
         }
     }
 
-    for idx in 0..total_positional {
-        if bound[idx].is_none() {
+    for (idx, slot) in bound.iter_mut().enumerate().take(total_positional) {
+        if slot.is_none() {
             if idx < required {
                 return Err(RuntimeError::new("argument count mismatch"));
             }
             let default_index = idx - required;
-            bound[idx] = Some(func.defaults[default_index].clone());
+            *slot = Some(func.defaults[default_index].clone());
         }
     }
 
@@ -7445,9 +7445,7 @@ fn extract_runtime_error_exception_name(message: &str) -> Option<String> {
         .map(|(name, _)| name.trim())
         .unwrap_or(candidate_line);
     let mut chars = candidate.chars();
-    let Some(first) = chars.next() else {
-        return None;
-    };
+    let first = chars.next()?;
     if !(first.is_ascii_uppercase() || first == '_') {
         return None;
     }

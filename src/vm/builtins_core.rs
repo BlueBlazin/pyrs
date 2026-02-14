@@ -6544,9 +6544,11 @@ impl Vm {
         match self.call_internal(method, Vec::new(), HashMap::new())? {
             InternalCallOutcome::Value(value) => Ok(value),
             InternalCallOutcome::CallerExceptionHandled => {
-                if default.is_some() && self.active_exception_is("StopAsyncIteration") {
+                if let Some(default) = default
+                    && self.active_exception_is("StopAsyncIteration")
+                {
                     self.clear_active_exception();
-                    Ok(self.make_immediate_coroutine(default.expect("checked is_some")))
+                    Ok(self.make_immediate_coroutine(default))
                 } else {
                     Err(RuntimeError::new("anext() failed"))
                 }
