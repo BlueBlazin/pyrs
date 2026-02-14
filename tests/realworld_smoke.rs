@@ -31,14 +31,13 @@ fn pyrs_bin() -> PathBuf {
     if from_manifest.is_file() {
         return from_manifest;
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(debug_dir) = exe.parent().and_then(|deps| deps.parent()) {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(debug_dir) = exe.parent().and_then(|deps| deps.parent()) {
             let sibling = debug_dir.join("pyrs");
             if sibling.is_file() {
                 return sibling;
             }
         }
-    }
     panic!("unable to locate pyrs binary for sandboxed smoke tests");
 }
 

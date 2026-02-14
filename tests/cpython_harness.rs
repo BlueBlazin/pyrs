@@ -162,14 +162,13 @@ fn pyrs_bin() -> Option<PathBuf> {
     if from_manifest.is_file() {
         return Some(from_manifest);
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(debug_dir) = exe.parent().and_then(|deps| deps.parent()) {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(debug_dir) = exe.parent().and_then(|deps| deps.parent()) {
             let sibling = debug_dir.join("pyrs");
             if sibling.is_file() {
                 return Some(sibling);
             }
         }
-    }
     None
 }
 
@@ -344,12 +343,11 @@ fn run_entry(
         ),
     };
 
-    if matches!(mode, SuiteMode::StrictUnittest) {
-        if let Some(bin) = strict_subprocess_bin {
+    if matches!(mode, SuiteMode::StrictUnittest)
+        && let Some(bin) = strict_subprocess_bin {
             let timeout = strict_timeout.unwrap_or_else(strict_unittest_timeout);
             return run_source_in_subprocess(bin, &source, timeout);
         }
-    }
 
     let module =
         parser::parse_module(&source).map_err(|err| format!("parse error {}", err.message))?;

@@ -334,7 +334,7 @@ fn executes_destructuring_assignment() {
 #[test]
 fn executes_destructuring_assignment_nested() {
     let source = "a, (b, c) = (1, (2, 3))";
-    let module = parser::parse_module(&source).expect("parse should succeed");
+    let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
@@ -367,7 +367,7 @@ fn executes_comparison_assignment() {
 #[test]
 fn executes_comparison_variants() {
     let source = "a = 1 != 2\nb = 2 <= 2\nc = 3 > 2\nd = 2 >= 3\n";
-    let module = parser::parse_module(&source).expect("parse should succeed");
+    let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
@@ -381,7 +381,7 @@ fn executes_comparison_variants() {
 #[test]
 fn executes_bool_int_numeric_ops() {
     let source = "a = True + 1\nb = False + 2\nc = True * 3\nd = True == 1\ne = True < 2\n";
-    let module = parser::parse_module(&source).expect("parse should succeed");
+    let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let value = vm.execute(&code).expect("execution should succeed");
@@ -5833,11 +5833,10 @@ fn executes_module_attribute_access() {
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     let module_value = vm.alloc_module("mod");
-    if let Value::Module(obj) = &module_value {
-        if let pyrs::runtime::Object::Module(module_data) = &mut *obj.kind_mut() {
+    if let Value::Module(obj) = &module_value
+        && let pyrs::runtime::Object::Module(module_data) = &mut *obj.kind_mut() {
             module_data.globals.insert("x".to_string(), Value::Int(42));
         }
-    }
     vm.set_global("mod", module_value);
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
