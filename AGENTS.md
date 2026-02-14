@@ -46,6 +46,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
   - C-API v1 now includes handle-based object attribute access (`object_get_attr`, `object_set_attr`, `object_del_attr`) with native extension smoke coverage.
   - C-API v1 attribute helpers now include presence checks (`object_has_attr`) for exception-free attr probes in native code.
+  - C-API v1 now includes type relation checks (`object_is_instance`, `object_is_subclass`) for native-side runtime typing paths.
   - C-API v1 now includes handle-based callable invocation (`object_call`) so native callbacks can call Python callables with positional/keyword payloads.
   - C-API baseline now includes runtime feature probing via `api_has_capability(...)` (covered in extension smoke).
   - builtin `_sysconfigdata__*` now provides extension-build baseline keys (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.

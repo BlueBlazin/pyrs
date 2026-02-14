@@ -35,6 +35,8 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `module_get_object(void* module_ctx, const char* name, PyrsObjectHandle* out_handle)`
 - `module_import(void* module_ctx, const char* module_name, PyrsObjectHandle* out_handle)`
 - `object_type(void* module_ctx, PyrsObjectHandle handle)`
+- `object_is_instance(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle classinfo_handle)` (`1`/`0` on success, `-1` on error)
+- `object_is_subclass(void* module_ctx, PyrsObjectHandle class_handle, PyrsObjectHandle classinfo_handle)` (`1`/`0` on success, `-1` on error)
 - `object_get_int(void* module_ctx, PyrsObjectHandle handle, int64_t* out)`
 - `object_get_float(void* module_ctx, PyrsObjectHandle handle, double* out)`
 - `object_get_bool(void* module_ctx, PyrsObjectHandle handle, int* out)`
@@ -76,6 +78,7 @@ Return semantics:
 - object handles are init-call scoped; module globals retain values after handle release.
 - extension code can re-read module globals as handles via `module_get_object(...)`.
 - extension code can import modules during init/call paths via `module_import(...)`.
+- extension code can perform type relation checks via `object_is_instance(...)` and `object_is_subclass(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
 - callable registration via `module_add_function_kw(...)` is supported for callbacks receiving keyword-name/value arrays.

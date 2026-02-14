@@ -65,6 +65,8 @@ struct PyrsApiV1 {
     int (*module_get_object)(void* module_ctx, const char* name, PyrsObjectHandle* out_handle);
     int (*module_import)(void* module_ctx, const char* module_name, PyrsObjectHandle* out_handle);
     int (*object_type)(void* module_ctx, PyrsObjectHandle handle);
+    int (*object_is_instance)(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle classinfo_handle);
+    int (*object_is_subclass)(void* module_ctx, PyrsObjectHandle class_handle, PyrsObjectHandle classinfo_handle);
     int (*object_get_int)(void* module_ctx, PyrsObjectHandle handle, int64_t* out);
     int (*object_get_float)(void* module_ctx, PyrsObjectHandle handle, double* out);
     int (*object_get_bool)(void* module_ctx, PyrsObjectHandle handle, int* out);

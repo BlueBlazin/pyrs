@@ -141,6 +141,58 @@ impl ModuleCapiContext {
         Ok(ty)
     }
 
+    fn object_is_instance(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+        classinfo_handle: PyrsObjectHandle,
+    ) -> Result<i32, String> {
+        if self.vm.is_null() {
+            return Err("object_is_instance missing VM context".to_string());
+        }
+        let object = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let classinfo = self
+            .object_value(classinfo_handle)
+            .ok_or_else(|| format!("invalid classinfo handle {}", classinfo_handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let value = vm
+            .builtin_isinstance(vec![object, classinfo], HashMap::new())
+            .map_err(|err| err.message)?;
+        match value {
+            Value::Bool(true) => Ok(1),
+            Value::Bool(false) => Ok(0),
+            other => Err(format!("isinstance returned non-bool value: {other:?}")),
+        }
+    }
+
+    fn object_is_subclass(
+        &mut self,
+        class_handle: PyrsObjectHandle,
+        classinfo_handle: PyrsObjectHandle,
+    ) -> Result<i32, String> {
+        if self.vm.is_null() {
+            return Err("object_is_subclass missing VM context".to_string());
+        }
+        let class = self
+            .object_value(class_handle)
+            .ok_or_else(|| format!("invalid class handle {}", class_handle))?;
+        let classinfo = self
+            .object_value(classinfo_handle)
+            .ok_or_else(|| format!("invalid classinfo handle {}", classinfo_handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let value = vm
+            .builtin_issubclass(vec![class, classinfo], HashMap::new())
+            .map_err(|err| err.message)?;
+        match value {
+            Value::Bool(true) => Ok(1),
+            Value::Bool(false) => Ok(0),
+            other => Err(format!("issubclass returned non-bool value: {other:?}")),
+        }
+    }
+
     fn object_get_int(&self, handle: PyrsObjectHandle) -> Result<i64, String> {
         let Some(slot) = self.object_slot(handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -613,6 +665,8 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_set_attr"
             | "object_del_attr"
             | "object_has_attr"
+            | "object_is_instance"
+            | "object_is_subclass"
             | "object_call"
             | "error_state"
             | "extension_symbol_metadata"
@@ -1022,6 +1076,40 @@ unsafe extern "C" fn capi_object_type(module_ctx: *mut c_void, handle: PyrsObjec
         Err(err) => {
             context.set_error(err);
             0
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_is_instance(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    classinfo_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_is_instance(object_handle, classinfo_handle) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_is_subclass(
+    module_ctx: *mut c_void,
+    class_handle: PyrsObjectHandle,
+    classinfo_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_is_subclass(class_handle, classinfo_handle) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(err);
+            -1
         }
     }
 }
@@ -1597,6 +1685,8 @@ impl Vm {
             module_get_object: capi_module_get_object,
             module_import: capi_module_import,
             object_type: capi_object_type,
+            object_is_instance: capi_object_is_instance,
+            object_is_subclass: capi_object_is_subclass,
             object_get_int: capi_object_get_int,
             object_get_float: capi_object_get_float,
             object_get_bool: capi_object_get_bool,
