@@ -842,7 +842,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_callable\nassert native_callable.API_KIND == 'callable'\nassert native_callable.add(20, 22) == 42",
+        "import native_callable\nassert native_callable.API_KIND == 'callable'\nassert native_callable.add(20, 22) == 42\nraised = False\ntry:\n    native_callable.add(20, 22, extra=1)\nexcept RuntimeError as exc:\n    raised = True\n    assert 'does not accept keyword arguments' in str(exc)\nassert raised",
     )
     .expect("callable extension import should succeed");
 
@@ -961,7 +961,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_kw_callable\nassert native_kw_callable.API_KIND == 'kw-callable'\nassert native_kw_callable.add_scaled(2, 3) == 5\nassert native_kw_callable.add_scaled(2, 3, scale=10) == 50",
+        "import native_kw_callable\nassert native_kw_callable.API_KIND == 'kw-callable'\nassert native_kw_callable.add_scaled(2, 3) == 5\nassert native_kw_callable.add_scaled(2, 3, scale=10) == 50\nraised_unknown = False\ntry:\n    native_kw_callable.add_scaled(2, 3, bad=1)\nexcept RuntimeError as exc:\n    raised_unknown = True\n    assert \"only accepts keyword 'scale'\" in str(exc)\nassert raised_unknown\nraised_type = False\ntry:\n    native_kw_callable.add_scaled(2, 3, scale='x')\nexcept RuntimeError as exc:\n    raised_type = True\n    assert \"keyword 'scale' must be int\" in str(exc)\nassert raised_type",
     )
     .expect("kw-callable extension import should succeed");
 
