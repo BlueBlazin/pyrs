@@ -1734,6 +1734,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_new_none"
             | "object_new_float"
             | "object_new_bytes"
+            | "object_new_bytearray"
             | "object_new_tuple"
             | "object_new_list"
             | "object_new_dict"
@@ -1969,6 +1970,33 @@ unsafe extern "C" fn capi_object_new_bytes(
     // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
     let vm = unsafe { &mut *context.vm };
     context.alloc_object(vm.heap.alloc_bytes(bytes))
+}
+
+unsafe extern "C" fn capi_object_new_bytearray(
+    module_ctx: *mut c_void,
+    data: *const u8,
+    len: usize,
+) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    if data.is_null() && len != 0 {
+        context.set_error("object_new_bytearray received null data pointer with non-zero len");
+        return 0;
+    }
+    let bytes = if len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: caller-provided pointer/len pair is assumed valid for read.
+        unsafe { std::slice::from_raw_parts(data, len) }.to_vec()
+    };
+    if context.vm.is_null() {
+        context.set_error("object_new_bytearray missing VM context");
+        return 0;
+    }
+    // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
+    let vm = unsafe { &mut *context.vm };
+    context.alloc_object(vm.heap.alloc_bytearray(bytes))
 }
 
 unsafe extern "C" fn capi_object_new_tuple(
@@ -3490,6 +3518,7 @@ impl Vm {
             object_new_bool: capi_object_new_bool,
             object_new_float: capi_object_new_float,
             object_new_bytes: capi_object_new_bytes,
+            object_new_bytearray: capi_object_new_bytearray,
             object_new_tuple: capi_object_new_tuple,
             object_new_list: capi_object_new_list,
             object_new_dict: capi_object_new_dict,

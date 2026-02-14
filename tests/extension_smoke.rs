@@ -536,6 +536,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     PyrsObjectHandle none_value = api->object_new_none(module_ctx);
     PyrsObjectHandle ratio = api->object_new_float(module_ctx, 3.5);
     PyrsObjectHandle blob = api->object_new_bytes(module_ctx, payload, 2);
+    PyrsObjectHandle blob_mut = api->object_new_bytearray(module_ctx, payload, 2);
     PyrsObjectHandle sequence_items[2];
     sequence_items[0] = answer;
     sequence_items[1] = ratio;
@@ -544,7 +545,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     PyrsObjectHandle mapping = api->object_new_dict(module_ctx);
     PyrsObjectHandle key_ratio = api->object_new_string(module_ctx, "ratio");
     PyrsObjectHandle text = api->object_new_string(module_ctx, "from-object-handle");
-    if (!answer || !none_value || !ratio || !blob || !pair_tuple || !pair_list || !mapping || !key_ratio || !text) {
+    if (!answer || !none_value || !ratio || !blob || !blob_mut || !pair_tuple || !pair_list || !mapping || !key_ratio || !text) {
         return -2;
     }
     double ratio_check = 0.0;
@@ -556,6 +557,12 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_get_bytes(module_ctx, blob, &blob_data, &blob_len) != 0 ||
         blob_len != 2 || !blob_data || blob_data[0] != 104 || blob_data[1] != 105) {
         return -14;
+    }
+    const uint8_t* blob_mut_data = 0;
+    uintptr_t blob_mut_len = 0;
+    if (api->object_get_bytes(module_ctx, blob_mut, &blob_mut_data, &blob_mut_len) != 0 ||
+        blob_mut_len != 2 || !blob_mut_data || blob_mut_data[0] != 104 || blob_mut_data[1] != 105) {
+        return -15;
     }
     uintptr_t tuple_len = 0;
     if (api->object_sequence_len(module_ctx, pair_tuple, &tuple_len) != 0 || tuple_len != 2) {
@@ -3394,6 +3401,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_module_get_object = api->api_has_capability(module_ctx, "module_get_object");
     int has_module_import = api->api_has_capability(module_ctx, "module_import");
     int has_module_get_attr = api->api_has_capability(module_ctx, "module_get_attr");
+    int has_object_new_bytearray = api->api_has_capability(module_ctx, "object_new_bytearray");
     int has_module_set_state = api->api_has_capability(module_ctx, "module_set_state");
     int has_module_get_state = api->api_has_capability(module_ctx, "module_get_state");
     int has_module_set_finalize = api->api_has_capability(module_ctx, "module_set_finalize");
@@ -3439,7 +3447,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_error_get_message = api->api_has_capability(module_ctx, "error_get_message");
     int has_missing = api->api_has_capability(module_ctx, "does_not_exist");
     if (has_dict != 1 || has_kw != 1 || has_module_get_object != 1 ||
-        has_module_import != 1 || has_module_get_attr != 1 ||
+        has_module_import != 1 || has_module_get_attr != 1 || has_object_new_bytearray != 1 ||
         has_module_set_state != 1 || has_module_get_state != 1 || has_module_set_finalize != 1 ||
         has_module_set_attr != 1 || has_module_del_attr != 1 || has_module_has_attr != 1 ||
         has_object_len != 1 || has_object_get_item != 1 ||
@@ -3475,6 +3483,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->module_set_bool(module_ctx, "HAS_MODULE_GET_ATTR", has_module_get_attr) != 0) {
         return -19;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_OBJECT_NEW_BYTEARRAY", has_object_new_bytearray) != 0) {
+        return -61;
     }
     if (api->module_set_bool(module_ctx, "HAS_MODULE_SET_STATE", has_module_set_state) != 0) {
         return -57;
@@ -3631,7 +3642,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_MODULE_SET_STATE is True\nassert native_capabilities.HAS_MODULE_GET_STATE is True\nassert native_capabilities.HAS_MODULE_SET_FINALIZE is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CONTAINS is True\nassert native_capabilities.HAS_OBJECT_DICT_KEYS is True\nassert native_capabilities.HAS_OBJECT_DICT_ITEMS is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER is True\nassert native_capabilities.HAS_OBJECT_RELEASE_BUFFER is True\nassert native_capabilities.HAS_CAPSULE_NEW is True\nassert native_capabilities.HAS_CAPSULE_GET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_SET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_GET_NAME is True\nassert native_capabilities.HAS_CAPSULE_SET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_GET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_SET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_GET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_SET_NAME is True\nassert native_capabilities.HAS_CAPSULE_IS_VALID is True\nassert native_capabilities.HAS_CAPSULE_EXPORT is True\nassert native_capabilities.HAS_CAPSULE_IMPORT is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_OBJECT_NEW_BYTEARRAY is True\nassert native_capabilities.HAS_MODULE_SET_STATE is True\nassert native_capabilities.HAS_MODULE_GET_STATE is True\nassert native_capabilities.HAS_MODULE_SET_FINALIZE is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CONTAINS is True\nassert native_capabilities.HAS_OBJECT_DICT_KEYS is True\nassert native_capabilities.HAS_OBJECT_DICT_ITEMS is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER is True\nassert native_capabilities.HAS_OBJECT_RELEASE_BUFFER is True\nassert native_capabilities.HAS_CAPSULE_NEW is True\nassert native_capabilities.HAS_CAPSULE_GET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_SET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_GET_NAME is True\nassert native_capabilities.HAS_CAPSULE_SET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_GET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_SET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_GET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_SET_NAME is True\nassert native_capabilities.HAS_CAPSULE_IS_VALID is True\nassert native_capabilities.HAS_CAPSULE_EXPORT is True\nassert native_capabilities.HAS_CAPSULE_IMPORT is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 

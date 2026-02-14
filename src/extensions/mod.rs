@@ -329,6 +329,11 @@ pub struct PyrsApiV1 {
         data: *const u8,
         len: usize,
     ) -> PyrsObjectHandle,
+    pub object_new_bytearray: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        data: *const u8,
+        len: usize,
+    ) -> PyrsObjectHandle,
     pub object_new_tuple: unsafe extern "C" fn(
         module_ctx: *mut c_void,
         len: usize,
