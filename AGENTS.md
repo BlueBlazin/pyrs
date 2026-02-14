@@ -38,6 +38,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension manifest parser + suffix baseline (`.pyrs-ext`, ABI `pyrs314`) is landed (`src/extensions/mod.rs`).
   - import loader now recognizes extension manifests and direct shared objects (`.so`/`.dylib`/`.pyd`), including tagged CPython-style filenames (`module.cpython-314-*.so`), and executes them through `pyrs.ExtensionFileLoader`.
   - direct shared-object import now emits explicit unsupported diagnostics when only CPython-style `PyInit_*` symbols are present (no silent/ambiguous symbol-miss failures).
+  - loaded native modules now publish symbol diagnostics metadata (`__pyrs_extension_expected_symbol__`, `__pyrs_extension_symbol_family__`) for ABI-mode visibility.
   - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`) and now includes module setters, native callable registration (`module_add_function`, `module_add_function_kw`), init-scoped object handles + type/getter introspection (`object_new_*`, `module_set_object`, `object_incref/decref`, `object_type`, `object_get_*`), and import-time error state (`error_set/clear/occurred`).
   - C-API handle constructors/getters now include `None`/`float`/`bytes` in addition to `bool`/`int`/`str`, with smoke coverage through native handle round-trip.
   - builtin `_sysconfigdata__*` now provides extension-build baseline keys (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.

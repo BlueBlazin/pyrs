@@ -22,6 +22,7 @@ This document defines how native-extension packaging/build will work for `pyrs` 
 - First C-API header/symbol slice is shipped in `/Users/$USER/pyrs/include/pyrs_capi.h`.
 - Builtin `_sysconfigdata__*` now exposes extension-build essentials (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.
 - Extension smoke now includes a compile+import flow that consumes these `_sysconfigdata__*` build vars end-to-end.
+- Loaded dynamic modules now expose explicit symbol metadata (`__pyrs_extension_expected_symbol__`, `__pyrs_extension_symbol_family__`) for ABI-mode diagnostics.
 
 This is still an early substrate, not full C-extension compatibility.
 

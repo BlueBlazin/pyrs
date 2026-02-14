@@ -924,6 +924,21 @@ impl Vm {
             "__pyrs_extension_symbol__".to_string(),
             Value::Str(symbol.to_string()),
         );
+        let symbol_family = if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 {
+            "pyrs-v1"
+        } else if symbol.starts_with("PyInit_") {
+            "cpython"
+        } else {
+            "custom"
+        };
+        module_data.globals.insert(
+            "__pyrs_extension_expected_symbol__".to_string(),
+            Value::Str(symbol.to_string()),
+        );
+        module_data.globals.insert(
+            "__pyrs_extension_symbol_family__".to_string(),
+            Value::Str(symbol_family.to_string()),
+        );
         self.extension_libraries.push(handle);
         Ok(())
     }
