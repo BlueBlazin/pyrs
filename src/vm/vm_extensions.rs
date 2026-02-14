@@ -462,6 +462,33 @@ impl ModuleCapiContext {
         if let Some(entry) = vm.extension_capsule_registry.get(requested_name) {
             return Ok(entry.pointer as *mut c_void);
         }
+        let mut parts = requested_name.split('.');
+        let Some(module_name) = parts.next() else {
+            return Err(format!(
+                "PyCapsule_Import \"{}\" is not valid",
+                requested_name
+            ));
+        };
+        if module_name.is_empty() {
+            return Err(format!(
+                "PyCapsule_Import \"{}\" is not valid",
+                requested_name
+            ));
+        }
+        let mut object = vm
+            .builtin_import_module(vec![Value::Str(module_name.to_string())], HashMap::new())
+            .map_err(|_| {
+                format!(
+                    "PyCapsule_Import could not import module \"{}\"",
+                    module_name
+                )
+            })?;
+        for part in parts {
+            object = vm
+                .builtin_getattr(vec![object, Value::Str(part.to_string())], HashMap::new())
+                .map_err(|_| format!("PyCapsule_Import \"{}\" is not valid", requested_name))?;
+        }
+        let _ = object;
         Err(format!(
             "PyCapsule_Import \"{}\" is not valid",
             requested_name

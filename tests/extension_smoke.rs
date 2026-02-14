@@ -3199,6 +3199,17 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (missing != 0 || api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
         return -3;
     }
+    void* missing_module = api->capsule_import(module_ctx, "missing_capsule_provider.API", 0);
+    if (missing_module != 0 || api->error_occurred(module_ctx) == 0) {
+        return -5;
+    }
+    const char* msg = api->error_get_message(module_ctx);
+    if (!msg || msg[0] != 'P' || msg[1] != 'y') {
+        return -6;
+    }
+    if (api->error_clear(module_ctx) != 0) {
+        return -7;
+    }
     if (api->module_set_bool(module_ctx, "IMPORTED", 1) != 0) {
         return -4;
     }
