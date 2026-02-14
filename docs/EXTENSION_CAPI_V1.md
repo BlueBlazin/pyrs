@@ -158,7 +158,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | Surface Group | Primary Smoke Evidence |
 |---|---|
 | module setters/getters/import/attr-load | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_can_import_module_and_export_attribute`, `dynamic_extension_mixed_surface_roundtrip` |
-| module-state lifecycle (`module_set_state`/`module_get_state`/`module_set_finalize`) | `dynamic_extension_can_manage_module_state_lifecycle` |
+| module-state lifecycle (`module_set_state`/`module_get_state`/`module_set_finalize`) | `dynamic_extension_can_manage_module_state_lifecycle`, `dynamic_extension_module_state_drop_runs_finalize_before_free` |
 | handle constructors + typed getters | `dynamic_extension_can_set_module_values_via_object_handles` |
 | module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
 | generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
