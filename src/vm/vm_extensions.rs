@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
-    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_INT,
-    PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsObjectHandle,
-    load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
+    PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_FLOAT,
+    PYRS_TYPE_INT, PYRS_TYPE_NONE, PYRS_TYPE_STR, PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
+    PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -99,6 +99,7 @@ impl ModuleCapiContext {
             Value::Bool(_) => PYRS_TYPE_BOOL,
             Value::Int(_) => PYRS_TYPE_INT,
             Value::Str(_) => PYRS_TYPE_STR,
+            Value::Float(_) => PYRS_TYPE_FLOAT,
             _ => 0,
         };
         Ok(ty)
@@ -121,6 +122,16 @@ impl ModuleCapiContext {
         match slot.value {
             Value::Bool(value) => Ok(if value { 1 } else { 0 }),
             _ => Err(format!("object handle {} is not a bool", handle)),
+        }
+    }
+
+    fn object_get_float(&self, handle: PyrsObjectHandle) -> Result<f64, String> {
+        let Some(slot) = self.object_slot(handle) else {
+            return Err(format!("invalid object handle {}", handle));
+        };
+        match slot.value {
+            Value::Float(value) => Ok(value),
+            _ => Err(format!("object handle {} is not a float", handle)),
         }
     }
 
@@ -322,11 +333,28 @@ unsafe extern "C" fn capi_object_new_int(module_ctx: *mut c_void, value: i64) ->
     context.alloc_object(Value::Int(value))
 }
 
+unsafe extern "C" fn capi_object_new_none(module_ctx: *mut c_void) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    context.alloc_object(Value::None)
+}
+
 unsafe extern "C" fn capi_object_new_bool(module_ctx: *mut c_void, value: i32) -> PyrsObjectHandle {
     let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
         return 0;
     };
     context.alloc_object(Value::Bool(value != 0))
+}
+
+unsafe extern "C" fn capi_object_new_float(
+    module_ctx: *mut c_void,
+    value: f64,
+) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    context.alloc_object(Value::Float(value))
 }
 
 unsafe extern "C" fn capi_object_new_string(
@@ -413,6 +441,33 @@ unsafe extern "C" fn capi_object_get_int(
         return -1;
     }
     match context.object_get_int(handle) {
+        Ok(value) => {
+            // SAFETY: caller provided non-null out pointer.
+            unsafe {
+                *out = value;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_get_float(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out: *mut f64,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out.is_null() {
+        context.set_error("object_get_float received null out pointer");
+        return -1;
+    }
+    match context.object_get_float(handle) {
         Ok(value) => {
             // SAFETY: caller provided non-null out pointer.
             unsafe {
@@ -528,13 +583,16 @@ impl Vm {
             module_add_function: capi_module_add_function,
             module_add_function_kw: capi_module_add_function_kw,
             object_new_int: capi_object_new_int,
+            object_new_none: capi_object_new_none,
             object_new_bool: capi_object_new_bool,
+            object_new_float: capi_object_new_float,
             object_new_string: capi_object_new_string,
             object_incref: capi_object_incref,
             object_decref: capi_object_decref,
             module_set_object: capi_module_set_object,
             object_type: capi_object_type,
             object_get_int: capi_object_get_int,
+            object_get_float: capi_object_get_float,
             object_get_bool: capi_object_get_bool,
             object_get_string: capi_object_get_string,
             error_set: capi_error_set,

@@ -20,13 +20,16 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `module_add_function(void* module_ctx, const char* name, PyrsCFunctionV1 callback)`
 - `module_add_function_kw(void* module_ctx, const char* name, PyrsCFunctionKwV1 callback)`
 - `object_new_int(void* module_ctx, int64_t value)`
+- `object_new_none(void* module_ctx)`
 - `object_new_bool(void* module_ctx, int value)`
+- `object_new_float(void* module_ctx, double value)`
 - `object_new_string(void* module_ctx, const char* value)`
 - `object_incref(void* module_ctx, PyrsObjectHandle handle)`
 - `object_decref(void* module_ctx, PyrsObjectHandle handle)`
 - `module_set_object(void* module_ctx, const char* name, PyrsObjectHandle handle)`
 - `object_type(void* module_ctx, PyrsObjectHandle handle)`
 - `object_get_int(void* module_ctx, PyrsObjectHandle handle, int64_t* out)`
+- `object_get_float(void* module_ctx, PyrsObjectHandle handle, double* out)`
 - `object_get_bool(void* module_ctx, PyrsObjectHandle handle, int* out)`
 - `object_get_string(void* module_ctx, PyrsObjectHandle handle)`
 - `error_set(void* module_ctx, const char* message)`

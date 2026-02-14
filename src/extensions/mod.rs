@@ -11,6 +11,7 @@ pub const PYRS_TYPE_NONE: i32 = 1;
 pub const PYRS_TYPE_BOOL: i32 = 2;
 pub const PYRS_TYPE_INT: i32 = 3;
 pub const PYRS_TYPE_STR: i32 = 4;
+pub const PYRS_TYPE_FLOAT: i32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionEntrypoint {
@@ -305,8 +306,11 @@ pub struct PyrsApiV1 {
     ) -> i32,
     pub object_new_int:
         unsafe extern "C" fn(module_ctx: *mut c_void, value: i64) -> PyrsObjectHandle,
+    pub object_new_none: unsafe extern "C" fn(module_ctx: *mut c_void) -> PyrsObjectHandle,
     pub object_new_bool:
         unsafe extern "C" fn(module_ctx: *mut c_void, value: i32) -> PyrsObjectHandle,
+    pub object_new_float:
+        unsafe extern "C" fn(module_ctx: *mut c_void, value: f64) -> PyrsObjectHandle,
     pub object_new_string:
         unsafe extern "C" fn(module_ctx: *mut c_void, value: *const c_char) -> PyrsObjectHandle,
     pub object_incref:
@@ -323,6 +327,11 @@ pub struct PyrsApiV1 {
         module_ctx: *mut c_void,
         handle: PyrsObjectHandle,
         out: *mut i64,
+    ) -> i32,
+    pub object_get_float: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        handle: PyrsObjectHandle,
+        out: *mut f64,
     ) -> i32,
     pub object_get_bool: unsafe extern "C" fn(
         module_ctx: *mut c_void,

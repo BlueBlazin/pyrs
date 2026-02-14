@@ -380,12 +380,24 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         return -1;
     }
     PyrsObjectHandle answer = api->object_new_int(module_ctx, 99);
+    PyrsObjectHandle none_value = api->object_new_none(module_ctx);
+    PyrsObjectHandle ratio = api->object_new_float(module_ctx, 3.5);
     PyrsObjectHandle text = api->object_new_string(module_ctx, "from-object-handle");
-    if (!answer || !text) {
+    if (!answer || !none_value || !ratio || !text) {
         return -2;
+    }
+    double ratio_check = 0.0;
+    if (api->object_get_float(module_ctx, ratio, &ratio_check) != 0 || ratio_check != 3.5) {
+        return -9;
     }
     if (api->module_set_object(module_ctx, "ANSWER", answer) != 0) {
         return -3;
+    }
+    if (api->module_set_object(module_ctx, "NONE_VALUE", none_value) != 0) {
+        return -10;
+    }
+    if (api->module_set_object(module_ctx, "RATIO", ratio) != 0) {
+        return -11;
     }
     if (api->module_set_object(module_ctx, "TEXT", text) != 0) {
         return -4;
@@ -398,6 +410,12 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     }
     if (api->object_decref(module_ctx, answer) != 0) {
         return -7;
+    }
+    if (api->object_decref(module_ctx, none_value) != 0) {
+        return -12;
+    }
+    if (api->object_decref(module_ctx, ratio) != 0) {
+        return -13;
     }
     if (api->object_decref(module_ctx, text) != 0) {
         return -8;
@@ -425,7 +443,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.TEXT == 'from-object-handle'",
+        "import native_handles\nassert native_handles.ANSWER == 99\nassert native_handles.NONE_VALUE is None\nassert abs(native_handles.RATIO - 3.5) < 1e-12\nassert native_handles.TEXT == 'from-object-handle'",
     )
     .expect("object-handle dynamic extension import should succeed");
 
