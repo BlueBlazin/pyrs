@@ -72,7 +72,7 @@ impl Vm {
         opname: &str,
     ) -> Result<ObjRef, RuntimeError> {
         let frame = self.frames.last().expect("frame exists");
-        if frame.stack.len() < oparg + 1 {
+        if frame.stack.len() < oparg {
             return Err(RuntimeError::new(format!("{opname} stack underflow")));
         }
         let dict_index = frame.stack.len() - oparg;
@@ -89,7 +89,7 @@ impl Vm {
 
     fn stack_list_target(&self, oparg: usize, opname: &str) -> Result<ObjRef, RuntimeError> {
         let frame = self.frames.last().expect("frame exists");
-        if frame.stack.len() < oparg + 1 {
+        if frame.stack.len() < oparg {
             return Err(RuntimeError::new(format!("{opname} stack underflow")));
         }
         let list_index = frame.stack.len() - oparg;

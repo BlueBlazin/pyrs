@@ -6290,8 +6290,16 @@ impl Vm {
                 is_extension: false,
             });
         }
-        // CPython's __pycache__ entries are source-bound; do not treat them as
-        // standalone sourceless imports when source is absent.
+        if pyc_candidate.exists() {
+            return cache_positive(ModuleSourceInfo {
+                path: pyc_candidate,
+                is_package: false,
+                package_dirs: Vec::new(),
+                is_namespace: false,
+                is_bytecode: true,
+                is_extension: false,
+            });
+        }
         if direct_pyc.exists() {
             return cache_positive(ModuleSourceInfo {
                 path: direct_pyc,
@@ -6365,7 +6373,16 @@ impl Vm {
                 is_extension: false,
             });
         }
-        // Likewise for package __pycache__/__init__.pyc: only valid with source.
+        if package_init_pyc.exists() {
+            return cache_positive(ModuleSourceInfo {
+                path: package_init_pyc,
+                is_package: true,
+                package_dirs: vec![package_dir],
+                is_namespace: false,
+                is_bytecode: true,
+                is_extension: false,
+            });
+        }
         if direct_package_init_pyc.exists() {
             return cache_positive(ModuleSourceInfo {
                 path: direct_package_init_pyc,

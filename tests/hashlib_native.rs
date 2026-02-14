@@ -166,29 +166,38 @@ fn hashlib_module_uses_native_md5_and_sha256_backends() {
         eprintln!("skipping hashlib stdlib path test (CPython Lib not found)");
         return;
     };
-    let mut vm = Vm::new();
-    vm.add_module_path_front(cpython_lib);
-    run_script(
-        &mut vm,
-        r#"
+    let handle = std::thread::Builder::new()
+        .name("hashlib-native-stdlib".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let mut vm = Vm::new();
+            vm.add_module_path_front(cpython_lib);
+            run_script(
+                &mut vm,
+                r#"
 import hashlib
 md5_hex = hashlib.md5(b"abc", usedforsecurity=False).hexdigest()
 sha256_hex = hashlib.sha256(b"abc").hexdigest()
 has_md5 = hasattr(hashlib, "md5")
 has_sha256 = hasattr(hashlib, "sha256")
 "#,
-    );
+            );
 
-    assert_eq!(
-        vm.get_global("md5_hex"),
-        Some(Value::Str("900150983cd24fb0d6963f7d28e17f72".to_string()))
-    );
-    assert_eq!(
-        vm.get_global("sha256_hex"),
-        Some(Value::Str(
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string()
-        ))
-    );
-    assert_eq!(vm.get_global("has_md5"), Some(Value::Bool(true)));
-    assert_eq!(vm.get_global("has_sha256"), Some(Value::Bool(true)));
+            assert_eq!(
+                vm.get_global("md5_hex"),
+                Some(Value::Str("900150983cd24fb0d6963f7d28e17f72".to_string()))
+            );
+            assert_eq!(
+                vm.get_global("sha256_hex"),
+                Some(Value::Str(
+                    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string()
+                ))
+            );
+            assert_eq!(vm.get_global("has_md5"), Some(Value::Bool(true)));
+            assert_eq!(vm.get_global("has_sha256"), Some(Value::Bool(true)));
+        })
+        .expect("spawn hashlib stdlib regression thread");
+    handle
+        .join()
+        .expect("hashlib stdlib regression thread should complete");
 }

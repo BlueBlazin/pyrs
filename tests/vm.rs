@@ -2523,18 +2523,27 @@ fn json_import_prefers_cpython_pure_module_when_lib_path_is_added_by_default() {
         eprintln!("skipping pure-json import preference test (CPython Lib path not available)");
         return;
     };
-    let source = r#"import json
+    let handle = std::thread::Builder::new()
+        .name("json-import-preference".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import json
 origin = getattr(json, '__file__', '')
 norm = origin.replace("\\", "/")
 ok = norm.endswith('/json/__init__.py') and ('/shims/' not in norm) and hasattr(json, 'loads') and hasattr(json, 'dumps')
 ok = ok and hasattr(json, 'encoder') and hasattr(json, 'decoder')
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn json import preference thread");
+    handle
+        .join()
+        .expect("json import preference thread should complete");
 }
 
 #[test]
@@ -12665,16 +12674,25 @@ fn statistics_mean_supports_basic_int_dataset() {
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    let source = r#"import statistics
+    let handle = std::thread::Builder::new()
+        .name("statistics-mean".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = r#"import statistics
 value = statistics.mean([1, 2, 3, 4])
 ok = (value == 2.5)
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn statistics mean thread");
+    handle
+        .join()
+        .expect("statistics mean thread should complete");
 }
 
 #[test]
