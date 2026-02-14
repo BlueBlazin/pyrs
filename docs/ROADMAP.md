@@ -78,6 +78,7 @@ Deliverables:
 - limited C-API/abi3 execution path for supported surfaces
 - HPy path and compatibility matrix
 - extension-backed ecosystem smoke suites + explicit unsupported-surface diagnostics
+- architecture and delivery gates follow `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
 
 ## Milestone 16 (Release Hardening)
 Deliverables:

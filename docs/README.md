@@ -7,6 +7,7 @@ Use this file to find canonical ownership quickly.
 - `docs/PRODUCTION_READINESS.md`: release blockers and completion requirements.
 - `docs/COMPATIBILITY.md`: subsystem-level compatibility summary.
 - `docs/RELEASE_PLAN_BETA.md`: staged beta release plan (tracked, not yet active execution).
+- `docs/EXTENSION_ECOSYSTEM_DESIGN.md`: architecture and quality gates for NumPy/SciPy/Pandas/Matplotlib support.
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
