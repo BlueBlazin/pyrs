@@ -269,6 +269,52 @@ impl ModuleCapiContext {
         }
     }
 
+    fn object_len(&mut self, handle: PyrsObjectHandle) -> Result<usize, String> {
+        if self.vm.is_null() {
+            return Err("object_len missing VM context".to_string());
+        }
+        let value = self
+            .object_value(handle)
+            .ok_or_else(|| format!("invalid object handle {}", handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let length_value = vm
+            .builtin_len(vec![value], HashMap::new())
+            .map_err(|err| err.message)?;
+        match length_value {
+            Value::Int(length) => usize::try_from(length)
+                .map_err(|_| format!("length {} is out of range for usize", length)),
+            Value::BigInt(bigint) => {
+                let text = bigint.to_string();
+                let parsed = text
+                    .parse::<usize>()
+                    .map_err(|_| format!("length {} is out of range for usize", text))?;
+                Ok(parsed)
+            }
+            other => Err(format!("len() returned non-int value: {other:?}")),
+        }
+    }
+
+    fn object_get_item(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+    ) -> Result<PyrsObjectHandle, String> {
+        if self.vm.is_null() {
+            return Err("object_get_item missing VM context".to_string());
+        }
+        let object = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let key = self
+            .object_value(key_handle)
+            .ok_or_else(|| format!("invalid key handle {}", key_handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let value = vm.getitem_value(object, key).map_err(|err| err.message)?;
+        Ok(self.alloc_object(value))
+    }
+
     fn object_sequence_len(&self, handle: PyrsObjectHandle) -> Result<usize, String> {
         let Some(slot) = self.object_slot(handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -748,6 +794,8 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_new_tuple"
             | "object_new_list"
             | "object_new_dict"
+            | "object_len"
+            | "object_get_item"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -1360,6 +1408,61 @@ unsafe extern "C" fn capi_object_get_bytes(
     }
 }
 
+unsafe extern "C" fn capi_object_len(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out_len: *mut usize,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_len.is_null() {
+        context.set_error("object_len received null output pointer");
+        return -1;
+    }
+    match context.object_len(handle) {
+        Ok(len) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_len = len;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_get_item(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    key_handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_get_item received null output pointer");
+        return -1;
+    }
+    match context.object_get_item(object_handle, key_handle) {
+        Ok(handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_sequence_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -1945,6 +2048,8 @@ impl Vm {
             object_get_float: capi_object_get_float,
             object_get_bool: capi_object_get_bool,
             object_get_bytes: capi_object_get_bytes,
+            object_len: capi_object_len,
+            object_get_item: capi_object_get_item,
             object_sequence_len: capi_object_sequence_len,
             object_sequence_get_item: capi_object_sequence_get_item,
             object_get_iter: capi_object_get_iter,

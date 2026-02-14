@@ -392,6 +392,17 @@ pub struct PyrsApiV1 {
         out_data: *mut *const u8,
         out_len: *mut usize,
     ) -> i32,
+    pub object_len: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        handle: PyrsObjectHandle,
+        out_len: *mut usize,
+    ) -> i32,
+    pub object_get_item: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        object_handle: PyrsObjectHandle,
+        key_handle: PyrsObjectHandle,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
     pub object_sequence_len: unsafe extern "C" fn(
         module_ctx: *mut c_void,
         handle: PyrsObjectHandle,

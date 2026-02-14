@@ -72,6 +72,8 @@ struct PyrsApiV1 {
     int (*object_get_float)(void* module_ctx, PyrsObjectHandle handle, double* out);
     int (*object_get_bool)(void* module_ctx, PyrsObjectHandle handle, int* out);
     int (*object_get_bytes)(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len);
+    int (*object_len)(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len);
+    int (*object_get_item)(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle, PyrsObjectHandle* out_handle);
     int (*object_sequence_len)(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len);
     int (*object_sequence_get_item)(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle);
     int (*object_get_iter)(void* module_ctx, PyrsObjectHandle handle, PyrsObjectHandle* out_handle);

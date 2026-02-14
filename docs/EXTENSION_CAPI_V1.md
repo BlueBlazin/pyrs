@@ -42,6 +42,8 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_get_float(void* module_ctx, PyrsObjectHandle handle, double* out)`
 - `object_get_bool(void* module_ctx, PyrsObjectHandle handle, int* out)`
 - `object_get_bytes(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len)`
+- `object_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
+- `object_get_item(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle key_handle, PyrsObjectHandle* out_handle)`
 - `object_sequence_len(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len)`
 - `object_sequence_get_item(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle)`
 - `object_get_iter(void* module_ctx, PyrsObjectHandle handle, PyrsObjectHandle* out_handle)`
@@ -86,6 +88,7 @@ Return semantics:
 - extension code can import modules during init/call paths via `module_import(...)`.
 - extension code can load module attributes via `module_get_attr(...)`.
 - extension code can perform type relation checks via `object_is_instance(...)` and `object_is_subclass(...)`.
+- generic length/subscript helpers are available through `object_len(...)` and `object_get_item(...)`.
 - iterator helpers are available through `object_get_iter(...)` and `object_iter_next(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.
@@ -114,6 +117,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 |---|---|
 | module setters/getters/import/attr-load | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_can_import_module_and_export_attribute`, `dynamic_extension_mixed_surface_roundtrip` |
 | handle constructors + typed getters | `dynamic_extension_can_set_module_values_via_object_handles` |
+| generic len/getitem helpers | `dynamic_extension_can_use_len_and_getitem_apis` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |
 | object attribute helpers (`get`/`set`/`del`/`has`) | `dynamic_extension_can_get_set_and_del_object_attributes` |
