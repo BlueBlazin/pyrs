@@ -3980,3 +3980,154 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);
 }
+
+#[test]
+fn dynamic_extension_can_disable_module_state_finalize_callback() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping module-state finalize-disable smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping module-state finalize-disable smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_module_state_finalize_disable");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_module_state_finalize_disable.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <stdint.h>
+
+static int g_free_calls = 0;
+static int g_finalize_calls = 0;
+
+static void free_state(void* state) {
+    (void)state;
+    g_free_calls += 1;
+}
+
+static void finalize_state(void* state) {
+    (void)state;
+    g_finalize_calls += 1;
+}
+
+static int free_calls(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    PyrsObjectHandle* result
+) {
+    (void)argv;
+    if (argc != 0 || !result) {
+        return -10;
+    }
+    PyrsObjectHandle value = api->object_new_int(module_ctx, g_free_calls);
+    if (!value) {
+        return -11;
+    }
+    *result = value;
+    return 0;
+}
+
+static int finalize_calls(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    PyrsObjectHandle* result
+) {
+    (void)argv;
+    if (argc != 0 || !result) {
+        return -12;
+    }
+    PyrsObjectHandle value = api->object_new_int(module_ctx, g_finalize_calls);
+    if (!value) {
+        return -13;
+    }
+    *result = value;
+    return 0;
+}
+
+static int clear_state(
+    const PyrsApiV1* api,
+    void* module_ctx,
+    uintptr_t argc,
+    const PyrsObjectHandle* argv,
+    PyrsObjectHandle* result
+) {
+    (void)argv;
+    if (argc != 0 || !result) {
+        return -14;
+    }
+    if (api->module_set_state(module_ctx, 0, 0) != 0) {
+        return -15;
+    }
+    PyrsObjectHandle value = api->object_new_int(module_ctx, g_free_calls);
+    if (!value) {
+        return -16;
+    }
+    *result = value;
+    return 0;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    if (api->module_set_finalize(module_ctx, finalize_state) != 0) {
+        return -2;
+    }
+    if (api->module_set_state(module_ctx, (void*)(uintptr_t)0x1234, free_state) != 0) {
+        return -3;
+    }
+    if (api->module_set_finalize(module_ctx, 0) != 0) {
+        return -4;
+    }
+    if (api->module_add_function(module_ctx, "free_calls", free_calls) != 0) {
+        return -5;
+    }
+    if (api->module_add_function(module_ctx, "finalize_calls", finalize_calls) != 0) {
+        return -6;
+    }
+    if (api->module_add_function(module_ctx, "clear_state", clear_state) != 0) {
+        return -7;
+    }
+    if (api->module_set_bool(module_ctx, "STATE_READY", 1) != 0) {
+        return -8;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_module_state_finalize_disable");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_module_state_finalize_disable.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_module_state_finalize_disable\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_module_state_finalize_disable as m\nassert m.STATE_READY is True\nassert m.free_calls() == 0\nassert m.finalize_calls() == 0\nassert m.clear_state() == 1\nassert m.free_calls() == 1\nassert m.finalize_calls() == 0",
+    )
+    .expect("module-state finalize-disable extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
