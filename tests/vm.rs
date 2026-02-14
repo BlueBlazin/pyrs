@@ -5023,11 +5023,17 @@ value_err = False
 try:
     signed[0] = 1.25
 except Exception as exc:
-    type_err = "invalid type for format 'b'" in str(exc)
+    type_err = (
+        type(exc).__name__ == "TypeError"
+        and "invalid type for format 'b'" in str(exc)
+    )
 try:
     signed[0] = 128
 except Exception as exc:
-    value_err = "invalid value for format 'b'" in str(exc)
+    value_err = (
+        type(exc).__name__ == "ValueError"
+        and "invalid value for format 'b'" in str(exc)
+    )
 ok = (
     signed_index_ok
     and signed_store_ok

@@ -4524,14 +4524,14 @@ fn memoryview_format_for_view(
 
 fn memoryview_invalid_type_error(format: MemoryViewCastFormat) -> RuntimeError {
     RuntimeError::new(format!(
-        "memoryview: invalid type for format '{}'",
+        "TypeError: memoryview: invalid type for format '{}'",
         format.code()
     ))
 }
 
 fn memoryview_invalid_value_error(format: MemoryViewCastFormat) -> RuntimeError {
     RuntimeError::new(format!(
-        "memoryview: invalid value for format '{}'",
+        "ValueError: memoryview: invalid value for format '{}'",
         format.code()
     ))
 }
