@@ -403,6 +403,16 @@ pub struct PyrsApiV1 {
         index: usize,
         out_handle: *mut PyrsObjectHandle,
     ) -> i32,
+    pub object_get_iter: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        handle: PyrsObjectHandle,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
+    pub object_iter_next: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        iter_handle: PyrsObjectHandle,
+        out_handle: *mut PyrsObjectHandle,
+    ) -> i32,
     pub object_list_append: unsafe extern "C" fn(
         module_ctx: *mut c_void,
         list_handle: PyrsObjectHandle,

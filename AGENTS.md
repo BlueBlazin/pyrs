@@ -44,6 +44,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 now includes `module_import(...)` for native-side module loading during extension init/call paths.
   - C-API v1 now includes `module_get_attr(...)` for module-handle attribute extraction with explicit module-type checks.
   - C-API handle constructors/getters now include `None`/`float`/`bytes`/`tuple`/`list`/`dict` in addition to `bool`/`int`/`str`, with smoke coverage through native handle and sequence+mapping round-trip.
+  - C-API v1 now includes native iterator helpers (`object_get_iter`, `object_iter_next`) for extension-side iteration without Python-level dispatch glue.
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
   - C-API v1 now includes handle-based object attribute access (`object_get_attr`, `object_set_attr`, `object_del_attr`) with native extension smoke coverage.
   - C-API v1 attribute helpers now include presence checks (`object_has_attr`) for exception-free attr probes in native code.

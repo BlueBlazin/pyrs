@@ -46,6 +46,7 @@ Supported dynamic init symbol contract (v1):
 - can import modules during init/call paths via `module_import`.
 - can load imported-module attributes via `module_get_attr`.
 - can register positional/keyword native callables via `module_add_function` / `module_add_function_kw`.
+- can iterate from native code via `object_get_iter` / `object_iter_next`.
 - can get/set/delete/check object attributes from native code via `object_get_attr` / `object_set_attr` / `object_del_attr` / `object_has_attr`.
 - can perform type relation checks via `object_is_instance` / `object_is_subclass`.
 - can invoke Python callables from native code via handle-based `object_call(...)` and fast helpers (`object_call_noargs`, `object_call_onearg`).

@@ -14,8 +14,8 @@ use crate::runtime::{
 };
 
 use super::{
-    ExtensionCallableKind, InternalCallOutcome, NativeCallResult, ObjRef, Vm,
-    dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value_checked,
+    ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome, NativeCallResult, ObjRef,
+    Vm, dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value_checked,
 };
 
 struct CapiObjectSlot {
@@ -316,6 +316,45 @@ impl ModuleCapiContext {
                 _ => Err(format!("object handle {} has invalid list storage", handle)),
             },
             _ => Err(format!("object handle {} is not tuple/list", handle)),
+        }
+    }
+
+    fn object_get_iter(&mut self, handle: PyrsObjectHandle) -> Result<PyrsObjectHandle, String> {
+        if self.vm.is_null() {
+            return Err("object_get_iter missing VM context".to_string());
+        }
+        let source = self
+            .object_value(handle)
+            .ok_or_else(|| format!("invalid object handle {}", handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let iterator = vm
+            .builtin_iter(vec![source], HashMap::new())
+            .map_err(|err| err.message)?;
+        Ok(self.alloc_object(iterator))
+    }
+
+    fn object_iter_next(
+        &mut self,
+        iter_handle: PyrsObjectHandle,
+    ) -> Result<Option<PyrsObjectHandle>, String> {
+        if self.vm.is_null() {
+            return Err("object_iter_next missing VM context".to_string());
+        }
+        let iterator = self
+            .object_value(iter_handle)
+            .ok_or_else(|| format!("invalid iterator handle {}", iter_handle))?;
+        // SAFETY: the VM pointer is initialized for the extension context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        match vm
+            .next_from_iterator_value(&iterator)
+            .map_err(|err| err.message)?
+        {
+            GeneratorResumeOutcome::Yield(value) => Ok(Some(self.alloc_object(value))),
+            GeneratorResumeOutcome::Complete(_) => Ok(None),
+            GeneratorResumeOutcome::PropagatedException => Err(vm
+                .runtime_error_from_active_exception("object_iter_next() failed")
+                .message),
         }
     }
 
@@ -711,6 +750,8 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_new_dict"
             | "object_sequence_len"
             | "object_sequence_get_item"
+            | "object_get_iter"
+            | "object_iter_next"
             | "object_list_append"
             | "object_list_set_item"
             | "object_dict_len"
@@ -1375,6 +1416,61 @@ unsafe extern "C" fn capi_object_sequence_get_item(
     }
 }
 
+unsafe extern "C" fn capi_object_get_iter(
+    module_ctx: *mut c_void,
+    handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_get_iter received null output pointer");
+        return -1;
+    }
+    match context.object_get_iter(handle) {
+        Ok(iterator_handle) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = iterator_handle;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_iter_next(
+    module_ctx: *mut c_void,
+    iter_handle: PyrsObjectHandle,
+    out_handle: *mut PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_handle.is_null() {
+        context.set_error("object_iter_next received null output pointer");
+        return -1;
+    }
+    match context.object_iter_next(iter_handle) {
+        Ok(Some(item_handle)) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_handle = item_handle;
+            }
+            1
+        }
+        Ok(None) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_list_append(
     module_ctx: *mut c_void,
     list_handle: PyrsObjectHandle,
@@ -1851,6 +1947,8 @@ impl Vm {
             object_get_bytes: capi_object_get_bytes,
             object_sequence_len: capi_object_sequence_len,
             object_sequence_get_item: capi_object_sequence_get_item,
+            object_get_iter: capi_object_get_iter,
+            object_iter_next: capi_object_iter_next,
             object_list_append: capi_object_list_append,
             object_list_set_item: capi_object_list_set_item,
             object_dict_len: capi_object_dict_len,

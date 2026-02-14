@@ -74,6 +74,8 @@ struct PyrsApiV1 {
     int (*object_get_bytes)(void* module_ctx, PyrsObjectHandle handle, const uint8_t** out_data, uintptr_t* out_len);
     int (*object_sequence_len)(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len);
     int (*object_sequence_get_item)(void* module_ctx, PyrsObjectHandle handle, uintptr_t index, PyrsObjectHandle* out_handle);
+    int (*object_get_iter)(void* module_ctx, PyrsObjectHandle handle, PyrsObjectHandle* out_handle);
+    int (*object_iter_next)(void* module_ctx, PyrsObjectHandle iter_handle, PyrsObjectHandle* out_handle);
     int (*object_list_append)(void* module_ctx, PyrsObjectHandle list_handle, PyrsObjectHandle item_handle);
     int (*object_list_set_item)(void* module_ctx, PyrsObjectHandle list_handle, uintptr_t index, PyrsObjectHandle item_handle);
     int (*object_dict_len)(void* module_ctx, PyrsObjectHandle handle, uintptr_t* out_len);
