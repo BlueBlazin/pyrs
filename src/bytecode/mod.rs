@@ -102,8 +102,13 @@ pub enum Opcode {
     PopBlock,
     Raise,
     MatchException,
+    CheckExcMatch,
     MatchExceptionStar,
     ClearException,
+    PushExcInfo,
+    PopExcept,
+    WithExceptStart,
+    Reraise,
     PopTop,
     EndFor,
     GetIter,
@@ -119,6 +124,15 @@ pub enum Opcode {
     SetFunctionAttribute,
     ReturnConst,
     ReturnValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExceptionHandler {
+    pub start: usize,
+    pub end: usize,
+    pub target: usize,
+    pub depth: usize,
+    pub push_lasti: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +194,7 @@ pub struct CodeObject {
     pub is_generator: bool,
     pub is_coroutine: bool,
     pub is_async_generator: bool,
+    pub exception_handlers: Vec<ExceptionHandler>,
 }
 
 impl CodeObject {
@@ -215,6 +230,7 @@ impl CodeObject {
             is_generator: false,
             is_coroutine: false,
             is_async_generator: false,
+            exception_handlers: Vec::new(),
         }
     }
 

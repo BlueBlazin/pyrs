@@ -162,3 +162,58 @@ fn translates_load_special_and_call_intrinsic_1() {
         ]
     );
 }
+
+#[test]
+fn translates_exception_table_and_with_except_opcodes() {
+    let mut code = test_code(vec![
+        op("LOAD_CONST"),
+        0,
+        op("LOAD_CONST"),
+        0,
+        op("LOAD_CONST"),
+        0,
+        op("LOAD_CONST"),
+        0,
+        op("LOAD_CONST"),
+        0,
+        op("WITH_EXCEPT_START"),
+        0,
+        op("PUSH_EXC_INFO"),
+        0,
+        op("POP_EXCEPT"),
+        0,
+        op("RERAISE"),
+        1,
+    ]);
+    code.exceptiontable = vec![0x80, 8, 2, 1];
+
+    let mut heap = Heap::new();
+    let translated = translate_code(&code, &mut heap).expect("translation should succeed");
+
+    let opcodes: Vec<Opcode> = translated
+        .instructions
+        .iter()
+        .map(|instr| instr.opcode)
+        .collect();
+    assert_eq!(
+        opcodes,
+        vec![
+            Opcode::LoadConst,
+            Opcode::LoadConst,
+            Opcode::LoadConst,
+            Opcode::LoadConst,
+            Opcode::LoadConst,
+            Opcode::WithExceptStart,
+            Opcode::PushExcInfo,
+            Opcode::PopExcept,
+            Opcode::Reraise,
+        ]
+    );
+    assert_eq!(translated.exception_handlers.len(), 1);
+    let handler = translated.exception_handlers[0];
+    assert_eq!(handler.start, 0);
+    assert_eq!(handler.end, 8);
+    assert_eq!(handler.target, 2);
+    assert_eq!(handler.depth, 0);
+    assert!(handler.push_lasti);
+}

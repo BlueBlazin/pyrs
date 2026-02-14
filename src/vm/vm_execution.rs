@@ -1605,18 +1605,14 @@ impl Vm {
                         }
                     }
                 };
-                if push_null {
-                    let frame = self
-                        .frames
-                        .get_mut(caller_idx)
-                        .ok_or_else(|| RuntimeError::new("attribute caller frame missing"))?;
-                    frame.stack.push(Value::None);
-                }
                 let frame = self
                     .frames
                     .get_mut(caller_idx)
                     .ok_or_else(|| RuntimeError::new("attribute caller frame missing"))?;
                 frame.stack.push(attr);
+                if push_null {
+                    frame.stack.push(Value::None);
+                }
             }
             Opcode::LoadSpecial => {
                 let oparg = instr
@@ -1635,8 +1631,8 @@ impl Vm {
                         error_suffix
                     ))
                 })?;
-                self.push_value(Value::None);
                 self.push_value(method);
+                self.push_value(Value::None);
             }
             Opcode::StoreName => {
                 let idx = instr
@@ -3960,17 +3956,17 @@ impl Vm {
                     args.push(self.pop_value()?);
                 }
                 args.reverse();
-                let mut func = self.pop_value()?;
-                if matches!(func, Value::None) {
-                    func = self.pop_value()?;
-                }
-                if let Some(Value::None) = self
-                    .frames
-                    .last()
-                    .and_then(|frame| frame.stack.last())
-                    .cloned()
-                {
-                    let _ = self.pop_value();
+                let top = self.pop_value()?;
+                let below = self.pop_value()?;
+                let (func, self_or_null) =
+                    if matches!(below, Value::None) && !matches!(top, Value::None) {
+                        (top, Value::None)
+                    } else {
+                        (below, top)
+                    };
+                let func = func;
+                if !matches!(self_or_null, Value::None) {
+                    args.insert(0, self_or_null);
                 }
 
                 let mut fast_dispatched = false;
@@ -4118,17 +4114,17 @@ impl Vm {
                     args.push(self.pop_value()?);
                 }
                 args.reverse();
-                let mut func = self.pop_value()?;
-                if matches!(func, Value::None) {
-                    func = self.pop_value()?;
-                }
-                if let Some(Value::None) = self
-                    .frames
-                    .last()
-                    .and_then(|frame| frame.stack.last())
-                    .cloned()
-                {
-                    let _ = self.pop_value();
+                let top = self.pop_value()?;
+                let below = self.pop_value()?;
+                let (func, self_or_null) =
+                    if matches!(below, Value::None) && !matches!(top, Value::None) {
+                        (top, Value::None)
+                    } else {
+                        (below, top)
+                    };
+                let func = func;
+                if !matches!(self_or_null, Value::None) {
+                    args.insert(0, self_or_null);
                 }
                 let mut fast_dispatched = false;
                 if kwargs.is_empty() {
@@ -4946,10 +4942,65 @@ impl Vm {
                     }
                 }
             }
+            Opcode::Reraise => {
+                let oparg = instr.arg.unwrap_or(0) as usize;
+                if oparg > 2 {
+                    return Err(RuntimeError::new("RERAISE oparg out of range"));
+                }
+                let exc = self.pop_value()?;
+                if oparg > 0 {
+                    let lasti_index = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .stack
+                            .len()
+                            .checked_sub(oparg)
+                            .ok_or_else(|| RuntimeError::new("RERAISE stack underflow"))?
+                    };
+                    let lasti = {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame
+                            .stack
+                            .get(lasti_index)
+                            .cloned()
+                            .ok_or_else(|| RuntimeError::new("RERAISE stack underflow"))?
+                    };
+                    let lasti = value_to_int(lasti)
+                        .map_err(|_| RuntimeError::new("RERAISE expects integer lasti value"))?;
+                    if lasti < 0 {
+                        return Err(RuntimeError::new("RERAISE lasti must be non-negative"));
+                    }
+                    let frame = self.frames.last_mut().expect("frame exists");
+                    frame.reraise_lasti_override = Some(lasti as usize);
+                    if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
+                        eprintln!(
+                            "[reraise] oparg={} lasti={} current_last_ip={} next_ip={}",
+                            oparg, lasti, frame.last_ip, frame.ip
+                        );
+                    }
+                }
+                let exc = self.normalize_exception_value(exc)?;
+                self.unwind_exception(exc)?;
+            }
             Opcode::MatchException => {
                 let handler_type = self.pop_value()?;
                 let exception = self.pop_value()?;
                 let matches = self.exception_matches(&exception, &handler_type)?;
+                self.push_value(Value::Bool(matches));
+            }
+            Opcode::CheckExcMatch => {
+                let handler_type = self.pop_value()?;
+                let exception = self.pop_value()?;
+                let matches = self.exception_matches(&exception, &handler_type)?;
+                if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
+                    eprintln!(
+                        "[check-exc-match] exception={} handler={} -> {}",
+                        self.value_type_name_for_error(&exception),
+                        self.value_type_name_for_error(&handler_type),
+                        matches
+                    );
+                }
+                self.push_value(exception);
                 self.push_value(Value::Bool(matches));
             }
             Opcode::MatchExceptionStar => {
@@ -4976,6 +5027,59 @@ impl Vm {
             Opcode::ClearException => {
                 if let Some(frame) = self.frames.last_mut() {
                     frame.active_exception = None;
+                }
+            }
+            Opcode::PushExcInfo => {
+                let exc = self.pop_value()?;
+                let previous = if let Some(frame) = self.frames.last_mut() {
+                    let previous = frame.active_exception.clone().unwrap_or(Value::None);
+                    frame.active_exception = Some(exc.clone());
+                    previous
+                } else {
+                    Value::None
+                };
+                self.push_value(previous);
+                self.push_value(exc);
+            }
+            Opcode::PopExcept => {
+                let exc_value = self.pop_value()?;
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.active_exception = if matches!(exc_value, Value::None) {
+                        None
+                    } else {
+                        Some(exc_value)
+                    };
+                }
+            }
+            Opcode::WithExceptStart => {
+                let (exit_func, exit_self, value) = {
+                    let frame = self.frames.last().expect("frame exists");
+                    if frame.stack.len() < 5 {
+                        return Err(RuntimeError::new("WITH_EXCEPT_START stack underflow"));
+                    }
+                    let top = frame.stack.len();
+                    (
+                        frame.stack[top - 5].clone(),
+                        frame.stack[top - 4].clone(),
+                        frame.stack[top - 1].clone(),
+                    )
+                };
+                let exc_type = match &value {
+                    Value::Exception(exc) => Value::ExceptionType(exc.name.clone()),
+                    Value::ExceptionType(name) => Value::ExceptionType(name.clone()),
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "WITH_EXCEPT_START expects exception value on stack",
+                        ));
+                    }
+                };
+                let mut args = vec![exc_type, value, Value::None];
+                if !matches!(exit_self, Value::None) {
+                    args.insert(0, exit_self);
+                }
+                match self.call_internal(exit_func, args, HashMap::new())? {
+                    InternalCallOutcome::Value(result) => self.push_value(result),
+                    InternalCallOutcome::CallerExceptionHandled => {}
                 }
             }
             Opcode::PopTop => {
@@ -5067,8 +5171,29 @@ impl Vm {
                         let frame = self.frames.last().expect("frame exists");
                         frame.simple_one_arg_no_cells
                             && frame.stack.len() == 1
+                            && frame.locals.is_empty()
+                            && frame.cells.is_empty()
+                            && frame.blocks.is_empty()
+                            && frame.class_bases.is_empty()
+                            && frame.class_keywords.is_empty()
+                            && frame.module_locals_dict.is_none()
+                            && frame.globals_fallback.is_none()
+                            && frame.locals_fallback.is_none()
+                            && frame.class_metaclass.is_none()
+                            && frame.class_namespace.is_none()
+                            && frame.generator_owner.is_none()
+                            && !frame.generator_awaiting_resume_value
+                            && frame.generator_resume_value.is_none()
+                            && frame.generator_pending_throw.is_none()
+                            && frame.generator_resume_kind.is_none()
+                            && frame.yield_from_iter.is_none()
+                            && frame.reraise_lasti_override.is_none()
                             && !frame.discard_result
                             && frame.active_exception.is_none()
+                            && !frame.return_class
+                            && frame.return_instance.is_none()
+                            && !frame.return_module
+                            && !frame.is_module
                             && !frame.expect_none_return
                     }
                 };
@@ -5080,17 +5205,31 @@ impl Vm {
                         let frame = self.frames.last().expect("frame exists");
                         frame.simple_one_arg_no_cells
                             && frame.stack.len() == 1
+                            && frame.locals.is_empty()
+                            && frame.cells.is_empty()
                             && frame.blocks.is_empty()
+                            && frame.class_bases.is_empty()
+                            && frame.class_keywords.is_empty()
                             && frame.code.fast_local_count == 1
                             && frame.code.plain_positional_arg0_slot == Some(0)
                             && !frame.is_module
                             && !frame.discard_result
                             && frame.module_locals_dict.is_none()
+                            && frame.globals_fallback.is_none()
+                            && frame.locals_fallback.is_none()
                             && frame.active_exception.is_none()
+                            && frame.reraise_lasti_override.is_none()
                             && !frame.return_class
                             && frame.return_instance.is_none()
                             && !frame.return_module
                             && !frame.expect_none_return
+                            && frame.class_metaclass.is_none()
+                            && frame.class_namespace.is_none()
+                            && !frame.generator_awaiting_resume_value
+                            && frame.generator_resume_value.is_none()
+                            && frame.generator_pending_throw.is_none()
+                            && frame.generator_resume_kind.is_none()
+                            && frame.yield_from_iter.is_none()
                             && frame.generator_owner.is_none()
                     }
                 };
@@ -5202,6 +5341,94 @@ impl Vm {
         self.raise_exception_with_cause(value, None)
     }
 
+    fn exception_handler_for_ip(
+        frame: &Frame,
+        instruction_ip: usize,
+    ) -> Option<(usize, usize, bool)> {
+        frame
+            .code
+            .exception_handlers
+            .iter()
+            .find(|entry| entry.start <= instruction_ip && instruction_ip < entry.end)
+            .map(|entry| (entry.target, entry.depth, entry.push_lasti))
+    }
+
+    fn unwind_exception(&mut self, exc: Value) -> Result<(), RuntimeError> {
+        let mut traceback = Vec::new();
+        loop {
+            let frame_depth = self.frames.len();
+            let Some(frame) = self.frames.last_mut() else {
+                let message = self.format_traceback(&traceback, &exc);
+                return Err(RuntimeError::new(message));
+            };
+
+            traceback.push(Self::frame_trace(frame));
+
+            if let Some(block) = frame.blocks.pop() {
+                frame.stack.truncate(block.stack_len);
+                frame.stack.push(exc.clone());
+                frame.ip = block.handler;
+                frame.reraise_lasti_override = None;
+                frame.active_exception = Some(exc.clone());
+                return Ok(());
+            }
+
+            if let Some((target, depth, push_lasti)) =
+                Self::exception_handler_for_ip(frame, frame.last_ip)
+            {
+                if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
+                    eprintln!(
+                        "[exc-table] last_ip={} ip={} -> target={} depth={} push_lasti={} stack_len={}",
+                        frame.last_ip,
+                        frame.ip,
+                        target,
+                        depth,
+                        push_lasti,
+                        frame.stack.len()
+                    );
+                }
+                if frame.stack.len() > depth {
+                    frame.stack.truncate(depth);
+                }
+                let lasti_to_push = frame.reraise_lasti_override.take().unwrap_or(frame.last_ip);
+                if push_lasti {
+                    frame.stack.push(Value::Int(lasti_to_push as i64));
+                }
+                frame.stack.push(exc.clone());
+                frame.ip = target;
+                return Ok(());
+            }
+
+            if let Some(boundary) = self.active_generator_resume_boundary
+                && frame_depth <= boundary
+            {
+                self.pending_generator_exception = Some(exc.clone());
+                self.generator_resume_outcome = Some(GeneratorResumeOutcome::PropagatedException);
+                return Ok(());
+            }
+
+            if let Some(stop_depth) = self.run_stop_depth
+                && frame_depth <= stop_depth
+            {
+                frame.active_exception = Some(exc.clone());
+                let message = self.format_traceback(&traceback, &exc);
+                return Err(RuntimeError::new(message));
+            }
+
+            let frame = self.frames.pop().expect("frame exists");
+            if let Some(owner) = frame.generator_owner {
+                self.generator_states.remove(&owner.id());
+                let _ = self.set_generator_running(&owner, false);
+                let _ = self.set_generator_started(&owner, true);
+                let _ = self.set_generator_closed(&owner, true);
+                if self.active_generator_resume == Some(owner.id()) {
+                    self.generator_resume_outcome =
+                        Some(GeneratorResumeOutcome::PropagatedException);
+                }
+            }
+        }
+    }
+
     pub(super) fn raise_exception_with_cause(
         &mut self,
         value: Value,
@@ -5231,58 +5458,7 @@ impl Vm {
                 }
             }
         }
-
-        let mut traceback = Vec::new();
-        loop {
-            let frame_depth = self.frames.len();
-            let Some(frame) = self.frames.last_mut() else {
-                let message = self.format_traceback(&traceback, &exc);
-                return Err(RuntimeError::new(message));
-            };
-
-            traceback.push(Self::frame_trace(frame));
-
-            if let Some(block) = frame.blocks.pop() {
-                frame.stack.truncate(block.stack_len);
-                frame.stack.push(exc.clone());
-                frame.ip = block.handler;
-                frame.active_exception = Some(exc);
-                return Ok(());
-            }
-
-            if let Some(boundary) = self.active_generator_resume_boundary
-                && frame_depth <= boundary
-            {
-                self.pending_generator_exception = Some(exc);
-                self.generator_resume_outcome = Some(GeneratorResumeOutcome::PropagatedException);
-                return Ok(());
-            }
-
-            // Preserve the internal-call boundary once unwinding has moved past
-            // the immediate caller frame. This still allows the caller itself
-            // to unwind so outer Python exception handlers can catch the real
-            // exception object (instead of collapsing into a RuntimeError
-            // traceback string at the boundary).
-            if let Some(stop_depth) = self.run_stop_depth
-                && frame_depth <= stop_depth
-            {
-                frame.active_exception = Some(exc.clone());
-                let message = self.format_traceback(&traceback, &exc);
-                return Err(RuntimeError::new(message));
-            }
-
-            let frame = self.frames.pop().expect("frame exists");
-            if let Some(owner) = frame.generator_owner {
-                self.generator_states.remove(&owner.id());
-                let _ = self.set_generator_running(&owner, false);
-                let _ = self.set_generator_started(&owner, true);
-                let _ = self.set_generator_closed(&owner, true);
-                if self.active_generator_resume == Some(owner.id()) {
-                    self.generator_resume_outcome =
-                        Some(GeneratorResumeOutcome::PropagatedException);
-                }
-            }
-        }
+        self.unwind_exception(exc)
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {

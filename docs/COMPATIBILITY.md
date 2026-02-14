@@ -18,7 +18,7 @@ Status:
 ## Bytecode and VM
 - `[x]` CPython 3.14 opcode-table foundation and decode/translate/execute support
 - `[x]` `.pyc` read/write baseline
-- `[~]` CPython exception-table execution for translated `.pyc` is not complete (current policy: explicit source fallback)
+- `[~]` CPython exception-table execution baseline for translated `.pyc` is landed (`PUSH_EXC_INFO`/`POP_EXCEPT`/`WITH_EXCEPT_START`/`RERAISE`/`CHECK_EXC_MATCH` + table-driven handler dispatch); remaining `.pyc` long-tail opcode/state parity is still in progress
 - `[~]` Full opcode-family parity
 
 ## Runtime and Object Model

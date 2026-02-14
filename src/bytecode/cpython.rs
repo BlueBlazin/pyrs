@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::pyc::{PycHeader, parse_pyc_header, write_pyc_header};
-use crate::bytecode::{CodeObject, Instruction, Opcode};
+use crate::bytecode::{CodeObject, ExceptionHandler, Instruction, Opcode};
 use crate::runtime::{Heap, SliceValue, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,11 +129,6 @@ impl<'a> Translator<'a> {
     }
 
     fn translate(&mut self) -> Result<CodeObject, CpythonError> {
-        if !self.code.exceptiontable.is_empty() {
-            return Err(CpythonError::new(
-                "unsupported CPython exception table (fallback to source required)",
-            ));
-        }
         self.build_name_maps()?;
         self.constants = self.convert_constants(&self.code.consts)?;
 
@@ -150,6 +145,16 @@ impl<'a> Translator<'a> {
         let instructions = self.translate_instructions()?;
         result.instructions = instructions;
         result.locations = vec![crate::bytecode::Location::unknown(); result.instructions.len()];
+        result.exception_handlers =
+            parse_exception_table(&self.code.exceptiontable, result.instructions.len())?;
+        if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
+            for entry in &result.exception_handlers {
+                eprintln!(
+                    "[pyc-exc-entry] start={} end={} target={} depth={} push_lasti={}",
+                    entry.start, entry.end, entry.target, entry.depth, entry.push_lasti
+                );
+            }
+        }
         result.constants = self.constants.clone();
         result.rebuild_layout_indexes();
         Ok(result)
@@ -390,24 +395,27 @@ impl<'a> Translator<'a> {
                 "CALL_INTRINSIC_1" => Instruction::new(Opcode::CallIntrinsic1, Some(arg)),
                 "POP_JUMP_IF_FALSE" => Instruction::new(
                     Opcode::JumpIfFalse,
-                    Some(relative_forward_target(idx, arg)?),
+                    Some(relative_forward_target_plus_two(idx, arg)?),
                 ),
                 "INSTRUMENTED_POP_JUMP_IF_FALSE" => Instruction::new(
                     Opcode::JumpIfFalse,
-                    Some(relative_forward_target(idx, arg)?),
+                    Some(relative_forward_target_plus_two(idx, arg)?),
                 ),
-                "POP_JUMP_IF_TRUE" => {
-                    Instruction::new(Opcode::JumpIfTrue, Some(relative_forward_target(idx, arg)?))
-                }
-                "INSTRUMENTED_POP_JUMP_IF_TRUE" => {
-                    Instruction::new(Opcode::JumpIfTrue, Some(relative_forward_target(idx, arg)?))
-                }
-                "POP_JUMP_IF_NONE" | "INSTRUMENTED_POP_JUMP_IF_NONE" => {
-                    Instruction::new(Opcode::JumpIfNone, Some(relative_forward_target(idx, arg)?))
-                }
+                "POP_JUMP_IF_TRUE" => Instruction::new(
+                    Opcode::JumpIfTrue,
+                    Some(relative_forward_target_plus_two(idx, arg)?),
+                ),
+                "INSTRUMENTED_POP_JUMP_IF_TRUE" => Instruction::new(
+                    Opcode::JumpIfTrue,
+                    Some(relative_forward_target_plus_two(idx, arg)?),
+                ),
+                "POP_JUMP_IF_NONE" | "INSTRUMENTED_POP_JUMP_IF_NONE" => Instruction::new(
+                    Opcode::JumpIfNone,
+                    Some(relative_forward_target_plus_two(idx, arg)?),
+                ),
                 "POP_JUMP_IF_NOT_NONE" | "INSTRUMENTED_POP_JUMP_IF_NOT_NONE" => Instruction::new(
                     Opcode::JumpIfNotNone,
-                    Some(relative_forward_target(idx, arg)?),
+                    Some(relative_forward_target_plus_two(idx, arg)?),
                 ),
                 "JUMP_FORWARD" | "INSTRUMENTED_JUMP_FORWARD" => {
                     Instruction::new(Opcode::Jump, Some(relative_forward_target(idx, arg)?))
@@ -432,9 +440,10 @@ impl<'a> Translator<'a> {
                 | "FOR_ITER_TUPLE" => {
                     Instruction::new(Opcode::ForIter, Some(for_iter_target(idx, arg)?))
                 }
-                "SEND" | "SEND_GEN" => {
-                    Instruction::new(Opcode::Send, Some(relative_forward_target(idx, arg)?))
-                }
+                "SEND" | "SEND_GEN" => Instruction::new(
+                    Opcode::Send,
+                    Some(relative_forward_target_plus_two(idx, arg)?),
+                ),
                 "YIELD_VALUE" => Instruction::new(Opcode::YieldValue, None),
                 "INSTRUMENTED_YIELD_VALUE" => Instruction::new(Opcode::YieldValue, None),
                 "YIELD_FROM" => Instruction::new(Opcode::YieldFrom, None),
@@ -534,12 +543,14 @@ impl<'a> Translator<'a> {
                     Instruction::new(Opcode::StoreSubscript, None)
                 }
                 "BINARY_SLICE" => Instruction::new(Opcode::Subscript, None),
-                "PUSH_EXC_INFO" => Instruction::new(Opcode::Nop, None),
-                "POP_EXCEPT" => Instruction::new(Opcode::ClearException, None),
-                "RERAISE" => Instruction::new(Opcode::Raise, Some(0)),
+                "PUSH_EXC_INFO" => Instruction::new(Opcode::PushExcInfo, None),
+                "POP_EXCEPT" => Instruction::new(Opcode::PopExcept, None),
+                "WITH_EXCEPT_START" => Instruction::new(Opcode::WithExceptStart, None),
+                "RERAISE" => Instruction::new(Opcode::Reraise, Some(arg)),
                 "RAISE_VARARGS" => Instruction::new(Opcode::Raise, Some(arg)),
-                "CHECK_EXC_MATCH" => Instruction::new(Opcode::MatchException, None),
-                "POP_BLOCK" => Instruction::new(Opcode::PopBlock, None),
+                "CHECK_EXC_MATCH" => Instruction::new(Opcode::CheckExcMatch, None),
+                // In CPython 3.14 this is a pseudo-op lowered to NOP.
+                "POP_BLOCK" => Instruction::new(Opcode::Nop, None),
                 _ => {
                     return Err(CpythonError::new(format!(
                         "unsupported CPython opcode '{}' (arg={}) at instruction {}",
@@ -848,10 +859,19 @@ fn relative_forward_target(idx: usize, arg: u32) -> Result<u32, CpythonError> {
     u32::try_from(target).map_err(|_| CpythonError::new("jump target overflow"))
 }
 
+fn relative_forward_target_plus_two(idx: usize, arg: u32) -> Result<u32, CpythonError> {
+    let delta = arg as usize;
+    let target = idx
+        .checked_add(2)
+        .and_then(|value| value.checked_add(delta))
+        .ok_or_else(|| CpythonError::new("jump target overflow"))?;
+    u32::try_from(target).map_err(|_| CpythonError::new("jump target overflow"))
+}
+
 fn relative_backward_target(idx: usize, arg: u32) -> Result<u32, CpythonError> {
     let delta = arg as usize;
     let base = idx
-        .checked_add(1)
+        .checked_add(2)
         .ok_or_else(|| CpythonError::new("jump target overflow"))?;
     let target = base
         .checked_sub(delta)
@@ -880,13 +900,13 @@ fn validate_cpython_control_flow(instructions: &[CpInstr]) -> Result<(), Cpython
             | "INSTRUMENTED_POP_JUMP_IF_FALSE"
             | "INSTRUMENTED_POP_JUMP_IF_TRUE"
             | "INSTRUMENTED_POP_JUMP_IF_NONE"
-            | "INSTRUMENTED_POP_JUMP_IF_NOT_NONE"
-            | "JUMP_FORWARD"
-            | "INSTRUMENTED_JUMP_FORWARD"
-            | "JUMP"
-            | "JUMP_NO_INTERRUPT"
-            | "SEND"
-            | "SEND_GEN" => Some(relative_forward_target(idx, instr.arg)? as usize),
+            | "INSTRUMENTED_POP_JUMP_IF_NOT_NONE" => {
+                Some(relative_forward_target_plus_two(idx, instr.arg)? as usize)
+            }
+            "JUMP_FORWARD" | "INSTRUMENTED_JUMP_FORWARD" | "JUMP" | "JUMP_NO_INTERRUPT" => {
+                Some(relative_forward_target(idx, instr.arg)? as usize)
+            }
+            "SEND" | "SEND_GEN" => Some(relative_forward_target_plus_two(idx, instr.arg)? as usize),
             "JUMP_BACKWARD"
             | "JUMP_BACKWARD_NO_INTERRUPT"
             | "JUMP_BACKWARD_NO_JIT"
@@ -947,6 +967,65 @@ fn validate_translated_code(instructions: &[Instruction]) -> Result<(), CpythonE
     Ok(())
 }
 
+fn parse_varint(bytes: &[u8], index: &mut usize) -> Result<u32, CpythonError> {
+    if *index >= bytes.len() {
+        return Err(CpythonError::new(
+            "truncated exception table while parsing varint",
+        ));
+    }
+    let mut value = (bytes[*index] & 0x3F) as u32;
+    while bytes[*index] & 0x40 != 0 {
+        *index += 1;
+        if *index >= bytes.len() {
+            return Err(CpythonError::new(
+                "truncated exception table while parsing varint",
+            ));
+        }
+        value = (value << 6) | ((bytes[*index] & 0x3F) as u32);
+    }
+    *index += 1;
+    Ok(value)
+}
+
+fn parse_exception_table(
+    bytes: &[u8],
+    instruction_count: usize,
+) -> Result<Vec<ExceptionHandler>, CpythonError> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut handlers = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let start = parse_varint(bytes, &mut index)? as usize;
+        let size = parse_varint(bytes, &mut index)? as usize;
+        let target = parse_varint(bytes, &mut index)? as usize;
+        let depth_and_lasti = parse_varint(bytes, &mut index)? as usize;
+        let end = start.saturating_add(size);
+        let depth = depth_and_lasti >> 1;
+        let push_lasti = (depth_and_lasti & 1) == 1;
+
+        if start > instruction_count || end > instruction_count || target > instruction_count {
+            return Err(CpythonError::new(format!(
+                "exception table entry out of range (start={start}, end={end}, target={target}, instruction_count={instruction_count})",
+            )));
+        }
+        if start >= end {
+            return Err(CpythonError::new(format!(
+                "invalid exception table entry range [{start}, {end})"
+            )));
+        }
+        handlers.push(ExceptionHandler {
+            start,
+            end,
+            target,
+            depth,
+            push_lasti,
+        });
+    }
+    Ok(handlers)
+}
+
 fn translated_successors(
     ip: usize,
     stack_depth: i32,
@@ -997,7 +1076,10 @@ fn translated_successors(
         | Opcode::StoreFast
         | Opcode::StoreGlobal
         | Opcode::StoreDeref
-        | Opcode::PopTop => vec![(next_ip, pop(1)?)],
+        | Opcode::PopTop
+        | Opcode::PopExcept => vec![(next_ip, pop(1)?)],
+        Opcode::PushExcInfo => vec![(next_ip, pop(1)? + 2)],
+        Opcode::WithExceptStart => vec![(next_ip, pop(5)? + 6)],
         Opcode::UnaryNeg
         | Opcode::UnaryNot
         | Opcode::UnaryPos
@@ -1050,6 +1132,7 @@ fn translated_successors(
         | Opcode::CompareIsNot
         | Opcode::Subscript
         | Opcode::MatchException => vec![(next_ip, pop(2)? + 1)],
+        Opcode::CheckExcMatch => vec![(next_ip, pop(2)? + 2)],
         Opcode::MatchExceptionStar => vec![(next_ip, pop(2)? + 2)],
         Opcode::BuildList | Opcode::BuildTuple | Opcode::BuildString => {
             let count = arg.ok_or_else(|| CpythonError::new("missing build count"))? as i32;
@@ -1153,7 +1236,7 @@ fn translated_successors(
         Opcode::ImportName => vec![(next_ip, stack_depth + 1)],
         Opcode::ImportNameCpython => vec![(next_ip, pop(2)? + 1)],
         Opcode::ImportFromCpython => vec![(next_ip, pop(1)? + 2)],
-        Opcode::Raise | Opcode::ReturnConst | Opcode::ReturnValue => Vec::new(),
+        Opcode::Raise | Opcode::Reraise | Opcode::ReturnConst | Opcode::ReturnValue => Vec::new(),
         _ => vec![(next_ip, stack_depth)],
     };
 

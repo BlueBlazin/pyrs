@@ -437,6 +437,7 @@ struct Frame {
     class_keywords: HashMap<String, Value>,
     blocks: Vec<Block>,
     active_exception: Option<Value>,
+    reraise_lasti_override: Option<usize>,
     expect_none_return: bool,
     generator_owner: Option<ObjRef>,
     generator_awaiting_resume_value: bool,
@@ -489,6 +490,7 @@ impl Frame {
             class_keywords: HashMap::new(),
             blocks: Vec::with_capacity(2),
             active_exception: None,
+            reraise_lasti_override: None,
             expect_none_return: false,
             generator_owner: None,
             generator_awaiting_resume_value: false,
@@ -528,6 +530,7 @@ impl Frame {
         debug_assert!(self.class_metaclass.is_none());
         debug_assert!(self.class_namespace.is_none());
         debug_assert!(self.active_exception.is_none());
+        debug_assert!(self.reraise_lasti_override.is_none());
         debug_assert!(self.generator_owner.is_none());
         debug_assert!(self.generator_resume_value.is_none());
         debug_assert!(self.generator_pending_throw.is_none());
@@ -536,6 +539,7 @@ impl Frame {
         self.code = code;
         self.ip = 0;
         self.last_ip = 0;
+        self.reraise_lasti_override = None;
         if cells.is_empty() {
             if !self.cells.is_empty() {
                 self.cells.clear();
@@ -587,6 +591,7 @@ impl Frame {
         {
             self.ip = 0;
             self.last_ip = 0;
+            self.reraise_lasti_override = None;
             self.function_globals_version = module_globals_version(module);
             self.simple_one_arg_no_cells = true;
             return;
@@ -610,9 +615,11 @@ impl Frame {
         debug_assert!(self.generator_resume_kind.is_none());
         debug_assert!(self.yield_from_iter.is_none());
         debug_assert!(self.active_exception.is_none());
+        debug_assert!(self.reraise_lasti_override.is_none());
         self.code = code.clone();
         self.ip = 0;
         self.last_ip = 0;
+        self.reraise_lasti_override = None;
         if self.module.id() != module.id() {
             self.module = module.clone();
             self.function_globals = module.clone();
@@ -1007,6 +1014,7 @@ impl Vm {
         frame.class_metaclass = None;
         frame.class_namespace = None;
         frame.active_exception = None;
+        frame.reraise_lasti_override = None;
         frame.generator_owner = None;
         frame.generator_resume_value = None;
         frame.generator_pending_throw = None;
@@ -1069,6 +1077,7 @@ impl Vm {
         if let Some(mut frame) = self.simple_slot0_pool.pop() {
             frame.ip = 0;
             frame.last_ip = 0;
+            frame.reraise_lasti_override = None;
             frame.function_globals_version = globals_version;
             frame.simple_one_arg_no_cells = true;
             return frame;
@@ -1106,6 +1115,7 @@ impl Vm {
         }
         frame.ip = 0;
         frame.last_ip = 0;
+        frame.reraise_lasti_override = None;
         if let Some(slot) = frame.fast_locals.get_mut(0) {
             *slot = None;
         }
@@ -1139,6 +1149,7 @@ impl Vm {
             && frame.generator_resume_kind.is_none()
             && frame.yield_from_iter.is_none()
             && frame.active_exception.is_none()
+            && frame.reraise_lasti_override.is_none()
             && !frame.discard_result
             && !frame.return_class
             && !frame.expect_none_return
@@ -1209,6 +1220,9 @@ impl Vm {
         if frame.active_exception.is_some() {
             frame.active_exception = None;
         }
+        if frame.reraise_lasti_override.is_some() {
+            frame.reraise_lasti_override = None;
+        }
         if frame.discard_result {
             frame.discard_result = false;
         }
@@ -1262,6 +1276,7 @@ impl Vm {
         debug_assert!(frame.generator_resume_kind.is_none());
         debug_assert!(frame.yield_from_iter.is_none());
         debug_assert!(frame.active_exception.is_none());
+        debug_assert!(frame.reraise_lasti_override.is_none());
         debug_assert!(!frame.discard_result);
         debug_assert!(!frame.return_class);
         debug_assert!(!frame.expect_none_return);

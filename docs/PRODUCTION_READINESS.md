@@ -23,7 +23,7 @@ Status:
 | `pickle`/`pickletools`/`copyreg` parity + hardening | `[~]` | Re-enable deferred strict pickle harness lane and close it without timeouts |
 | `_io` stdlib-required behavioral parity | `[~]` | Close remaining strict-harness-lane `_io` dependencies and edge semantics |
 | `_sre` parity needed for pure `re` closure | `[~]` | Close long-tail regex semantics needed by strict stdlib and differential tests |
-| CPython `.pyc` exception-table execution parity | `[~]` | Implement exception-table-driven handler/unwind semantics for translated `.pyc` (remove source fallback requirement for modules with non-empty exception tables) |
+| CPython `.pyc` exception-table execution parity | `[~]` | Keep landed exception-table-driven handler/unwind semantics green for translated `.pyc` and close remaining `.pyc` long-tail opcode/state parity without reintroducing source fallback for covered startup/import paths |
 | Hash-container semantic/perf closure (`dict`/`set`/`frozenset`) | `[~]` | CPython parity on edge semantics and expected throughput characteristics |
 | VM throughput closure for production workloads | `[~]` | Close P0/P1 performance items tracked in `docs/OPTIMIZATION_BACKLOG.md` |
 | P0 engineering-gate backlog (`docs/ALGO_AUDIT_BACKLOG.md`) | `[~]` | Close all P0 audit rows with test + benchmark evidence |

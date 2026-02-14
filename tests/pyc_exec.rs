@@ -205,3 +205,41 @@ ok = imported == 4.0 and a == 3
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn executes_cpython_pyc_with_exception_tables_and_with_except_start() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+events = []
+
+try:
+    raise ValueError("boom")
+except ValueError:
+    events.append("except")
+
+class C:
+    def __enter__(self):
+        events.append("enter")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        events.append(exc_type.__name__)
+        return True
+
+with C():
+    events.append("body")
+    raise RuntimeError("x")
+
+ok = events == ["except", "enter", "body", "RuntimeError"]
+"#;
+
+    let pyc_path = compile_pyc(source, "exception_table_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
