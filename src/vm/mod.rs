@@ -66,9 +66,9 @@ use crate::extensions::{
 use crate::parser;
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
-    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError, SuperObject, Value,
-    format_repr, format_value,
+    GeneratorObject, Heap, InstanceObject, IteratorKind, IteratorObject, MemoryViewObject,
+    ModuleObject, NativeMethodKind, NativeMethodObject, Obj, ObjRef, Object, RuntimeError,
+    SuperObject, Value, format_repr, format_value,
 };
 
 #[derive(Debug, Clone)]
@@ -4474,6 +4474,144 @@ fn memoryview_bounds(start: usize, length: Option<usize>, source_len: usize) -> 
     (start, end)
 }
 
+fn memoryview_shape_and_strides_from_parts(
+    start: usize,
+    length: Option<usize>,
+    shape: Option<&Vec<isize>>,
+    strides: Option<&Vec<isize>>,
+    itemsize: usize,
+    source_len: usize,
+) -> Option<(Vec<isize>, Vec<isize>)> {
+    if let (Some(shape), Some(strides)) = (shape, strides)
+        && !shape.is_empty()
+        && shape.len() == strides.len()
+    {
+        return Some((shape.clone(), strides.clone()));
+    }
+    let itemsize = itemsize.max(1);
+    let (start, end) = memoryview_bounds(start, length, source_len);
+    let span = end.saturating_sub(start);
+    let logical_len = if span % itemsize == 0 {
+        span / itemsize
+    } else {
+        span
+    };
+    Some((vec![logical_len as isize], vec![itemsize as isize]))
+}
+
+fn memoryview_layout_1d(
+    view: &MemoryViewObject,
+    source_len: usize,
+) -> Option<(isize, usize, isize, usize)> {
+    memoryview_layout_1d_from_parts(
+        view.start,
+        view.length,
+        view.itemsize,
+        view.shape.as_ref(),
+        view.strides.as_ref(),
+        source_len,
+    )
+}
+
+fn memoryview_layout_1d_from_parts(
+    start: usize,
+    length: Option<usize>,
+    itemsize: usize,
+    shape: Option<&Vec<isize>>,
+    strides: Option<&Vec<isize>>,
+    source_len: usize,
+) -> Option<(isize, usize, isize, usize)> {
+    let itemsize = itemsize.max(1);
+    let (shape, strides) = memoryview_shape_and_strides_from_parts(
+        start, length, shape, strides, itemsize, source_len,
+    )?;
+    if shape.len() != 1 || strides.len() != 1 {
+        return None;
+    }
+    let logical_len = if shape[0] < 0 {
+        return None;
+    } else {
+        usize::try_from(shape[0]).ok()?
+    };
+    let stride = strides[0];
+    let origin = isize::try_from(start).ok()?;
+    if logical_len == 0 {
+        return Some((origin, 0, stride, itemsize));
+    }
+    let tail_delta = stride.checked_mul((logical_len.saturating_sub(1)) as isize)?;
+    let first = origin.min(origin.checked_add(tail_delta)?);
+    let last = origin.max(origin.checked_add(tail_delta)?);
+    let itemsize_isize = isize::try_from(itemsize).ok()?;
+    let highest = last.checked_add(itemsize_isize.checked_sub(1)?)?;
+    if first < 0 || highest < 0 {
+        return None;
+    }
+    let source_len_isize = isize::try_from(source_len).ok()?;
+    if highest >= source_len_isize {
+        return None;
+    }
+    Some((origin, logical_len, stride, itemsize))
+}
+
+fn memoryview_normalize_index(logical_len: usize, index: isize) -> Option<usize> {
+    let mut normalized = index;
+    if normalized < 0 {
+        normalized = normalized.checked_add(logical_len as isize)?;
+    }
+    if normalized < 0 {
+        return None;
+    }
+    let normalized = usize::try_from(normalized).ok()?;
+    if normalized >= logical_len {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn memoryview_element_offset(
+    origin: isize,
+    logical_len: usize,
+    stride: isize,
+    index: isize,
+) -> Option<usize> {
+    let normalized = memoryview_normalize_index(logical_len, index)?;
+    let delta = stride.checked_mul(normalized as isize)?;
+    let offset = origin.checked_add(delta)?;
+    if offset < 0 {
+        return None;
+    }
+    usize::try_from(offset).ok()
+}
+
+fn memoryview_collect_bytes(
+    source: &[u8],
+    origin: isize,
+    logical_len: usize,
+    stride: isize,
+    itemsize: usize,
+) -> Option<Vec<u8>> {
+    if logical_len == 0 {
+        return Some(Vec::new());
+    }
+    let mut out = Vec::with_capacity(logical_len.checked_mul(itemsize)?);
+    let itemsize_isize = isize::try_from(itemsize).ok()?;
+    for index in 0..logical_len {
+        let base = origin.checked_add(stride.checked_mul(index as isize)?)?;
+        if base < 0 {
+            return None;
+        }
+        let end = base.checked_add(itemsize_isize)?;
+        let source_len = isize::try_from(source.len()).ok()?;
+        if end > source_len {
+            return None;
+        }
+        let base_usize = usize::try_from(base).ok()?;
+        let end_usize = base_usize.checked_add(itemsize)?;
+        out.extend_from_slice(source.get(base_usize..end_usize)?);
+    }
+    Some(out)
+}
+
 fn bytes_like_source_is_readonly(source: &ObjRef) -> Option<bool> {
     match &*source.kind() {
         Object::Bytes(_) => Some(true),
@@ -4502,10 +4640,17 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
-                let (start, end) = memoryview_bounds(view.start, view.length, values.len());
-                values[start..end].to_vec()
+                if let Some((origin, logical_len, stride, itemsize)) =
+                    memoryview_layout_1d(view, values.len())
+                {
+                    memoryview_collect_bytes(values, origin, logical_len, stride, itemsize)
+                        .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
+                } else {
+                    let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                    Ok(values[start..end].to_vec())
+                }
             })
-            .ok_or_else(|| RuntimeError::new("expected bytes-like payload")),
+            .unwrap_or_else(|| Err(RuntimeError::new("expected bytes-like payload"))),
             _ => Err(RuntimeError::new("expected bytes-like payload")),
         },
         Value::Module(obj) => match &*obj.kind() {

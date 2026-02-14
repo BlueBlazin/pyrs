@@ -5002,6 +5002,53 @@ ok = ok and (buf.cast("d").itemsize == 8 and len(d_values) == 1 and type(d_value
 }
 
 #[test]
+fn memoryview_strided_slice_is_noncontiguous_writable_view() {
+    let source = r#"buf = bytearray(b"ABCDE")
+view = memoryview(buf)[::2]
+view[1] = ord("x")
+ok = (
+    bytes(buf) == b"ABxDE"
+    and view.tolist() == [ord("A"), ord("x"), ord("E")]
+    and view.shape == (3,)
+    and view.strides == (2,)
+    and not view.contiguous
+    and not view.c_contiguous
+    and not view.f_contiguous
+    and not view.readonly
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn memoryview_negative_stride_slice_tracks_underlying_storage() {
+    let source = r#"buf = bytearray(b"ABCD")
+rev = memoryview(buf)[::-1]
+before = rev.tolist()
+rev[0] = ord("Z")
+ok = (
+    before == [ord("D"), ord("C"), ord("B"), ord("A")]
+    and rev.tolist() == [ord("Z"), ord("C"), ord("B"), ord("A")]
+    and bytes(buf) == b"ABCZ"
+    and rev.shape == (4,)
+    and rev.strides == (-1,)
+    and not rev.contiguous
+    and not rev.c_contiguous
+    and not rev.f_contiguous
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn json_loads_accepts_utf8_bytes_and_bytearray() {
     let source = r#"import json
 a = json.loads(b'{"x": 1, "y": [2, 3]}')

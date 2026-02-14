@@ -1467,7 +1467,23 @@ impl Vm {
                     with_bytes_like_source(&view_data.source, |values| {
                         let (start, end) =
                             memoryview_bounds(view_data.start, view_data.length, values.len());
-                        Value::Int(end.saturating_sub(start) as i64)
+                        let byte_len = end.saturating_sub(start);
+                        let (shape, _strides) = memoryview_shape_and_strides(view_data, byte_len);
+                        let mut elements = 1usize;
+                        for dim in shape {
+                            if dim < 0 {
+                                return Value::Int(0);
+                            }
+                            let Ok(dim_usize) = usize::try_from(dim) else {
+                                return Value::Int(0);
+                            };
+                            let Some(next) = elements.checked_mul(dim_usize) else {
+                                return Value::Int(0);
+                            };
+                            elements = next;
+                        }
+                        let nbytes = elements.saturating_mul(view_data.itemsize.max(1));
+                        Value::Int(nbytes as i64)
                     })
                     .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
                 }

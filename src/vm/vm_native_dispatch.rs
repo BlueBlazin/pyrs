@@ -2460,21 +2460,11 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("toreadonly() expects no arguments"));
                 }
-                let (source, itemsize, format, start, length) = match &*receiver.kind() {
-                    Object::MemoryView(view_data) => (
-                        view_data.source.clone(),
-                        view_data.itemsize,
-                        view_data.format.clone(),
-                        view_data.start,
-                        view_data.length,
-                    ),
+                let (itemsize, format) = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => (view_data.itemsize, view_data.format.clone()),
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
-                let bytes = with_bytes_like_source(&source, |values| {
-                    let (start, end) = memoryview_bounds(start, length, values.len());
-                    values[start..end].to_vec()
-                })
-                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                let bytes = self.value_to_bytes_payload(Value::MemoryView(receiver.clone()))?;
                 let source = match self.heap.alloc_bytes(bytes) {
                     Value::Bytes(obj) => obj,
                     _ => unreachable!(),
@@ -2595,21 +2585,13 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("tolist() expects no arguments"));
                 }
-                let (source, itemsize, format, start, length) = match &*receiver.kind() {
-                    Object::MemoryView(view_data) => (
-                        view_data.source.clone(),
-                        view_data.itemsize.max(1),
-                        view_data.format.clone(),
-                        view_data.start,
-                        view_data.length,
-                    ),
+                let (itemsize, format) = match &*receiver.kind() {
+                    Object::MemoryView(view_data) => {
+                        (view_data.itemsize.max(1), view_data.format.clone())
+                    }
                     _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
                 };
-                let bytes = with_bytes_like_source(&source, |values| {
-                    let (start, end) = memoryview_bounds(start, length, values.len());
-                    values[start..end].to_vec()
-                })
-                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                let bytes = self.value_to_bytes_payload(Value::MemoryView(receiver.clone()))?;
                 let format_spec = format.as_deref().unwrap_or("B");
                 let cast_format = parse_memoryview_cast_format(format_spec)
                     .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;

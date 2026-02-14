@@ -1319,6 +1319,9 @@ impl ModuleCapiContext {
                     if view.released {
                         return Err("memoryview is released".to_string());
                     }
+                    if !view.contiguous {
+                        return Err("memoryview is not C-contiguous".to_string());
+                    }
                     let (ptr, len, readonly) =
                         Self::readable_buffer_from_source(&view.source, view.start, view.length)?;
                     (ptr, len, readonly)
@@ -1361,10 +1364,14 @@ impl ModuleCapiContext {
         let (data, len) = match &value {
             Value::ByteArray(obj) => Self::writable_buffer_from_source(obj, 0, None)?,
             Value::MemoryView(obj) => {
-                let (source, start, length, released) = match &*obj.kind() {
-                    Object::MemoryView(view) => {
-                        (view.source.clone(), view.start, view.length, view.released)
-                    }
+                let (source, start, length, contiguous, released) = match &*obj.kind() {
+                    Object::MemoryView(view) => (
+                        view.source.clone(),
+                        view.start,
+                        view.length,
+                        view.contiguous,
+                        view.released,
+                    ),
                     _ => {
                         return Err(format!(
                             "object handle {} has invalid memoryview storage",
@@ -1374,6 +1381,9 @@ impl ModuleCapiContext {
                 };
                 if released {
                     return Err("memoryview is released".to_string());
+                }
+                if !contiguous {
+                    return Err("memoryview is not C-contiguous".to_string());
                 }
                 Self::writable_buffer_from_source(&source, start, length)?
             }
@@ -1468,6 +1478,18 @@ impl ModuleCapiContext {
         (vec![logical_len as isize], vec![safe_itemsize as isize])
     }
 
+    fn logical_nbytes_from_shape(shape: &[isize], itemsize: usize) -> Option<usize> {
+        let mut elements = 1usize;
+        for dim in shape {
+            if *dim < 0 {
+                return None;
+            }
+            let dim_usize = usize::try_from(*dim).ok()?;
+            elements = elements.checked_mul(dim_usize)?;
+        }
+        elements.checked_mul(itemsize.max(1))
+    }
+
     fn buffer_info_snapshot_from_value(
         &self,
         object_handle: PyrsObjectHandle,
@@ -1556,9 +1578,10 @@ impl ModuleCapiContext {
                     }
                     _ => Self::default_buffer_shape_and_strides(len, itemsize),
                 };
+                let logical_len = Self::logical_nbytes_from_shape(&shape, itemsize).unwrap_or(len);
                 Ok(BufferInfoSnapshot {
                     data,
-                    len,
+                    len: logical_len,
                     readonly,
                     itemsize,
                     shape,

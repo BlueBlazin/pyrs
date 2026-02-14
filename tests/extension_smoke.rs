@@ -3203,8 +3203,8 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_get_buffer_info(module_ctx, subview, &info) != 0) {
         return -9;
     }
-    if (!info.data || info.len != 2 || info.readonly != 1 || info.itemsize != 1 ||
-        info.ndim != 1 || info.shape0 != 2 || info.stride0 != 1 || info.contiguous != 0 ||
+    if (!info.data || info.len != 2 || info.readonly != 0 || info.itemsize != 1 ||
+        info.ndim != 1 || info.shape0 != 2 || info.stride0 != 2 || info.contiguous != 0 ||
         !info.format || strcmp(info.format, "B") != 0) {
         return -10;
     }
@@ -3214,9 +3214,9 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->object_get_buffer_info_v2(module_ctx, subview, &info2) != 0) {
         return -12;
     }
-    if (!info2.data || info2.len != 2 || info2.readonly != 1 || info2.itemsize != 1 ||
+    if (!info2.data || info2.len != 2 || info2.readonly != 0 || info2.itemsize != 1 ||
         info2.ndim != 1 || !info2.shape || !info2.strides ||
-        info2.shape[0] != 2 || info2.strides[0] != 1 || info2.contiguous != 0 ||
+        info2.shape[0] != 2 || info2.strides[0] != 2 || info2.contiguous != 0 ||
         !info2.format || strcmp(info2.format, "B") != 0) {
         return -13;
     }
