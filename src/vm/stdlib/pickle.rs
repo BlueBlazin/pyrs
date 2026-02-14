@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Read, Vm, Value, RuntimeError, HashMap, InternalCallOutcome, value_to_int, is_truthy, Object, ObjRef, BuiltinFunction, NativeMethodKind, BYTES_BACKING_STORAGE_ATTR, runtime_error_matches_exception, IteratorObject, IteratorKind, value_from_bigint, class_name_for_instance};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Mutex, OnceLock};
@@ -114,7 +114,7 @@ fn pickle_profile_record(name: &'static str, elapsed_ns: u128) {
     }
     let event_count = PICKLE_PROFILE_EVENTS.fetch_add(1, AtomicOrdering::Relaxed) + 1;
     let emit_every = pickle_profile_emit_every();
-    if event_count % emit_every == 0 {
+    if event_count.is_multiple_of(emit_every) {
         pickle_profile_emit_summary(event_count);
     }
 }
@@ -865,7 +865,7 @@ impl Vm {
                 b'u' => {
                     let mark = marks.pop()?;
                     let items = stack.split_off(mark);
-                    if items.len() % 2 != 0 {
+                    if !items.len().is_multiple_of(2) {
                         return None;
                     }
                     let dict_obj = match stack.last().cloned()? {
@@ -1340,12 +1340,10 @@ impl Vm {
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
             && Self::fast_pickle_graph_is_alias_free(&args[0])
-        {
-            if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
+            && let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
                 self.pickle_write_chunks_to_file(args[1].clone(), chunks)?;
                 return Ok(Value::None);
             }
-        }
         self.pickle_call_pure_symbol("_dump", raw_args, raw_kwargs, "pickle dump fallback failed")
     }
 
@@ -1382,15 +1380,13 @@ impl Vm {
             && matches!(buffer_callback, Value::None)
             && (PICKLE_MIN_FAST_PROTOCOL..=PICKLE_MAX_FAST_PROTOCOL).contains(&protocol)
             && Self::fast_pickle_graph_is_alias_free(&args[0])
-        {
-            if let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
+            && let Some(chunks) = self.fast_pickle_encode_chunks(&args[0], protocol) {
                 let mut payload = Vec::new();
                 for chunk in chunks {
                     payload.extend_from_slice(&chunk);
                 }
                 return Ok(self.heap.alloc_bytes(payload));
             }
-        }
         self.pickle_call_pure_symbol(
             "_dumps",
             raw_args,
@@ -1425,13 +1421,10 @@ impl Vm {
             && kwargs
                 .get("buffers")
                 .is_none_or(|value| matches!(value, Value::None))
-        {
-            if let Some(bytes) = self.pickle_extract_bytes_like(&args[0]) {
-                if let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
+            && let Some(bytes) = self.pickle_extract_bytes_like(&args[0])
+                && let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
                     return Ok(value);
                 }
-            }
-        }
         self.pickle_call_pure_symbol(
             "_loads",
             raw_args,
@@ -1518,11 +1511,10 @@ impl Vm {
                         );
                     }
                 };
-                if let Some(bytes) = self.pickle_extract_bytes_like(&raw) {
-                    if let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
+                if let Some(bytes) = self.pickle_extract_bytes_like(&raw)
+                    && let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
                         return Ok(value);
                     }
-                }
                 let _ =
                     self.call_internal_preserving_caller(seek_method, vec![start], HashMap::new());
             }
@@ -1531,8 +1523,8 @@ impl Vm {
     }
 
     fn pickle_pickler_build_fallback(&mut self, instance: &ObjRef) -> Result<Value, RuntimeError> {
-        if let Some(existing) = Self::pickle_get_instance_attr(instance, PICKLER_FALLBACK_ATTR) {
-            if !matches!(existing, Value::None) {
+        if let Some(existing) = Self::pickle_get_instance_attr(instance, PICKLER_FALLBACK_ATTR)
+            && !matches!(existing, Value::None) {
                 self.pickle_install_c_pickler_save_reduce_hook(&existing)?;
                 if let Some(dispatch_table) = self.pickle_get_pickler_dispatch_table(instance) {
                     self.builtin_setattr(
@@ -1546,7 +1538,6 @@ impl Vm {
                 }
                 return Ok(existing);
             }
-        }
         let file =
             Self::pickle_get_instance_attr(instance, PICKLER_FILE_ATTR).ok_or_else(|| {
                 RuntimeError::new("Pickler.__init__() was not called by Pickler.__init__")
@@ -1625,11 +1616,10 @@ impl Vm {
         &mut self,
         instance: &ObjRef,
     ) -> Result<Value, RuntimeError> {
-        if let Some(existing) = Self::pickle_get_instance_attr(instance, UNPICKLER_FALLBACK_ATTR) {
-            if !matches!(existing, Value::None) {
+        if let Some(existing) = Self::pickle_get_instance_attr(instance, UNPICKLER_FALLBACK_ATTR)
+            && !matches!(existing, Value::None) {
                 return Ok(existing);
             }
-        }
         let file =
             Self::pickle_get_instance_attr(instance, UNPICKLER_FILE_ATTR).ok_or_else(|| {
                 RuntimeError::new("Unpickler.__init__() was not called by Unpickler.__init__")
@@ -1807,11 +1797,10 @@ impl Vm {
                     return Ok(None);
                 }
             };
-        if let Some(bytes) = self.pickle_extract_bytes_like(&raw) {
-            if let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
+        if let Some(bytes) = self.pickle_extract_bytes_like(&raw)
+            && let Some(value) = self.fast_pickle_decode_bytes(&bytes) {
                 return Ok(Some(value));
             }
-        }
         let _ = self.call_internal_preserving_caller(seek_method, vec![start], HashMap::new());
         Ok(None)
     }
@@ -2101,10 +2090,7 @@ impl Vm {
                 vec![file.clone(), Value::Str(attr.to_string())],
                 HashMap::new(),
             );
-            let method = match method {
-                Ok(method) => method,
-                Err(err) => return Err(err),
-            };
+            let method = method?;
             if !self.is_callable_value(&method) {
                 return Err(RuntimeError::new(
                     "TypeError: file must have 'read' and 'readline' attributes",
@@ -2987,24 +2973,21 @@ impl Vm {
         if let Some(name) = self.object_reduce_ex_builtin_singleton_name(&value) {
             return Ok(Value::Str(name.to_string()));
         }
-        if let Value::Instance(instance) = &value {
-            if let Some(class_name) = class_name_for_instance(instance) {
-                if class_name == "__csv_dialect__" {
+        if let Value::Instance(instance) = &value
+            && let Some(class_name) = class_name_for_instance(instance)
+                && class_name == "__csv_dialect__" {
                     return Err(RuntimeError::new("cannot pickle 'Dialect' instances"));
                 }
-            }
-        }
-        if allow_custom_reduce {
-            if let Some(reduced) = self.object_reduce_ex_custom_reduce(&value)? {
+        if allow_custom_reduce
+            && let Some(reduced) = self.object_reduce_ex_custom_reduce(&value)? {
                 return Ok(reduced);
             }
-        }
 
         // Match CPython's object.__reduce_ex__ behavior for protocol 0/1:
         // delegate instance reduction to copyreg._reduce_ex (Objects/typeobject.c::_common_reduce).
         // This preserves legacy getattr/__dict__/__slots__ probing semantics.
-        if protocol < 2 {
-            if let Value::Instance(instance) = &value {
+        if protocol < 2
+            && let Value::Instance(instance) = &value {
                 let has_builtin_backing = self.instance_backing_int(instance).is_some()
                     || self.instance_backing_float(instance).is_some()
                     || self.instance_backing_complex(instance).is_some()
@@ -3014,8 +2997,8 @@ impl Vm {
                     || self.instance_backing_dict(instance).is_some()
                     || self.instance_backing_set(instance).is_some()
                     || self.instance_backing_frozenset(instance).is_some();
-                if !has_builtin_backing {
-                    if let Ok(reduce_ex) = self.pickle_copyreg_callable("_reduce_ex") {
+                if !has_builtin_backing
+                    && let Ok(reduce_ex) = self.pickle_copyreg_callable("_reduce_ex") {
                         return match self.call_internal(
                             reduce_ex,
                             vec![value.clone(), Value::Int(protocol)],
@@ -3028,20 +3011,16 @@ impl Vm {
                                 )),
                         };
                     }
-                }
             }
-        }
 
         let (constructor, constructor_args) = if protocol < 2 {
-            if let Value::Instance(instance) = &value {
-                if let Object::Instance(instance_data) = &*instance.kind() {
-                    if self.class_has_pickled_slots(&instance_data.class) {
+            if let Value::Instance(instance) = &value
+                && let Object::Instance(instance_data) = &*instance.kind()
+                    && self.class_has_pickled_slots(&instance_data.class) {
                         return Err(RuntimeError::new(
                             "TypeError: __slots__ classes are unsupported for protocol < 2",
                         ));
                     }
-                }
-            }
             match self.object_reduce_ex_legacy_constructor_and_args(&value)? {
                 Some(pair) => pair,
                 None => self.reduce_ex_constructor_and_args(&value),
@@ -3150,10 +3129,11 @@ impl Vm {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::compiler;
     use crate::parser;
-    use crate::runtime::{ClassObject, InstanceObject, Object};
+    use crate::runtime::{ClassObject, InstanceObject, Object, Value};
+    use crate::vm::Vm;
+    use std::collections::HashMap;
 
     fn tuple_values(value: &Value) -> Vec<Value> {
         let Value::Tuple(obj) = value else {

@@ -555,11 +555,10 @@ impl IndexBucket {
     }
 
     fn normalize(&mut self) {
-        if let Self::Many(indices) = self {
-            if indices.len() == 1 {
+        if let Self::Many(indices) = self
+            && indices.len() == 1 {
                 *self = Self::One(indices[0]);
             }
-        }
     }
 
     fn is_empty(&self) -> bool {
@@ -752,11 +751,10 @@ impl SetObject {
         }
         if index < self.values.len() {
             let moved = &self.values[index];
-            if let Some(moved_hash) = value_lookup_hash(moved) {
-                if let Some(bucket) = self.index.get_mut(&moved_hash) {
+            if let Some(moved_hash) = value_lookup_hash(moved)
+                && let Some(bucket) = self.index.get_mut(&moved_hash) {
                     bucket.replace_index(last_index, index);
                 }
-            }
         }
         removed
     }
@@ -805,8 +803,8 @@ impl SetObject {
     }
 
     fn find_index(&self, value: &Value) -> Option<usize> {
-        if let Some(hash) = value_lookup_hash(value) {
-            if let Some(bucket) = self.index.get(&hash) {
+        if let Some(hash) = value_lookup_hash(value)
+            && let Some(bucket) = self.index.get(&hash) {
                 if let Some(index) =
                     bucket.find_index_with(|index| value_key_equal(&self.values[index], value))
                 {
@@ -814,7 +812,6 @@ impl SetObject {
                 }
                 return None;
             }
-        }
         self.values
             .iter()
             .position(|item| value_key_equal(item, value))
@@ -1166,6 +1163,12 @@ fn next_exception_object_id() -> u64 {
     NEXT_EXCEPTION_OBJECT_ID.fetch_add(1, AtomicOrdering::Relaxed)
 }
 
+impl Default for Heap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Heap {
     pub fn new() -> Self {
         Self {
@@ -1279,13 +1282,11 @@ impl Heap {
             let Object::MemoryView(view) = &*obj.kind.borrow() else {
                 return false;
             };
-            if !view.released {
-                if let Some(export_owner) = &view.export_owner {
-                    if export_owner.id() == owner.id() {
+            if !view.released
+                && let Some(export_owner) = &view.export_owner
+                    && export_owner.id() == owner.id() {
                         count += 1;
                     }
-                }
-            }
             true
         });
         count
@@ -3449,15 +3450,14 @@ impl BuiltinFunction {
                             digits = rest;
                             saw_prefix = true;
                         }
-                    } else if base == 2 {
-                        if let Some(rest) = digits
+                    } else if base == 2
+                        && let Some(rest) = digits
                             .strip_prefix("0b")
                             .or_else(|| digits.strip_prefix("0B"))
                         {
                             digits = rest;
                             saw_prefix = true;
                         }
-                    }
 
                     let normalized = normalize_int_digits_for_base(digits, base as u32, saw_prefix)
                         .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
@@ -4773,13 +4773,12 @@ impl BuiltinFunction {
                         Value::Builtin(BuiltinFunction::CollectionsNamedTupleMake),
                     );
                 }
-                if let Value::Class(class_ref) = &class_value {
-                    if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+                if let Value::Class(class_ref) = &class_value
+                    && let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                         class_data
                             .attrs
                             .insert("_make".to_string(), Value::Module(make_wrapper));
                     }
-                }
                 Ok(class_value)
             }
             BuiltinFunction::CollectionsNamedTupleMake => {
@@ -5043,13 +5042,11 @@ impl BuiltinFunction {
                         "_remove_dead_weakref() expects two arguments",
                     ));
                 }
-                if let Value::Dict(obj) = &args[0] {
-                    if let Object::Dict(entries) = &mut *obj.kind_mut() {
-                        if let Some(index) = entries.iter().position(|(key, _)| *key == args[1]) {
+                if let Value::Dict(obj) = &args[0]
+                    && let Object::Dict(entries) = &mut *obj.kind_mut()
+                        && let Some(index) = entries.iter().position(|(key, _)| *key == args[1]) {
                             entries.remove(index);
                         }
-                    }
-                }
                 Ok(Value::None)
             }
             BuiltinFunction::ArrayArray => {
@@ -5960,7 +5957,7 @@ fn dedup_values(values: Vec<Value>) -> Result<Vec<Value>, RuntimeError> {
     let mut out = Vec::new();
     for value in values {
         ensure_hashable_key(&value)?;
-        if !out.iter().any(|existing| *existing == value) {
+        if !out.contains(&value) {
             out.push(value);
         }
     }
@@ -5995,9 +5992,7 @@ fn normalize_int_digits_for_base(
             prev_underscore = true;
             continue;
         }
-        if ch.to_digit(radix).is_none() {
-            return None;
-        }
+        ch.to_digit(radix)?;
         saw_digit = true;
         prev_underscore = false;
         out.push(ch);
@@ -7252,13 +7247,11 @@ pub fn format_repr(value: &Value) -> String {
         },
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
-                if let Object::Class(class_data) = &*instance_data.class.kind() {
-                    if class_data.name == "StackObject" {
-                        if let Some(Value::Str(name)) = instance_data.attrs.get("name") {
+                if let Object::Class(class_data) = &*instance_data.class.kind()
+                    && class_data.name == "StackObject"
+                        && let Some(Value::Str(name)) = instance_data.attrs.get("name") {
                             return name.clone();
                         }
-                    }
-                }
                 format_value(value)
             }
             _ => format_value(value),
@@ -7362,7 +7355,10 @@ impl RuntimeError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        BoundMethod, ClassObject, DictKeysView, DictObject, Heap, IndexBucket, InstanceObject,
+        MemoryViewObject, Object, SetObject, SuperObject, Value, format_repr, is_truthy_value,
+    };
 
     #[test]
     fn gc_collects_self_referential_dict_keys_view() {

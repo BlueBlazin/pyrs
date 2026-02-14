@@ -805,9 +805,7 @@ impl<'a> Lexer<'a> {
                     content.push('}');
                     continue;
                 }
-                if expr_depth > 0 {
-                    expr_depth -= 1;
-                }
+                expr_depth = expr_depth.saturating_sub(1);
                 self.advance();
                 content.push(ch);
                 continue;
@@ -1221,7 +1219,7 @@ impl<'a> Lexer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Lexer, TokenKind};
 
     #[test]
     fn decodes_named_unicode_escape_in_string_literals() {

@@ -292,13 +292,11 @@ impl DictBackend {
     }
 
     fn remove_slot_for_entry(&mut self, expected_entry: usize, slot_index: usize) {
-        if let Some(slot) = self.slots.get_mut(slot_index) {
-            if let DictSlot::Occupied { entry, .. } = slot {
-                if *entry == expected_entry {
+        if let Some(slot) = self.slots.get_mut(slot_index)
+            && let DictSlot::Occupied { entry, .. } = slot
+                && *entry == expected_entry {
                     *slot = DictSlot::Dummy;
                 }
-            }
-        }
     }
 
     fn adjust_slot_indices_after_remove(&mut self, removed_index: usize) {
@@ -306,11 +304,10 @@ impl DictBackend {
             if *slot_index == NO_SLOT {
                 continue;
             }
-            if let Some(DictSlot::Occupied { entry, .. }) = self.slots.get_mut(*slot_index) {
-                if *entry > removed_index {
+            if let Some(DictSlot::Occupied { entry, .. }) = self.slots.get_mut(*slot_index)
+                && *entry > removed_index {
                     *entry -= 1;
                 }
-            }
         }
     }
 }
@@ -324,7 +321,8 @@ fn next_power_of_two(value: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{DictBackend, MIN_TABLE_SIZE, value_lookup_hash};
+    use crate::runtime::Value;
 
     fn collide_on_mask(mask: usize, count: usize) -> Vec<Value> {
         let mut out = Vec::new();

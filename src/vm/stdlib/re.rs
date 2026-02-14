@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Vm, Value, RuntimeError, HashMap, value_to_int, Object, ReMatchDetail, bytes_like_from_value, ModuleObject, ObjRef, dict_get_value, ReMode, re_pattern_from_compiled_module, format_value, RePatternValue, re_match_bounds, re_match_details, re_pattern_from_argument};
 
 const CSV_SNIFFER_PATTERN_1: &str =
     r#"(?P<delim>[^\w\n"\'])(?P<space> ?)(?P<quote>["\']).*?(?P=quote)(?P=delim)"#;
@@ -551,8 +551,8 @@ impl Vm {
         }
 
         let compiled = self.builtin_re_compile(vec![pattern, Value::Int(flags)], HashMap::new())?;
-        if let Value::Module(compiled_obj) = &compiled {
-            if let Object::Module(module_data) = &mut *compiled_obj.kind_mut() {
+        if let Value::Module(compiled_obj) = &compiled
+            && let Object::Module(module_data) = &mut *compiled_obj.kind_mut() {
                 module_data
                     .globals
                     .insert("flags".to_string(), Value::Int(flags));
@@ -563,7 +563,6 @@ impl Vm {
                     .globals
                     .insert("groupindex".to_string(), groupindex);
             }
-        }
         Ok(compiled)
     }
 
@@ -724,8 +723,8 @@ impl Vm {
                         "cannot use a bytes pattern on a string-like object",
                     ));
                 }
-                if let RePatternValue::Str(pattern_text) = &pattern {
-                    if let Some((group_count, matches)) =
+                if let RePatternValue::Str(pattern_text) = &pattern
+                    && let Some((group_count, matches)) =
                         csv_sniffer_pattern_findall(pattern_text, &text)
                     {
                         if group_count == 1 {
@@ -744,7 +743,6 @@ impl Vm {
                             .collect::<Vec<_>>();
                         return Ok(self.heap.alloc_list(out));
                     }
-                }
                 let raw_pos = if let Some(value) = args.first() {
                     value_to_int(value.clone())?
                 } else {
@@ -1221,11 +1219,9 @@ impl Vm {
                 re_match_details(&pattern, &segment, mode)?.map(|mut detail| {
                     detail.start += start;
                     detail.end += start;
-                    for capture in &mut detail.captures {
-                        if let Some((cap_start, cap_end)) = capture {
-                            *cap_start += start;
-                            *cap_end += start;
-                        }
+                    for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
+                        *cap_start += start;
+                        *cap_end += start;
                     }
                     detail
                 })
@@ -1241,11 +1237,9 @@ impl Vm {
                 re_match_details(&pattern, &segment, mode)?.map(|mut detail| {
                     detail.start += start;
                     detail.end += start;
-                    for capture in &mut detail.captures {
-                        if let Some((cap_start, cap_end)) = capture {
-                            *cap_start += start;
-                            *cap_end += start;
-                        }
+                    for (cap_start, cap_end) in detail.captures.iter_mut().flatten() {
+                        *cap_start += start;
+                        *cap_end += start;
                     }
                     detail
                 })
@@ -1426,7 +1420,14 @@ fn csv_sniffer_pattern_findall(pattern: &str, text: &str) -> Option<(usize, Vec<
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        CSV_SNIFFER_PATTERN_1, CSV_SNIFFER_PATTERN_2, CSV_SNIFFER_PATTERN_4,
+        PKGUTIL_RESOLVE_NAME_PATTERN, ReMode, csv_sniffer_groupindex_entries,
+        csv_sniffer_pattern_findall,
+    };
+    use crate::runtime::{Object, Value};
+    use crate::vm::Vm;
+    use std::collections::HashMap;
 
     #[test]
     fn csv_sniffer_groupindex_entries_cover_known_patterns() {

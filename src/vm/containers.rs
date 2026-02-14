@@ -136,8 +136,11 @@ fn value_type_name(value: &Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::runtime::Heap;
+    use super::{
+        ObjRef, dedup_hashable_values, dict_get_value, dict_remove_value, dict_set_value,
+        dict_set_value_checked, ensure_hashable,
+    };
+    use crate::runtime::{Heap, Object, SetObject, Value};
 
     fn empty_dict_obj(heap: &Heap) -> ObjRef {
         let Value::Dict(dict) = heap.alloc_dict(Vec::new()) else {

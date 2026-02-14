@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::{Vm, Value, HashMap, RuntimeError, is_truthy, BuiltinFunction, ModuleObject, Object, value_to_int, InternalCallOutcome, BigInt, Hasher, Heap};
 
 #[derive(Clone)]
 struct JsonDumpsOptions {
@@ -41,21 +41,19 @@ impl Vm {
         if let Some(ensure_ascii) = kwargs.remove("ensure_ascii") {
             options.ensure_ascii = is_truthy(&ensure_ascii);
         }
-        if let Some(check_circular) = kwargs.remove("check_circular") {
-            if !is_truthy(&check_circular) {
+        if let Some(check_circular) = kwargs.remove("check_circular")
+            && !is_truthy(&check_circular) {
                 return Err(RuntimeError::new(
                     "dumps() check_circular=False is not supported yet",
                 ));
             }
-        }
         if let Some(allow_nan) = kwargs.remove("allow_nan") {
             options.allow_nan = is_truthy(&allow_nan);
         }
-        if let Some(indent) = kwargs.remove("indent") {
-            if !matches!(indent, Value::None) {
+        if let Some(indent) = kwargs.remove("indent")
+            && !matches!(indent, Value::None) {
                 return Err(RuntimeError::new("dumps() indent is not supported yet"));
             }
-        }
         if let Some(sort_keys) = kwargs.remove("sort_keys") {
             options.sort_keys = is_truthy(&sort_keys);
         }
@@ -65,11 +63,10 @@ impl Vm {
             options.key_separator = key_sep;
         }
 
-        if let Some(cls) = kwargs.remove("cls") {
-            if !matches!(cls, Value::None) {
+        if let Some(cls) = kwargs.remove("cls")
+            && !matches!(cls, Value::None) {
                 return Err(RuntimeError::new("dumps() cls is not supported yet"));
             }
-        }
         let default = kwargs.remove("default");
         if let Some(default_callable) = &default {
             if matches!(default_callable, Value::None) {
@@ -105,13 +102,12 @@ impl Vm {
             return Err(RuntimeError::new("loads() expects one argument"));
         }
 
-        if let Some(strict) = kwargs.remove("strict") {
-            if !is_truthy(&strict) {
+        if let Some(strict) = kwargs.remove("strict")
+            && !is_truthy(&strict) {
                 return Err(RuntimeError::new(
                     "loads() strict=False is not supported yet",
                 ));
             }
-        }
         for key in [
             "cls",
             "object_hook",
@@ -120,14 +116,13 @@ impl Vm {
             "parse_int",
             "parse_constant",
         ] {
-            if let Some(value) = kwargs.remove(key) {
-                if !matches!(value, Value::None) {
+            if let Some(value) = kwargs.remove(key)
+                && !matches!(value, Value::None) {
                     return Err(RuntimeError::new(format!(
                         "loads() {} is not supported yet",
                         key
                     )));
                 }
-            }
         }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
@@ -962,7 +957,12 @@ fn json_node_to_value(node: JsonNode, heap: &Heap) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        JsonNode, json_escape_string, json_source_text, parse_json_node, parse_json_node_from_index,
+        parse_json_separators,
+    };
+    use crate::runtime::{Heap, Object, Value};
+    use crate::vm::Vm;
     use std::collections::HashMap;
 
     #[test]
