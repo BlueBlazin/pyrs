@@ -1735,6 +1735,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_new_float"
             | "object_new_bytes"
             | "object_new_bytearray"
+            | "object_new_memoryview"
             | "object_new_tuple"
             | "object_new_list"
             | "object_new_dict"
@@ -1997,6 +1998,46 @@ unsafe extern "C" fn capi_object_new_bytearray(
     // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
     let vm = unsafe { &mut *context.vm };
     context.alloc_object(vm.heap.alloc_bytearray(bytes))
+}
+
+unsafe extern "C" fn capi_object_new_memoryview(
+    module_ctx: *mut c_void,
+    source_handle: PyrsObjectHandle,
+) -> PyrsObjectHandle {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return 0;
+    };
+    if context.vm.is_null() {
+        context.set_error("object_new_memoryview missing VM context");
+        return 0;
+    }
+    let Some(source_value) = context.object_value(source_handle) else {
+        context.set_error(format!("invalid object handle {}", source_handle));
+        return 0;
+    };
+    let source = match source_value {
+        Value::Bytes(obj) | Value::ByteArray(obj) => obj,
+        Value::MemoryView(obj) => match &*obj.kind() {
+            Object::MemoryView(view) => view.source.clone(),
+            _ => {
+                context.set_error(format!(
+                    "object handle {} has invalid memoryview storage",
+                    source_handle
+                ));
+                return 0;
+            }
+        },
+        _ => {
+            context.set_error(format!(
+                "object handle {} does not support memoryview construction",
+                source_handle
+            ));
+            return 0;
+        }
+    };
+    // SAFETY: VM pointer is set by extension entrypoint dispatch and valid here.
+    let vm = unsafe { &mut *context.vm };
+    context.alloc_object(vm.heap.alloc_memoryview(source))
 }
 
 unsafe extern "C" fn capi_object_new_tuple(
@@ -3519,6 +3560,7 @@ impl Vm {
             object_new_float: capi_object_new_float,
             object_new_bytes: capi_object_new_bytes,
             object_new_bytearray: capi_object_new_bytearray,
+            object_new_memoryview: capi_object_new_memoryview,
             object_new_tuple: capi_object_new_tuple,
             object_new_list: capi_object_new_list,
             object_new_dict: capi_object_new_dict,

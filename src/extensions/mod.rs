@@ -334,6 +334,10 @@ pub struct PyrsApiV1 {
         data: *const u8,
         len: usize,
     ) -> PyrsObjectHandle,
+    pub object_new_memoryview: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        source_handle: PyrsObjectHandle,
+    ) -> PyrsObjectHandle,
     pub object_new_tuple: unsafe extern "C" fn(
         module_ctx: *mut c_void,
         len: usize,
