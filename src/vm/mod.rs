@@ -1306,6 +1306,21 @@ impl Vm {
         None
     }
 
+    pub fn repl_symbol_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if let Object::Module(module) = &*self.main_module.kind() {
+            names.extend(module.globals.keys().cloned());
+        }
+        if let Some(builtins_obj) = self.modules.get("builtins")
+            && let Object::Module(module) = &*builtins_obj.kind()
+        {
+            names.extend(module.globals.keys().cloned());
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
     pub fn run_shutdown_hooks(&mut self) -> Result<(), RuntimeError> {
         let pushed_shutdown_frame = if self.frames.is_empty() {
             let shutdown_code = Rc::new(CodeObject::new("<shutdown>", "<shutdown>"));
