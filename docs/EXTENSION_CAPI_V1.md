@@ -129,6 +129,7 @@ Return semantics:
 - buffer access helpers are available through `object_get_buffer(...)` and `object_release_buffer(...)`.
 - current buffer helper coverage is `bytes`/`bytearray`/`memoryview` handles with pointer+length+readonly metadata.
 - writable buffer helper is available through `object_get_writable_buffer(...)` for mutable bytes-like handles (`bytearray` and writable `memoryview`) and rejects read-only sources (`bytes`/readonly `memoryview`).
+- active C-API buffer acquisitions on mutable bytes-like sources now pin exports and block bytearray resizing paths until `object_release_buffer(...)` is called.
 - memoryview constructor helper is available through `object_new_memoryview(...)` for `bytes`/`bytearray`/`memoryview` source handles.
 - capsule helpers are available through `capsule_new(...)`, `capsule_get_pointer(...)`, and `capsule_get_name(...)`.
 - capsule context helpers are available through `capsule_set_context(...)` and `capsule_get_context(...)`.
@@ -182,7 +183,7 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | module attr mutation helpers (`set`/`del`/`has`) | `dynamic_extension_can_set_module_attrs_and_items` |
 | generic len/item helpers (`get`/`set`/`del`) | `dynamic_extension_can_use_len_and_getitem_apis`, `dynamic_extension_can_set_module_attrs_and_items`, `dynamic_extension_item_mutation_falls_back_to_special_methods` |
 | membership + dict-view helpers (`contains`/`dict_keys`/`dict_items`) | `dynamic_extension_can_use_contains_and_dict_view_apis` |
-| buffer helpers (`get_buffer`/`get_writable_buffer`/`release_buffer`) | `dynamic_extension_can_use_buffer_apis`, `dynamic_extension_can_use_writable_buffer_apis`, `dynamic_extension_buffer_api_handles_memoryview_slices_and_release`, `dynamic_extension_can_bridge_buffer_pointer_through_capsule` |
+| buffer helpers (`get_buffer`/`get_writable_buffer`/`release_buffer`) | `dynamic_extension_can_use_buffer_apis`, `dynamic_extension_can_use_writable_buffer_apis`, `dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release`, `dynamic_extension_buffer_api_handles_memoryview_slices_and_release`, `dynamic_extension_can_bridge_buffer_pointer_through_capsule` |
 | capsule helpers (`capsule_new`/`capsule_get_pointer`/`capsule_set_pointer`/`capsule_get_name`/`capsule_set_context`/`capsule_get_context`/`capsule_set_destructor`/`capsule_get_destructor`/`capsule_set_name`/`capsule_is_valid`/`capsule_export`/`capsule_import`) | `dynamic_extension_can_use_capsule_apis`, `dynamic_extension_runs_capsule_destructor_on_context_drop`, `dynamic_extension_can_import_exported_capsule_by_name`, `dynamic_extension_can_bridge_buffer_pointer_through_capsule` |
 | iterator helpers (`get_iter`/`iter_next`) | `dynamic_extension_can_iterate_with_iterator_apis` |
 | list/dict sequence+mapping mutation | `dynamic_extension_can_set_module_values_via_object_handles`, `dynamic_extension_mixed_surface_roundtrip` |

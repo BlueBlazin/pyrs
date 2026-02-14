@@ -52,6 +52,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 now includes generic membership and dict-view helpers (`object_contains`, `object_dict_keys`, `object_dict_items`) for native-side probe/inspection paths.
   - C-API v1 now includes bytes-like buffer helpers (`object_get_buffer`, `object_release_buffer`) exposing pointer/len/readonly buffer views for `bytes`/`bytearray`/`memoryview` handles.
   - C-API v1 now includes writable buffer helper (`object_get_writable_buffer`) for mutable `bytearray` and writable `memoryview` handles, with explicit read-only rejection for `bytes`/readonly-memoryview sources.
+  - C-API buffer acquisitions on mutable sources now pin runtime buffer exports and block bytearray resize paths until `object_release_buffer` is called.
   - C-API v1 now includes capsule baseline helpers (`capsule_new`, `capsule_get_pointer`, `capsule_set_pointer`, `capsule_get_name`, `capsule_set_context`, `capsule_get_context`, `capsule_set_destructor`, `capsule_get_destructor`, `capsule_set_name`, `capsule_is_valid`, `capsule_export`, `capsule_import`) for opaque native-pointer interop in extension handle space.
   - C-API v1 now includes list/dict mutation helpers (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`) with positive/negative-path smoke coverage.
   - C-API v1 now includes handle-based object attribute access (`object_get_attr`, `object_set_attr`, `object_del_attr`) with native extension smoke coverage.
@@ -72,6 +73,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes membership + dict-view fixture coverage for `object_contains` + `object_dict_keys`/`object_dict_items` APIs (`dynamic_extension_can_use_contains_and_dict_view_apis`).
   - extension smoke now includes buffer API coverage for pointer/len/readonly views and release semantics (`dynamic_extension_can_use_buffer_apis`).
   - extension smoke now includes writable buffer API coverage (`dynamic_extension_can_use_writable_buffer_apis`) validating in-place mutation through `bytearray` and writable `memoryview` handles plus read-only rejection paths.
+  - extension smoke now includes resize-blocking export-pin coverage (`dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release`).
   - extension smoke now includes memoryview-slice + release failure-path coverage for buffer APIs (`dynamic_extension_buffer_api_handles_memoryview_slices_and_release`).
   - extension smoke now includes capsule API coverage for create/name/pointer/context/destructor/refcount paths (`dynamic_extension_can_use_capsule_apis`).
   - capsule destructor callbacks now run on final handle decref and on module C-API context drop, with dedicated smoke coverage (`dynamic_extension_runs_capsule_destructor_on_context_drop`).
