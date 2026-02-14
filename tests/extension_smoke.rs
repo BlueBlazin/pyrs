@@ -3124,6 +3124,119 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_can_import_exported_capsule_by_name() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping capsule import/export smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping capsule import/export smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_capsule_import_export");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let provider_source = temp_root.join("native_capsule_provider.c");
+    fs::write(
+        &provider_source,
+        r#"#include "pyrs_capi.h"
+#include <stdint.h>
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    PyrsObjectHandle cap = api->capsule_new(module_ctx, (void*)(uintptr_t)0xABCDEF, "native_capsule_provider.CAPSULE_API");
+    if (!cap) {
+        return -2;
+    }
+    if (api->capsule_set_context(module_ctx, cap, (void*)(uintptr_t)0x1234) != 0) {
+        return -3;
+    }
+    if (api->capsule_export(module_ctx, cap) != 0) {
+        return -4;
+    }
+    if (api->object_decref(module_ctx, cap) != 0) {
+        return -5;
+    }
+    if (api->module_set_bool(module_ctx, "EXPORTED", 1) != 0) {
+        return -6;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("provider source should be written");
+    let provider_library_file = shared_library_filename("native_capsule_provider");
+    let provider_library_path = temp_root.join(&provider_library_file);
+    compile_shared_extension(&provider_source, &provider_library_path)
+        .expect("provider extension should build");
+    let provider_manifest = temp_root.join("native_capsule_provider.pyrs-ext");
+    fs::write(
+        &provider_manifest,
+        format!(
+            "module=native_capsule_provider\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={provider_library_file}\n"
+        ),
+    )
+    .expect("provider manifest should be written");
+
+    let consumer_source = temp_root.join("native_capsule_consumer.c");
+    fs::write(
+        &consumer_source,
+        r#"#include "pyrs_capi.h"
+#include <stdint.h>
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    void* ptr = api->capsule_import(module_ctx, "native_capsule_provider.CAPSULE_API", 0);
+    if (ptr != (void*)(uintptr_t)0xABCDEF) {
+        return -2;
+    }
+    void* missing = api->capsule_import(module_ctx, "native_capsule_provider.MISSING", 0);
+    if (missing != 0 || api->error_occurred(module_ctx) == 0 || api->error_clear(module_ctx) != 0) {
+        return -3;
+    }
+    if (api->module_set_bool(module_ctx, "IMPORTED", 1) != 0) {
+        return -4;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("consumer source should be written");
+    let consumer_library_file = shared_library_filename("native_capsule_consumer");
+    let consumer_library_path = temp_root.join(&consumer_library_file);
+    compile_shared_extension(&consumer_source, &consumer_library_path)
+        .expect("consumer extension should build");
+    let consumer_manifest = temp_root.join("native_capsule_consumer.pyrs-ext");
+    fs::write(
+        &consumer_manifest,
+        format!(
+            "module=native_capsule_consumer\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={consumer_library_file}\n"
+        ),
+    )
+    .expect("consumer manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_capsule_provider as p\nassert p.EXPORTED is True\nimport native_capsule_consumer as c\nassert c.IMPORTED is True",
+    )
+    .expect("capsule import/export extension flow should succeed");
+
+    let _ = fs::remove_file(provider_manifest);
+    let _ = fs::remove_file(provider_library_path);
+    let _ = fs::remove_file(provider_source);
+    let _ = fs::remove_file(consumer_manifest);
+    let _ = fs::remove_file(consumer_library_path);
+    let _ = fs::remove_file(consumer_source);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_bridge_buffer_pointer_through_capsule() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping buffer/capsule bridge extension smoke (pyrs binary not found)");
@@ -3274,6 +3387,8 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     int has_capsule_get_destructor = api->api_has_capability(module_ctx, "capsule_get_destructor");
     int has_capsule_set_name = api->api_has_capability(module_ctx, "capsule_set_name");
     int has_capsule_is_valid = api->api_has_capability(module_ctx, "capsule_is_valid");
+    int has_capsule_export = api->api_has_capability(module_ctx, "capsule_export");
+    int has_capsule_import = api->api_has_capability(module_ctx, "capsule_import");
     int has_get_iter = api->api_has_capability(module_ctx, "object_get_iter");
     int has_iter_next = api->api_has_capability(module_ctx, "object_iter_next");
     int has_list_append = api->api_has_capability(module_ctx, "object_list_append");
@@ -3302,6 +3417,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
         has_capsule_set_context != 1 || has_capsule_get_context != 1 ||
         has_capsule_set_destructor != 1 || has_capsule_get_destructor != 1 ||
         has_capsule_set_name != 1 || has_capsule_is_valid != 1 ||
+        has_capsule_export != 1 || has_capsule_import != 1 ||
         has_get_iter != 1 || has_iter_next != 1 ||
         has_list_append != 1 || has_list_set_item != 1 ||
         has_dict_contains != 1 || has_dict_del_item != 1 ||
@@ -3389,6 +3505,12 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->module_set_bool(module_ctx, "HAS_CAPSULE_IS_VALID", has_capsule_is_valid) != 0) {
         return -54;
     }
+    if (api->module_set_bool(module_ctx, "HAS_CAPSULE_EXPORT", has_capsule_export) != 0) {
+        return -55;
+    }
+    if (api->module_set_bool(module_ctx, "HAS_CAPSULE_IMPORT", has_capsule_import) != 0) {
+        return -56;
+    }
     if (api->module_set_bool(module_ctx, "HAS_GET_ITER", has_get_iter) != 0) {
         return -23;
     }
@@ -3463,7 +3585,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CONTAINS is True\nassert native_capabilities.HAS_OBJECT_DICT_KEYS is True\nassert native_capabilities.HAS_OBJECT_DICT_ITEMS is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER is True\nassert native_capabilities.HAS_OBJECT_RELEASE_BUFFER is True\nassert native_capabilities.HAS_CAPSULE_NEW is True\nassert native_capabilities.HAS_CAPSULE_GET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_GET_NAME is True\nassert native_capabilities.HAS_CAPSULE_SET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_GET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_SET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_GET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_SET_NAME is True\nassert native_capabilities.HAS_CAPSULE_IS_VALID is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
+        "import native_capabilities\nassert native_capabilities.HAS_DICT is True\nassert native_capabilities.HAS_KW is True\nassert native_capabilities.HAS_MODULE_GET_OBJECT is True\nassert native_capabilities.HAS_MODULE_IMPORT is True\nassert native_capabilities.HAS_MODULE_GET_ATTR is True\nassert native_capabilities.HAS_MODULE_SET_ATTR is True\nassert native_capabilities.HAS_MODULE_DEL_ATTR is True\nassert native_capabilities.HAS_MODULE_HAS_ATTR is True\nassert native_capabilities.HAS_OBJECT_LEN is True\nassert native_capabilities.HAS_OBJECT_GET_ITEM is True\nassert native_capabilities.HAS_OBJECT_SET_ITEM is True\nassert native_capabilities.HAS_OBJECT_DEL_ITEM is True\nassert native_capabilities.HAS_OBJECT_CONTAINS is True\nassert native_capabilities.HAS_OBJECT_DICT_KEYS is True\nassert native_capabilities.HAS_OBJECT_DICT_ITEMS is True\nassert native_capabilities.HAS_OBJECT_GET_BUFFER is True\nassert native_capabilities.HAS_OBJECT_RELEASE_BUFFER is True\nassert native_capabilities.HAS_CAPSULE_NEW is True\nassert native_capabilities.HAS_CAPSULE_GET_POINTER is True\nassert native_capabilities.HAS_CAPSULE_GET_NAME is True\nassert native_capabilities.HAS_CAPSULE_SET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_GET_CONTEXT is True\nassert native_capabilities.HAS_CAPSULE_SET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_GET_DESTRUCTOR is True\nassert native_capabilities.HAS_CAPSULE_SET_NAME is True\nassert native_capabilities.HAS_CAPSULE_IS_VALID is True\nassert native_capabilities.HAS_CAPSULE_EXPORT is True\nassert native_capabilities.HAS_CAPSULE_IMPORT is True\nassert native_capabilities.HAS_GET_ITER is True\nassert native_capabilities.HAS_ITER_NEXT is True\nassert native_capabilities.HAS_LIST_APPEND is True\nassert native_capabilities.HAS_LIST_SET_ITEM is True\nassert native_capabilities.HAS_DICT_CONTAINS is True\nassert native_capabilities.HAS_DICT_DEL_ITEM is True\nassert native_capabilities.HAS_GET_ATTR is True\nassert native_capabilities.HAS_SET_ATTR is True\nassert native_capabilities.HAS_DEL_ATTR is True\nassert native_capabilities.HAS_HAS_ATTR is True\nassert native_capabilities.HAS_IS_INSTANCE is True\nassert native_capabilities.HAS_IS_SUBCLASS is True\nassert native_capabilities.HAS_CALL_NOARGS is True\nassert native_capabilities.HAS_CALL_ONEARG is True\nassert native_capabilities.HAS_OBJECT_CALL is True\nassert native_capabilities.HAS_ERROR_GET_MESSAGE is True\nassert native_capabilities.HAS_MISSING is False",
     )
     .expect("capability-query extension import should succeed");
 

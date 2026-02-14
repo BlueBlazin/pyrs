@@ -21,6 +21,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
+use std::ffi::c_void;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
@@ -58,7 +59,9 @@ use crate::bytecode::cpython;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::compiler;
-use crate::extensions::{PyrsCFunctionKwV1, PyrsCFunctionV1, SharedLibraryHandle};
+use crate::extensions::{
+    PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, SharedLibraryHandle,
+};
 use crate::parser;
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, FunctionObject,
@@ -102,6 +105,13 @@ struct ExtensionCallableEntry {
     module: ObjRef,
     name: String,
     kind: ExtensionCallableKind,
+}
+
+#[derive(Clone, Copy)]
+struct ExtensionCapsuleRegistryEntry {
+    pointer: usize,
+    context: usize,
+    destructor: Option<PyrsCapsuleDestructorV1>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -733,6 +743,7 @@ pub struct Vm {
     atexit_handlers: Vec<AtexitHandler>,
     extension_libraries: Vec<SharedLibraryHandle>,
     extension_callable_registry: HashMap<u64, ExtensionCallableEntry>,
+    extension_capsule_registry: HashMap<String, ExtensionCapsuleRegistryEntry>,
     next_extension_callable_id: u64,
     local_shim_fallback_enabled: bool,
     prefer_pure_json_when_available: bool,
@@ -757,6 +768,19 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        for capsule in self.extension_capsule_registry.values() {
+            if let Some(destructor) = capsule.destructor {
+                // SAFETY: destructor pointers come from loaded extension modules and
+                // are invoked before extension libraries are dropped.
+                unsafe {
+                    destructor(
+                        capsule.pointer as *mut c_void,
+                        capsule.context as *mut c_void,
+                    );
+                }
+            }
+        }
+        self.extension_capsule_registry.clear();
         // Break reference cycles before field teardown so per-VM object graphs
         // do not accumulate across harness runs.
         self.heap.collect_cycles(&[]);
@@ -842,6 +866,7 @@ impl Vm {
             atexit_handlers: Vec::new(),
             extension_libraries: Vec::new(),
             extension_callable_registry: HashMap::new(),
+            extension_capsule_registry: HashMap::new(),
             next_extension_callable_id: 1,
             // Shim fallback is restricted by LOCAL_SHIM_MODULES and only used when normal
             // path resolution fails, so keep it enabled by default (allow explicit opt-out).
