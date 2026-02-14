@@ -1198,8 +1198,8 @@ impl Highlighter for PythonHighlighter {
         let mut cursor = 0usize;
         for token in tokens {
             let token_start = token.offset.min(line.len());
-            let token_end = token_start
-                .saturating_add(token.lexeme.len())
+            let token_end = token_visual_end_offset(line, &token)
+                .unwrap_or_else(|| token_start.saturating_add(token.lexeme.len()))
                 .min(line.len());
 
             if token_start > cursor {
@@ -1222,6 +1222,68 @@ impl Highlighter for PythonHighlighter {
         }
         styled
     }
+}
+
+fn token_visual_end_offset(line: &str, token: &parser::token::Token) -> Option<usize> {
+    match token.kind {
+        parser::token::TokenKind::String
+        | parser::token::TokenKind::Bytes
+        | parser::token::TokenKind::FString => string_literal_visual_end(line, token.offset),
+        _ => Some(token.offset.saturating_add(token.lexeme.len())),
+    }
+}
+
+fn string_literal_visual_end(line: &str, start_offset: usize) -> Option<usize> {
+    let source = line.get(start_offset..)?;
+    let mut cursor = 0usize;
+    while let Some(ch) = source.get(cursor..)?.chars().next() {
+        if ch == '\'' || ch == '"' {
+            break;
+        }
+        if ch.is_ascii_alphabetic() && matches!(ch.to_ascii_lowercase(), 'r' | 'b' | 'f') {
+            cursor += ch.len_utf8();
+            continue;
+        }
+        return None;
+    }
+
+    let quote = source.get(cursor..)?.chars().next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    let quote_len = quote.len_utf8();
+    let quote_char = quote;
+    let mut body_pos = cursor + quote_len;
+    let triple = source.get(body_pos..)?.starts_with(quote_char)
+        && source.get(body_pos + quote_len..)?.starts_with(quote_char);
+    if triple {
+        body_pos += quote_len * 2;
+    }
+
+    while body_pos < source.len() {
+        if triple
+            && source.get(body_pos..)?.starts_with(quote_char)
+            && source.get(body_pos + quote_len..)?.starts_with(quote_char)
+            && source
+                .get(body_pos + quote_len * 2..)?
+                .starts_with(quote_char)
+        {
+            return Some(start_offset + body_pos + quote_len * 3);
+        }
+
+        let ch = source.get(body_pos..)?.chars().next()?;
+        body_pos += ch.len_utf8();
+        if ch == '\\' {
+            if let Some(next) = source.get(body_pos..)?.chars().next() {
+                body_pos += next.len_utf8();
+            }
+            continue;
+        }
+        if !triple && ch == quote_char {
+            return Some(start_offset + body_pos);
+        }
+    }
+    None
 }
 
 fn style_for_token_kind(palette: ReplPalette, token_kind: &parser::token::TokenKind) -> Style {
@@ -1783,7 +1845,7 @@ fn has_unclosed_delimiters(source: &str) -> bool {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use reedline::{Completer, Highlighter};
+    use reedline::{Completer, Highlighter, StyledText};
 
     use super::{
         CompletionState, MetaCommand, PythonHighlighter, ReplCompleter, ReplMagicCommand,
@@ -2020,6 +2082,46 @@ mod tests {
         assert_eq!(styled.raw_string(), "identifier");
         assert!(!styled.buffer.is_empty());
         assert_eq!(styled.buffer[0].0, nu_ansi_term::Style::new());
+    }
+
+    fn style_at_byte(styled: &StyledText, byte_index: usize) -> Option<nu_ansi_term::Style> {
+        let mut cursor = 0usize;
+        for (style, segment) in &styled.buffer {
+            let end = cursor + segment.len();
+            if byte_index >= cursor && byte_index < end {
+                return Some(*style);
+            }
+            cursor = end;
+        }
+        None
+    }
+
+    #[test]
+    fn python_highlighter_covers_entire_string_literal_span() {
+        let palette = repl_palette(ResolvedReplTheme::Dark);
+        let highlighter = PythonHighlighter::new(palette);
+        let line = "'abc'";
+        let styled = highlighter.highlight(line, 0);
+        assert_eq!(styled.raw_string(), line);
+
+        let c_style = style_at_byte(&styled, 3).expect("style for last content char");
+        let quote_style = style_at_byte(&styled, 4).expect("style for closing quote");
+        assert_eq!(c_style, palette.string_style);
+        assert_eq!(quote_style, palette.string_style);
+    }
+
+    #[test]
+    fn python_highlighter_covers_prefixed_string_literal_span() {
+        let palette = repl_palette(ResolvedReplTheme::Dark);
+        let highlighter = PythonHighlighter::new(palette);
+        let line = "b'abc'";
+        let styled = highlighter.highlight(line, 0);
+        assert_eq!(styled.raw_string(), line);
+
+        let prefix_style = style_at_byte(&styled, 0).expect("style for prefix");
+        let quote_style = style_at_byte(&styled, 5).expect("style for closing quote");
+        assert_eq!(prefix_style, palette.string_style);
+        assert_eq!(quote_style, palette.string_style);
     }
 
     #[test]
