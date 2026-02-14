@@ -1,5 +1,6 @@
 pub(super) mod bz2;
 pub(super) mod csv;
+pub(super) mod expat;
 pub(super) mod hashlib;
 pub(super) mod json;
 pub(super) mod lzma;

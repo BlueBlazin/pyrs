@@ -199,6 +199,14 @@ impl Vm {
             BuiltinFunction::SslContextNew => "__new__".to_string(),
             BuiltinFunction::SslContextInit => "__init__".to_string(),
             BuiltinFunction::SslCreateDefaultContext => "create_default_context".to_string(),
+            BuiltinFunction::PyExpatParserCreate => "ParserCreate".to_string(),
+            BuiltinFunction::PyExpatParserParse => "Parse".to_string(),
+            BuiltinFunction::PyExpatParserGetReparseDeferralEnabled => {
+                "GetReparseDeferralEnabled".to_string()
+            }
+            BuiltinFunction::PyExpatParserSetReparseDeferralEnabled => {
+                "SetReparseDeferralEnabled".to_string()
+            }
             BuiltinFunction::ThreadingRegisterAtexit => "_register_atexit".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
@@ -369,6 +377,14 @@ impl Vm {
             BuiltinFunction::SslContextNew => "_ssl._SSLContext.__new__".to_string(),
             BuiltinFunction::SslContextInit => "ssl.SSLContext.__init__".to_string(),
             BuiltinFunction::SslCreateDefaultContext => "ssl.create_default_context".to_string(),
+            BuiltinFunction::PyExpatParserCreate => "pyexpat.ParserCreate".to_string(),
+            BuiltinFunction::PyExpatParserParse => "pyexpat.xmlparser.Parse".to_string(),
+            BuiltinFunction::PyExpatParserGetReparseDeferralEnabled => {
+                "pyexpat.xmlparser.GetReparseDeferralEnabled".to_string()
+            }
+            BuiltinFunction::PyExpatParserSetReparseDeferralEnabled => {
+                "pyexpat.xmlparser.SetReparseDeferralEnabled".to_string()
+            }
             BuiltinFunction::ThreadingRegisterAtexit => "threading._register_atexit".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
@@ -554,6 +570,10 @@ impl Vm {
             | BuiltinFunction::SslRandEgd
             | BuiltinFunction::SslContextNew => "_ssl",
             BuiltinFunction::SslContextInit | BuiltinFunction::SslCreateDefaultContext => "ssl",
+            BuiltinFunction::PyExpatParserCreate
+            | BuiltinFunction::PyExpatParserParse
+            | BuiltinFunction::PyExpatParserGetReparseDeferralEnabled
+            | BuiltinFunction::PyExpatParserSetReparseDeferralEnabled => "pyexpat",
             BuiltinFunction::ThreadingRegisterAtexit => "threading",
             BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate

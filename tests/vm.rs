@@ -200,12 +200,32 @@ fn bytes_lstrip_and_strip_match_common_semantics() {
 }
 
 #[test]
-fn xml_elementtree_fromstring_smoke_uses_pyexpat_fallback() {
+fn pyexpat_parser_create_parse_baseline() {
+    let source = "import pyexpat\nevents = []\np = pyexpat.ParserCreate()\np.ordered_attributes = 1\np.StartElementHandler = lambda tag, attrs: events.append(('s', tag, attrs))\np.EndElementHandler = lambda tag: events.append(('e', tag))\np.CharacterDataHandler = lambda data: events.append(('d', data))\nr = p.Parse('<a x=\"1\">z</a>', True)\nok = (r == 1 and events == [('s', 'a', ['x', '1']), ('d', 'z'), ('e', 'a')])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pyexpat_parse_error_exposes_code_lineno_offset() {
+    let source = "import pyexpat\np = pyexpat.ParserCreate()\ncaught = False\ncode = -1\nline = -1\noffset = -1\ntry:\n    p.Parse('<a>', True)\nexcept pyexpat.error as exc:\n    caught = True\n    code = exc.code\n    line = exc.lineno\n    offset = exc.offset\nok = (caught and code == 1 and line >= 1 and offset >= 0)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn xml_elementtree_fromstring_smoke_uses_native_pyexpat() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
     };
     let source = format!(
-        "import sys\nsys.path = [{lib_path:?}]\nimport xml.etree.ElementTree as ET\nroot = ET.fromstring('<a><b/></a>')\nok = (root.tag == 'a' and root[0].tag == 'b')\n"
+        "import sys\nsys.path = [{lib_path:?}]\nimport pyexpat\nimport xml.etree.ElementTree as ET\nroot = ET.fromstring('<a><b/></a>')\nmod_file = getattr(pyexpat, '__file__', None)\nok = (root.tag == 'a' and root[0].tag == 'b' and mod_file is None)\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

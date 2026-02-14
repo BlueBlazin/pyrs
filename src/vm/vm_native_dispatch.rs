@@ -5933,6 +5933,16 @@ impl Vm {
             BuiltinFunction::SslCreateDefaultContext => {
                 self.builtin_ssl_create_default_context(args, kwargs)
             }
+            BuiltinFunction::PyExpatParserCreate => {
+                self.builtin_pyexpat_parser_create(args, kwargs)
+            }
+            BuiltinFunction::PyExpatParserParse => self.builtin_pyexpat_parser_parse(args, kwargs),
+            BuiltinFunction::PyExpatParserGetReparseDeferralEnabled => {
+                self.builtin_pyexpat_parser_get_reparse_deferral_enabled(args, kwargs)
+            }
+            BuiltinFunction::PyExpatParserSetReparseDeferralEnabled => {
+                self.builtin_pyexpat_parser_set_reparse_deferral_enabled(args, kwargs)
+            }
             BuiltinFunction::PickleDump => self.builtin_pickle_dump(args, kwargs),
             BuiltinFunction::PickleDumps => self.builtin_pickle_dumps(args, kwargs),
             BuiltinFunction::PickleLoad => self.builtin_pickle_load(args, kwargs),

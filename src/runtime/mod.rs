@@ -2533,6 +2533,10 @@ pub enum BuiltinFunction {
     SslContextNew,
     SslContextInit,
     SslCreateDefaultContext,
+    PyExpatParserCreate,
+    PyExpatParserParse,
+    PyExpatParserGetReparseDeferralEnabled,
+    PyExpatParserSetReparseDeferralEnabled,
     PickleDump,
     PickleDumps,
     PickleLoad,
@@ -3208,7 +3212,11 @@ impl BuiltinFunction {
             | BuiltinFunction::PickleBufferRelease
             | BuiltinFunction::CopyregReconstructor
             | BuiltinFunction::CopyregNewObj
-            | BuiltinFunction::CopyregNewObjEx => Err(RuntimeError::new(
+            | BuiltinFunction::CopyregNewObjEx
+            | BuiltinFunction::PyExpatParserCreate
+            | BuiltinFunction::PyExpatParserParse
+            | BuiltinFunction::PyExpatParserGetReparseDeferralEnabled
+            | BuiltinFunction::PyExpatParserSetReparseDeferralEnabled => Err(RuntimeError::new(
                 "StringIO/BytesIO builtin not available in runtime-only call path",
             )),
             BuiltinFunction::Len => {

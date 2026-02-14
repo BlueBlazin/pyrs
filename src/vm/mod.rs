@@ -48,6 +48,7 @@ use self::ops::{
     rshift_values, sub_values, xor_values,
 };
 use self::stdlib::bz2::{Bz2CompressorState, Bz2DecompressorState};
+use self::stdlib::expat::ExpatParserState;
 use self::stdlib::hashlib::HashState;
 use self::stdlib::lzma::{LzmaCompressorState, LzmaDecompressorState};
 use self::stdlib::sqlite3::{SqliteBlobState, SqliteConnectionState, SqliteCursorState};
@@ -356,7 +357,7 @@ const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
-const LOCAL_SHIM_MODULES: &[&str] = &["pkgutil", "importlib.resources", "pyexpat"];
+const LOCAL_SHIM_MODULES: &[&str] = &["pkgutil", "importlib.resources"];
 
 thread_local! {
     static VM_THREAD_IDENT_OVERRIDE: Cell<Option<i64>> = const { Cell::new(None) };
@@ -655,6 +656,7 @@ pub struct Vm {
     bz2_decompressors: HashMap<u64, Bz2DecompressorState>,
     lzma_compressors: HashMap<u64, LzmaCompressorState>,
     lzma_decompressors: HashMap<u64, LzmaDecompressorState>,
+    expat_parsers: HashMap<u64, ExpatParserState>,
     sqlite_connections: HashMap<u64, SqliteConnectionState>,
     sqlite_cursors: HashMap<u64, SqliteCursorState>,
     sqlite_blobs: HashMap<u64, SqliteBlobState>,
@@ -736,6 +738,7 @@ impl Vm {
             bz2_decompressors: HashMap::new(),
             lzma_compressors: HashMap::new(),
             lzma_decompressors: HashMap::new(),
+            expat_parsers: HashMap::new(),
             sqlite_connections: HashMap::new(),
             sqlite_cursors: HashMap::new(),
             sqlite_blobs: HashMap::new(),
@@ -1801,6 +1804,7 @@ impl Vm {
             self.bz2_decompressors.remove(&obj_id);
             self.lzma_compressors.remove(&obj_id);
             self.lzma_decompressors.remove(&obj_id);
+            self.expat_parsers.remove(&obj_id);
             self.sqlite_cursors.remove(&obj_id);
             self.sqlite_blobs.remove(&obj_id);
             if let Some(mut connection_state) = self.sqlite_connections.remove(&obj_id) {
@@ -6428,6 +6432,7 @@ pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
         "PickleError" => Some("Exception"),
         "PicklingError" => Some("PickleError"),
         "UnpicklingError" => Some("PickleError"),
+        "ExpatError" => Some("Exception"),
         "SSLError" => Some("OSError"),
         "SSLZeroReturnError" => Some("SSLError"),
         "SSLWantReadError" => Some("SSLError"),

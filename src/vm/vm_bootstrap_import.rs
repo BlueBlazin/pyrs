@@ -856,6 +856,73 @@ impl Vm {
                 ),
             ],
         );
+        let pyexpat_parser_type = match self
+            .heap
+            .alloc_class(ClassObject::new("xmlparser".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *pyexpat_parser_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("pyexpat".to_string()));
+            class_data.attrs.insert(
+                "Parse".to_string(),
+                Value::Builtin(BuiltinFunction::PyExpatParserParse),
+            );
+            class_data.attrs.insert(
+                "GetReparseDeferralEnabled".to_string(),
+                Value::Builtin(BuiltinFunction::PyExpatParserGetReparseDeferralEnabled),
+            );
+            class_data.attrs.insert(
+                "SetReparseDeferralEnabled".to_string(),
+                Value::Builtin(BuiltinFunction::PyExpatParserSetReparseDeferralEnabled),
+            );
+        }
+        let pyexpat_model_module = match self.heap.alloc_module(ModuleObject::new("pyexpat.model"))
+        {
+            Value::Module(module) => module,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(
+            &pyexpat_model_module,
+            "pyexpat.model",
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            false,
+            Vec::new(),
+            false,
+        );
+        self.register_module("pyexpat.model", pyexpat_model_module.clone());
+        let pyexpat_errors_module =
+            match self.heap.alloc_module(ModuleObject::new("pyexpat.errors")) {
+                Value::Module(module) => module,
+                _ => unreachable!(),
+            };
+        self.set_module_metadata(
+            &pyexpat_errors_module,
+            "pyexpat.errors",
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            false,
+            Vec::new(),
+            false,
+        );
+        self.register_module("pyexpat.errors", pyexpat_errors_module.clone());
+        self.install_builtin_module(
+            "pyexpat",
+            &[("ParserCreate", BuiltinFunction::PyExpatParserCreate)],
+            vec![
+                ("xmlparser", Value::Class(pyexpat_parser_type.clone())),
+                ("XMLParserType", Value::Class(pyexpat_parser_type)),
+                ("ExpatError", Value::ExceptionType("ExpatError".to_string())),
+                ("error", Value::ExceptionType("ExpatError".to_string())),
+                ("model", Value::Module(pyexpat_model_module)),
+                ("errors", Value::Module(pyexpat_errors_module)),
+                ("version_info", self.heap.alloc_tuple(vec![Value::Int(2), Value::Int(6), Value::Int(0)])),
+            ],
+        );
         self.install_builtin_module(
             "_json",
             &[
