@@ -7,7 +7,8 @@ use crate::extensions::{
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
     PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferViewV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
-    PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
+    PyrsCapsuleDestructorV1, PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest,
+    path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -29,6 +30,7 @@ struct CapiCapsuleSlot {
     pointer: usize,
     context: usize,
     name: Option<CString>,
+    destructor: Option<PyrsCapsuleDestructorV1>,
     refcount: usize,
 }
 
@@ -109,6 +111,7 @@ impl ModuleCapiContext {
                 pointer: pointer as usize,
                 context: 0,
                 name,
+                destructor: None,
                 refcount: 1,
             },
         );
@@ -277,7 +280,16 @@ impl ModuleCapiContext {
             }
             slot.refcount -= 1;
             if slot.refcount == 0 {
-                self.capsules.remove(&handle);
+                let slot = self
+                    .capsules
+                    .remove(&handle)
+                    .ok_or_else(|| format!("invalid object handle {}", handle))?;
+                if let Some(destructor) = slot.destructor {
+                    // SAFETY: destructor pointer was provided by extension code.
+                    unsafe {
+                        destructor(slot.pointer as *mut c_void, slot.context as *mut c_void);
+                    }
+                }
             }
             return Ok(());
         }
@@ -355,6 +367,18 @@ impl ModuleCapiContext {
             return Err(format!("invalid capsule handle {}", capsule_handle));
         };
         Ok(slot.context as *mut c_void)
+    }
+
+    fn capsule_set_destructor(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+        destructor: Option<PyrsCapsuleDestructorV1>,
+    ) -> Result<(), String> {
+        let Some(slot) = self.capsules.get_mut(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        slot.destructor = destructor;
+        Ok(())
     }
 
     fn object_type(&self, handle: PyrsObjectHandle) -> Result<i32, String> {
@@ -1337,6 +1361,7 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "capsule_get_name"
             | "capsule_set_context"
             | "capsule_get_context"
+            | "capsule_set_destructor"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -2309,6 +2334,23 @@ unsafe extern "C" fn capi_capsule_get_context(
     }
 }
 
+unsafe extern "C" fn capi_capsule_set_destructor(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+    destructor: Option<PyrsCapsuleDestructorV1>,
+) -> i32 {
+    let Some(context_obj) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context_obj.capsule_set_destructor(capsule_handle, destructor) {
+        Ok(()) => 0,
+        Err(err) => {
+            context_obj.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_sequence_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -2934,6 +2976,7 @@ impl Vm {
             capsule_get_name: capi_capsule_get_name,
             capsule_set_context: capi_capsule_set_context,
             capsule_get_context: capi_capsule_get_context,
+            capsule_set_destructor: capi_capsule_set_destructor,
         }
     }
 

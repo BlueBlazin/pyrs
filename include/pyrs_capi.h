@@ -39,6 +39,7 @@ typedef int (*PyrsCFunctionKwV1)(
     const PyrsObjectHandle* kwarg_values,
     PyrsObjectHandle* result
 );
+typedef void (*PyrsCapsuleDestructorV1)(void* pointer, void* context);
 
 struct PyrsBufferViewV1 {
     const uint8_t* data;
@@ -129,6 +130,7 @@ struct PyrsApiV1 {
     const char* (*capsule_get_name)(void* module_ctx, PyrsObjectHandle capsule_handle);
     int (*capsule_set_context)(void* module_ctx, PyrsObjectHandle capsule_handle, void* context);
     void* (*capsule_get_context)(void* module_ctx, PyrsObjectHandle capsule_handle);
+    int (*capsule_set_destructor)(void* module_ctx, PyrsObjectHandle capsule_handle, PyrsCapsuleDestructorV1 destructor);
 };
 
 typedef int (*PyrsExtensionInitV1)(const PyrsApiV1* api, void* module_ctx);

@@ -590,6 +590,11 @@ pub struct PyrsApiV1 {
         module_ctx: *mut c_void,
         capsule_handle: PyrsObjectHandle,
     ) -> *mut c_void,
+    pub capsule_set_destructor: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        capsule_handle: PyrsObjectHandle,
+        destructor: Option<PyrsCapsuleDestructorV1>,
+    ) -> i32,
 }
 
 pub type PyrsCFunctionV1 = unsafe extern "C" fn(
@@ -610,6 +615,8 @@ pub type PyrsCFunctionKwV1 = unsafe extern "C" fn(
     kwarg_values: *const PyrsObjectHandle,
     result: *mut PyrsObjectHandle,
 ) -> i32;
+
+pub type PyrsCapsuleDestructorV1 = unsafe extern "C" fn(pointer: *mut c_void, context: *mut c_void);
 
 pub type PyrsExtensionInitV1 =
     unsafe extern "C" fn(api: *const PyrsApiV1, module_ctx: *mut c_void) -> i32;
