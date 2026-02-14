@@ -7169,7 +7169,9 @@ pub fn format_value(value: &Value) -> String {
         }
         Value::Code(_) => "<code>".to_string(),
         Value::Function(_) => "<function>".to_string(),
-        Value::Builtin(_) => "<builtin>".to_string(),
+        Value::Builtin(builtin) => builtin_type_object_name(*builtin)
+            .map(|name| format!("<class '{name}'>"))
+            .unwrap_or_else(|| "<builtin>".to_string()),
     }
 }
 
@@ -7289,6 +7291,38 @@ pub fn format_repr(value: &Value) -> String {
             _ => format_value(value),
         },
         _ => format_value(value),
+    }
+}
+
+fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
+    match builtin {
+        BuiltinFunction::Type => Some("type"),
+        BuiltinFunction::Bool => Some("bool"),
+        BuiltinFunction::Int => Some("int"),
+        BuiltinFunction::Float => Some("float"),
+        BuiltinFunction::Complex => Some("complex"),
+        BuiltinFunction::Str => Some("str"),
+        BuiltinFunction::List => Some("list"),
+        BuiltinFunction::Tuple => Some("tuple"),
+        BuiltinFunction::Dict => Some("dict"),
+        BuiltinFunction::Set => Some("set"),
+        BuiltinFunction::FrozenSet => Some("frozenset"),
+        BuiltinFunction::Bytes => Some("bytes"),
+        BuiltinFunction::ByteArray => Some("bytearray"),
+        BuiltinFunction::MemoryView => Some("memoryview"),
+        BuiltinFunction::Slice => Some("slice"),
+        BuiltinFunction::Range => Some("range"),
+        BuiltinFunction::Enumerate => Some("enumerate"),
+        BuiltinFunction::Zip => Some("zip"),
+        BuiltinFunction::Map => Some("map"),
+        BuiltinFunction::Filter => Some("filter"),
+        BuiltinFunction::ClassMethod => Some("classmethod"),
+        BuiltinFunction::StaticMethod => Some("staticmethod"),
+        BuiltinFunction::Property => Some("property"),
+        BuiltinFunction::Super => Some("super"),
+        BuiltinFunction::TypesModuleType => Some("module"),
+        BuiltinFunction::TypesMethodType => Some("method"),
+        _ => None,
     }
 }
 

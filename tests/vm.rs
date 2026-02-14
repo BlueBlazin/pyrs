@@ -181,6 +181,27 @@ fn executes_name_expression_with_global() {
 }
 
 #[test]
+fn type_repr_matches_cpython_for_builtin_type_objects() {
+    let source = "ok = (repr(type(7)) == \"<class 'int'>\" and repr(int) == \"<class 'int'>\" and repr(type) == \"<class 'type'>\")\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn type_str_matches_cpython_for_builtin_type_objects() {
+    let source =
+        "ok = (str(type(7)) == \"<class 'int'>\" and str(int) == \"<class 'int'>\" and str(type) == \"<class 'type'>\")\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn iterator_count_exposes_iter_and_next_attributes() {
     let source = "import itertools\nit = itertools.count(2, 3)\na = it.__next__()\nb = (it.__iter__() is it)\nc = next(it)\nok = (a == 2 and b and c == 5)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
