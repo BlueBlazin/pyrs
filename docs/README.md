@@ -8,6 +8,8 @@ Use this file to find canonical ownership quickly.
 - `docs/COMPATIBILITY.md`: subsystem-level compatibility summary.
 - `docs/RELEASE_PLAN_BETA.md`: staged beta release plan (tracked, not yet active execution).
 - `docs/EXTENSION_ECOSYSTEM_DESIGN.md`: architecture and quality gates for NumPy/SciPy/Pandas/Matplotlib support.
+- `docs/EXTENSION_CAPABILITY_MATRIX.md`: source-of-truth status table for extension API/loader surfaces.
+- `docs/EXTENSION_PACKAGING_CONTRACT.md`: extension build/package contract (`pyrs314` mode first).
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
@@ -28,6 +30,7 @@ Use this file to find canonical ownership quickly.
 
 ## Validation and Artifacts
 - `docs/BUILTIN_PARITY.md`: builtin parity gate definition and closure rules.
+- `docs/NUMPY_BRINGUP_GATE.md`: NumPy import/ndarray bring-up probe and current status.
 - `docs/UNICODE_NAME_DATA.md`: Unicode-name data provenance/regeneration.
 - `docs/DICT_BACKEND_CPYTHON_MAPPING.md`: dict backend design mapping.
 - `docs/DICT_BACKEND_BENCHMARK.md`: dict backend benchmark snapshot artifact.

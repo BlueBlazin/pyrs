@@ -76,8 +76,12 @@ Deliverables:
 ## Milestone 15 (Extension Ecosystem)
 Deliverables:
 - limited C-API/abi3 execution path for supported surfaces
-- HPy path and compatibility matrix
+- extension capability matrix and packaging/build contract:
+  - `docs/EXTENSION_CAPABILITY_MATRIX.md`
+  - `docs/EXTENSION_PACKAGING_CONTRACT.md`
 - extension-backed ecosystem smoke suites + explicit unsupported-surface diagnostics
+- baseline extension loader smoke gate (`hello_ext`) in CI
+- NumPy bring-up gate scaffold (`import numpy` + first ndarray smoke)
 - architecture and delivery gates follow `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
 
 ## Milestone 16 (Release Hardening)
