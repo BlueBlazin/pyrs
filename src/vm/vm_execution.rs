@@ -1650,33 +1650,10 @@ impl Vm {
                     (left, right) => self.binary_add_runtime(left, right)?,
                 };
                 #[cfg(not(debug_assertions))]
-                {
-                    let can_fast_return = if self.frames.len() <= 1 {
-                        false
-                    } else {
-                        let frame = self.frames.last().expect("frame exists");
-                        frame.simple_one_arg_no_cells
-                            && frame.stack.is_empty()
-                            && !frame.discard_result
-                            && frame.active_exception.is_none()
-                            && !frame.expect_none_return
-                            && matches!(
-                                frame.code.instructions.get(frame.ip),
-                                Some(next) if next.opcode == Opcode::ReturnValue
-                            )
-                    };
-                    if can_fast_return {
-                        let frame = self.frames.pop().expect("frame exists");
-                        let caller = self.frames.last_mut().expect("caller frame exists");
-                        caller.stack.push(value);
-                        if frame.owner_class.is_none() {
-                            self.recycle_simple_frame_clean_slot0_unchecked(frame);
-                        } else {
-                            self.recycle_simple_frame(frame);
-                        }
-                        return Ok(None);
-                    }
-                }
+                let value = match self.try_fast_terminal_return_simple_no_cells(value) {
+                    Ok(()) => return Ok(None),
+                    Err(value) => value,
+                };
                 self.frames
                     .last_mut()
                     .expect("frame exists")
@@ -1702,6 +1679,11 @@ impl Vm {
                         None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
                     },
                     (left, right) => sub_values(left, right, &self.heap)?,
+                };
+                #[cfg(not(debug_assertions))]
+                let value = match self.try_fast_terminal_return_simple_no_cells(value) {
+                    Ok(()) => return Ok(None),
+                    Err(value) => value,
                 };
                 self.frames
                     .last_mut()
@@ -1750,7 +1732,13 @@ impl Vm {
             Opcode::BinaryMul => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                self.push_value(mul_values(left, right, &self.heap)?);
+                let value = mul_values(left, right, &self.heap)?;
+                #[cfg(not(debug_assertions))]
+                let value = match self.try_fast_terminal_return_simple_no_cells(value) {
+                    Ok(()) => return Ok(None),
+                    Err(value) => value,
+                };
+                self.push_value(value);
             }
             Opcode::BinaryMatMul => {
                 let right = self.pop_value()?;
@@ -6726,6 +6714,40 @@ impl Vm {
             return next.arg.map(|arg| arg as usize);
         }
         None
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[inline(always)]
+    fn try_fast_terminal_return_simple_no_cells(&mut self, value: Value) -> Result<(), Value> {
+        let can_fast_return = if self.frames.len() <= 1 {
+            false
+        } else {
+            let frame = self.frames.last().expect("frame exists");
+            frame.simple_one_arg_no_cells
+                && frame.stack.is_empty()
+                && !frame.discard_result
+                && frame.active_exception.is_none()
+                && !frame.expect_none_return
+                && matches!(
+                    frame.code.instructions.get(frame.ip),
+                    Some(next) if next.opcode == Opcode::ReturnValue
+                )
+        };
+        if !can_fast_return {
+            return Err(value);
+        }
+        let frame = self.frames.pop().expect("frame exists");
+        let caller = self.frames.last_mut().expect("caller frame exists");
+        caller.stack.push(value);
+        if frame.owner_class.is_none()
+            && frame.code.fast_local_count == 1
+            && frame.code.plain_positional_arg0_slot == Some(0)
+        {
+            self.recycle_simple_frame_clean_slot0_unchecked(frame);
+        } else {
+            self.recycle_simple_frame(frame);
+        }
+        Ok(())
     }
 
     #[cfg(not(debug_assertions))]

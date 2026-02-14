@@ -5853,6 +5853,28 @@ fn bound_method_binary_add_return_path_preserves_result() {
 }
 
 #[test]
+fn lambda_sub_return_path_preserves_result() {
+    let source = "x = 7\nf = lambda n: n - x\nok = (f(10) == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn lambda_mul_return_path_preserves_result() {
+    let source = "f = lambda n: n * 3\nok = (f(14) == 42)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_module_attribute_access() {
     let module = parser::parse_module("y = mod.x").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
