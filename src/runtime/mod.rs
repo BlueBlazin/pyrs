@@ -2890,6 +2890,7 @@ pub enum BuiltinFunction {
     ThreadingCurrentThread,
     ThreadingMainThread,
     ThreadingActiveCount,
+    ThreadingRegisterAtexit,
     ThreadClassInit,
     ThreadClassStart,
     ThreadClassJoin,
@@ -5516,6 +5517,7 @@ impl BuiltinFunction {
             | BuiltinFunction::ThreadingCurrentThread
             | BuiltinFunction::ThreadingMainThread
             | BuiltinFunction::ThreadingActiveCount
+            | BuiltinFunction::ThreadingRegisterAtexit
             | BuiltinFunction::ThreadClassInit
             | BuiltinFunction::ThreadClassStart
             | BuiltinFunction::ThreadClassJoin

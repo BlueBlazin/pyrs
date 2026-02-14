@@ -1341,6 +1341,30 @@ impl Vm {
         Ok(Value::Int(1))
     }
 
+    pub(super) fn builtin_threading_register_atexit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "_register_atexit() missing required callable argument",
+            ));
+        }
+        let callable = args.remove(0);
+        if !self.is_callable_value(&callable) {
+            return Err(RuntimeError::new(
+                "_register_atexit() first argument must be callable",
+            ));
+        }
+        // Compatibility baseline: accept and record shutdown callbacks as no-op.
+        // CPython executes these during threading shutdown; current runtime does
+        // not model interpreter-finalization callback ordering yet.
+        let _ = args;
+        let _ = kwargs;
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_thread_class_init(
         &mut self,
         mut args: Vec<Value>,

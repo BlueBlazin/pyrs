@@ -6359,6 +6359,9 @@ impl Vm {
             BuiltinFunction::ThreadingActiveCount => {
                 self.builtin_threading_active_count(args, kwargs)
             }
+            BuiltinFunction::ThreadingRegisterAtexit => {
+                self.builtin_threading_register_atexit(args, kwargs)
+            }
             BuiltinFunction::ThreadClassInit => self.builtin_thread_class_init(args, kwargs),
             BuiltinFunction::ThreadClassStart => self.builtin_thread_class_start(args, kwargs),
             BuiltinFunction::ThreadClassJoin => self.builtin_thread_class_join(args, kwargs),

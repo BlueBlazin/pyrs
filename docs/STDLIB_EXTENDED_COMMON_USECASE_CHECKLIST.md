@@ -54,7 +54,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 | `contextlib` | DONE | PASS | PASS | - |
 | `weakref` | DONE | PASS | PASS | - |
 | `queue` | DONE | PASS | PASS | - |
-| `concurrent.futures` | P1 | PASS | FAIL | `threading._register_atexit` missing in `threading` runtime surface |
+| `concurrent.futures` | P1 | PASS | FAIL | iterator protocol gap: `itertools.count` object lacks `__next__` in this import-chain smoke |
 | `socket` | DONE | PASS | PASS | - |
 | `ssl` | DONE | PASS | PASS | `_ssl` baseline landed and a native `ssl` bootstrap module now provides import/common context surfaces while namedtuple+super enum bootstrap gap remains tracked in object-model backlog |
 | `email` | DONE | PASS | PASS* | `EmailMessage` header/content fold + `as_string()` smoke is green (artifact refresh pending) |
@@ -72,7 +72,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 
 - Native extension/module gaps: none in this matrix (`zlib`, `_bz2`, `_lzma`, `_ssl` baselines are present)
 - XML parser backend gap (`pyexpat`): `xml`
-- Threading hook gap: `concurrent.futures` (`threading._register_atexit`)
+- Iterator protocol gap in `concurrent.futures` import-chain (`itertools.count.__next__`)
 - Bytes method gap: `bytes.lstrip` (blocks full `gzip.decompress` smoke)
 - Extended `hashlib` algorithm coverage gap impacting `smtplib` startup/runtime diagnostics
 

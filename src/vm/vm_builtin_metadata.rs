@@ -199,6 +199,7 @@ impl Vm {
             BuiltinFunction::SslContextNew => "__new__".to_string(),
             BuiltinFunction::SslContextInit => "__init__".to_string(),
             BuiltinFunction::SslCreateDefaultContext => "create_default_context".to_string(),
+            BuiltinFunction::ThreadingRegisterAtexit => "_register_atexit".to_string(),
             BuiltinFunction::OperatorContains => "contains".to_string(),
             BuiltinFunction::FunctoolsReduce => "reduce".to_string(),
             _ => self.builtin_runtime_name(builtin),
@@ -368,6 +369,7 @@ impl Vm {
             BuiltinFunction::SslContextNew => "_ssl._SSLContext.__new__".to_string(),
             BuiltinFunction::SslContextInit => "ssl.SSLContext.__init__".to_string(),
             BuiltinFunction::SslCreateDefaultContext => "ssl.create_default_context".to_string(),
+            BuiltinFunction::ThreadingRegisterAtexit => "threading._register_atexit".to_string(),
             BuiltinFunction::SreCompile => "_sre.compile".to_string(),
             BuiltinFunction::SreTemplate => "_sre.template".to_string(),
             BuiltinFunction::SreAsciiIsCased => "_sre.ascii_iscased".to_string(),
@@ -552,6 +554,7 @@ impl Vm {
             | BuiltinFunction::SslRandEgd
             | BuiltinFunction::SslContextNew => "_ssl",
             BuiltinFunction::SslContextInit | BuiltinFunction::SslCreateDefaultContext => "ssl",
+            BuiltinFunction::ThreadingRegisterAtexit => "threading",
             BuiltinFunction::SreCompile
             | BuiltinFunction::SreTemplate
             | BuiltinFunction::SreAsciiIsCased

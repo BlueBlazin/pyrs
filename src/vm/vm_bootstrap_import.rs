@@ -5112,6 +5112,7 @@ impl Vm {
                 ("current_thread", BuiltinFunction::ThreadingCurrentThread),
                 ("main_thread", BuiltinFunction::ThreadingMainThread),
                 ("active_count", BuiltinFunction::ThreadingActiveCount),
+                ("_register_atexit", BuiltinFunction::ThreadingRegisterAtexit),
             ],
             vec![
                 ("TIMEOUT_MAX", Value::Float(f64::MAX)),
