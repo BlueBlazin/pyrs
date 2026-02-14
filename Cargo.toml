@@ -8,6 +8,6 @@ md-5 = "0.10.6"
 sha2 = "0.10.9"
 
 [profile.release]
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 panic = "abort"

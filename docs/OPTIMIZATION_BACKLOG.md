@@ -102,3 +102,6 @@ Do not rely on stale point-in-time numbers in this document.
   - reduced `LOAD_GLOBAL` fused-call overhead by caching direct one-arg/no-cells frame metadata (`code/module/owner`) and reusing ref-based frame entry paths after epoch validation.
   - added memoization for filesystem stdlib-preference probes (`has_preferred_filesystem_module`) with invalidation on `sys.path` mutations to reduce startup/import stat churn.
   - removed full tuple payload clones from native tuple methods (`tuple.count`, `tuple.index`) and validated bound/subclass semantics with regression coverage.
+  - fused `BinaryAdd -> ReturnValue` for simple one-arg/no-cells function frames, avoiding an extra opcode dispatch and stack roundtrip on hot recursive-return paths.
+  - tightened `CompareLt`/`CompareLtConst` jump path truthiness handling to avoid temporary `Value::Bool` materialization when the result is used only for branch control.
+  - release profile now uses `lto = "fat"` (from thin) to improve cross-function optimization in hot VM call/dispatch paths.

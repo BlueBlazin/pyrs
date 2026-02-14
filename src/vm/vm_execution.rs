@@ -1649,6 +1649,34 @@ impl Vm {
                     },
                     (left, right) => self.binary_add_runtime(left, right)?,
                 };
+                #[cfg(not(debug_assertions))]
+                {
+                    let can_fast_return = if self.frames.len() <= 1 {
+                        false
+                    } else {
+                        let frame = self.frames.last().expect("frame exists");
+                        frame.simple_one_arg_no_cells
+                            && frame.stack.is_empty()
+                            && !frame.discard_result
+                            && frame.active_exception.is_none()
+                            && !frame.expect_none_return
+                            && matches!(
+                                frame.code.instructions.get(frame.ip),
+                                Some(next) if next.opcode == Opcode::ReturnValue
+                            )
+                    };
+                    if can_fast_return {
+                        let frame = self.frames.pop().expect("frame exists");
+                        let caller = self.frames.last_mut().expect("caller frame exists");
+                        caller.stack.push(value);
+                        if frame.owner_class.is_none() {
+                            self.recycle_simple_frame_clean_slot0_unchecked(frame);
+                        } else {
+                            self.recycle_simple_frame(frame);
+                        }
+                        return Ok(None);
+                    }
+                }
                 self.frames
                     .last_mut()
                     .expect("frame exists")
@@ -1791,6 +1819,7 @@ impl Vm {
                 let site_index = self.current_site_index();
                 let quickened_int =
                     self.is_quickened_site(site_index, QuickenedSiteKind::CompareLtInt);
+                let jump_target = self.next_jump_if_false_target();
                 let (left, right) = {
                     let frame = self.frames.last_mut().expect("frame exists");
                     let right = frame
@@ -1803,29 +1832,28 @@ impl Vm {
                         .ok_or_else(|| RuntimeError::new("stack underflow (CompareLt lhs)"))?;
                     (left, right)
                 };
-                let (result, can_quicken) = if quickened_int {
-                    let result = match (left, right) {
-                        (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
-                        (left, right) => {
-                            self.clear_quickened_site(site_index);
-                            self.compare_lt_runtime(left, right)?
+                if let Some(target) = jump_target {
+                    let (truthy, can_quicken) = if quickened_int {
+                        match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => (a < b, false),
+                            (left, right) => {
+                                self.clear_quickened_site(site_index);
+                                let result = self.compare_lt_runtime(left, right)?;
+                                (self.truthy_from_value(&result)?, false)
+                            }
+                        }
+                    } else {
+                        match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => (a < b, true),
+                            (left, right) => {
+                                let result = self.compare_lt_runtime(left, right)?;
+                                (self.truthy_from_value(&result)?, false)
+                            }
                         }
                     };
-                    (result, false)
-                } else {
-                    match (left, right) {
-                        (Value::Int(a), Value::Int(b)) => (Value::Bool(a < b), true),
-                        (left, right) => (self.compare_lt_runtime(left, right)?, false),
+                    if can_quicken {
+                        self.mark_quickened_site(site_index, QuickenedSiteKind::CompareLtInt);
                     }
-                };
-                if can_quicken {
-                    self.mark_quickened_site(site_index, QuickenedSiteKind::CompareLtInt);
-                }
-                if let Some(target) = self.next_jump_if_false_target() {
-                    let truthy = match result {
-                        Value::Bool(flag) => flag,
-                        other => self.truthy_from_value(&other)?,
-                    };
                     let frame = self.frames.last_mut().expect("frame exists");
                     if truthy {
                         frame.ip += 1;
@@ -1833,6 +1861,24 @@ impl Vm {
                         frame.ip = target;
                     }
                 } else {
+                    let (result, can_quicken) = if quickened_int {
+                        let result = match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => Value::Bool(a < b),
+                            (left, right) => {
+                                self.clear_quickened_site(site_index);
+                                self.compare_lt_runtime(left, right)?
+                            }
+                        };
+                        (result, false)
+                    } else {
+                        match (left, right) {
+                            (Value::Int(a), Value::Int(b)) => (Value::Bool(a < b), true),
+                            (left, right) => (self.compare_lt_runtime(left, right)?, false),
+                        }
+                    };
+                    if can_quicken {
+                        self.mark_quickened_site(site_index, QuickenedSiteKind::CompareLtInt);
+                    }
                     self.frames
                         .last_mut()
                         .expect("frame exists")
@@ -1845,6 +1891,7 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing const argument"))?
                     as usize;
+                let jump_target = self.next_jump_if_false_target();
                 let (left, right_int, right_value) = {
                     let frame = self.frames.last_mut().expect("frame exists");
                     if idx >= frame.code.constants.len() {
@@ -1861,18 +1908,20 @@ impl Vm {
                     };
                     (left, right_int, right_value)
                 };
-                let result = match (left, right_int, right_value) {
-                    (Value::Int(a), Some(b), _) => Value::Bool(a < b),
-                    (left, Some(b), _) => self.compare_lt_runtime(left, Value::Int(b))?,
-                    (left, None, Some(right)) => self.compare_lt_runtime(left, right)?,
-                    (_, None, None) => {
-                        return Err(RuntimeError::new("invalid constant for CompareLtConst"));
-                    }
-                };
-                if let Some(target) = self.next_jump_if_false_target() {
-                    let truthy = match result {
-                        Value::Bool(flag) => flag,
-                        other => self.truthy_from_value(&other)?,
+                if let Some(target) = jump_target {
+                    let truthy = match (left, right_int, right_value) {
+                        (Value::Int(a), Some(b), _) => a < b,
+                        (left, Some(b), _) => {
+                            let result = self.compare_lt_runtime(left, Value::Int(b))?;
+                            self.truthy_from_value(&result)?
+                        }
+                        (left, None, Some(right)) => {
+                            let result = self.compare_lt_runtime(left, right)?;
+                            self.truthy_from_value(&result)?
+                        }
+                        (_, None, None) => {
+                            return Err(RuntimeError::new("invalid constant for CompareLtConst"));
+                        }
                     };
                     let frame = self.frames.last_mut().expect("frame exists");
                     if truthy {
@@ -1881,6 +1930,14 @@ impl Vm {
                         frame.ip = target;
                     }
                 } else {
+                    let result = match (left, right_int, right_value) {
+                        (Value::Int(a), Some(b), _) => Value::Bool(a < b),
+                        (left, Some(b), _) => self.compare_lt_runtime(left, Value::Int(b))?,
+                        (left, None, Some(right)) => self.compare_lt_runtime(left, right)?,
+                        (_, None, None) => {
+                            return Err(RuntimeError::new("invalid constant for CompareLtConst"));
+                        }
+                    };
                     self.frames
                         .last_mut()
                         .expect("frame exists")

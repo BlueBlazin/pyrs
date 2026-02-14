@@ -5831,6 +5831,28 @@ fn executes_lambda_multiple_args() {
 }
 
 #[test]
+fn lambda_recursive_binary_add_return_path_preserves_result() {
+    let source = "fib = lambda n: n if n < 2 else fib(n-1) + fib(n-2)\nok = (fib(12) == 144)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bound_method_binary_add_return_path_preserves_result() {
+    let source = "class Box:\n    def total(self):\n        return 1 + 2\nbox = Box()\nok = (box.total() == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_module_attribute_access() {
     let module = parser::parse_module("y = mod.x").expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
