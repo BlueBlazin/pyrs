@@ -104,6 +104,7 @@ Return semantics:
 - generic membership probes are available through `object_contains(...)`.
 - dict-view helpers are available through `object_dict_keys(...)` and `object_dict_items(...)`.
 - buffer access helpers are available through `object_get_buffer(...)` and `object_release_buffer(...)`.
+- current buffer helper coverage is `bytes`/`bytearray`/`memoryview` handles with pointer+length+readonly metadata.
 - iterator helpers are available through `object_get_iter(...)` and `object_iter_next(...)`.
 - extension error state set via `error_set(...)` is propagated into import-time runtime errors.
 - callable registration via `module_add_function(...)` is supported for positional-only callbacks.

@@ -59,6 +59,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-API v1 error state now exposes message retrieval (`error_get_message`) in addition to set/clear/occurred hooks.
   - C-API baseline now includes runtime feature probing via `api_has_capability(...)` (covered in extension smoke).
   - builtin `_sysconfigdata__*` now provides extension-build baseline keys (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.
+  - `_sysconfigdata__*` build vars now include broader toolchain/linker baselines (`AR`, `ARFLAGS`, `CCSHARED`, `BLDSHARED`, `CPPFLAGS`, `LDFLAGS`, `LIBPL`, `INCLUDEDIR`, `Py_ENABLE_SHARED`) alongside prior extension keys.
   - extension smoke includes compile+import validation driven by `_sysconfigdata__*` build vars (`sysconfig_build_vars_can_compile_and_import_extension`).
   - extension smoke path now includes compiled native fixtures for manifest dynamic load, direct shared-object import, tagged filename resolution, object-handle flow, positional+keyword callable registration/invocation, and error-state propagation (`tests/extension_smoke.rs`).
   - extension smoke now includes a mixed-surface cross-API fixture exercising module import/attr-load, type checks, list+dict mutation, callable invocation, and module-global round-trips in one extension init path.
