@@ -2783,6 +2783,25 @@ impl Vm {
         }
     }
 
+    pub fn set_sys_interactive_flag(&mut self, interactive: bool) {
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return;
+        };
+        let flags_module = match &*sys_module.kind() {
+            Object::Module(module_data) => match module_data.globals.get("flags") {
+                Some(Value::Module(flags)) => flags.clone(),
+                _ => return,
+            },
+            _ => return,
+        };
+        if let Object::Module(flags_data) = &mut *flags_module.kind_mut() {
+            flags_data.globals.insert(
+                "interactive".to_string(),
+                Value::Int(if interactive { 1 } else { 0 }),
+            );
+        }
+    }
+
     fn install_importlib_modules(&mut self) {
         let importlib = match self.heap.alloc_module(ModuleObject::new("importlib")) {
             Value::Module(obj) => obj,

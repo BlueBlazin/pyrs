@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_root(prefix: &str) -> PathBuf {
@@ -50,6 +51,38 @@ fn run_pyrs(root: &Path, args: &[&str], extra_env: &[(&str, &Path)]) -> (i32, St
     )
 }
 
+fn run_pyrs_with_stdin(
+    root: &Path,
+    args: &[&str],
+    stdin_source: &str,
+    extra_env: &[(&str, &Path)],
+) -> (i32, String, String) {
+    let mut cmd = Command::new(pyrs_bin());
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.current_dir(root);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    for (name, value) in extra_env {
+        cmd.env(name, value);
+    }
+    let mut child = cmd.spawn().expect("spawn pyrs");
+    {
+        let mut stdin = child.stdin.take().expect("child stdin");
+        stdin
+            .write_all(stdin_source.as_bytes())
+            .expect("write stdin source");
+    }
+    let output = child.wait_with_output().expect("wait pyrs");
+    (
+        output.status.code().unwrap_or(1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
 #[test]
 fn cli_imports_site_by_default_when_stdlib_is_available() {
     let root = temp_root("cli_site_default");
@@ -83,6 +116,39 @@ fn cli_no_site_flag_skips_startup_site_import() {
     let (code, _stdout, stderr) = run_pyrs(
         &root,
         &["-S", script_arg.as_ref()],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+}
+
+#[test]
+fn cli_no_args_executes_stdin_when_not_interactive() {
+    let root = temp_root("cli_stdin_exec");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let (code, stdout, stderr) = run_pyrs_with_stdin(
+        &root,
+        &[],
+        "print(21 + 21)\n",
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
+fn cli_no_args_honors_site_import_flag_for_stdin_execution() {
+    let root = temp_root("cli_stdin_site");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let (code, _stdout, stderr) = run_pyrs_with_stdin(
+        &root,
+        &[],
+        "import sys\nassert 'site' in sys.modules\n",
         &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
     );
     assert_eq!(code, 0, "stderr:\n{stderr}");
