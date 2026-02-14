@@ -2757,7 +2757,8 @@ impl Vm {
                             let upper = slice.upper;
                             let step = slice.step;
                             let replacement = self.value_to_bytes_payload(value)?;
-                            let has_exports = self.heap.count_live_memoryviews_for_source(&obj) > 0;
+                            let has_exports =
+                                self.heap.count_live_buffer_exports_for_source(&obj) > 0;
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {
@@ -3105,7 +3106,8 @@ impl Vm {
                             let lower = slice.lower;
                             let upper = slice.upper;
                             let step = slice.step;
-                            let has_exports = self.heap.count_live_memoryviews_for_source(&obj) > 0;
+                            let has_exports =
+                                self.heap.count_live_buffer_exports_for_source(&obj) > 0;
                             if let Object::ByteArray(values) = &mut *obj.kind_mut() {
                                 let step_value = step.unwrap_or(1);
                                 if step_value == 1 {
@@ -3133,7 +3135,7 @@ impl Vm {
                             }
                         }
                         index => {
-                            if self.heap.count_live_memoryviews_for_source(&obj) > 0 {
+                            if self.heap.count_live_buffer_exports_for_source(&obj) > 0 {
                                 return Err(RuntimeError::new(
                                     "BufferError: Existing exports of data: object cannot be re-sized",
                                 ));

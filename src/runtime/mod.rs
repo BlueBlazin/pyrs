@@ -1137,6 +1137,7 @@ pub struct Heap {
     next_id: Cell<u64>,
     registry: RefCell<Vec<Weak<Obj>>>,
     memoryview_registry: RefCell<Vec<Weak<Obj>>>,
+    external_buffer_pins: RefCell<HashMap<u64, usize>>,
     small_int_ids: RefCell<Vec<u64>>,
     immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
     allocation_count: Cell<usize>,
@@ -1180,6 +1181,7 @@ impl Heap {
             next_id: Cell::new(1),
             registry: RefCell::new(Vec::new()),
             memoryview_registry: RefCell::new(Vec::new()),
+            external_buffer_pins: RefCell::new(HashMap::new()),
             small_int_ids: RefCell::new(vec![0; SMALL_INT_COUNT]),
             immediate_ids: RefCell::new(HashMap::new()),
             allocation_count: Cell::new(0),
@@ -1337,6 +1339,43 @@ impl Heap {
             true
         });
         count
+    }
+
+    pub fn pin_external_buffer_source(&self, source: &ObjRef) {
+        let mut pins = self.external_buffer_pins.borrow_mut();
+        *pins.entry(source.id()).or_insert(0) += 1;
+    }
+
+    pub fn unpin_external_buffer_source(&self, source: &ObjRef) {
+        self.unpin_external_buffer_source_by_count(source, 1);
+    }
+
+    pub fn unpin_external_buffer_source_by_count(&self, source: &ObjRef, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let mut pins = self.external_buffer_pins.borrow_mut();
+        let Some(current) = pins.get_mut(&source.id()) else {
+            return;
+        };
+        if *current <= count {
+            pins.remove(&source.id());
+        } else {
+            *current -= count;
+        }
+    }
+
+    pub fn external_buffer_pin_count_for_source(&self, source: &ObjRef) -> usize {
+        self.external_buffer_pins
+            .borrow()
+            .get(&source.id())
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn count_live_buffer_exports_for_source(&self, source: &ObjRef) -> usize {
+        self.count_live_memoryviews_for_source(source)
+            + self.external_buffer_pin_count_for_source(source)
     }
 
     pub fn alloc_module(&self, module: ModuleObject) -> Value {
@@ -7637,6 +7676,35 @@ mod tests {
             Object::Dict(entries) => assert_eq!(entries.len(), 0, "dict cycle should be cleared"),
             other => panic!("expected dict object, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn external_buffer_pin_counts_track_and_clear() {
+        let heap = Heap::new();
+        let source = heap.alloc(Object::ByteArray(vec![1, 2, 3]));
+        assert_eq!(heap.external_buffer_pin_count_for_source(&source), 0);
+        assert_eq!(heap.count_live_buffer_exports_for_source(&source), 0);
+
+        heap.pin_external_buffer_source(&source);
+        heap.pin_external_buffer_source(&source);
+        assert_eq!(heap.external_buffer_pin_count_for_source(&source), 2);
+        assert_eq!(heap.count_live_buffer_exports_for_source(&source), 2);
+
+        heap.unpin_external_buffer_source(&source);
+        assert_eq!(heap.external_buffer_pin_count_for_source(&source), 1);
+        heap.unpin_external_buffer_source_by_count(&source, 4);
+        assert_eq!(heap.external_buffer_pin_count_for_source(&source), 0);
+    }
+
+    #[test]
+    fn live_buffer_exports_include_memoryviews_and_external_pins() {
+        let heap = Heap::new();
+        let source = heap.alloc(Object::ByteArray(vec![1, 2, 3]));
+        let _view = heap.alloc_memoryview(source.clone());
+        heap.pin_external_buffer_source(&source);
+        assert_eq!(heap.count_live_memoryviews_for_source(&source), 1);
+        assert_eq!(heap.external_buffer_pin_count_for_source(&source), 1);
+        assert_eq!(heap.count_live_buffer_exports_for_source(&source), 2);
     }
 
     #[test]

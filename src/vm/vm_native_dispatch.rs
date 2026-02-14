@@ -2256,7 +2256,7 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
                 };
-                let has_exports = self.heap.count_live_memoryviews_for_source(&buffer) > 0;
+                let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
                     return Err(RuntimeError::new("bytearray receiver is invalid"));
                 };
@@ -2279,7 +2279,7 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
                 };
-                let has_exports = self.heap.count_live_memoryviews_for_source(&buffer) > 0;
+                let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
                     return Err(RuntimeError::new("bytearray receiver is invalid"));
                 };
@@ -2308,7 +2308,7 @@ impl Vm {
                         "ValueError: new size must be non-negative",
                     ));
                 }
-                let has_exports = self.heap.count_live_memoryviews_for_source(&buffer) > 0;
+                let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
                     return Err(RuntimeError::new("bytearray receiver is invalid"));
                 };

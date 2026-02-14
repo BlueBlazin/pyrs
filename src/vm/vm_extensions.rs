@@ -49,6 +49,24 @@ struct ModuleCapiContext {
 
 impl Drop for ModuleCapiContext {
     fn drop(&mut self) {
+        if !self.vm.is_null() && !self.buffer_pins.is_empty() {
+            let mut stale_pins: Vec<(ObjRef, usize)> = Vec::new();
+            for (handle, pins) in &self.buffer_pins {
+                if *pins == 0 {
+                    continue;
+                }
+                if let Some(value) = self.object_value(*handle)
+                    && let Some(source) = Self::mutable_buffer_source_from_value(&value)
+                {
+                    stale_pins.push((source, *pins));
+                }
+            }
+            // SAFETY: VM pointer is valid for the C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            for (source, pins) in stale_pins {
+                vm.heap.unpin_external_buffer_source_by_count(&source, pins);
+            }
+        }
         let mut capsules = HashMap::new();
         std::mem::swap(&mut capsules, &mut self.capsules);
         for slot in capsules.into_values() {
@@ -1172,6 +1190,25 @@ impl ModuleCapiContext {
         Ok(self.alloc_object(vm.heap.alloc_list(items)))
     }
 
+    fn mutable_buffer_source_from_obj(source: &ObjRef) -> Option<ObjRef> {
+        match &*source.kind() {
+            Object::ByteArray(_) => Some(source.clone()),
+            Object::MemoryView(view) => Self::mutable_buffer_source_from_obj(&view.source),
+            _ => None,
+        }
+    }
+
+    fn mutable_buffer_source_from_value(value: &Value) -> Option<ObjRef> {
+        match value {
+            Value::ByteArray(obj) => Some(obj.clone()),
+            Value::MemoryView(obj) => match &*obj.kind() {
+                Object::MemoryView(view) => Self::mutable_buffer_source_from_obj(&view.source),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn writable_buffer_from_source(
         source: &ObjRef,
         start: usize,
@@ -1261,6 +1298,11 @@ impl ModuleCapiContext {
                 ));
             }
         };
+        if let Some(source) = Self::mutable_buffer_source_from_value(&value) {
+            // SAFETY: the VM pointer is initialized for the extension context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.heap.pin_external_buffer_source(&source);
+        }
         self.incref(object_handle)?;
         *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
         Ok(PyrsBufferViewV1 {
@@ -1304,6 +1346,11 @@ impl ModuleCapiContext {
                 ));
             }
         };
+        if let Some(source) = Self::mutable_buffer_source_from_value(&value) {
+            // SAFETY: the VM pointer is initialized for the extension context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.heap.pin_external_buffer_source(&source);
+        }
         self.incref(object_handle)?;
         *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
         Ok(PyrsWritableBufferViewV1 { data, len })
@@ -1320,6 +1367,13 @@ impl ModuleCapiContext {
         *pins -= 1;
         if *pins == 0 {
             self.buffer_pins.remove(&object_handle);
+        }
+        if let Some(value) = self.object_value(object_handle)
+            && let Some(source) = Self::mutable_buffer_source_from_value(&value)
+        {
+            // SAFETY: the VM pointer is initialized for the extension context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.heap.unpin_external_buffer_source(&source);
         }
         self.decref(object_handle)
     }

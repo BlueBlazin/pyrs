@@ -2884,6 +2884,116 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_buffer_pin_blocks_bytearray_resize_until_release() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping buffer-pin resize-block smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping buffer-pin resize-block smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_buffer_pin_resize_block");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_buffer_pin_resize_block.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <string.h>
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+
+    const uint8_t payload[] = {97, 98, 99}; /* abc */
+    const uint8_t extra[] = {120}; /* x */
+    PyrsObjectHandle bytearray_obj = api->object_new_bytearray(module_ctx, payload, 3);
+    if (!bytearray_obj) {
+        return -2;
+    }
+    PyrsObjectHandle extra_obj = api->object_new_bytes(module_ctx, extra, 1);
+    if (!extra_obj) {
+        return -3;
+    }
+
+    PyrsBufferViewV1 view;
+    if (api->object_get_buffer(module_ctx, bytearray_obj, &view) != 0) {
+        return -4;
+    }
+    if (!view.data || view.len != 3 || view.readonly != 0) {
+        return -5;
+    }
+
+    PyrsObjectHandle extend = 0;
+    if (api->object_get_attr(module_ctx, bytearray_obj, "extend", &extend) != 0 || !extend) {
+        return -6;
+    }
+    PyrsObjectHandle ignored = 0;
+    if (api->object_call_onearg(module_ctx, extend, extra_obj, &ignored) == 0) {
+        return -7;
+    }
+    if (api->error_occurred(module_ctx) == 0) {
+        return -8;
+    }
+    const char* msg = api->error_get_message(module_ctx);
+    if (!msg || strstr(msg, "BufferError") == 0) {
+        return -9;
+    }
+    if (api->error_clear(module_ctx) != 0) {
+        return -10;
+    }
+
+    if (api->object_release_buffer(module_ctx, bytearray_obj) != 0) {
+        return -11;
+    }
+    if (api->object_call_onearg(module_ctx, extend, extra_obj, &ignored) != 0) {
+        return -12;
+    }
+    uintptr_t length = 0;
+    if (api->object_len(module_ctx, bytearray_obj, &length) != 0 || length != 4) {
+        return -13;
+    }
+
+    if (api->module_set_bool(module_ctx, "BUFFER_PIN_RESIZE_BLOCK_OK", 1) != 0) {
+        return -14;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_buffer_pin_resize_block");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_buffer_pin_resize_block.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_buffer_pin_resize_block\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_buffer_pin_resize_block\nassert native_buffer_pin_resize_block.BUFFER_PIN_RESIZE_BLOCK_OK is True",
+    )
+    .expect("buffer pin resize-block extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_buffer_api_handles_memoryview_slices_and_release() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping buffer slice/release extension smoke (pyrs binary not found)");
