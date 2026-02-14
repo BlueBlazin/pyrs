@@ -280,6 +280,7 @@ impl ModuleCapiContext {
         let module_id = self.module.id();
         // SAFETY: VM pointer is valid for the context lifetime.
         let vm = unsafe { &mut *self.vm };
+        vm.prune_extension_module_state_registry();
         if state.is_null() {
             if let Some(previous) = vm.extension_module_state_registry.remove(&module_id)
                 && previous.state != 0
@@ -321,6 +322,7 @@ impl ModuleCapiContext {
         let module_id = self.module.id();
         // SAFETY: VM pointer is valid for the context lifetime.
         let vm = unsafe { &mut *self.vm };
+        vm.prune_extension_module_state_registry();
         let state = vm
             .extension_module_state_registry
             .get(&module_id)
@@ -3310,6 +3312,28 @@ enum ExtensionExecutionPlan {
 }
 
 impl Vm {
+    fn prune_extension_module_state_registry(&mut self) {
+        let live_module_ids: std::collections::HashSet<u64> =
+            self.modules.values().map(|module| module.id()).collect();
+        let stale_ids: Vec<u64> = self
+            .extension_module_state_registry
+            .keys()
+            .copied()
+            .filter(|id| !live_module_ids.contains(id))
+            .collect();
+        for stale_id in stale_ids {
+            if let Some(entry) = self.extension_module_state_registry.remove(&stale_id)
+                && entry.state != 0
+                && let Some(free_func) = entry.free_func
+            {
+                // SAFETY: free function pointer was provided by extension code.
+                unsafe {
+                    free_func(entry.state as *mut c_void);
+                }
+            }
+        }
+    }
+
     fn cpython_init_symbol_for_module(module_name: &str) -> String {
         let leaf = module_name
             .rsplit('.')
