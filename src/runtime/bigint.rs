@@ -606,8 +606,8 @@ impl BigInt {
     fn abs_sub(left: &[u32], right: &[u32]) -> Vec<u32> {
         let mut out = Vec::with_capacity(left.len());
         let mut borrow: i64 = 0;
-        for idx in 0..left.len() {
-            let lhs = left[idx] as i64;
+        for (idx, lhs) in left.iter().enumerate() {
+            let lhs = *lhs as i64;
             let rhs = right.get(idx).copied().unwrap_or(0) as i64;
             let mut diff = lhs - rhs - borrow;
             if diff < 0 {

@@ -1796,7 +1796,7 @@ impl Vm {
             ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Semaphore.acquire")?;
-        let blocking = kwargs
+        let _blocking = kwargs
             .get("blocking")
             .cloned()
             .or_else(|| args.first().cloned())
@@ -1810,11 +1810,7 @@ impl Vm {
             Self::instance_attr_set(&instance, "_value", Value::Int(current - 1))?;
             return Ok(Value::Bool(true));
         }
-        if blocking {
-            Ok(Value::Bool(false))
-        } else {
-            Ok(Value::Bool(false))
-        }
+        Ok(Value::Bool(false))
     }
 
     pub(super) fn builtin_thread_semaphore_release(

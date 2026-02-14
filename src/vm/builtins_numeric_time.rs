@@ -1001,9 +1001,7 @@ impl Vm {
             } else {
                 value_to_f64(value)?.trunc() as i64
             }
-        } else if args.is_empty() {
-            unix_seconds_now()
-        } else if matches!(args[0], Value::None) {
+        } else if args.is_empty() || matches!(args[0], Value::None) {
             unix_seconds_now()
         } else {
             value_to_f64(args.remove(0))?.trunc() as i64

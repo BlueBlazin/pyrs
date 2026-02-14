@@ -1267,15 +1267,11 @@ fn sqlite_lstrip_sql(mut sql: &str) -> Option<&str> {
                 sql = &sql[1..];
             }
             b'-' if bytes.len() >= 2 && bytes[1] == b'-' => {
-                let Some(newline) = sql.find('\n') else {
-                    return None;
-                };
+                let newline = sql.find('\n')?;
                 sql = &sql[(newline + 1)..];
             }
             b'/' if bytes.len() >= 2 && bytes[1] == b'*' => {
-                let Some(end_comment) = sql.find("*/") else {
-                    return None;
-                };
+                let end_comment = sql.find("*/")?;
                 sql = &sql[(end_comment + 2)..];
             }
             _ => return Some(sql),

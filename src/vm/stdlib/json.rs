@@ -567,8 +567,7 @@ fn json_serialize_value(
         },
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(entries) => {
-                let mut mapped: Vec<(String, &Value)> = Vec::new();
-                mapped.reserve(entries.len());
+                let mut mapped: Vec<(String, &Value)> = Vec::with_capacity(entries.len());
                 for (key, value) in entries {
                     match key {
                         Value::Str(text) => mapped.push((text.clone(), value)),

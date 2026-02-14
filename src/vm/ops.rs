@@ -1063,30 +1063,25 @@ fn is_type_union_operand(value: &Value) -> bool {
                 )
             })
             .unwrap_or(false),
-        Value::Builtin(builtin)
-            if matches!(
-                builtin,
-                BuiltinFunction::Type
-                    | BuiltinFunction::Bool
-                    | BuiltinFunction::Int
-                    | BuiltinFunction::Float
-                    | BuiltinFunction::Str
-                    | BuiltinFunction::List
-                    | BuiltinFunction::Tuple
-                    | BuiltinFunction::Dict
-                    | BuiltinFunction::Set
-                    | BuiltinFunction::FrozenSet
-                    | BuiltinFunction::Bytes
-                    | BuiltinFunction::ByteArray
-                    | BuiltinFunction::MemoryView
-                    | BuiltinFunction::Complex
-                    | BuiltinFunction::ClassMethod
-                    | BuiltinFunction::StaticMethod
-                    | BuiltinFunction::Property
-            ) =>
-        {
-            true
-        }
+        Value::Builtin(
+            BuiltinFunction::Type
+            | BuiltinFunction::Bool
+            | BuiltinFunction::Int
+            | BuiltinFunction::Float
+            | BuiltinFunction::Str
+            | BuiltinFunction::List
+            | BuiltinFunction::Tuple
+            | BuiltinFunction::Dict
+            | BuiltinFunction::Set
+            | BuiltinFunction::FrozenSet
+            | BuiltinFunction::Bytes
+            | BuiltinFunction::ByteArray
+            | BuiltinFunction::MemoryView
+            | BuiltinFunction::Complex
+            | BuiltinFunction::ClassMethod
+            | BuiltinFunction::StaticMethod
+            | BuiltinFunction::Property,
+        ) => true,
         Value::Tuple(obj) => match &*obj.kind() {
             Object::Tuple(values) => values.iter().all(is_type_union_operand),
             _ => false,

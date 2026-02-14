@@ -1438,9 +1438,11 @@ impl Vm {
                 module_data
                     .globals
                     .insert("dict".to_string(), Value::Dict(dict));
-                module_data
-                    .globals
-                    .insert("owner".to_string(), owner.expect("checked"));
+                if let Some(owner) = owner {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), owner);
+                }
             }
             Ok(self.alloc_native_bound_method(kind, receiver))
         } else {
@@ -2941,9 +2943,7 @@ impl Vm {
         let mut descriptor_owner: Option<ObjRef> = None;
         let attr = if let Some(attr) = class_attr_lookup(class, attr_name) {
             attr
-        } else if attr_name == "__name__" {
-            Value::Str(class_name.clone())
-        } else if attr_name == "__qualname__" {
+        } else if attr_name == "__name__" || attr_name == "__qualname__" {
             Value::Str(class_name.clone())
         } else if attr_name == "__base__" {
             let class_kind = class.kind();

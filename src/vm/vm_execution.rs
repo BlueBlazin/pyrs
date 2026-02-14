@@ -3573,7 +3573,6 @@ impl Vm {
                 }
                 args.reverse();
                 let func = self.pop_value()?;
-                let mut args = args;
                 let mut fast_dispatched = false;
                 if kwargs.is_empty() {
                     fast_dispatched = self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
@@ -5045,9 +5044,7 @@ impl Vm {
         let Object::Instance(instance_data) = &*instance.kind() else {
             return None;
         };
-        let Some(args_value) = instance_data.attrs.get("args") else {
-            return None;
-        };
+        let args_value = instance_data.attrs.get("args")?;
         let Value::Tuple(args_obj) = args_value else {
             return None;
         };
