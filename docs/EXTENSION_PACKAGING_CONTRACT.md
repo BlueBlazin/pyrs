@@ -20,6 +20,7 @@ This document defines how native-extension packaging/build will work for `pyrs` 
 - Direct shared-object imports are supported (`module.so` / `module.dylib` / `module.pyd`) using default init symbol `pyrs_extension_init_v1`.
 - Tagged CPython-style shared-object names are recognized for import resolution (e.g. `module.cpython-314-*.so`).
 - First C-API header/symbol slice is shipped in `/Users/$USER/pyrs/include/pyrs_capi.h`.
+- Builtin `_sysconfigdata__*` now exposes extension-build essentials (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.
 
 This is still an early substrate, not full C-extension compatibility.
 

@@ -14,6 +14,19 @@ use crate::extensions::{
 };
 
 impl Vm {
+    fn sys_str_value(&self, name: &str) -> Option<String> {
+        let sys_module = self.modules.get("sys")?.clone();
+        let module_kind = sys_module.kind();
+        let module_data = match &*module_kind {
+            Object::Module(module_data) => module_data,
+            _ => return None,
+        };
+        match module_data.globals.get(name) {
+            Some(Value::Str(text)) => Some(text.clone()),
+            _ => None,
+        }
+    }
+
     fn sys_list_obj(&self, name: &str) -> Option<ObjRef> {
         let sys_module = self.modules.get("sys")?.clone();
         let module_kind = sys_module.kind();
@@ -568,11 +581,82 @@ impl Vm {
                 ),
             ],
         );
+        let prefix = self
+            .sys_str_value("prefix")
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| ".".to_string());
+        let exec_prefix = self
+            .sys_str_value("exec_prefix")
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| prefix.clone());
+        let base_prefix = self
+            .sys_str_value("base_prefix")
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| prefix.clone());
+        let base_exec_prefix = self
+            .sys_str_value("base_exec_prefix")
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| exec_prefix.clone());
+        let cc = std::env::var("CC").unwrap_or_else(|_| {
+            if cfg!(target_os = "windows") {
+                "cl".to_string()
+            } else {
+                "cc".to_string()
+            }
+        });
+        let cflags = std::env::var("CFLAGS").unwrap_or_default();
+        let ldshared = std::env::var("LDSHARED").unwrap_or_else(|_| {
+            if cfg!(target_os = "macos") {
+                format!("{cc} -bundle -undefined dynamic_lookup")
+            } else if cfg!(target_os = "windows") {
+                cc.clone()
+            } else {
+                format!("{cc} -shared")
+            }
+        });
+        let shlib_suffix = if cfg!(target_os = "windows") {
+            ".pyd"
+        } else {
+            ".so"
+        };
+        let soabi = format!("pyrs-314-{platform}");
+        let ext_suffix = format!(".{soabi}{shlib_suffix}");
+        let includepy = if cfg!(target_os = "windows") {
+            format!("{prefix}\\include")
+        } else {
+            format!("{prefix}/include")
+        };
+        let libdir = if cfg!(target_os = "windows") {
+            format!("{prefix}\\libs")
+        } else {
+            format!("{prefix}/lib")
+        };
         let build_time_vars = vec![
-            (Value::Str("prefix".to_string()), Value::Str(String::new())),
+            (Value::Str("prefix".to_string()), Value::Str(prefix.clone())),
             (
                 Value::Str("exec_prefix".to_string()),
-                Value::Str(String::new()),
+                Value::Str(exec_prefix.clone()),
+            ),
+            (
+                Value::Str("host_prefix".to_string()),
+                Value::Str(prefix.clone()),
+            ),
+            (
+                Value::Str("host_exec_prefix".to_string()),
+                Value::Str(exec_prefix.clone()),
+            ),
+            (
+                Value::Str("installed_base".to_string()),
+                Value::Str(base_prefix.clone()),
+            ),
+            (
+                Value::Str("installed_platbase".to_string()),
+                Value::Str(base_exec_prefix.clone()),
+            ),
+            (Value::Str("base".to_string()), Value::Str(prefix.clone())),
+            (
+                Value::Str("platbase".to_string()),
+                Value::Str(exec_prefix.clone()),
             ),
             (
                 Value::Str("ABIFLAGS".to_string()),
@@ -582,7 +666,50 @@ impl Vm {
                 Value::Str("MULTIARCH".to_string()),
                 Value::Str(String::new()),
             ),
+            (Value::Str("SOABI".to_string()), Value::Str(soabi.clone())),
+            (
+                Value::Str("EXT_SUFFIX".to_string()),
+                Value::Str(ext_suffix.clone()),
+            ),
+            (Value::Str("SO".to_string()), Value::Str(ext_suffix)),
+            (
+                Value::Str("SHLIB_SUFFIX".to_string()),
+                Value::Str(shlib_suffix.to_string()),
+            ),
+            (Value::Str("CC".to_string()), Value::Str(cc.clone())),
+            (Value::Str("LDSHARED".to_string()), Value::Str(ldshared)),
+            (Value::Str("CFLAGS".to_string()), Value::Str(cflags)),
+            (
+                Value::Str("LDLIBRARY".to_string()),
+                Value::Str(String::new()),
+            ),
+            (Value::Str("LIBDIR".to_string()), Value::Str(libdir)),
+            (
+                Value::Str("INCLUDEPY".to_string()),
+                Value::Str(includepy.clone()),
+            ),
+            (
+                Value::Str("CONFINCLUDEPY".to_string()),
+                Value::Str(includepy),
+            ),
             (Value::Str("Py_GIL_DISABLED".to_string()), Value::Int(0)),
+            (Value::Str("Py_DEBUG".to_string()), Value::Int(0)),
+            (
+                Value::Str("VERSION".to_string()),
+                Value::Str("314".to_string()),
+            ),
+            (
+                Value::Str("py_version".to_string()),
+                Value::Str("3.14".to_string()),
+            ),
+            (
+                Value::Str("py_version_short".to_string()),
+                Value::Str("3.14".to_string()),
+            ),
+            (
+                Value::Str("py_version_nodot".to_string()),
+                Value::Str("314".to_string()),
+            ),
         ];
         let sysconfigdata_name = format!("_sysconfigdata__{platform}_");
         self.install_builtin_module(

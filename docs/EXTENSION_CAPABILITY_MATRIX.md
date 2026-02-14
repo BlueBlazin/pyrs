@@ -19,6 +19,7 @@ Legend:
 | Minimal extension entrypoint registry (`hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs::imports_manifest_backed_hello_extension` | Smoke substrate only; not a user-facing compatibility claim. |
 | Dynamic shared-library loader (`.so/.dylib/.pyd`) | DONE | VM/extensions | `tests/extension_smoke.rs::imports_compiled_dynamic_extension_from_manifest` | Runtime loads shared objects via native loader (`dlopen`/`dlsym` on unix) and executes extension init symbols. |
 | Direct shared-object import without manifest | DONE | VM/import + VM/extensions | `tests/extension_smoke.rs::imports_direct_shared_object_extension_without_manifest` | Importer detects `module.so` / `module.dylib` / `module.pyd` on `sys.path` and uses default symbol `pyrs_extension_init_v1`. |
+| `_sysconfigdata__*` extension-build vars baseline | IN PROGRESS | VM/bootstrap | `tests/extension_smoke.rs::sysconfigdata_builtin_exposes_extension_build_keys` | Baseline keys (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib hints) are populated; full CPython/distutils parity remains open. |
 | PEP 489 multi-phase init | PLANNED | VM/extensions | - | Required for production extension parity. |
 | Extension module state lifecycle hooks | PLANNED | VM/extensions | - | Needs finalize/teardown semantics. |
 

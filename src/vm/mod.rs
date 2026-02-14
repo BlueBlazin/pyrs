@@ -2377,24 +2377,53 @@ impl Vm {
             module_data
                 .globals
                 .insert("argv".to_string(), self.heap.alloc_list(argv));
-            let executable = std::env::args()
-                .next()
-                .unwrap_or_else(|| "pyrs".to_string());
+            let executable_path = std::env::current_exe().unwrap_or_else(|_| {
+                std::env::args()
+                    .next()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("pyrs"))
+            });
+            let executable = executable_path.to_string_lossy().to_string();
+            let mut inferred_prefix = executable_path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
+            if inferred_prefix
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name == "debug" || name == "release")
+                .unwrap_or(false)
+            {
+                if let Some(parent) = inferred_prefix.parent() {
+                    inferred_prefix = parent.to_path_buf();
+                }
+            }
+            if inferred_prefix
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name == "target")
+                .unwrap_or(false)
+            {
+                if let Some(parent) = inferred_prefix.parent() {
+                    inferred_prefix = parent.to_path_buf();
+                }
+            }
+            let prefix = inferred_prefix.to_string_lossy().to_string();
             module_data
                 .globals
                 .insert("executable".to_string(), Value::Str(executable));
             module_data
                 .globals
-                .insert("prefix".to_string(), Value::Str(String::new()));
+                .insert("prefix".to_string(), Value::Str(prefix.clone()));
             module_data
                 .globals
-                .insert("base_prefix".to_string(), Value::Str(String::new()));
+                .insert("base_prefix".to_string(), Value::Str(prefix.clone()));
             module_data
                 .globals
-                .insert("exec_prefix".to_string(), Value::Str(String::new()));
+                .insert("exec_prefix".to_string(), Value::Str(prefix.clone()));
             module_data
                 .globals
-                .insert("base_exec_prefix".to_string(), Value::Str(String::new()));
+                .insert("base_exec_prefix".to_string(), Value::Str(prefix));
             let platform = match std::env::consts::OS {
                 "macos" => "darwin",
                 other => other,

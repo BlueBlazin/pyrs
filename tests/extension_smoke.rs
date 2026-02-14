@@ -178,6 +178,26 @@ fn imports_manifest_backed_hello_extension() {
 }
 
 #[test]
+fn sysconfigdata_builtin_exposes_extension_build_keys() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping sysconfigdata smoke (pyrs binary not found)");
+        return;
+    };
+
+    let temp_root = unique_temp_dir("ext_smoke_sysconfigdata");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import sys\nname = f\"_sysconfigdata_{sys.abiflags}_{sys.platform}_{getattr(sys.implementation, '_multiarch', '')}\"\nm = __import__(name)\nvars = m.build_time_vars\nassert isinstance(vars.get('SOABI'), str) and vars.get('SOABI')\nassert isinstance(vars.get('EXT_SUFFIX'), str) and vars.get('EXT_SUFFIX').endswith(('.so', '.pyd'))\nassert isinstance(vars.get('CC'), str) and vars.get('CC')\nassert vars.get('Py_GIL_DISABLED') in (0, 1)",
+    )
+    .expect("sysconfigdata build vars should expose extension keys");
+
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn imports_compiled_dynamic_extension_from_manifest() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping dynamic extension smoke (pyrs binary not found)");
