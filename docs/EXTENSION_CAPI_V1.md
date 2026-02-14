@@ -27,6 +27,7 @@ This is the first shipped `libpyrs-capi` contract slice used by compiled extensi
 - `object_new_bool(void* module_ctx, int value)`
 - `object_new_float(void* module_ctx, double value)`
 - `object_new_bytes(void* module_ctx, const uint8_t* data, uintptr_t len)`
+- `object_new_bytearray(void* module_ctx, const uint8_t* data, uintptr_t len)`
 - `object_new_tuple(void* module_ctx, uintptr_t len, const PyrsObjectHandle* items)`
 - `object_new_list(void* module_ctx, uintptr_t len, const PyrsObjectHandle* items)`
 - `object_new_dict(void* module_ctx)`
