@@ -63,7 +63,7 @@ Do not rely on stale point-in-time numbers in this document.
 | `OPT-013` | P0 | lookup | Reduce local/global hash churn for repeated name access in hot loops | `ceval.c`, name cache patterns | `[~]` |
 | `OPT-014` | P1 | dispatch | Reduce per-opcode branch/indirection overhead in main eval loop | `ceval.c` dispatch structure | `[~]` |
 | `OPT-015` | P1 | containers | Dict/set hot-path operations benchmark and algorithmic closure | `dictobject.c`, `setobject.c` | `[~]` |
-| `OPT-016` | P1 | startup | Reduce startup/import overhead in non-stdlib benchmark mode where safe | CPython startup path | `[ ]` |
+| `OPT-016` | P1 | startup | Reduce startup/import overhead in non-stdlib benchmark mode where safe | CPython startup path | `[~]` |
 | `OPT-017` | P1 | allocation | Audit and eliminate avoidable `clone`/temporary allocations in hot VM paths | N/A (local audit) | `[~]` |
 | `OPT-018` | P1 | toolchain | Evaluate local `target-cpu=native` measurement profile | N/A (toolchain) | `[ ]` |
 | `OPT-019` | P2 | toolchain | Evaluate PGO/BOLT branch for release artifacts | CPython PGO precedent | `[ ]` |
@@ -106,3 +106,7 @@ Do not rely on stale point-in-time numbers in this document.
   - tightened `CompareLt`/`CompareLtConst` jump path truthiness handling to avoid temporary `Value::Bool` materialization when the result is used only for branch control.
   - release profile now uses `lto = "fat"` (from thin) to improve cross-function optimization in hot VM call/dispatch paths.
   - dispatch hotpath benchmark remains non-regressing after terminal-op fusion extension (`scripts/bench_dispatch_hotpath.sh`: `0.8493s` at `bfeba79` vs `0.8470s` current in local runs; lower is better).
+  - startup/import optimization wave started: positive module-source lookup cache keyed by `(root, module_name)` and `sys.path` sync short-circuit/invalidation landed.
+  - startup gate delta vs `0efdd20` baseline (`WARMUP=2 scripts/bench_startup_gate.sh 12`):
+    - `startup pass (site)`: `0.0275s -> 0.0225s` (~18% faster).
+    - `startup import-bundle`: `0.0600s -> 0.0592s` (small improvement; more work needed).

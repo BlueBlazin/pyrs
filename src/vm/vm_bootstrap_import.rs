@@ -5378,7 +5378,12 @@ impl Vm {
                 }
             }
         }
+        if new_paths == self.module_paths {
+            return;
+        }
         self.module_paths = new_paths;
+        self.module_source_positive_cache.clear();
+        self.preferred_filesystem_module_cache.clear();
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
 
@@ -5856,7 +5861,7 @@ impl Vm {
     }
 
     pub(super) fn find_module_source_with_importer(
-        &self,
+        &mut self,
         importer: &Value,
         module_name: &str,
     ) -> Option<ModuleSourceInfo> {
@@ -5880,14 +5885,23 @@ impl Vm {
     }
 
     pub(super) fn find_module_source_in_single_root(
-        &self,
+        &mut self,
         module_name: &str,
         root: &std::path::Path,
     ) -> Option<ModuleSourceInfo> {
+        let cache_key = (root.to_path_buf(), module_name.to_string());
+        if let Some(cached) = self.module_source_positive_cache.get(&cache_key) {
+            return Some(cached.clone());
+        }
+        let mut cache_positive = |spec: ModuleSourceInfo| {
+            self.module_source_positive_cache
+                .insert(cache_key.clone(), spec.clone());
+            Some(spec)
+        };
         let rel_name = module_name.replace('.', "/");
         let candidate = root.join(format!("{rel_name}.py"));
         if candidate.exists() {
-            return Some(ModuleSourceInfo {
+            return cache_positive(ModuleSourceInfo {
                 path: candidate,
                 is_package: false,
                 package_dirs: Vec::new(),
@@ -5897,7 +5911,7 @@ impl Vm {
         }
         let pyc_candidate = cached_module_path(root, &rel_name);
         if pyc_candidate.exists() {
-            return Some(ModuleSourceInfo {
+            return cache_positive(ModuleSourceInfo {
                 path: pyc_candidate,
                 is_package: false,
                 package_dirs: Vec::new(),
@@ -5907,7 +5921,7 @@ impl Vm {
         }
         let direct_pyc = root.join(format!("{rel_name}.pyc"));
         if direct_pyc.exists() {
-            return Some(ModuleSourceInfo {
+            return cache_positive(ModuleSourceInfo {
                 path: direct_pyc,
                 is_package: false,
                 package_dirs: Vec::new(),
@@ -5918,7 +5932,7 @@ impl Vm {
         let package_dir = root.join(&rel_name);
         let package_init = package_dir.join("__init__.py");
         if package_init.exists() {
-            return Some(ModuleSourceInfo {
+            return cache_positive(ModuleSourceInfo {
                 path: package_init,
                 is_package: true,
                 package_dirs: vec![package_dir],
@@ -5930,7 +5944,7 @@ impl Vm {
             .join("__pycache__")
             .join("__init__.cpython-314.pyc");
         if package_init_pyc.exists() {
-            return Some(ModuleSourceInfo {
+            return cache_positive(ModuleSourceInfo {
                 path: package_init_pyc,
                 is_package: true,
                 package_dirs: vec![package_dir],
@@ -5940,7 +5954,7 @@ impl Vm {
         }
         let direct_package_init_pyc = package_dir.join("__init__.pyc");
         if direct_package_init_pyc.exists() {
-            return Some(ModuleSourceInfo {
+            return cache_positive(ModuleSourceInfo {
                 path: direct_package_init_pyc,
                 is_package: true,
                 package_dirs: vec![package_dir],

@@ -79,6 +79,7 @@ struct TraceFrame {
     name: String,
 }
 
+#[derive(Clone)]
 struct ModuleSourceInfo {
     path: PathBuf,
     is_package: bool,
@@ -651,6 +652,7 @@ pub struct Vm {
     modules: HashMap<String, ObjRef>,
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
+    module_source_positive_cache: HashMap<(PathBuf, String), ModuleSourceInfo>,
     preferred_filesystem_module_cache: HashMap<String, bool>,
     heap: Heap,
     random: Mt19937,
@@ -746,6 +748,7 @@ impl Vm {
             modules,
             main_module,
             module_paths,
+            module_source_positive_cache: HashMap::new(),
             preferred_filesystem_module_cache: HashMap::new(),
             heap,
             random: Mt19937::new(5489),
@@ -1288,6 +1291,7 @@ impl Vm {
             return;
         }
         self.module_paths.push(path);
+        self.module_source_positive_cache.clear();
         self.preferred_filesystem_module_cache.clear();
         self.sync_sys_path_from_module_paths();
         self.maybe_prefer_cpython_pure_stdlib_modules();
@@ -1297,6 +1301,7 @@ impl Vm {
         let path = path.into();
         self.module_paths.retain(|existing| existing != &path);
         self.module_paths.insert(0, path);
+        self.module_source_positive_cache.clear();
         self.preferred_filesystem_module_cache.clear();
         self.sync_sys_path_from_module_paths();
         self.maybe_prefer_cpython_pure_stdlib_modules();

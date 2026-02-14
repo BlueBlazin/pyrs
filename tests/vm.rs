@@ -6621,6 +6621,47 @@ fn uses_sys_path_mutation_for_module_lookup() {
 }
 
 #[test]
+fn in_place_sys_path_replacement_retargets_import_resolution() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_root = std::env::temp_dir().join(format!("pyrs_sys_path_replace_{unique}"));
+    let temp_dir_a = temp_root.join("a");
+    let temp_dir_b = temp_root.join("b");
+    std::fs::create_dir_all(&temp_dir_a).expect("create temp dir a");
+    std::fs::create_dir_all(&temp_dir_b).expect("create temp dir b");
+    std::fs::write(temp_dir_a.join("mod.py"), "value = 11\n").expect("write module a");
+    std::fs::write(temp_dir_b.join("mod.py"), "value = 29\n").expect("write module b");
+
+    let path_a = temp_dir_a.to_string_lossy().replace('\\', "\\\\");
+    let path_b = temp_dir_b.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nimport importlib\n\
+sys.path = ['{path_a}']\n\
+import mod\n\
+first = mod.value\n\
+del sys.modules['mod']\n\
+sys.path[0] = '{path_b}'\n\
+mod = importlib.import_module('mod')\n\
+second = mod.value\n\
+ok = (first == 11 and second == 29)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir_a.join("mod.py"));
+    let _ = std::fs::remove_file(temp_dir_b.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir_a);
+    let _ = std::fs::remove_dir(&temp_dir_b);
+    let _ = std::fs::remove_dir(&temp_root);
+}
+
+#[test]
 fn executes_dunder_import_top_level_and_fromlist() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
