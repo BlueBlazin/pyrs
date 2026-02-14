@@ -459,13 +459,18 @@ impl ModuleCapiContext {
         }
         // SAFETY: the VM pointer is initialized for the extension context lifetime.
         let vm = unsafe { &mut *self.vm };
+        if !vm.is_callable_value(&callable) {
+            return Err("object_call target is not callable".to_string());
+        }
         let result = match vm
             .call_internal(callable, args, kwargs)
             .map_err(|err| err.message)?
         {
             InternalCallOutcome::Value(value) => value,
             InternalCallOutcome::CallerExceptionHandled => {
-                return Err("callable raised an exception".to_string());
+                return Err(vm
+                    .runtime_error_from_active_exception("object_call() failed")
+                    .message);
             }
         };
         Ok(self.alloc_object(result))

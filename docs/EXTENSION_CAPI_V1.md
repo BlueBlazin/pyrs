@@ -79,6 +79,7 @@ Return semantics:
 - list/dict mutation through handles is available (`object_list_append`, `object_list_set_item`, `object_dict_contains`, `object_dict_del_item`).
 - handle-based object attribute access/mutation is available (`object_get_attr`, `object_set_attr`, `object_del_attr`).
 - extension callbacks can invoke Python callables through `object_call(...)` using handle-based positional/keyword argument arrays.
+- `object_call(...)` now returns explicit non-callable errors and surfaces active Python exceptions via runtime error text.
 - capability checks are available via `api_has_capability(...)` for runtime feature probing.
 - ABI mismatch must be handled by extension code and reflected via non-zero return.
 

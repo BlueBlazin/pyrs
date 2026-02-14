@@ -1155,7 +1155,7 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import native_object_call\nassert native_object_call.API_KIND == 'object-call'\ndef py_scale(value, scale=1):\n    return value * scale\nassert native_object_call.invoke(py_scale, 7) == 7\nassert native_object_call.invoke(py_scale, 7, scale=3) == 21",
+        "import native_object_call\nassert native_object_call.API_KIND == 'object-call'\ndef py_scale(value, scale=1):\n    return value * scale\nassert native_object_call.invoke(py_scale, 7) == 7\nassert native_object_call.invoke(py_scale, 7, scale=3) == 21\nraised_non_callable = False\ntry:\n    native_object_call.invoke(42, 7)\nexcept Exception:\n    raised_non_callable = True\nassert raised_non_callable\ndef boom(value, scale=1):\n    raise ValueError('boom')\nraised_inner = False\ntry:\n    native_object_call.invoke(boom, 1)\nexcept Exception:\n    raised_inner = True\nassert raised_inner",
     )
     .expect("object-call extension import should succeed");
 
