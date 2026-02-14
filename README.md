@@ -15,6 +15,7 @@
 - Substantial pure-Python execution: modules/packages, classes, closures, generators, comprehensions, core async flows.
 - CPython `.pyc` execution for a supported subset, including sourceless import fallback paths and exception-table `try`/`except`/`with` baseline semantics.
 - Broad stdlib foundation (`sys`, import foundations, `os`/`pathlib`, `json`, `re`, `math`, `datetime`, `random`, `sqlite3` baseline, core `asyncio`/`threading`/`signal`).
+- Interactive REPL via `pyrs` with line editing/history and multiline input; expression statements echo repr-style results.
 - Curated CPython harness suites and project test suite are green.
 
 ## Current Limits
@@ -61,6 +62,18 @@ Run source:
 
 ```bash
 cargo run -- path/to/script.py
+```
+
+Run interactive REPL (default with no args):
+
+```bash
+cargo run --
+```
+
+Run from piped stdin (non-interactive mode):
+
+```bash
+echo "print(40 + 2)" | cargo run --
 ```
 
 Run bytecode:

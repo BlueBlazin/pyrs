@@ -96,6 +96,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - local validation checkpoint: `cargo test -q --test pyc_translate`, `cargo test -q --test pyc_exec`, `cargo test -q --test cpython_harness runs_cpython_import_suite`, and `cargo test -q --test cpython_harness runs_cpython_language_suite` are green in this wave.
   - local shim retirement checkpoint: `shims/pyexpat.py` and `shims/pkgutil.py` are removed; native runtime fallbacks now cover `pyexpat` and `pkgutil` surfaces.
   - allowlist-restricted local shim fallback remains enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`) for `importlib.resources` only.
+  - REPL checkpoint: no-arg CLI path now starts an interactive `reedline` REPL (history + multiline + expression-result echo), while non-interactive no-arg runs consume stdin as script input (CPython-like `python < file.py` behavior).
 - Extended probe remaining red modules: none (`50/50` smoke green).
 
 ## Execution Policy
