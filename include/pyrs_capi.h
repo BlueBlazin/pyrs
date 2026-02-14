@@ -20,6 +20,7 @@ extern "C" {
 
 typedef uint64_t PyrsObjectHandle;
 typedef struct PyrsApiV1 PyrsApiV1;
+typedef struct PyrsBufferViewV1 PyrsBufferViewV1;
 
 typedef int (*PyrsCFunctionV1)(
     const PyrsApiV1* api,
@@ -38,6 +39,12 @@ typedef int (*PyrsCFunctionKwV1)(
     const PyrsObjectHandle* kwarg_values,
     PyrsObjectHandle* result
 );
+
+struct PyrsBufferViewV1 {
+    const uint8_t* data;
+    uintptr_t len;
+    int readonly;
+};
 
 struct PyrsApiV1 {
     uint32_t abi_version;
@@ -115,6 +122,8 @@ struct PyrsApiV1 {
     int (*object_contains)(void* module_ctx, PyrsObjectHandle object_handle, PyrsObjectHandle needle_handle);
     int (*object_dict_keys)(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle);
     int (*object_dict_items)(void* module_ctx, PyrsObjectHandle dict_handle, PyrsObjectHandle* out_handle);
+    int (*object_get_buffer)(void* module_ctx, PyrsObjectHandle object_handle, PyrsBufferViewV1* out_view);
+    int (*object_release_buffer)(void* module_ctx, PyrsObjectHandle object_handle);
 };
 
 typedef int (*PyrsExtensionInitV1)(const PyrsApiV1* api, void* module_ctx);

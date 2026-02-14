@@ -17,6 +17,13 @@ pub const PYRS_TYPE_TUPLE: i32 = 7;
 pub const PYRS_TYPE_LIST: i32 = 8;
 pub const PYRS_TYPE_DICT: i32 = 9;
 
+#[repr(C)]
+pub struct PyrsBufferViewV1 {
+    pub data: *const u8,
+    pub len: usize,
+    pub readonly: i32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionEntrypoint {
     HelloExt,
@@ -553,6 +560,13 @@ pub struct PyrsApiV1 {
         dict_handle: PyrsObjectHandle,
         out_handle: *mut PyrsObjectHandle,
     ) -> i32,
+    pub object_get_buffer: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        object_handle: PyrsObjectHandle,
+        out_view: *mut PyrsBufferViewV1,
+    ) -> i32,
+    pub object_release_buffer:
+        unsafe extern "C" fn(module_ctx: *mut c_void, object_handle: PyrsObjectHandle) -> i32,
 }
 
 pub type PyrsCFunctionV1 = unsafe extern "C" fn(

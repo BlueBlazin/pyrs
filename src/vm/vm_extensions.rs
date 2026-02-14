@@ -6,8 +6,8 @@ use crate::extensions::{
     ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
-    PYRS_TYPE_TUPLE, PyrsApiV1, PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsObjectHandle,
-    load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
+    PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferViewV1, PyrsCFunctionKwV1, PyrsCFunctionV1,
+    PyrsObjectHandle, load_dynamic_initializer, parse_extension_manifest, path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -15,8 +15,9 @@ use crate::runtime::{
 
 use super::{
     ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome, NativeCallResult, ObjRef,
-    Vm, dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value_checked,
-    value_to_int,
+    Vm, bytes_like_source_is_readonly, dict_contains_key_checked, dict_get_value,
+    dict_remove_value, dict_set_value_checked, memoryview_bounds, value_to_int,
+    with_bytes_like_source,
 };
 
 struct CapiObjectSlot {
@@ -31,6 +32,7 @@ struct ModuleCapiContext {
     objects: HashMap<PyrsObjectHandle, CapiObjectSlot>,
     last_error: Option<String>,
     scratch_strings: Vec<CString>,
+    buffer_pins: HashMap<PyrsObjectHandle, usize>,
 }
 
 impl ModuleCapiContext {
@@ -42,6 +44,7 @@ impl ModuleCapiContext {
             objects: HashMap::new(),
             last_error: None,
             scratch_strings: Vec::new(),
+            buffer_pins: HashMap::new(),
         }
     }
 
@@ -621,6 +624,87 @@ impl ModuleCapiContext {
         Ok(self.alloc_object(vm.heap.alloc_list(items)))
     }
 
+    fn object_get_buffer(
+        &mut self,
+        object_handle: PyrsObjectHandle,
+    ) -> Result<PyrsBufferViewV1, String> {
+        let value = self
+            .object_value(object_handle)
+            .ok_or_else(|| format!("invalid object handle {}", object_handle))?;
+        let (data, len, readonly) = match &value {
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => (values.as_ptr(), values.len(), true),
+                _ => {
+                    return Err(format!(
+                        "object handle {} has invalid bytes storage",
+                        object_handle
+                    ));
+                }
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => (values.as_ptr(), values.len(), false),
+                _ => {
+                    return Err(format!(
+                        "object handle {} has invalid bytearray storage",
+                        object_handle
+                    ));
+                }
+            },
+            Value::MemoryView(obj) => match &*obj.kind() {
+                Object::MemoryView(view) => {
+                    if view.released {
+                        return Err("memoryview is released".to_string());
+                    }
+                    let readonly = bytes_like_source_is_readonly(&view.source).unwrap_or(true);
+                    let Some((ptr, len)) = with_bytes_like_source(&view.source, |values| {
+                        let (start, end) = memoryview_bounds(view.start, view.length, values.len());
+                        (
+                            values.as_ptr().wrapping_add(start),
+                            end.saturating_sub(start),
+                        )
+                    }) else {
+                        return Err("memoryview source is not bytes-like".to_string());
+                    };
+                    (ptr, len, readonly)
+                }
+                _ => {
+                    return Err(format!(
+                        "object handle {} has invalid memoryview storage",
+                        object_handle
+                    ));
+                }
+            },
+            _ => {
+                return Err(format!(
+                    "object handle {} does not support buffer access",
+                    object_handle
+                ));
+            }
+        };
+        self.incref(object_handle)?;
+        *self.buffer_pins.entry(object_handle).or_insert(0) += 1;
+        Ok(PyrsBufferViewV1 {
+            data,
+            len,
+            readonly: if readonly { 1 } else { 0 },
+        })
+    }
+
+    fn object_release_buffer(&mut self, object_handle: PyrsObjectHandle) -> Result<(), String> {
+        let Some(pins) = self.buffer_pins.get_mut(&object_handle) else {
+            return Err("buffer was not acquired for this handle".to_string());
+        };
+        if *pins == 0 {
+            self.buffer_pins.remove(&object_handle);
+            return Err("buffer was not acquired for this handle".to_string());
+        }
+        *pins -= 1;
+        if *pins == 0 {
+            self.buffer_pins.remove(&object_handle);
+        }
+        self.decref(object_handle)
+    }
+
     fn object_sequence_len(&self, handle: PyrsObjectHandle) -> Result<usize, String> {
         let Some(slot) = self.object_slot(handle) else {
             return Err(format!("invalid object handle {}", handle));
@@ -1110,6 +1194,8 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "object_contains"
             | "object_dict_keys"
             | "object_dict_items"
+            | "object_get_buffer"
+            | "object_release_buffer"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -1956,6 +2042,49 @@ unsafe extern "C" fn capi_object_dict_items(
     }
 }
 
+unsafe extern "C" fn capi_object_get_buffer(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+    out_view: *mut PyrsBufferViewV1,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    if out_view.is_null() {
+        context.set_error("object_get_buffer received null output pointer");
+        return -1;
+    }
+    match context.object_get_buffer(object_handle) {
+        Ok(view) => {
+            // SAFETY: caller provided non-null output pointer.
+            unsafe {
+                *out_view = view;
+            }
+            0
+        }
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_object_release_buffer(
+    module_ctx: *mut c_void,
+    object_handle: PyrsObjectHandle,
+) -> i32 {
+    let Some(context) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context.object_release_buffer(object_handle) {
+        Ok(()) => 0,
+        Err(err) => {
+            context.set_error(err);
+            -1
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_sequence_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -2574,6 +2703,8 @@ impl Vm {
             object_contains: capi_object_contains,
             object_dict_keys: capi_object_dict_keys,
             object_dict_items: capi_object_dict_items,
+            object_get_buffer: capi_object_get_buffer,
+            object_release_buffer: capi_object_release_buffer,
         }
     }
 
