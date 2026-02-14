@@ -36,6 +36,12 @@ fn python_string_literal(path: &Path) -> String {
         .replace('"', "\\\"")
 }
 
+fn c_string_literal(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+}
+
 fn has_c_compiler() -> bool {
     Command::new("cc")
         .arg("--version")
@@ -3817,11 +3823,11 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     if (api->module_get_state(module_ctx) != 0) {
         return -2;
     }
-    if (api->module_set_state(module_ctx, (void*)(uintptr_t)0x1111, free_state) != 0) {
-        return -3;
-    }
     if (api->module_set_finalize(module_ctx, finalize_state) != 0) {
         return -26;
+    }
+    if (api->module_set_state(module_ctx, (void*)(uintptr_t)0x1111, free_state) != 0) {
+        return -3;
     }
     if (api->module_get_state(module_ctx) != (void*)(uintptr_t)0x1111) {
         return -4;
@@ -3877,6 +3883,98 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     )
     .expect("module-state extension import should succeed");
 
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn dynamic_extension_module_state_drop_runs_finalize_before_free() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping module-state drop smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping module-state drop smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_module_state_drop");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+    let log_path = temp_root.join("module_state_drop.log");
+    let source_path = temp_root.join("native_module_state_drop.c");
+    let source = r#"#include "pyrs_capi.h"
+#include <stdint.h>
+#include <stdio.h>
+
+static const char* g_log_path = "__LOG_PATH__";
+
+static void append_event(const char* event) {
+    FILE* log_file = fopen(g_log_path, "a");
+    if (!log_file) {
+        return;
+    }
+    fputs(event, log_file);
+    fputc('\n', log_file);
+    fclose(log_file);
+}
+
+static void free_state(void* state) {
+    (void)state;
+    append_event("free");
+}
+
+static void finalize_state(void* state) {
+    (void)state;
+    append_event("finalize");
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    if (api->module_set_finalize(module_ctx, finalize_state) != 0) {
+        return -2;
+    }
+    if (api->module_set_state(module_ctx, (void*)(uintptr_t)0x99, free_state) != 0) {
+        return -3;
+    }
+    if (api->module_set_bool(module_ctx, "STATE_READY", 1) != 0) {
+        return -4;
+    }
+    return 0;
+}
+"#
+    .replace("__LOG_PATH__", &c_string_literal(&log_path));
+    fs::write(&source_path, source).expect("source should be written");
+
+    let library_file = shared_library_filename("native_module_state_drop");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_module_state_drop.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_module_state_drop\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_module_state_drop\nassert native_module_state_drop.STATE_READY is True",
+    )
+    .expect("module-state drop extension import should succeed");
+
+    let log_content = fs::read_to_string(&log_path).expect("drop callbacks should write log");
+    let events: Vec<_> = log_content.lines().collect();
+    assert_eq!(events, vec!["finalize", "free"]);
+
+    let _ = fs::remove_file(log_path);
     let _ = fs::remove_file(manifest_path);
     let _ = fs::remove_file(library_path);
     let _ = fs::remove_file(source_path);
