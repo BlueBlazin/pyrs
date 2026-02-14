@@ -577,8 +577,19 @@ pub struct PyrsApiV1 {
         capsule_handle: PyrsObjectHandle,
         name: *const c_char,
     ) -> *mut c_void,
-    pub capsule_get_name:
-        unsafe extern "C" fn(module_ctx: *mut c_void, capsule_handle: PyrsObjectHandle) -> *const c_char,
+    pub capsule_get_name: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        capsule_handle: PyrsObjectHandle,
+    ) -> *const c_char,
+    pub capsule_set_context: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        capsule_handle: PyrsObjectHandle,
+        context: *mut c_void,
+    ) -> i32,
+    pub capsule_get_context: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        capsule_handle: PyrsObjectHandle,
+    ) -> *mut c_void,
 }
 
 pub type PyrsCFunctionV1 = unsafe extern "C" fn(

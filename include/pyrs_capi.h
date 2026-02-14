@@ -127,6 +127,8 @@ struct PyrsApiV1 {
     PyrsObjectHandle (*capsule_new)(void* module_ctx, void* pointer, const char* name);
     void* (*capsule_get_pointer)(void* module_ctx, PyrsObjectHandle capsule_handle, const char* name);
     const char* (*capsule_get_name)(void* module_ctx, PyrsObjectHandle capsule_handle);
+    int (*capsule_set_context)(void* module_ctx, PyrsObjectHandle capsule_handle, void* context);
+    void* (*capsule_get_context)(void* module_ctx, PyrsObjectHandle capsule_handle);
 };
 
 typedef int (*PyrsExtensionInitV1)(const PyrsApiV1* api, void* module_ctx);

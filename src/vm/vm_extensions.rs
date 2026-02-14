@@ -27,6 +27,7 @@ struct CapiObjectSlot {
 
 struct CapiCapsuleSlot {
     pointer: usize,
+    context: usize,
     name: Option<CString>,
     refcount: usize,
 }
@@ -106,6 +107,7 @@ impl ModuleCapiContext {
             handle,
             CapiCapsuleSlot {
                 pointer: pointer as usize,
+                context: 0,
                 name,
                 refcount: 1,
             },
@@ -320,7 +322,10 @@ impl ModuleCapiContext {
         Ok(slot.pointer as *mut c_void)
     }
 
-    fn capsule_get_name_ptr(&mut self, capsule_handle: PyrsObjectHandle) -> Result<*const c_char, String> {
+    fn capsule_get_name_ptr(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+    ) -> Result<*const c_char, String> {
         let Some(slot) = self.capsules.get(&capsule_handle) else {
             return Err(format!("invalid capsule handle {}", capsule_handle));
         };
@@ -328,6 +333,28 @@ impl ModuleCapiContext {
             .name
             .as_ref()
             .map_or(std::ptr::null(), |value| value.as_ptr()))
+    }
+
+    fn capsule_set_context(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+        context: *mut c_void,
+    ) -> Result<(), String> {
+        let Some(slot) = self.capsules.get_mut(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        slot.context = context as usize;
+        Ok(())
+    }
+
+    fn capsule_get_context(
+        &mut self,
+        capsule_handle: PyrsObjectHandle,
+    ) -> Result<*mut c_void, String> {
+        let Some(slot) = self.capsules.get(&capsule_handle) else {
+            return Err(format!("invalid capsule handle {}", capsule_handle));
+        };
+        Ok(slot.context as *mut c_void)
     }
 
     fn object_type(&self, handle: PyrsObjectHandle) -> Result<i32, String> {
@@ -1308,6 +1335,8 @@ unsafe extern "C" fn capi_api_has_capability(module_ctx: *mut c_void, name: *con
             | "capsule_new"
             | "capsule_get_pointer"
             | "capsule_get_name"
+            | "capsule_set_context"
+            | "capsule_get_context"
             | "object_sequence_len"
             | "object_sequence_get_item"
             | "object_get_iter"
@@ -2247,6 +2276,39 @@ unsafe extern "C" fn capi_capsule_get_name(
     }
 }
 
+unsafe extern "C" fn capi_capsule_set_context(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+    context: *mut c_void,
+) -> i32 {
+    let Some(context_obj) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return -1;
+    };
+    match context_obj.capsule_set_context(capsule_handle, context) {
+        Ok(()) => 0,
+        Err(err) => {
+            context_obj.set_error(err);
+            -1
+        }
+    }
+}
+
+unsafe extern "C" fn capi_capsule_get_context(
+    module_ctx: *mut c_void,
+    capsule_handle: PyrsObjectHandle,
+) -> *mut c_void {
+    let Some(context_obj) = (unsafe { capi_context_mut(module_ctx) }) else {
+        return std::ptr::null_mut();
+    };
+    match context_obj.capsule_get_context(capsule_handle) {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            context_obj.set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 unsafe extern "C" fn capi_object_sequence_len(
     module_ctx: *mut c_void,
     handle: PyrsObjectHandle,
@@ -2870,6 +2932,8 @@ impl Vm {
             capsule_new: capi_capsule_new,
             capsule_get_pointer: capi_capsule_get_pointer,
             capsule_get_name: capi_capsule_get_name,
+            capsule_set_context: capi_capsule_set_context,
+            capsule_get_context: capi_capsule_get_context,
         }
     }
 
