@@ -4951,6 +4951,70 @@ fn memoryview_decode_tolist(
     memoryview_decode_tolist_recursive(source, start, itemsize.max(1), format, shape, strides, heap)
 }
 
+fn memoryview_collect_bytes_recursive(
+    source: &[u8],
+    base: isize,
+    itemsize: usize,
+    shape: &[isize],
+    strides: &[isize],
+    out: &mut Vec<u8>,
+) -> Option<()> {
+    if shape.is_empty() || shape.len() != strides.len() {
+        return None;
+    }
+    let dim = usize::try_from(shape[0]).ok()?;
+    let stride = strides[0];
+    if shape.len() == 1 {
+        let itemsize_isize = isize::try_from(itemsize).ok()?;
+        for index in 0..dim {
+            let delta = stride.checked_mul(index as isize)?;
+            let offset = base.checked_add(delta)?;
+            if offset < 0 {
+                return None;
+            }
+            let end = offset.checked_add(itemsize_isize)?;
+            let source_len = isize::try_from(source.len()).ok()?;
+            if end > source_len {
+                return None;
+            }
+            let offset_usize = usize::try_from(offset).ok()?;
+            let end_usize = offset_usize.checked_add(itemsize)?;
+            out.extend_from_slice(source.get(offset_usize..end_usize)?);
+        }
+    } else {
+        for index in 0..dim {
+            let delta = stride.checked_mul(index as isize)?;
+            let row_base = base.checked_add(delta)?;
+            memoryview_collect_bytes_recursive(
+                source,
+                row_base,
+                itemsize,
+                &shape[1..],
+                &strides[1..],
+                out,
+            )?;
+        }
+    }
+    Some(())
+}
+
+fn memoryview_collect_bytes_for_view(view: &MemoryViewObject, source: &[u8]) -> Option<Vec<u8>> {
+    let itemsize = view.itemsize.max(1);
+    let (shape, strides) = memoryview_shape_and_strides_from_parts(
+        view.start,
+        view.length,
+        view.shape.as_ref(),
+        view.strides.as_ref(),
+        itemsize,
+        source.len(),
+    )?;
+    let total = memoryview_logical_nbytes(&shape, itemsize)?;
+    let mut out = Vec::with_capacity(total);
+    let start = isize::try_from(view.start).ok()?;
+    memoryview_collect_bytes_recursive(source, start, itemsize, &shape, &strides, &mut out)?;
+    Some(out)
+}
+
 fn bytes_like_source_is_readonly(source: &ObjRef) -> Option<bool> {
     match &*source.kind() {
         Object::Bytes(_) => Some(true),
@@ -4985,8 +5049,8 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                     memoryview_collect_bytes(values, origin, logical_len, stride, itemsize)
                         .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
                 } else {
-                    let (start, end) = memoryview_bounds(view.start, view.length, values.len());
-                    Ok(values[start..end].to_vec())
+                    memoryview_collect_bytes_for_view(view, values)
+                        .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
                 }
             })
             .unwrap_or_else(|| Err(RuntimeError::new("expected bytes-like payload"))),

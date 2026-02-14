@@ -5117,6 +5117,33 @@ ok = (
 }
 
 #[test]
+fn memoryview_bytes_and_iter_follow_strided_and_typed_semantics() {
+    let source = r#"base = memoryview(bytearray(range(12))).cast("B", [3, 4])
+stride = base[::2]
+rev = base[::-1]
+bytes_ok = (
+    bytes(stride) == bytes([0, 1, 2, 3, 8, 9, 10, 11])
+    and bytes(rev) == bytes([8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3])
+)
+typed_iter_ok = (list(memoryview(bytearray([255])).cast("b")) == [-1])
+ndim_iter_err = False
+try:
+    list(base)
+except Exception as exc:
+    ndim_iter_err = (
+        type(exc).__name__ == "NotImplementedError"
+        and "multi-dimensional sub-views are not implemented" in str(exc)
+    )
+ok = bytes_ok and typed_iter_ok and ndim_iter_err
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn memoryview_strided_slice_is_noncontiguous_writable_view() {
     let source = r#"buf = bytearray(b"ABCDE")
 view = memoryview(buf)[::2]

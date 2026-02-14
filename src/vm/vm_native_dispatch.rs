@@ -5196,21 +5196,54 @@ impl Vm {
                     });
                 }
                 IteratorKind::MemoryView(view_ref) => {
-                    return Ok(match &*view_ref.kind() {
-                        Object::MemoryView(view) => {
-                            with_bytes_like_source(&view.source, |values| {
-                                if state.index >= values.len() {
-                                    None
-                                } else {
-                                    let value = Value::Int(values[state.index] as i64);
-                                    state.index += 1;
-                                    Some(value)
-                                }
-                            })
-                            .flatten()
-                        }
-                        _ => None,
-                    });
+                    return match &*view_ref.kind() {
+                        Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
+                            let Some((shape, _strides)) = memoryview_shape_and_strides_from_parts(
+                                view.start,
+                                view.length,
+                                view.shape.as_ref(),
+                                view.strides.as_ref(),
+                                view.itemsize,
+                                values.len(),
+                            ) else {
+                                return Ok(None);
+                            };
+                            if shape.len() > 1 {
+                                return Err(RuntimeError::new(
+                                    "NotImplementedError: multi-dimensional sub-views are not implemented",
+                                ));
+                            }
+                            let itemsize = view.itemsize.max(1);
+                            let format = memoryview_format_for_view(itemsize, view.format.as_deref())?;
+                            let Some((origin, logical_len, stride, _)) =
+                                super::memoryview_layout_1d(view, values.len())
+                            else {
+                                return Ok(None);
+                            };
+                            if state.index >= logical_len {
+                                return Ok(None);
+                            }
+                            let offset = super::memoryview_element_offset(
+                                origin,
+                                logical_len,
+                                stride,
+                                state.index as isize,
+                            )
+                            .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            let end = offset
+                                .checked_add(itemsize)
+                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            let chunk = values
+                                .get(offset..end)
+                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            let value =
+                                super::memoryview_decode_element(chunk, format, itemsize, &self.heap)?;
+                            state.index += 1;
+                            Ok(Some(value))
+                        })
+                        .unwrap_or_else(|| Ok(None)),
+                        _ => Ok(None),
+                    };
                 }
                 IteratorKind::Cycle { values } => {
                     if values.is_empty() {
