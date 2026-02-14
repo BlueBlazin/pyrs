@@ -5081,6 +5081,34 @@ ok = read_err and write_err
 }
 
 #[test]
+fn memoryview_multidim_slice_preserves_shape_and_nested_tolist() {
+    let source = r#"buf = bytearray(range(12))
+view = memoryview(buf).cast("B", [3, 4])
+head = view[0:1]
+stride = view[::2]
+before = stride.tolist()
+buf[8] = 99
+after = stride.tolist()
+ok = (
+    head.ndim == 2
+    and head.shape == (1, 4)
+    and head.strides == (4, 1)
+    and head.tolist() == [[0, 1, 2, 3]]
+    and stride.ndim == 2
+    and stride.shape == (2, 4)
+    and stride.strides == (8, 1)
+    and before == [[0, 1, 2, 3], [8, 9, 10, 11]]
+    and after == [[0, 1, 2, 3], [99, 9, 10, 11]]
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn memoryview_strided_slice_is_noncontiguous_writable_view() {
     let source = r#"buf = bytearray(b"ABCDE")
 view = memoryview(buf)[::2]

@@ -4,8 +4,9 @@ use super::{
     RuntimeError, Value, Vm, builtin_exception_parent, classify_runtime_error, dict_get_value,
     dict_set_value_checked, ensure_hashable, format_repr, memoryview_bounds,
     memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
-    memoryview_layout_1d, module_globals_version, slice_bounds_for_step_one, slice_indices,
-    value_from_bigint, value_to_bytes_payload, value_to_int, with_bytes_like_source,
+    memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
+    module_globals_version, slice_bounds_for_step_one, slice_indices, value_from_bigint,
+    value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
 use crate::runtime::SliceValue;
 
@@ -224,6 +225,64 @@ impl Vm {
                         Object::MemoryView(view) => {
                             with_bytes_like_source(&view.source, |values| {
                                 let step_value = step.unwrap_or(1);
+                                if let Some((shape, strides)) = memoryview_shape_and_strides_from_parts(
+                                    view.start,
+                                    view.length,
+                                    view.shape.as_ref(),
+                                    view.strides.as_ref(),
+                                    view.itemsize,
+                                    values.len(),
+                                ) && shape.len() > 1
+                                {
+                                    if shape.len() != strides.len() {
+                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                    }
+                                    let rows = usize::try_from(shape[0])
+                                        .map_err(|_| RuntimeError::new("subscript unsupported type"))?;
+                                    let indices = slice_indices(rows, lower, upper, step)?;
+                                    let origin = isize::try_from(view.start)
+                                        .map_err(|_| RuntimeError::new("subscript unsupported type"))?;
+                                    let base_stride = strides[0];
+                                    let new_start = if let Some(first) = indices.first() {
+                                        let delta = base_stride
+                                            .checked_mul(*first as isize)
+                                            .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?;
+                                        origin
+                                            .checked_add(delta)
+                                            .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?
+                                    } else {
+                                        origin
+                                    };
+                                    if new_start < 0 {
+                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                    }
+                                    let mut new_shape = shape.clone();
+                                    new_shape[0] = indices.len() as isize;
+                                    let mut new_strides = strides.clone();
+                                    new_strides[0] = base_stride
+                                        .checked_mul(step_value as isize)
+                                        .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?;
+                                    let byte_len = memoryview_logical_nbytes(&new_shape, view.itemsize)
+                                        .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?;
+                                    let sliced = self.heap.alloc_memoryview_with(
+                                        view.source.clone(),
+                                        view.itemsize,
+                                        view.format.clone(),
+                                    );
+                                    if let Value::MemoryView(sliced_obj) = &sliced
+                                        && let Object::MemoryView(sliced_view) =
+                                            &mut *sliced_obj.kind_mut()
+                                    {
+                                        sliced_view.start = new_start as usize;
+                                        sliced_view.length = Some(byte_len);
+                                        sliced_view.shape = Some(new_shape);
+                                        sliced_view.strides = Some(new_strides);
+                                        sliced_view.contiguous = view.contiguous && step_value == 1;
+                                        sliced_view.export_owner = view.export_owner.clone();
+                                        sliced_view.released = view.released;
+                                    }
+                                    return Ok(sliced);
+                                }
                                 if let Some((origin, logical_len, stride, itemsize)) =
                                     memoryview_layout_1d(view, values.len())
                                 {

@@ -7,11 +7,11 @@ use super::{
     call_builtin_with_kwargs, class_attr_lookup, decode_text_bytes, dedup_hashable_values,
     dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes,
     ensure_hashable, exception_is_named, find_bytes_subslice, is_truthy, memoryview_bounds,
-    memoryview_decode_element, memoryview_format_for_view, normalize_codec_encoding,
-    normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
-    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
-    runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
-    value_to_bigint, value_to_int, with_bytes_like_source,
+    memoryview_decode_tolist, memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
+    normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
+    parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
+    re_pattern_from_compiled_module, runtime_error_matches_exception, split_formatter_field_name,
+    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
 };
 
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
@@ -2538,27 +2538,43 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("tolist() expects no arguments"));
                 }
-                let (itemsize, format) = match &*receiver.kind() {
-                    Object::MemoryView(view_data) => {
-                        (view_data.itemsize.max(1), view_data.format.clone())
-                    }
-                    _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
-                };
-                let bytes = self.value_to_bytes_payload(Value::MemoryView(receiver.clone()))?;
+                let (source, start, length, itemsize, format, shape, strides) =
+                    match &*receiver.kind() {
+                        Object::MemoryView(view_data) => (
+                            view_data.source.clone(),
+                            view_data.start,
+                            view_data.length,
+                            view_data.itemsize.max(1),
+                            view_data.format.clone(),
+                            view_data.shape.clone(),
+                            view_data.strides.clone(),
+                        ),
+                        _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
+                    };
                 let cast_format = memoryview_format_for_view(itemsize, format.as_deref())
                     .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
-                if bytes.len() % itemsize != 0 {
-                    return Err(RuntimeError::new(
-                        "memoryview length is not a multiple of itemsize",
-                    ));
-                }
-                let mut values = Vec::new();
-                for chunk in bytes.chunks_exact(itemsize) {
-                    let value = memoryview_decode_element(chunk, cast_format, itemsize, &self.heap)
-                        .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
-                    values.push(value);
-                }
-                Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
+                with_bytes_like_source(&source, |values| {
+                    let (shape, strides) = memoryview_shape_and_strides_from_parts(
+                        start,
+                        length,
+                        shape.as_ref(),
+                        strides.as_ref(),
+                        itemsize,
+                        values.len(),
+                    )
+                    .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                    memoryview_decode_tolist(
+                        values,
+                        start,
+                        itemsize,
+                        cast_format,
+                        &shape,
+                        &strides,
+                        &self.heap,
+                    )
+                })
+                .unwrap_or_else(|| Err(RuntimeError::new("memoryview.tolist() unsupported format")))
+                .map(NativeCallResult::Value)
             }
             NativeMethodKind::MemoryViewRelease => {
                 if !args.is_empty() {
