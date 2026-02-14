@@ -130,6 +130,7 @@ struct PyrsApiV1 {
     int (*object_release_buffer)(void* module_ctx, PyrsObjectHandle object_handle);
     PyrsObjectHandle (*capsule_new)(void* module_ctx, void* pointer, const char* name);
     void* (*capsule_get_pointer)(void* module_ctx, PyrsObjectHandle capsule_handle, const char* name);
+    int (*capsule_set_pointer)(void* module_ctx, PyrsObjectHandle capsule_handle, void* pointer);
     const char* (*capsule_get_name)(void* module_ctx, PyrsObjectHandle capsule_handle);
     int (*capsule_set_context)(void* module_ctx, PyrsObjectHandle capsule_handle, void* context);
     void* (*capsule_get_context)(void* module_ctx, PyrsObjectHandle capsule_handle);

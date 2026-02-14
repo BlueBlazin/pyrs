@@ -583,6 +583,11 @@ pub struct PyrsApiV1 {
         capsule_handle: PyrsObjectHandle,
         name: *const c_char,
     ) -> *mut c_void,
+    pub capsule_set_pointer: unsafe extern "C" fn(
+        module_ctx: *mut c_void,
+        capsule_handle: PyrsObjectHandle,
+        pointer: *mut c_void,
+    ) -> i32,
     pub capsule_get_name: unsafe extern "C" fn(
         module_ctx: *mut c_void,
         capsule_handle: PyrsObjectHandle,
