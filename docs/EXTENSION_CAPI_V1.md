@@ -116,4 +116,5 @@ These are tracked in `/Users/$USER/pyrs/docs/EXTENSION_CAPABILITY_MATRIX.md`.
 | callable invocation (`object_call`, fast helpers) | `dynamic_extension_can_call_python_callable_handles`, `dynamic_extension_can_use_object_call_fastpaths`, `dynamic_extension_mixed_surface_roundtrip` |
 | type relation checks (`isinstance`/`issubclass`) | `dynamic_extension_can_check_isinstance_and_issubclass`, `dynamic_extension_mixed_surface_roundtrip` |
 | error state + message retrieval | `dynamic_extension_error_state_is_propagated_to_import_failure`, `dynamic_extension_can_read_and_clear_error_message` |
+| invalid handle/error resilience | `dynamic_extension_invalid_handles_report_errors_consistently` |
 | capability introspection | `dynamic_extension_can_query_capabilities` |

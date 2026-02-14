@@ -1851,6 +1851,118 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
+fn dynamic_extension_invalid_handles_report_errors_consistently() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping invalid-handle extension smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping invalid-handle extension smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_invalid_handles");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_invalid_handles.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+
+int expect_error(const PyrsApiV1* api, void* module_ctx) {
+    const char* msg = api->error_get_message(module_ctx);
+    if (!msg || !msg[0]) {
+        return 0;
+    }
+    if (api->error_clear(module_ctx) != 0) {
+        return 0;
+    }
+    return api->error_occurred(module_ctx) == 0;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    PyrsObjectHandle invalid = 999999;
+    int64_t int_out = 0;
+    uintptr_t len_out = 0;
+    PyrsObjectHandle handle_out = 0;
+
+    if (api->object_get_int(module_ctx, invalid, &int_out) == 0 || !expect_error(api, module_ctx)) {
+        return -2;
+    }
+    if (api->object_sequence_len(module_ctx, invalid, &len_out) == 0 || !expect_error(api, module_ctx)) {
+        return -3;
+    }
+    if (api->object_dict_len(module_ctx, invalid, &len_out) == 0 || !expect_error(api, module_ctx)) {
+        return -4;
+    }
+    if (api->object_get_attr(module_ctx, invalid, "x", &handle_out) == 0 || !expect_error(api, module_ctx)) {
+        return -5;
+    }
+    if (api->object_set_attr(module_ctx, invalid, "x", invalid) == 0 || !expect_error(api, module_ctx)) {
+        return -6;
+    }
+    if (api->object_del_attr(module_ctx, invalid, "x") == 0 || !expect_error(api, module_ctx)) {
+        return -7;
+    }
+    if (api->object_has_attr(module_ctx, invalid, "x") >= 0 || !expect_error(api, module_ctx)) {
+        return -8;
+    }
+    if (api->object_call_noargs(module_ctx, invalid, &handle_out) == 0 || !expect_error(api, module_ctx)) {
+        return -9;
+    }
+    if (api->object_call_onearg(module_ctx, invalid, invalid, &handle_out) == 0 || !expect_error(api, module_ctx)) {
+        return -10;
+    }
+    if (api->module_get_attr(module_ctx, invalid, "x", &handle_out) == 0 || !expect_error(api, module_ctx)) {
+        return -11;
+    }
+    if (api->module_get_object(module_ctx, "does_not_exist", &handle_out) == 0 || !expect_error(api, module_ctx)) {
+        return -12;
+    }
+
+    if (api->module_set_bool(module_ctx, "INVALID_HANDLE_CHECKS_OK", 1) != 0) {
+        return -13;
+    }
+    if (api->module_set_string(module_ctx, "API_KIND", "invalid-handles") != 0) {
+        return -14;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_invalid_handles");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_invalid_handles.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_invalid_handles\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_invalid_handles\nassert native_invalid_handles.API_KIND == 'invalid-handles'\nassert native_invalid_handles.INVALID_HANDLE_CHECKS_OK is True",
+    )
+    .expect("invalid-handle extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_query_capabilities() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping capability-query extension smoke (pyrs binary not found)");

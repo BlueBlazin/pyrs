@@ -56,6 +56,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke includes compile+import validation driven by `_sysconfigdata__*` build vars (`sysconfig_build_vars_can_compile_and_import_extension`).
   - extension smoke path now includes compiled native fixtures for manifest dynamic load, direct shared-object import, tagged filename resolution, object-handle flow, positional+keyword callable registration/invocation, and error-state propagation (`tests/extension_smoke.rs`).
   - extension smoke now includes a mixed-surface cross-API fixture exercising module import/attr-load, type checks, list+dict mutation, callable invocation, and module-global round-trips in one extension init path.
+  - extension smoke now includes an invalid-handle resilience fixture to enforce consistent error-message + error-clear behavior across C-API calls.
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
