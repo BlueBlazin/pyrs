@@ -577,6 +577,11 @@ impl Vm {
                 Value::MemoryView(obj) => match &*obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
                         if view.shape.as_ref().is_some_and(|shape| shape.len() > 1) {
+                            if value_to_int(index.clone()).is_err() {
+                                return Err(RuntimeError::new(
+                                    "TypeError: memoryview: invalid slice key",
+                                ));
+                            }
                             return Err(RuntimeError::new(
                                 "NotImplementedError: multi-dimensional sub-views are not implemented",
                             ));

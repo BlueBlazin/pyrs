@@ -5057,6 +5057,7 @@ fn memoryview_multidim_scalar_indexing_reports_not_implemented() {
     let source = r#"view = memoryview(bytearray(b"abcd")).cast("B", [2, 2])
 read_err = False
 write_err = False
+tuple_err = False
 try:
     _ = view[0]
 except Exception as exc:
@@ -5071,7 +5072,14 @@ except Exception as exc:
         type(exc).__name__ == "NotImplementedError"
         and "sub-views are not implemented" in str(exc)
     )
-ok = read_err and write_err
+try:
+    _ = view[:, 0]
+except Exception as exc:
+    tuple_err = (
+        type(exc).__name__ == "TypeError"
+        and "invalid slice key" in str(exc)
+    )
+ok = read_err and write_err and tuple_err
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
