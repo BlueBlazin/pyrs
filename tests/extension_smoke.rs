@@ -4131,3 +4131,85 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);
 }
+
+#[test]
+fn dynamic_extension_module_state_apis_guard_null_module_ctx() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping null-module-ctx smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping null-module-ctx smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_null_module_ctx");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("native_null_module_ctx.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_capi.h"
+#include <stdint.h>
+
+static void free_state(void* state) {
+    (void)state;
+}
+
+static void finalize_state(void* state) {
+    (void)state;
+}
+
+int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
+    if (!api || api->abi_version != PYRS_CAPI_ABI_VERSION) {
+        return -1;
+    }
+    int set_state_result = api->module_set_state(0, (void*)(uintptr_t)0x1, free_state);
+    if (set_state_result != -1) {
+        return -2;
+    }
+    if (api->module_get_state(0) != 0) {
+        return -3;
+    }
+    int set_finalize_result = api->module_set_finalize(0, finalize_state);
+    if (set_finalize_result != -1) {
+        return -4;
+    }
+    if (api->error_get_message(0) != 0) {
+        return -5;
+    }
+    if (api->module_set_bool(module_ctx, "NULL_CTX_GUARDS", 1) != 0) {
+        return -6;
+    }
+    return 0;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_file = shared_library_filename("native_null_module_ctx");
+    let library_path = temp_root.join(&library_file);
+    compile_shared_extension(&source_path, &library_path)
+        .expect("compiled extension library should build");
+
+    let manifest_path = temp_root.join("native_null_module_ctx.pyrs-ext");
+    fs::write(
+        &manifest_path,
+        format!(
+            "module=native_null_module_ctx\nabi=pyrs314\nentrypoint=dynamic:pyrs_extension_init_v1\nlibrary={library_file}\n"
+        ),
+    )
+    .expect("manifest should be written");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import native_null_module_ctx\nassert native_null_module_ctx.NULL_CTX_GUARDS is True",
+    )
+    .expect("null-module-ctx extension import should succeed");
+
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}

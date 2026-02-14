@@ -161,6 +161,88 @@ def build_numpy_from_source(
     )
 
 
+def probe_local_numpy_install(
+    python_probe_bin: str,
+    timeout_secs: int,
+) -> tuple[dict[str, Any], pathlib.Path | None]:
+    snippet = (
+        "import importlib.util, json, pathlib\n"
+        "spec = importlib.util.find_spec('numpy')\n"
+        "if spec is None or not spec.origin:\n"
+        "    print(json.dumps({'status': 'NOT_FOUND', 'ok': False}))\n"
+        "else:\n"
+        "    origin = str(pathlib.Path(spec.origin).resolve())\n"
+        "    path_root = str(pathlib.Path(origin).parent.parent)\n"
+        "    print(json.dumps({'status': 'FOUND', 'ok': True, 'origin': origin, 'path_root': path_root}))\n"
+    )
+    cmd = [python_probe_bin, "-c", snippet]
+    try:
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout_secs,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            {
+                "status": "ERROR",
+                "ok": False,
+                "reason": f"timeout after {timeout_secs}s",
+                "cmd": cmd,
+            },
+            None,
+        )
+    if completed.returncode != 0:
+        return (
+            {
+                "status": "ERROR",
+                "ok": False,
+                "reason": "python probe command failed",
+                "cmd": cmd,
+                "returncode": completed.returncode,
+                "stdout": completed.stdout.strip(),
+                "stderr": completed.stderr.strip(),
+            },
+            None,
+        )
+    payload_text = completed.stdout.strip()
+    if not payload_text:
+        return (
+            {
+                "status": "ERROR",
+                "ok": False,
+                "reason": "python probe produced empty output",
+                "cmd": cmd,
+            },
+            None,
+        )
+    try:
+        payload = json.loads(payload_text)
+    except json.JSONDecodeError:
+        return (
+            {
+                "status": "ERROR",
+                "ok": False,
+                "reason": "python probe produced non-JSON output",
+                "cmd": cmd,
+                "stdout": payload_text,
+            },
+            None,
+        )
+    status = payload.get("status")
+    if status == "FOUND":
+        path_root = payload.get("path_root")
+        if isinstance(path_root, str) and path_root:
+            return (payload, pathlib.Path(path_root))
+        payload["status"] = "ERROR"
+        payload["ok"] = False
+        payload["reason"] = "missing path_root in probe payload"
+        return (payload, None)
+    return (payload, None)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -182,6 +264,16 @@ def main() -> int:
         "--python-build-bin",
         default=os.environ.get("PYRS_NUMPY_BUILD_PYTHON", "python3"),
         help="Python executable used for source-build phase (default: python3)",
+    )
+    parser.add_argument(
+        "--probe-local-numpy",
+        action="store_true",
+        help="Probe local Python for an installed NumPy and add its site-packages root to PYTHONPATH for gate runs.",
+    )
+    parser.add_argument(
+        "--python-probe-bin",
+        default=os.environ.get("PYRS_NUMPY_PROBE_PYTHON", "python3"),
+        help="Python executable used for --probe-local-numpy (default: python3)",
     )
     parser.add_argument(
         "--build-timeout",
@@ -227,6 +319,7 @@ def main() -> int:
             "failed": 0,
             "skipped": 0,
         },
+        "local_numpy_probe": None,
     }
 
     if not pyrs_bin.is_file():
@@ -264,6 +357,35 @@ def main() -> int:
             "ok": False,
             "reason": "--numpy-src not provided",
         }
+
+    if args.probe_local_numpy:
+        local_numpy_report, local_numpy_path = probe_local_numpy_install(
+            args.python_probe_bin,
+            args.timeout,
+        )
+        report["local_numpy_probe"] = {
+            "python_probe_bin": args.python_probe_bin,
+            **local_numpy_report,
+        }
+        if local_numpy_path is not None:
+            python_paths.append(local_numpy_path)
+        print(f"[numpy-gate] local numpy probe: {local_numpy_report.get('status', 'ERROR')}")
+    else:
+        report["local_numpy_probe"] = {
+            "status": "SKIP",
+            "ok": False,
+            "reason": "--probe-local-numpy not provided",
+        }
+
+    dedup_paths: list[pathlib.Path] = []
+    seen_path_text: set[str] = set()
+    for path in python_paths:
+        path_text = str(path)
+        if path_text in seen_path_text:
+            continue
+        seen_path_text.add(path_text)
+        dedup_paths.append(path)
+    python_paths = dedup_paths
 
     for case_name, source in CASES:
         result = run_case(pyrs_bin, source, args.timeout, cpython_lib, python_paths)
