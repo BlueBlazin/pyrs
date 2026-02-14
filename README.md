@@ -15,7 +15,7 @@
 - Substantial pure-Python execution: modules/packages, classes, closures, generators, comprehensions, core async flows.
 - CPython `.pyc` execution for a supported subset, including sourceless import fallback paths and exception-table `try`/`except`/`with` baseline semantics.
 - Broad stdlib foundation (`sys`, import foundations, `os`/`pathlib`, `json`, `re`, `math`, `datetime`, `random`, `sqlite3` baseline, core `asyncio`/`threading`/`signal`).
-- Interactive REPL via `pyrs` with line editing/history, tab completion, multiline input, and repr-style expression echo. REPL banner is `RSPYTHON`.
+- Interactive REPL via `pyrs` with syntax highlighting, history, multiline input, repr-style expression echo, and banner `RSPYTHON`.
 - Curated CPython harness suites and project test suite are green.
 
 ## Current Limits
@@ -74,6 +74,22 @@ REPL commands:
 
 ```text
 :help   :clear   :paste   :timing   :reset   :exit/:quit
+%time <expr-or-stmt>
+```
+
+REPL keys:
+
+```text
+Tab                     insert 4 spaces
+Shift-Tab / Ctrl-Space  open completion menu
+```
+
+REPL startup script:
+
+```text
+default: ~/.pyrsrc
+override: PYRS_REPL_INIT=/path/to/init.py
+disable: PYRS_REPL_INIT=""
 ```
 
 Run from piped stdin (non-interactive mode):
