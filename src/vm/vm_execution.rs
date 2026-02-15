@@ -9093,8 +9093,12 @@ impl Vm {
 
     pub(super) fn native_method_pickle_name(&self, kind: NativeMethodKind) -> Option<&'static str> {
         match kind {
+            NativeMethodKind::ListEq => Some("__eq__"),
+            NativeMethodKind::ListNe => Some("__ne__"),
             NativeMethodKind::TupleCount => Some("count"),
             NativeMethodKind::TupleIndex => Some("index"),
+            NativeMethodKind::TupleEq => Some("__eq__"),
+            NativeMethodKind::TupleNe => Some("__ne__"),
             NativeMethodKind::StrCount => Some("count"),
             NativeMethodKind::StrIndex => Some("index"),
             NativeMethodKind::SetContains => Some("__contains__"),

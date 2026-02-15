@@ -1063,6 +1063,8 @@ impl Vm {
         }
         let kind = match attr_name {
             "__init__" => NativeMethodKind::ListInit,
+            "__eq__" => NativeMethodKind::ListEq,
+            "__ne__" => NativeMethodKind::ListNe,
             "append" => NativeMethodKind::ListAppend,
             "extend" => NativeMethodKind::ListExtend,
             "insert" => NativeMethodKind::ListInsert,
@@ -1092,6 +1094,8 @@ impl Vm {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, tuple));
         }
         let kind = match attr_name {
+            "__eq__" => NativeMethodKind::TupleEq,
+            "__ne__" => NativeMethodKind::TupleNe,
             "count" => NativeMethodKind::TupleCount,
             "index" => NativeMethodKind::TupleIndex,
             _ => {

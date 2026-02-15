@@ -763,6 +763,74 @@ impl Vm {
                     self.heap.alloc_list(values.clone()),
                 ))
             }
+            cmp_kind @ (NativeMethodKind::ListEq | NativeMethodKind::ListNe) => {
+                if args.len() != 1 {
+                    let method_name = if matches!(cmp_kind, NativeMethodKind::ListEq) {
+                        "list.__eq__"
+                    } else {
+                        "list.__ne__"
+                    };
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects one argument"
+                    )));
+                }
+                let left_values = {
+                    let receiver_kind = receiver.kind();
+                    let Object::List(values) = &*receiver_kind else {
+                        return Err(RuntimeError::new("list comparison receiver must be list"));
+                    };
+                    values.clone()
+                };
+                let right_values = match args.remove(0) {
+                    Value::List(list_obj) => {
+                        let list_kind = list_obj.kind();
+                        let Object::List(values) = &*list_kind else {
+                            return Err(RuntimeError::new("list comparison argument must be list"));
+                        };
+                        Some(values.clone())
+                    }
+                    Value::Instance(instance) => {
+                        let Some(backing) = self.instance_backing_list(&instance) else {
+                            return Ok(NativeCallResult::Value(Value::Bool(!matches!(
+                                cmp_kind,
+                                NativeMethodKind::ListEq
+                            ))));
+                        };
+                        let list_kind = backing.kind();
+                        let Object::List(values) = &*list_kind else {
+                            return Ok(NativeCallResult::Value(Value::Bool(!matches!(
+                                cmp_kind,
+                                NativeMethodKind::ListEq
+                            ))));
+                        };
+                        Some(values.clone())
+                    }
+                    _ => None,
+                };
+                let equals = if let Some(right_values) = right_values {
+                    if left_values.len() != right_values.len() {
+                        false
+                    } else {
+                        let mut all_equal = true;
+                        for (left, right) in left_values.iter().zip(right_values.iter()) {
+                            let result = self.compare_eq_runtime(left.clone(), right.clone())?;
+                            if !self.truthy_from_value(&result)? {
+                                all_equal = false;
+                                break;
+                            }
+                        }
+                        all_equal
+                    }
+                } else {
+                    false
+                };
+                let value = if matches!(cmp_kind, NativeMethodKind::ListEq) {
+                    equals
+                } else {
+                    !equals
+                };
+                Ok(NativeCallResult::Value(Value::Bool(value)))
+            }
             NativeMethodKind::TupleCount => {
                 if args.is_empty() {
                     return Err(RuntimeError::new("tuple.count() expects one argument"));
@@ -814,6 +882,76 @@ impl Vm {
                     }
                     _ => Err(RuntimeError::new("tuple.count() receiver must be tuple")),
                 }
+            }
+            cmp_kind @ (NativeMethodKind::TupleEq | NativeMethodKind::TupleNe) => {
+                if args.len() != 1 {
+                    let method_name = if matches!(cmp_kind, NativeMethodKind::TupleEq) {
+                        "tuple.__eq__"
+                    } else {
+                        "tuple.__ne__"
+                    };
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects one argument"
+                    )));
+                }
+                let left_values = {
+                    let receiver_kind = receiver.kind();
+                    let Object::Tuple(values) = &*receiver_kind else {
+                        return Err(RuntimeError::new("tuple comparison receiver must be tuple"));
+                    };
+                    values.clone()
+                };
+                let right_values = match args.remove(0) {
+                    Value::Tuple(tuple_obj) => {
+                        let tuple_kind = tuple_obj.kind();
+                        let Object::Tuple(values) = &*tuple_kind else {
+                            return Err(RuntimeError::new(
+                                "tuple comparison argument must be tuple",
+                            ));
+                        };
+                        Some(values.clone())
+                    }
+                    Value::Instance(instance) => {
+                        let Some(backing) = self.instance_backing_tuple(&instance) else {
+                            return Ok(NativeCallResult::Value(Value::Bool(!matches!(
+                                cmp_kind,
+                                NativeMethodKind::TupleEq
+                            ))));
+                        };
+                        let tuple_kind = backing.kind();
+                        let Object::Tuple(values) = &*tuple_kind else {
+                            return Ok(NativeCallResult::Value(Value::Bool(!matches!(
+                                cmp_kind,
+                                NativeMethodKind::TupleEq
+                            ))));
+                        };
+                        Some(values.clone())
+                    }
+                    _ => None,
+                };
+                let equals = if let Some(right_values) = right_values {
+                    if left_values.len() != right_values.len() {
+                        false
+                    } else {
+                        let mut all_equal = true;
+                        for (left, right) in left_values.iter().zip(right_values.iter()) {
+                            let result = self.compare_eq_runtime(left.clone(), right.clone())?;
+                            if !self.truthy_from_value(&result)? {
+                                all_equal = false;
+                                break;
+                            }
+                        }
+                        all_equal
+                    }
+                } else {
+                    false
+                };
+                let value = if matches!(cmp_kind, NativeMethodKind::TupleEq) {
+                    equals
+                } else {
+                    !equals
+                };
+                Ok(NativeCallResult::Value(Value::Bool(value)))
             }
             NativeMethodKind::TupleIndex => {
                 let find_index = |values: &[Value],

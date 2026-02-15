@@ -227,6 +227,36 @@ PyObject *Py_BuildValue(const char *format, ...) {
     return NULL;
 }
 
+__attribute__((used)) PyObject *PyTuple_Pack(long size, ...) {
+    if (size < 0) {
+        pyrs_py_buildvalue_error("PyTuple_Pack requires non-negative size");
+        return NULL;
+    }
+    PyObject *tuple = PyTuple_New(size);
+    if (tuple == NULL) {
+        return NULL;
+    }
+    va_list ap;
+    va_start(ap, size);
+    for (long i = 0; i < size; i++) {
+        PyObject *value = va_arg(ap, PyObject *);
+        if (value == NULL) {
+            va_end(ap);
+            Py_DecRef(tuple);
+            pyrs_py_buildvalue_error("PyTuple_Pack received null item");
+            return NULL;
+        }
+        Py_IncRef(value);
+        if (PyTuple_SetItem(tuple, i, value) != 0) {
+            va_end(ap);
+            Py_DecRef(tuple);
+            return NULL;
+        }
+    }
+    va_end(ap);
+    return tuple;
+}
+
 static int pyrs_count_call_units(const char *format) {
     if (format == NULL) {
         return -1;

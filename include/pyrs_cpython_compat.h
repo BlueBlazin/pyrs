@@ -65,6 +65,7 @@ const char *PyUnicode_AsUTF8(PyObject *object);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
 int PyBytes_AsStringAndSize(PyObject *object, char **buffer, long long *len);
 PyObject *PyTuple_New(long long size);
+PyObject *PyTuple_Pack(long long size, ...);
 long long PyTuple_Size(PyObject *tuple);
 PyObject *PyTuple_GetItem(PyObject *tuple, long long index);
 int PyTuple_SetItem(PyObject *tuple, long long index, PyObject *item);
