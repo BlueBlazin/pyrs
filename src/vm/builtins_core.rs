@@ -584,6 +584,38 @@ impl Vm {
         Ok(Value::Str(out))
     }
 
+    pub(crate) fn render_value_repr_for_display(
+        &mut self,
+        value: Value,
+    ) -> Result<String, RuntimeError> {
+        if !self.frames.is_empty() {
+            return match self.builtin_repr(vec![value], HashMap::new())? {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+            };
+        }
+        const TEMP_REPR_NAME: &str = "__pyrs_repl_repr_target__";
+        let previous = self.get_global(TEMP_REPR_NAME);
+        self.set_global(TEMP_REPR_NAME, value);
+        let render_result = (|| -> Result<String, RuntimeError> {
+            let expr = parser::parse_expression("repr(__pyrs_repl_repr_target__)")
+                .map_err(|err| RuntimeError::new(format!("repr() parse failed: {}", err.message)))?;
+            let code = compiler::compile_expression_with_filename(&expr, "<repl-repr>")
+                .map_err(|err| RuntimeError::new(format!("repr() compile failed: {}", err.message)))?;
+            match self.execute(&code)? {
+                Value::Str(text) => Ok(text),
+                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+            }
+        })();
+        match previous {
+            Some(value) => self.set_global(TEMP_REPR_NAME, value),
+            None => {
+                self.remove_global(TEMP_REPR_NAME);
+            }
+        }
+        render_result
+    }
+
     pub(super) fn builtin_locals(
         &mut self,
         args: Vec<Value>,

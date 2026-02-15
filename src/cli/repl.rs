@@ -20,7 +20,7 @@ use crate::VERSION;
 use crate::ast::{Module, StmtKind};
 use crate::compiler;
 use crate::parser::{self, ParseError};
-use crate::runtime::{Object, Value, format_repr};
+use crate::runtime::{Object, Value};
 use crate::stdlib;
 use crate::vm::Vm;
 
@@ -1767,7 +1767,10 @@ fn execute_parsed_module(
             .execute(&code)
             .map_err(|err| format!("runtime error: {}", err.message))?;
         if !matches!(value, Value::None) {
-            println!("{}", format_repr(&value));
+            let rendered = vm
+                .render_value_repr_for_display(value)
+                .map_err(|err| format!("runtime error: {}", err.message))?;
+            println!("{rendered}");
         }
         return Ok(());
     }
@@ -2136,5 +2139,22 @@ mod tests {
             format!("{:?}", dark.keyword_style),
             format!("{:?}", light.keyword_style)
         );
+    }
+
+    #[test]
+    fn repl_expression_render_uses_python_repr_protocol() {
+        let mut vm = super::build_vm(false, true).expect("vm");
+        super::execute_module_source(
+            &mut vm,
+            "class A:\n    def __repr__(self):\n        return 'custom-repr'\na = A()\n",
+            "<stdin>",
+            false,
+        )
+        .expect("module execution should succeed");
+        let value = vm.get_global("a").expect("global should exist");
+        let rendered = vm
+            .render_value_repr_for_display(value)
+            .expect("repr should render");
+        assert_eq!(rendered, "custom-repr");
     }
 }

@@ -991,6 +991,22 @@ impl Vm {
         }
     }
 
+    pub(crate) fn remove_global(&mut self, name: &str) -> Option<Value> {
+        let mut removed = None;
+        let mut touched_version = None;
+        if let Object::Module(module) = &mut *self.main_module.kind_mut() {
+            removed = module.globals.remove(name);
+            if removed.is_some() {
+                module.touch_globals_version();
+                touched_version = Some(module.globals_version);
+            }
+        }
+        if let Some(version) = touched_version {
+            self.propagate_module_globals_version(self.main_module.id(), version);
+        }
+        removed
+    }
+
     #[inline]
     fn touch_builtins_version(&mut self) {
         self.builtins_version = self.builtins_version.wrapping_add(1);

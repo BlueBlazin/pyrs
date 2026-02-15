@@ -180,6 +180,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - local shim retirement checkpoint: `shims/pyexpat.py` and `shims/pkgutil.py` are removed; native runtime fallbacks now cover `pyexpat` and `pkgutil` surfaces.
   - allowlist-restricted local shim fallback remains enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`) for `importlib.resources` only.
   - REPL checkpoint: no-arg CLI path now starts an interactive `reedline` REPL (`RSPYTHON` banner, Python syntax highlighting, Tab=4-space indentation, Shift-Tab/Ctrl-Space completion menu, dotted member completion, multiline, `%time` one-shot timing, `:paste`/`:timing`/`:reset` controls, optional startup script `~/.pyrsrc`/`PYRS_REPL_INIT`), while non-interactive no-arg runs consume stdin as script input (CPython-like `python < file.py` behavior).
+  - REPL expression echo now routes through Python-level `repr(...)` protocol (instead of raw `format_repr` fallback), so bridge-backed objects like NumPy arrays display CPython-style repr text in interactive output.
   - builtin type-repr checkpoint: `repr(type(7))`, `repr(int)`, and `repr(type)` now match CPython class-style formatting (`<class 'int'>`, `<class 'type'>`) instead of generic `<builtin>`.
 - Extended probe remaining red modules: none (`50/50` smoke green).
 
