@@ -37,3 +37,4 @@ Use this file to find canonical ownership quickly.
 - `docs/DICT_BACKEND_BENCHMARK.md`: dict backend benchmark snapshot artifact.
 - `docs/CLONE_AUDIT.md`, `docs/CLONE_BASELINE.txt`: clone pressure inventory.
 - `docs/MILESTONE_12_BACKLOG.md`: historical milestone-12 closure report.
+- `docs/DEVELOPER_TOOLING.md`: optional local dev tooling install and sanitizer runbook.

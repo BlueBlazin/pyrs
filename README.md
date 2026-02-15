@@ -138,6 +138,12 @@ Run tests:
 cargo test
 ```
 
+Install optional developer tools:
+
+```bash
+./scripts/bootstrap_dev_tools.sh
+```
+
 Run parity profile:
 
 ```bash
@@ -180,4 +186,5 @@ Curated smoke/parity tests run subprocesses in a constrained mode (`env_clear`, 
 - Compatibility tracker: `docs/COMPATIBILITY.md`
 - Production readiness accounting: `docs/PRODUCTION_READINESS.md`
 - Stub/partial ledger: `docs/STUB_ACCOUNTING.md`
+- Developer tooling + sanitizer runbook: `docs/DEVELOPER_TOOLING.md`
 - Project context for agent workflows: `AGENTS.md`
