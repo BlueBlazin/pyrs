@@ -4745,7 +4745,9 @@ impl Vm {
                         let attr = match self.load_attr_module(&module_obj, &attr_name) {
                             Ok(attr) => attr,
                             Err(load_err) => {
-                                if let Some(module) = self.load_submodule(&module_obj, &attr_name) {
+                                if let Some(module) =
+                                    self.load_submodule_with_error(&module_obj, &attr_name)?
+                                {
                                     Value::Module(module)
                                 } else if load_err.message.contains("has no attribute") {
                                     return Err(RuntimeError::new(format!(

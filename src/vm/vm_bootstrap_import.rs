@@ -6558,10 +6558,14 @@ impl Vm {
         self.find_module_source(name).map(|info| info.path)
     }
 
-    pub(super) fn load_submodule(&mut self, parent: &ObjRef, attr_name: &str) -> Option<ObjRef> {
+    pub(super) fn load_submodule_with_error(
+        &mut self,
+        parent: &ObjRef,
+        attr_name: &str,
+    ) -> Result<Option<ObjRef>, RuntimeError> {
         let parent_name = match &*parent.kind() {
             Object::Module(module) => module.name.clone(),
-            _ => return None,
+            _ => return Ok(None),
         };
         if std::env::var_os("PYRS_TRACE_SUBMODULE").is_some() {
             let seen = SUBMODULE_TRACE_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
@@ -6578,15 +6582,15 @@ impl Vm {
             match dict_get_value(&modules_dict, &key) {
                 Some(Value::Module(module)) => {
                     self.modules.insert(full_name.clone(), module.clone());
-                    return Some(module);
+                    return Ok(Some(module));
                 }
                 Some(Value::None) => {
                     self.modules.remove(&full_name);
-                    return None;
+                    return Ok(None);
                 }
                 Some(_) => {
                     self.modules.remove(&full_name);
-                    return None;
+                    return Ok(None);
                 }
                 None => {
                     missing_from_sys_modules = true;
@@ -6596,15 +6600,20 @@ impl Vm {
         if missing_from_sys_modules {
             self.modules.remove(&full_name);
         } else if let Some(module) = self.modules.get(&full_name).cloned() {
-            return Some(module);
+            return Ok(Some(module));
         }
-        if self.find_module_file(&full_name).is_some()
-            && let Ok(module) = self.import_module_object(&full_name)
-        {
+        if self.find_module_file(&full_name).is_some() {
+            let module = self.import_module_object(&full_name)?;
             self.upsert_module_global(parent, attr_name, Value::Module(module.clone()));
-            return Some(module);
+            return Ok(Some(module));
         }
-        None
+        Ok(None)
+    }
+
+    pub(super) fn load_submodule(&mut self, parent: &ObjRef, attr_name: &str) -> Option<ObjRef> {
+        self.load_submodule_with_error(parent, attr_name)
+            .ok()
+            .flatten()
     }
 
     pub(super) fn ensure_module(&mut self, name: &str) -> ObjRef {

@@ -41,6 +41,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension manifest parser + suffix baseline (`.pyrs-ext`, ABI `pyrs314`) is landed (`src/extensions/mod.rs`).
   - import loader now recognizes extension manifests and direct shared objects (`.so`/`.dylib`/`.pyd`), including tagged CPython-style filenames (`module.cpython-314-*.so`), and executes them through `pyrs.ExtensionFileLoader`.
   - direct shared-object import now emits explicit unsupported diagnostics when only CPython-style `PyInit_*` symbols are present (no silent/ambiguous symbol-miss failures).
+  - extension submodule fallback now propagates nested import failures (instead of silently collapsing to generic `cannot import name` in `from pkg import submodule` flows), so NumPy gate failures surface explicit ABI-mode mismatch diagnostics.
   - loaded native modules now publish symbol diagnostics metadata (`__pyrs_extension_expected_symbol__`, `__pyrs_extension_symbol_family__`) for ABI-mode visibility.
   - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`) and now includes module setters, native callable registration (`module_add_function`, `module_add_function_kw`), init-scoped object handles + type/getter introspection (`object_new_*`, `module_set_object`, `object_incref/decref`, `object_type`, `object_get_*`), and import-time error state (`error_set/clear/occurred`).
   - C-API v1 now includes `module_get_object(...)` for handle-based reads of module globals during extension init/call paths.
@@ -139,6 +140,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - CPython harness import suites (`runs_cpython_language_suite`, `runs_cpython_import_suite`) now run on dedicated 32MB stack threads to avoid debug-thread stack overflows during deep import chains.
   - strict stdlib lane remains green after enum-shim retirement (`PYRS_RUN_STRICT_STDLIB=1 cargo test -q --test cpython_harness runs_cpython_strict_stdlib_suite`).
   - builtin callable/type object repr/str parity checkpoint: `type(7)`/`str(type)` render CPython-style `<class '...'>`, and builtin callables now render `<built-in function ...>` in both `repr(...)` and `str(...)`.
+  - import-exception parity checkpoint: `ImportError` / `ModuleNotFoundError` now populate `msg`/`name`/`path` consistently across constructor and runtime-conversion paths (required by NumPy import error-handling paths).
   - `_io.open` now preserves raw bytes paths when dispatching opener callbacks (no lossy bytes->str conversion), with regression coverage in `tests/vm.rs::io_open_passes_bytes_path_to_opener_without_lossy_conversion`.
   - `_sqlite3.connect` / `Connection.__init__` now preserve raw bytes/bytearray database paths when calling `sqlite3_open_v2` (no lossy UTF-8 replacement in native handoff).
   - `_sqlite3.connect` now accepts path-like (`__fspath__`) database arguments, matching CPython DB-API expectations.
