@@ -523,6 +523,7 @@ fn imports_direct_cpython_style_single_phase_extension() {
     fs::write(
         &source_path,
         r#"#include "pyrs_cpython_compat.h"
+extern int PyDict_SetItemString(PyObject *dict, const char *key, PyObject *value);
 
 static struct PyModuleDef module_def = {
     PyModuleDef_HEAD_INIT,
@@ -564,6 +565,126 @@ PyInit_cpython_single_phase(void) {
         "import cpython_single_phase\nassert cpython_single_phase.ANSWER == 42\nassert cpython_single_phase.SOURCE == 'cpython-single-phase'\nassert cpython_single_phase.__pyrs_extension_symbol_family__ == 'cpython'\nassert cpython_single_phase.__pyrs_extension_expected_symbol__ == 'PyInit_cpython_single_phase'",
     )
     .expect("cpython single-phase extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_varargs_parse_and_call_helpers_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython varargs helper smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython varargs helper smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_varargs");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_varargs_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+extern int PyDict_SetItemString(PyObject *dict, const char *key, PyObject *value);
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_varargs_probe",
+    "cpython varargs helpers probe",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+static int unicode_to_cstr(PyObject *value, void *out) {
+    const char *text = PyUnicode_AsUTF8(value);
+    if (!text) {
+        return 0;
+    }
+    *(const char **)out = text;
+    return 1;
+}
+
+PyMODINIT_FUNC
+PyInit_cpython_varargs_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *args = PyTuple_New(0);
+    PyObject *kwargs = Py_BuildValue("{s:O}", "coerce", PyBool_FromLong(0));
+    if (kwargs && PyDict_SetItemString(kwargs, "na_object", PyUnicode_FromString("NA")) != 0) {
+        return 0;
+    }
+    if (!args || !kwargs) {
+        return 0;
+    }
+
+    int coerce = 1;
+    const char *na_object = "";
+    const char *const keywords[] = {"coerce", "na_object", 0};
+    if (!PyArg_ParseTupleAndKeywords(
+            args,
+            kwargs,
+            "|$pO&:StringDType",
+            keywords,
+            &coerce,
+            unicode_to_cstr,
+            &na_object
+        )) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "PARSED_COERCE", coerce) != 0) {
+        return 0;
+    }
+    if (PyModule_AddStringConstant(module, "PARSED_NA_OBJECT", na_object) != 0) {
+        return 0;
+    }
+
+    PyObject *mapping = Py_BuildValue("{s:O}", "x", PyLong_FromLong(7));
+    PyObject *mapped = PyObject_CallMethod(mapping, "__getitem__", "s", "x");
+    if (!mapped) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "CALL_METHOD_VALUE", PyLong_AsLongLong(mapped)) != 0) {
+        return 0;
+    }
+
+    PyObject *text = PyUnicode_FromString("alpha");
+    PyObject *startswith = PyObject_GetAttrString(text, "startswith");
+    PyObject *prefix = PyUnicode_FromString("a");
+    PyObject *starts_with = PyObject_CallFunctionObjArgs(startswith, prefix, (PyObject *)0);
+    if (!starts_with) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "CALL_OBJARGS_VALUE", PyObject_IsTrue(starts_with)) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename("cpython_varargs_probe"));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython varargs probe extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_varargs_probe\nassert cpython_varargs_probe.PARSED_COERCE == 0\nassert cpython_varargs_probe.PARSED_NA_OBJECT == 'NA'\nassert cpython_varargs_probe.CALL_METHOD_VALUE == 7\nassert cpython_varargs_probe.CALL_OBJARGS_VALUE == 1",
+    )
+    .expect("cpython varargs helper extension import should succeed");
 
     let _ = fs::remove_file(library_path);
     let _ = fs::remove_file(source_path);

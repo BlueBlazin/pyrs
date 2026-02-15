@@ -56,10 +56,32 @@ int PyModule_AddStringConstant(PyObject *module, const char *name, const char *v
 
 PyObject *PyLong_FromLong(long long value);
 PyObject *PyLong_FromLongLong(long long value);
+long long PyLong_AsLongLong(PyObject *object);
 PyObject *PyBool_FromLong(long long value);
 PyObject *PyFloat_FromDouble(double value);
+double PyFloat_AsDouble(PyObject *object);
 PyObject *PyUnicode_FromString(const char *value);
+const char *PyUnicode_AsUTF8(PyObject *object);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
+int PyBytes_AsStringAndSize(PyObject *object, char **buffer, long long *len);
+PyObject *PyTuple_New(long long size);
+long long PyTuple_Size(PyObject *tuple);
+PyObject *PyTuple_GetItem(PyObject *tuple, long long index);
+int PyTuple_SetItem(PyObject *tuple, long long index, PyObject *item);
+PyObject *Py_BuildValue(const char *format, ...);
+int PyArg_ParseTuple(PyObject *args, const char *format, ...);
+int PyArg_ParseTupleAndKeywords(
+    PyObject *args,
+    PyObject *kwargs,
+    const char *format,
+    const char *const *keywords,
+    ...
+);
+PyObject *PyObject_GetAttrString(PyObject *object, const char *name);
+PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *format, ...);
+PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
+int PyObject_IsTrue(PyObject *object);
+int PyObject_IsInstance(PyObject *object, PyObject *class_obj);
 
 void PyErr_SetString(PyObject *exception, const char *message);
 PyObject *PyErr_Occurred(void);

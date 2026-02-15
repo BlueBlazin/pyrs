@@ -625,6 +625,7 @@ struct ModuleCapiContext {
     objects: HashMap<PyrsObjectHandle, CapiObjectSlot>,
     capsules: HashMap<PyrsObjectHandle, CapiCapsuleSlot>,
     last_error: Option<String>,
+    first_error: Option<String>,
     scratch_strings: Vec<CString>,
     scratch_isize_arrays: Vec<Vec<isize>>,
     buffer_pins: HashMap<PyrsObjectHandle, usize>,
@@ -695,6 +696,7 @@ impl ModuleCapiContext {
             objects: HashMap::new(),
             capsules: HashMap::new(),
             last_error: None,
+            first_error: None,
             scratch_strings: Vec::new(),
             scratch_isize_arrays: Vec::new(),
             buffer_pins: HashMap::new(),
@@ -709,6 +711,15 @@ impl ModuleCapiContext {
     #[track_caller]
     fn set_error(&mut self, message: impl Into<String>) {
         let message = message.into();
+        if self.first_error.is_none() {
+            self.first_error = Some(message.clone());
+        }
+        if self.last_error.is_some()
+            && (message == "cannot load module more than once per process"
+                || message == "extension returned null module")
+        {
+            return;
+        }
         if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
             let caller = std::panic::Location::caller();
             eprintln!(
@@ -5278,20 +5289,7 @@ pub unsafe extern "C" fn PyTuple_GetItem(tuple: *mut c_void, index: isize) -> *m
                     .cast::<u8>()
                     .add(std::mem::size_of::<CpythonVarObjectHead>())
                     .cast::<*mut c_void>();
-                let raw_item = *items_ptr.add(idx as usize);
-                if !raw_item.is_null() {
-                    if let Some(value) = context.cpython_value_from_ptr_or_proxy(raw_item) {
-                        if let Some(tuple_handle) = context.cpython_handle_from_ptr(tuple)
-                            && let Some(tuple_slot) = context.objects.get_mut(&tuple_handle)
-                            && let Value::Tuple(tuple_obj) = &mut tuple_slot.value
-                            && let Object::Tuple(values) = &mut *tuple_obj.kind_mut()
-                            && (idx as usize) < values.len()
-                        {
-                            values[idx as usize] = value.clone();
-                        }
-                        return context.alloc_cpython_ptr_for_value(value);
-                    }
-                }
+                return *items_ptr.add(idx as usize);
             }
         }
         let Some(value) = context.cpython_value_from_ptr(tuple) else {
@@ -11566,8 +11564,9 @@ impl Vm {
                                     if status != 0 {
                                         cpython_set_active_context(previous_context);
                                         let message = module_ctx
-                                            .last_error
+                                            .first_error
                                             .clone()
+                                            .or_else(|| module_ctx.last_error.clone())
                                             .unwrap_or_else(|| "Py_mod_exec failed".to_string());
                                         if trace_slots {
                                             eprintln!(
