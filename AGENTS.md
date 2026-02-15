@@ -194,6 +194,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   2. Pure-stdlib strict-lane expansion/closure
 - Prefer official CPython pure-Python stdlib implementations where feasible.
 - Keep native handlers as substrate/accelerator layers, not replacement semantics.
+- When citing Python docs, always pin URLs to `https://docs.python.org/3.14/...` (do not use unversioned `.../3/...` links).
 - Local shim policy:
   - CPython `Lib/enum.py` path is now the default.
   - local `enum` shim has been retired (`shims/enum.py` removed); enum behavior now always follows CPython `Lib/enum.py` when stdlib is present.
