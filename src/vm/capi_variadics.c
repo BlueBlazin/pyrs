@@ -9,6 +9,8 @@ typedef intptr_t Py_ssize_t;
 
 extern void *pyrs_capi_tuple_pack_from_array(Py_ssize_t n, void *const *items);
 extern void pyrs_capi_set_error_message(const char *message);
+extern void *pyrs_capi_pyerr_format_fallback(void *exception, const char *format);
+extern void *pyrs_capi_pyerr_formatv_fallback(void *exception, const char *format, void *vargs);
 
 extern void *PyTuple_New(Py_ssize_t size);
 extern int PyTuple_SetItem(void *tuple, Py_ssize_t index, void *item);
@@ -37,6 +39,21 @@ extern void Py_IncRef(void *object);
 extern void Py_DecRef(void *object);
 extern char _Py_NoneStruct;
 extern char PyTuple_Type;
+
+void *PyErr_Format(void *exception, const char *format, ...)
+{
+    (void)exception;
+    va_list ap;
+    va_start(ap, format);
+    va_end(ap);
+    return pyrs_capi_pyerr_format_fallback(exception, format);
+}
+
+void *PyErr_FormatV(void *exception, const char *format, va_list vargs)
+{
+    (void)vargs;
+    return pyrs_capi_pyerr_formatv_fallback(exception, format, NULL);
+}
 
 typedef struct {
     Py_ssize_t ob_refcnt;
