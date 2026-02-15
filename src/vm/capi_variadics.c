@@ -1,0 +1,841 @@
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+typedef intptr_t Py_ssize_t;
+
+extern void *pyrs_capi_tuple_pack_from_array(Py_ssize_t n, void *const *items);
+extern void pyrs_capi_set_error_message(const char *message);
+
+extern void *PyTuple_New(Py_ssize_t size);
+extern int PyTuple_SetItem(void *tuple, Py_ssize_t index, void *item);
+extern Py_ssize_t PyTuple_Size(void *tuple);
+extern void *PyTuple_GetItem(void *tuple, Py_ssize_t index);
+extern void *PyList_New(Py_ssize_t size);
+extern int PyList_Append(void *list, void *item);
+extern void *PyDict_New(void);
+extern int PyDict_SetItem(void *dict, void *key, void *value);
+extern void *PyDict_GetItemString(void *dict, const char *key);
+extern void *PyLong_FromLong(long value);
+extern void *PyLong_FromUnsignedLong(unsigned long value);
+extern void *PyLong_FromLongLong(long long value);
+extern void *PyLong_FromUnsignedLongLong(unsigned long long value);
+extern void *PyLong_FromSsize_t(Py_ssize_t value);
+extern void *PyFloat_FromDouble(double value);
+extern void *PyBool_FromLong(long value);
+extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
+extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
+extern void *PyObject_CallObject(void *callable, void *args);
+extern void *PyObject_GetAttrString(void *object, const char *name);
+extern int PyObject_IsTrue(void *object);
+extern int PyType_IsSubtype(void *subtype, void *type);
+extern void *PyErr_Occurred(void);
+extern void Py_IncRef(void *object);
+extern void Py_DecRef(void *object);
+extern char _Py_NoneStruct;
+extern char PyTuple_Type;
+
+typedef struct {
+    Py_ssize_t ob_refcnt;
+    void *ob_type;
+} PyObjectHeadCompat;
+
+static int is_tuple_object(void *object)
+{
+    if (object == NULL) {
+        return 0;
+    }
+    PyObjectHeadCompat *head = (PyObjectHeadCompat *)object;
+    if (head->ob_type == (void *)&PyTuple_Type) {
+        return 1;
+    }
+    if (head->ob_type == NULL) {
+        return 0;
+    }
+    return PyType_IsSubtype(head->ob_type, (void *)&PyTuple_Type);
+}
+
+static void *build_none(void)
+{
+    void *none = (void *)&_Py_NoneStruct;
+    Py_IncRef(none);
+    return none;
+}
+
+static Py_ssize_t countformat(const char *format, char endchar)
+{
+    Py_ssize_t count = 0;
+    int level = 0;
+    while (level > 0 || *format != endchar) {
+        switch (*format) {
+            case '\0':
+                pyrs_capi_set_error_message("unmatched paren in format");
+                return -1;
+            case '(':
+            case '[':
+            case '{':
+                if (level == 0) {
+                    count++;
+                }
+                level++;
+                break;
+            case ')':
+            case ']':
+            case '}':
+                level--;
+                break;
+            case '#':
+            case '&':
+            case ',':
+            case ':':
+            case ' ':
+            case '\t':
+                break;
+            default:
+                if (level == 0) {
+                    count++;
+                }
+                break;
+        }
+        format++;
+    }
+    return count;
+}
+
+static int check_end(const char **format, char endchar)
+{
+    const char *cursor = *format;
+    while (*cursor != endchar) {
+        if (*cursor != ' ' && *cursor != '\t' && *cursor != ',' && *cursor != ':') {
+            pyrs_capi_set_error_message("unmatched paren in format");
+            return 0;
+        }
+        cursor++;
+    }
+    if (endchar != '\0') {
+        cursor++;
+    }
+    *format = cursor;
+    return 1;
+}
+
+static void *do_mkvalue(const char **format, va_list *args);
+
+static void *do_mktuple(const char **format, va_list *args, char endchar, Py_ssize_t n)
+{
+    if (n < 0) {
+        return NULL;
+    }
+    void *tuple = PyTuple_New(n);
+    if (tuple == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        void *item = do_mkvalue(format, args);
+        if (item == NULL) {
+            Py_DecRef(tuple);
+            return NULL;
+        }
+        if (PyTuple_SetItem(tuple, i, item) != 0) {
+            Py_DecRef(item);
+            Py_DecRef(tuple);
+            return NULL;
+        }
+    }
+    if (!check_end(format, endchar)) {
+        Py_DecRef(tuple);
+        return NULL;
+    }
+    return tuple;
+}
+
+static void *do_mklist(const char **format, va_list *args, char endchar, Py_ssize_t n)
+{
+    if (n < 0) {
+        return NULL;
+    }
+    void *list = PyList_New(0);
+    if (list == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        void *item = do_mkvalue(format, args);
+        if (item == NULL) {
+            Py_DecRef(list);
+            return NULL;
+        }
+        if (PyList_Append(list, item) != 0) {
+            Py_DecRef(item);
+            Py_DecRef(list);
+            return NULL;
+        }
+        Py_DecRef(item);
+    }
+    if (!check_end(format, endchar)) {
+        Py_DecRef(list);
+        return NULL;
+    }
+    return list;
+}
+
+static void *do_mkdict(const char **format, va_list *args, char endchar, Py_ssize_t n)
+{
+    if (n < 0) {
+        return NULL;
+    }
+    if ((n % 2) != 0) {
+        pyrs_capi_set_error_message("bad dict format");
+        return NULL;
+    }
+    void *dict = PyDict_New();
+    if (dict == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < n; i += 2) {
+        void *key = do_mkvalue(format, args);
+        if (key == NULL) {
+            Py_DecRef(dict);
+            return NULL;
+        }
+        void *value = do_mkvalue(format, args);
+        if (value == NULL) {
+            Py_DecRef(key);
+            Py_DecRef(dict);
+            return NULL;
+        }
+        if (PyDict_SetItem(dict, key, value) != 0) {
+            Py_DecRef(key);
+            Py_DecRef(value);
+            Py_DecRef(dict);
+            return NULL;
+        }
+        Py_DecRef(key);
+        Py_DecRef(value);
+    }
+    if (!check_end(format, endchar)) {
+        Py_DecRef(dict);
+        return NULL;
+    }
+    return dict;
+}
+
+static void *do_mkvalue(const char **format, va_list *args)
+{
+    int trace = getenv("PYRS_TRACE_CAPI_CALLF") != NULL;
+    for (;;) {
+        char token = *(*format)++;
+        if (trace) {
+            unsigned char u = (unsigned char)token;
+            fprintf(stderr,
+                    "[capi-do_mkvalue] token='%c' (0x%02x)\n",
+                    (u >= 32 && u < 127) ? token : '?',
+                    u);
+        }
+        switch (token) {
+            case '(':
+                return do_mktuple(format, args, ')', countformat(*format, ')'));
+            case '[':
+                return do_mklist(format, args, ']', countformat(*format, ']'));
+            case '{':
+                return do_mkdict(format, args, '}', countformat(*format, '}'));
+            case 'b':
+            case 'B':
+            case 'h':
+            case 'i':
+                return PyLong_FromLong((long)va_arg(*args, int));
+            case 'H':
+                return PyLong_FromLong((long)va_arg(*args, unsigned int));
+            case 'I':
+                return PyLong_FromUnsignedLong((unsigned long)va_arg(*args, unsigned int));
+            case 'n':
+                return PyLong_FromSsize_t(va_arg(*args, Py_ssize_t));
+            case 'l':
+                return PyLong_FromLong(va_arg(*args, long));
+            case 'k':
+                return PyLong_FromUnsignedLong(va_arg(*args, unsigned long));
+            case 'L':
+                return PyLong_FromLongLong(va_arg(*args, long long));
+            case 'K':
+                return PyLong_FromUnsignedLongLong(va_arg(*args, unsigned long long));
+            case 'f':
+            case 'd':
+                return PyFloat_FromDouble(va_arg(*args, double));
+            case 'p':
+                return PyBool_FromLong((long)va_arg(*args, int));
+            case 'c': {
+                char one[1];
+                one[0] = (char)va_arg(*args, int);
+                return PyBytes_FromStringAndSize(one, 1);
+            }
+            case 's':
+            case 'z':
+            case 'U':
+            case 'y': {
+                int trace = getenv("PYRS_TRACE_CAPI_CALLF") != NULL;
+                const char *text = va_arg(*args, const char *);
+                Py_ssize_t len = -1;
+                if (**format == '#') {
+                    (*format)++;
+                    len = va_arg(*args, Py_ssize_t);
+                }
+                if (text == NULL) {
+                    return build_none();
+                }
+                if (len < 0) {
+                    size_t measured = strlen(text);
+                    if (measured > (size_t)INTPTR_MAX) {
+                        pyrs_capi_set_error_message("string too long for Py_BuildValue");
+                        return NULL;
+                    }
+                    len = (Py_ssize_t)measured;
+                }
+                if (token == 'y') {
+                    void *bytes_value = PyBytes_FromStringAndSize(text, len);
+                    if (trace) {
+                        fprintf(stderr,
+                                "[capi-callf-str] token=%c text_ptr=%p len=%zd result=%p\n",
+                                token,
+                                (const void *)text,
+                                (ssize_t)len,
+                                bytes_value);
+                    }
+                    return bytes_value;
+                }
+                void *unicode_value = PyUnicode_FromStringAndSize(text, len);
+                if (trace) {
+                    fprintf(stderr,
+                            "[capi-callf-str] token=%c text_ptr=%p len=%zd result=%p\n",
+                            token,
+                            (const void *)text,
+                            (ssize_t)len,
+                            unicode_value);
+                }
+                return unicode_value;
+            }
+            case 'N':
+            case 'S':
+            case 'O': {
+                if (**format == '&') {
+                    pyrs_capi_set_error_message(
+                        "Py_BuildValue converter callbacks (O&) are not implemented"
+                    );
+                    return NULL;
+                }
+                void *object = va_arg(*args, void *);
+                if (object == NULL) {
+                    pyrs_capi_set_error_message("NULL object passed to Py_BuildValue");
+                    return NULL;
+                }
+                if (token != 'N') {
+                    Py_IncRef(object);
+                }
+                return object;
+            }
+            case ':':
+            case ',':
+            case ' ':
+            case '\t':
+                break;
+            case '\0':
+                pyrs_capi_set_error_message("bad format char passed to Py_BuildValue");
+                return NULL;
+            default:
+                pyrs_capi_set_error_message("bad format char passed to Py_BuildValue");
+                return NULL;
+        }
+    }
+}
+
+static void *va_build_value(const char *format, va_list *args)
+{
+    const char *cursor = format;
+    Py_ssize_t n = countformat(cursor, '\0');
+    if (n < 0) {
+        return NULL;
+    }
+    if (n == 0) {
+        return build_none();
+    }
+    if (n == 1) {
+        return do_mkvalue(&cursor, args);
+    }
+    return do_mktuple(&cursor, args, '\0', n);
+}
+
+static void *call_with_borrowed_stack(void *callable, void *const *stack, Py_ssize_t nargs)
+{
+    if (nargs == 0) {
+        return PyObject_CallObject(callable, NULL);
+    }
+    void *args_tuple = PyTuple_New(nargs);
+    if (args_tuple == NULL) {
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        void *item = stack[i];
+        if (item == NULL) {
+            pyrs_capi_set_error_message("PyObject_CallFunction received NULL argument");
+            Py_DecRef(args_tuple);
+            return NULL;
+        }
+        Py_IncRef(item);
+        if (PyTuple_SetItem(args_tuple, i, item) != 0) {
+            Py_DecRef(item);
+            Py_DecRef(args_tuple);
+            return NULL;
+        }
+    }
+    void *result = PyObject_CallObject(callable, args_tuple);
+    Py_DecRef(args_tuple);
+    return result;
+}
+
+static void *callfunction_va(void *callable, const char *format, va_list *ap)
+{
+    int trace = getenv("PYRS_TRACE_CAPI_CALLF") != NULL;
+    if (format == NULL || *format == '\0') {
+        return PyObject_CallObject(callable, NULL);
+    }
+    Py_ssize_t nargs = countformat(format, '\0');
+    if (nargs < 0) {
+        return NULL;
+    }
+    if (nargs == 0) {
+        return PyObject_CallObject(callable, NULL);
+    }
+
+    const char *cursor = format;
+    void *stack_items[16];
+    void **stack = stack_items;
+    if (nargs > (Py_ssize_t)(sizeof(stack_items) / sizeof(stack_items[0]))) {
+        size_t bytes = (size_t)nargs * sizeof(void *);
+        stack = (void **)malloc(bytes);
+        if (stack == NULL) {
+            pyrs_capi_set_error_message("PyObject_CallFunction failed allocating argument stack");
+            return NULL;
+        }
+    }
+
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        if (trace) {
+            unsigned char token = (unsigned char)*cursor;
+            fprintf(stderr, "[capi-callf-token] i=%zd token='%c' (0x%02x)\n",
+                    (ssize_t)i,
+                    (token >= 32 && token < 127) ? token : '?',
+                    token);
+        }
+        stack[i] = do_mkvalue(&cursor, ap);
+        if (stack[i] == NULL) {
+            for (Py_ssize_t j = 0; j < i; j++) {
+                Py_DecRef(stack[j]);
+            }
+            if (stack != stack_items) {
+                free(stack);
+            }
+            return NULL;
+        }
+    }
+    if (!check_end(&cursor, '\0')) {
+        for (Py_ssize_t i = 0; i < nargs; i++) {
+            Py_DecRef(stack[i]);
+        }
+        if (stack != stack_items) {
+            free(stack);
+        }
+        return NULL;
+    }
+    if (trace) {
+        fprintf(stderr, "[capi-callf] callable=%p format=%s nargs=%zd", callable, format, (ssize_t)nargs);
+        for (Py_ssize_t i = 0; i < nargs; i++) {
+            fprintf(stderr, " arg%zd=%p", (ssize_t)i, stack[i]);
+        }
+        fprintf(stderr, "\n");
+    }
+
+    void *result = NULL;
+    if (nargs == 1 && is_tuple_object(stack[0])) {
+        /* CPython quirk compatibility:
+         *   - PyObject_CallFunction(f, "O", tuple) => f(*tuple)
+         *   - PyObject_CallFunction(f, "(OO)", a, b) => f(*(a, b)) == f(a, b)
+         */
+        result = PyObject_CallObject(callable, stack[0]);
+    } else {
+        result = call_with_borrowed_stack(callable, (void *const *)stack, nargs);
+    }
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        Py_DecRef(stack[i]);
+    }
+    if (stack != stack_items) {
+        free(stack);
+    }
+    return result;
+}
+
+void *PyTuple_Pack(Py_ssize_t n, ...)
+{
+    if (n < 0) {
+        pyrs_capi_set_error_message("PyTuple_Pack requires non-negative size");
+        return NULL;
+    }
+    if (n == 0) {
+        return pyrs_capi_tuple_pack_from_array(0, NULL);
+    }
+
+    void *stack_items[16];
+    void **items = stack_items;
+    if (n > (Py_ssize_t)(sizeof(stack_items) / sizeof(stack_items[0]))) {
+        size_t bytes = (size_t)n * sizeof(void *);
+        items = (void **)malloc(bytes);
+        if (items == NULL) {
+            pyrs_capi_set_error_message("PyTuple_Pack failed allocating argument array");
+            return NULL;
+        }
+    }
+
+    va_list ap;
+    va_start(ap, n);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        items[i] = va_arg(ap, void *);
+    }
+    va_end(ap);
+
+    void *result = pyrs_capi_tuple_pack_from_array(n, (void *const *)items);
+    if (items != stack_items) {
+        free(items);
+    }
+    return result;
+}
+
+void *Py_BuildValue(const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void *result = va_build_value(format, &ap);
+    va_end(ap);
+    return result;
+}
+
+void *_Py_BuildValue_SizeT(const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void *result = va_build_value(format, &ap);
+    va_end(ap);
+    return result;
+}
+
+void *Py_VaBuildValue(const char *format, va_list ap)
+{
+    va_list copy;
+    va_copy(copy, ap);
+    void *result = va_build_value(format, &copy);
+    va_end(copy);
+    return result;
+}
+
+void *_Py_VaBuildValue_SizeT(const char *format, va_list ap)
+{
+    va_list copy;
+    va_copy(copy, ap);
+    void *result = va_build_value(format, &copy);
+    va_end(copy);
+    return result;
+}
+
+void *PyObject_CallFunction(void *callable, const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void *result = callfunction_va(callable, format, &ap);
+    va_end(ap);
+    return result;
+}
+
+void *_PyObject_CallFunction_SizeT(void *callable, const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void *result = callfunction_va(callable, format, &ap);
+    va_end(ap);
+    return result;
+}
+
+void *PyObject_CallMethod(void *object, const char *name, const char *format, ...)
+{
+    if (object == NULL || name == NULL) {
+        pyrs_capi_set_error_message("PyObject_CallMethod received null object/name");
+        return NULL;
+    }
+    void *callable = PyObject_GetAttrString(object, name);
+    if (callable == NULL) {
+        return NULL;
+    }
+    va_list ap;
+    va_start(ap, format);
+    void *result = callfunction_va(callable, format, &ap);
+    va_end(ap);
+    Py_DecRef(callable);
+    return result;
+}
+
+void *_PyObject_CallMethod_SizeT(void *object, const char *name, const char *format, ...)
+{
+    if (object == NULL || name == NULL) {
+        pyrs_capi_set_error_message("_PyObject_CallMethod_SizeT received null object/name");
+        return NULL;
+    }
+    void *callable = PyObject_GetAttrString(object, name);
+    if (callable == NULL) {
+        return NULL;
+    }
+    va_list ap;
+    va_start(ap, format);
+    void *result = callfunction_va(callable, format, &ap);
+    va_end(ap);
+    Py_DecRef(callable);
+    return result;
+}
+
+void *PyObject_CallFunctionObjArgs(void *callable, ...)
+{
+    void *stack_items[16];
+    void **stack = stack_items;
+    Py_ssize_t nargs = 0;
+    Py_ssize_t capacity = (Py_ssize_t)(sizeof(stack_items) / sizeof(stack_items[0]));
+
+    va_list ap;
+    va_start(ap, callable);
+    for (;;) {
+        void *arg = va_arg(ap, void *);
+        if (arg == NULL) {
+            break;
+        }
+        if (nargs == capacity) {
+            Py_ssize_t next_capacity = capacity * 2;
+            size_t bytes = (size_t)next_capacity * sizeof(void *);
+            if (stack == stack_items) {
+                stack = (void **)malloc(bytes);
+                if (stack == NULL) {
+                    va_end(ap);
+                    pyrs_capi_set_error_message(
+                        "PyObject_CallFunctionObjArgs failed allocating stack"
+                    );
+                    return NULL;
+                }
+                for (Py_ssize_t i = 0; i < nargs; i++) {
+                    stack[i] = stack_items[i];
+                }
+            } else {
+                void **grown = (void **)realloc(stack, bytes);
+                if (grown == NULL) {
+                    free(stack);
+                    va_end(ap);
+                    pyrs_capi_set_error_message(
+                        "PyObject_CallFunctionObjArgs failed growing stack"
+                    );
+                    return NULL;
+                }
+                stack = grown;
+            }
+            capacity = next_capacity;
+        }
+        stack[nargs++] = arg;
+    }
+    va_end(ap);
+
+    void *result = call_with_borrowed_stack(callable, (void *const *)stack, nargs);
+    if (stack != stack_items) {
+        free(stack);
+    }
+    return result;
+}
+
+typedef int (*arg_converter_fn)(void *value, void *output);
+
+static int parse_args_and_keywords_va(
+    void *args,
+    void *kwargs,
+    const char *format,
+    const char *const *keywords,
+    va_list *ap
+)
+{
+    if (format == NULL) {
+        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords received null format");
+        return 0;
+    }
+
+    const char *cursor = format;
+    while (*cursor != '\0' && *cursor != ':' && *cursor != ';') {
+        cursor++;
+    }
+    size_t format_len = (size_t)(cursor - format);
+    char *spec = (char *)malloc(format_len + 1);
+    if (spec == NULL) {
+        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords failed allocating format copy");
+        return 0;
+    }
+    memcpy(spec, format, format_len);
+    spec[format_len] = '\0';
+
+    Py_ssize_t positional_total = 0;
+    if (args != NULL) {
+        positional_total = PyTuple_Size(args);
+        if (positional_total < 0) {
+            free(spec);
+            return 0;
+        }
+    }
+
+    int optional = 0;
+    int keyword_only = 0;
+    Py_ssize_t positional_index = 0;
+    Py_ssize_t token_index = 0;
+    for (const char *p = spec; *p != '\0'; p++) {
+        char token = *p;
+        if (token == ' ' || token == '\t' || token == ',' || token == ':') {
+            continue;
+        }
+        if (token == '|') {
+            optional = 1;
+            continue;
+        }
+        if (token == '$') {
+            keyword_only = 1;
+            continue;
+        }
+
+        const char *keyword_name = NULL;
+        if (keywords != NULL) {
+            keyword_name = keywords[token_index];
+        }
+
+        void *value = NULL;
+        int present = 0;
+        if (!keyword_only && positional_index < positional_total) {
+            value = PyTuple_GetItem(args, positional_index++);
+            present = 1;
+            if (kwargs != NULL && keyword_name != NULL) {
+                void *duplicate = PyDict_GetItemString(kwargs, keyword_name);
+                if (duplicate != NULL) {
+                    free(spec);
+                    pyrs_capi_set_error_message(
+                        "PyArg_ParseTupleAndKeywords received duplicate positional/keyword argument"
+                    );
+                    return 0;
+                }
+            }
+        } else if (kwargs != NULL && keyword_name != NULL) {
+            value = PyDict_GetItemString(kwargs, keyword_name);
+            if (value != NULL) {
+                present = 1;
+            }
+        }
+
+        if (token == 'O' && p[1] == '&') {
+            p++;
+            arg_converter_fn converter = va_arg(*ap, arg_converter_fn);
+            void *output = va_arg(*ap, void *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (converter == NULL || converter(value, output) == 0) {
+                free(spec);
+                if (PyErr_Occurred() == NULL) {
+                    pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords converter failed");
+                }
+                return 0;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'p') {
+            int *output = va_arg(*ap, int *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            int truth = PyObject_IsTrue(value);
+            if (truth < 0) {
+                free(spec);
+                return 0;
+            }
+            if (output != NULL) {
+                *output = truth ? 1 : 0;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'O') {
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (output != NULL) {
+                *output = value;
+                Py_IncRef(value);
+            }
+            token_index++;
+            continue;
+        }
+
+        free(spec);
+        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords token is not implemented");
+        return 0;
+    }
+
+    if (positional_index < positional_total) {
+        free(spec);
+        pyrs_capi_set_error_message("too many positional arguments");
+        return 0;
+    }
+
+    free(spec);
+    return 1;
+}
+
+int PyArg_ParseTuple(void *args, const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    int result = parse_args_and_keywords_va(args, NULL, format, NULL, &ap);
+    va_end(ap);
+    return result;
+}
+
+int PyArg_ParseTupleAndKeywords(
+    void *args,
+    void *kwargs,
+    const char *format,
+    const char *const *keywords,
+    ...
+)
+{
+    va_list ap;
+    va_start(ap, keywords);
+    int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &ap);
+    va_end(ap);
+    return result;
+}

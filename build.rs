@@ -3,30 +3,26 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    let src = PathBuf::from("src/vm/cpython_varargs_shim.c");
-    println!("cargo:rerun-if-changed={}", src.display());
+    let src = "src/vm/capi_variadics.c";
+    println!("cargo:rerun-if-changed={src}");
 
-    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR should be set"));
-    let object = out_dir.join("cpython_varargs_shim.o");
-    let lib = out_dir.join("libcpython_varargs_shim.a");
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
+    let obj = out_dir.join("capi_variadics.o");
+    let compiler = env::var("CC").unwrap_or_else(|_| "cc".to_string());
 
-    let status = Command::new("cc")
+    let status = Command::new(&compiler)
+        .arg("-std=c11")
+        .arg("-fPIC")
         .arg("-c")
-        .arg(&src)
+        .arg(src)
         .arg("-o")
-        .arg(&object)
+        .arg(&obj)
         .status()
-        .expect("failed to invoke cc for cpython_varargs_shim.c");
-    assert!(status.success(), "cc failed for cpython_varargs_shim.c");
+        .unwrap_or_else(|err| panic!("failed to invoke C compiler '{compiler}': {err}"));
+    assert!(
+        status.success(),
+        "C compiler '{compiler}' failed building {src}"
+    );
 
-    let status = Command::new("ar")
-        .arg("crus")
-        .arg(&lib)
-        .arg(&object)
-        .status()
-        .expect("failed to invoke ar for cpython_varargs_shim.o");
-    assert!(status.success(), "ar failed for cpython_varargs_shim.o");
-
-    println!("cargo:rustc-link-search=native={}", out_dir.display());
-    println!("cargo:rustc-link-lib=static=cpython_varargs_shim");
+    println!("cargo:rustc-link-arg={}", obj.display());
 }
