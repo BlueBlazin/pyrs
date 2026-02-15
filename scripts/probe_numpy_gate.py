@@ -14,12 +14,38 @@ import tempfile
 import time
 from typing import Any
 
+CaseSpec = tuple[str, str, tuple[str, ...]]
 
-CASES: list[tuple[str, str]] = [
-    ("numpy_import", "import numpy as np"),
+BASE_CASES: list[CaseSpec] = [
+    ("numpy_import", "import numpy as np", ("numpy",)),
     (
         "numpy_ndarray_sum",
         "import numpy as np\na = np.array([1, 2, 3])\nassert int(a.sum()) == 6",
+        ("numpy",),
+    ),
+]
+
+SCIENTIFIC_STACK_CASES: list[CaseSpec] = [
+    ("scipy_import", "import scipy as sp\nassert sp.__name__ == 'scipy'", ("scipy",)),
+    (
+        "pandas_import",
+        "import pandas as pd\nassert pd.__name__ == 'pandas'",
+        ("pandas",),
+    ),
+    (
+        "pandas_series_sum",
+        "import pandas as pd\ns = pd.Series([1, 2, 3])\nassert int(s.sum()) == 6",
+        ("pandas",),
+    ),
+    (
+        "matplotlib_import",
+        "import matplotlib\nassert matplotlib.__name__ == 'matplotlib'",
+        ("matplotlib",),
+    ),
+    (
+        "matplotlib_pyplot_smoke",
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\nfig.canvas.draw()\nplt.close(fig)",
+        ("matplotlib",),
     ),
 ]
 
@@ -46,8 +72,18 @@ def classify_failure(stderr: str) -> dict[str, str]:
     if "initializer" in stderr and "failed with status" in stderr:
         diagnostics["kind"] = "init-failure"
         return diagnostics
-    if "ModuleNotFoundError: module 'numpy' not found" in stderr:
+    module_not_found_match = re.search(
+        r"ModuleNotFoundError:\s+module '([^']+)' not found",
+        stderr,
+    )
+    if module_not_found_match:
         diagnostics["kind"] = "module-not-found"
+        diagnostics["missing_module"] = module_not_found_match.group(1)
+        return diagnostics
+    no_module_named_match = re.search(r"No module named '([^']+)'", stderr)
+    if no_module_named_match:
+        diagnostics["kind"] = "module-not-found"
+        diagnostics["missing_module"] = no_module_named_match.group(1)
         return diagnostics
     return diagnostics
 
@@ -161,19 +197,36 @@ def build_numpy_from_source(
     )
 
 
-def probe_local_numpy_install(
+def probe_local_modules(
     python_probe_bin: str,
+    modules: list[str],
     timeout_secs: int,
-) -> tuple[dict[str, Any], pathlib.Path | None]:
+) -> tuple[dict[str, Any], list[pathlib.Path]]:
+    if not modules:
+        return (
+            {
+                "status": "SKIP",
+                "ok": False,
+                "reason": "no modules requested",
+                "modules": {},
+            },
+            [],
+        )
     snippet = (
-        "import importlib.util, json, pathlib\n"
-        "spec = importlib.util.find_spec('numpy')\n"
-        "if spec is None or not spec.origin:\n"
-        "    print(json.dumps({'status': 'NOT_FOUND', 'ok': False}))\n"
-        "else:\n"
+        "import importlib.util, json, pathlib, sys\n"
+        f"modules = {modules!r}\n"
+        "report = {}\n"
+        "roots = []\n"
+        "for name in modules:\n"
+        "    spec = importlib.util.find_spec(name)\n"
+        "    if spec is None or not spec.origin:\n"
+        "        report[name] = {'status': 'NOT_FOUND', 'ok': False}\n"
+        "        continue\n"
         "    origin = str(pathlib.Path(spec.origin).resolve())\n"
         "    path_root = str(pathlib.Path(origin).parent.parent)\n"
-        "    print(json.dumps({'status': 'FOUND', 'ok': True, 'origin': origin, 'path_root': path_root}))\n"
+        "    report[name] = {'status': 'FOUND', 'ok': True, 'origin': origin, 'path_root': path_root}\n"
+        "    roots.append(path_root)\n"
+        "print(json.dumps({'status': 'OK', 'ok': True, 'modules': report, 'path_roots': roots}))\n"
     )
     cmd = [python_probe_bin, "-c", snippet]
     try:
@@ -192,7 +245,7 @@ def probe_local_numpy_install(
                 "reason": f"timeout after {timeout_secs}s",
                 "cmd": cmd,
             },
-            None,
+            [],
         )
     if completed.returncode != 0:
         return (
@@ -205,7 +258,7 @@ def probe_local_numpy_install(
                 "stdout": completed.stdout.strip(),
                 "stderr": completed.stderr.strip(),
             },
-            None,
+            [],
         )
     payload_text = completed.stdout.strip()
     if not payload_text:
@@ -216,7 +269,7 @@ def probe_local_numpy_install(
                 "reason": "python probe produced empty output",
                 "cmd": cmd,
             },
-            None,
+            [],
         )
     try:
         payload = json.loads(payload_text)
@@ -229,18 +282,13 @@ def probe_local_numpy_install(
                 "cmd": cmd,
                 "stdout": payload_text,
             },
-            None,
+            [],
         )
-    status = payload.get("status")
-    if status == "FOUND":
-        path_root = payload.get("path_root")
-        if isinstance(path_root, str) and path_root:
-            return (payload, pathlib.Path(path_root))
-        payload["status"] = "ERROR"
-        payload["ok"] = False
-        payload["reason"] = "missing path_root in probe payload"
-        return (payload, None)
-    return (payload, None)
+    roots: list[pathlib.Path] = []
+    for root in payload.get("path_roots", []):
+        if isinstance(root, str) and root:
+            roots.append(pathlib.Path(root))
+    return (payload, roots)
 
 
 def main() -> int:
@@ -269,6 +317,16 @@ def main() -> int:
         "--probe-local-numpy",
         action="store_true",
         help="Probe local Python for an installed NumPy and add its site-packages root to PYTHONPATH for gate runs.",
+    )
+    parser.add_argument(
+        "--probe-local-stack",
+        action="store_true",
+        help="Probe local Python for NumPy/SciPy/Pandas/Matplotlib and add discovered site-packages roots to PYTHONPATH.",
+    )
+    parser.add_argument(
+        "--include-scientific-stack",
+        action="store_true",
+        help="Run additional scipy/pandas/matplotlib bridge probes.",
     )
     parser.add_argument(
         "--python-probe-bin",
@@ -303,6 +361,9 @@ def main() -> int:
     out_path = pathlib.Path(args.out)
     cpython_lib = pathlib.Path(args.cpython_lib) if args.cpython_lib else None
     numpy_src = pathlib.Path(args.numpy_src) if args.numpy_src else None
+    active_cases = list(BASE_CASES)
+    if args.include_scientific_stack:
+        active_cases.extend(SCIENTIFIC_STACK_CASES)
 
     report: dict[str, Any] = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -314,16 +375,17 @@ def main() -> int:
         "cases": [],
         "build": None,
         "summary": {
-            "total": len(CASES),
+            "total": len(active_cases),
             "passed": 0,
             "failed": 0,
             "skipped": 0,
         },
         "local_numpy_probe": None,
+        "local_module_probe": None,
     }
 
     if not pyrs_bin.is_file():
-        for case_name, _source in CASES:
+        for case_name, _source, _required_modules in active_cases:
             report["cases"].append(
                 {
                     "name": case_name,
@@ -358,23 +420,57 @@ def main() -> int:
             "reason": "--numpy-src not provided",
         }
 
-    if args.probe_local_numpy:
-        local_numpy_report, local_numpy_path = probe_local_numpy_install(
+    probed_modules = ["numpy"]
+    if args.probe_local_stack or args.include_scientific_stack:
+        probed_modules = ["numpy", "scipy", "pandas", "matplotlib"]
+
+    installed_module_status: dict[str, str] = {}
+    if args.probe_local_numpy or args.probe_local_stack:
+        local_module_report, local_module_paths = probe_local_modules(
             args.python_probe_bin,
+            probed_modules,
             args.timeout,
         )
-        report["local_numpy_probe"] = {
+        report["local_module_probe"] = {
             "python_probe_bin": args.python_probe_bin,
-            **local_numpy_report,
+            "requested_modules": probed_modules,
+            **local_module_report,
         }
-        if local_numpy_path is not None:
-            python_paths.append(local_numpy_path)
-        print(f"[numpy-gate] local numpy probe: {local_numpy_report.get('status', 'ERROR')}")
+        module_payload = local_module_report.get("modules", {})
+        if isinstance(module_payload, dict):
+            for name, payload in module_payload.items():
+                if isinstance(name, str) and isinstance(payload, dict):
+                    status = payload.get("status")
+                    if isinstance(status, str):
+                        installed_module_status[name] = status
+            numpy_entry = module_payload.get("numpy")
+            if isinstance(numpy_entry, dict):
+                report["local_numpy_probe"] = {
+                    "python_probe_bin": args.python_probe_bin,
+                    **numpy_entry,
+                }
+        if report["local_numpy_probe"] is None:
+            report["local_numpy_probe"] = {
+                "status": "ERROR",
+                "ok": False,
+                "reason": "numpy probe result missing from local module probe payload",
+                "python_probe_bin": args.python_probe_bin,
+            }
+        for root in local_module_paths:
+            python_paths.append(root)
+        print(
+            f"[numpy-gate] local module probe: {local_module_report.get('status', 'ERROR')}"
+        )
     else:
         report["local_numpy_probe"] = {
             "status": "SKIP",
             "ok": False,
             "reason": "--probe-local-numpy not provided",
+        }
+        report["local_module_probe"] = {
+            "status": "SKIP",
+            "ok": False,
+            "reason": "--probe-local-numpy/--probe-local-stack not provided",
         }
 
     dedup_paths: list[pathlib.Path] = []
@@ -387,7 +483,28 @@ def main() -> int:
         dedup_paths.append(path)
     python_paths = dedup_paths
 
-    for case_name, source in CASES:
+    for case_name, source, required_modules in active_cases:
+        missing_modules = [
+            module
+            for module in required_modules
+            if installed_module_status.get(module) == "NOT_FOUND"
+        ]
+        if missing_modules:
+            report["cases"].append(
+                {
+                    "name": case_name,
+                    "status": "SKIP",
+                    "reason": (
+                        "required modules not found in local probe: "
+                        + ", ".join(missing_modules)
+                    ),
+                    "required_modules": list(required_modules),
+                }
+            )
+            report["summary"]["skipped"] += 1
+            print(f"[numpy-gate] {case_name}: SKIP ({', '.join(missing_modules)} missing)")
+            continue
+
         result = run_case(pyrs_bin, source, args.timeout, cpython_lib, python_paths)
         status = "PASS" if result["ok"] else "FAIL"
         if status == "PASS":
@@ -397,7 +514,14 @@ def main() -> int:
             diagnostics = classify_failure(result.get("stderr", ""))
             if diagnostics:
                 result["diagnostics"] = diagnostics
-        report["cases"].append({"name": case_name, "status": status, **result})
+        report["cases"].append(
+            {
+                "name": case_name,
+                "status": status,
+                "required_modules": list(required_modules),
+                **result,
+            }
+        )
         print(f"[numpy-gate] {case_name}: {status}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
