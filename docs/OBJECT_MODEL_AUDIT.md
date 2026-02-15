@@ -9,7 +9,7 @@ Status values:
 
 ## Reference Map
 - Python language reference:
-  - `https://docs.python.org/3/reference/datamodel.html`
+  - `https://docs.python.org/3.14/reference/datamodel.html`
 - CPython runtime/protocol sources:
   - `Objects/object.c` (`PyObject_IsTrue`)
   - `Objects/typeobject.c` (`slot_nb_bool`, `slot_sq_contains`, slot wiring)

@@ -2315,14 +2315,6 @@ pub enum BuiltinFunction {
     SysStreamIsATty,
     PlatformLibcVer,
     PlatformWin32IsIot,
-    CpythonProxyModuleGetAttr,
-    CpythonProxyGetAttribute,
-    CpythonProxyCall,
-    CpythonProxyRepr,
-    CpythonProxyStr,
-    CpythonProxyBool,
-    CpythonProxyInt,
-    CpythonProxyFloat,
     Import,
     Exec,
     Eval,
@@ -5299,14 +5291,6 @@ impl BuiltinFunction {
             | BuiltinFunction::SysStreamIsATty
             | BuiltinFunction::PlatformLibcVer
             | BuiltinFunction::PlatformWin32IsIot
-            | BuiltinFunction::CpythonProxyModuleGetAttr
-            | BuiltinFunction::CpythonProxyGetAttribute
-            | BuiltinFunction::CpythonProxyCall
-            | BuiltinFunction::CpythonProxyRepr
-            | BuiltinFunction::CpythonProxyStr
-            | BuiltinFunction::CpythonProxyBool
-            | BuiltinFunction::CpythonProxyInt
-            | BuiltinFunction::CpythonProxyFloat
             | BuiltinFunction::ImportlibInvalidateCaches
             | BuiltinFunction::ImportlibSourceFromCache
             | BuiltinFunction::ImportlibCacheFromSource

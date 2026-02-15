@@ -123,21 +123,6 @@ fn pyrs_binary_path() -> Option<PathBuf> {
     None
 }
 
-fn scientific_stack_site_packages_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("PYRS_SCI_STACK_SITE_PACKAGES") {
-        let candidate = PathBuf::from(path);
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-    }
-    let candidate =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".venv-ext314/lib/python3.14/site-packages");
-    if candidate.is_dir() {
-        return Some(candidate);
-    }
-    None
-}
-
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "{prefix}_{}",
@@ -5453,48 +5438,6 @@ fn cpython_enum_path_supports_member_value_and_name() {
         .expect("spawn pyrs enum cpython-path probe");
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1 A");
-}
-
-#[test]
-fn cpython_abi_bridge_scientific_stack_smoke_when_site_packages_are_available() {
-    let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping scientific bridge smoke (CPython Lib path not available)");
-        return;
-    };
-    let Some(pyrs_bin) = pyrs_binary_path() else {
-        eprintln!("skipping scientific bridge smoke (pyrs binary not found)");
-        return;
-    };
-    let Some(site_packages) = scientific_stack_site_packages_path() else {
-        eprintln!("skipping scientific bridge smoke (site-packages path not available)");
-        return;
-    };
-    let required_modules = ["numpy", "scipy", "pandas", "matplotlib"];
-    if required_modules
-        .iter()
-        .any(|module| !site_packages.join(module).exists())
-    {
-        eprintln!("skipping scientific bridge smoke (required modules are not installed)");
-        return;
-    }
-
-    let source = "import numpy as np\nimport scipy\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\narr = np.array([1, 2, 3])\nseries = pd.Series([1, 2, 3])\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\nfig.canvas.draw()\nplt.close(fig)\nok = (int(arr.sum()) == 6 and int(series.sum()) == 6 and scipy.__name__ == 'scipy' and matplotlib.__name__ == 'matplotlib')\nprint(ok)\n";
-    let output = Command::new(pyrs_bin)
-        .env("PYRS_ENABLE_CPYTHON_ABI_BRIDGE", "1")
-        .env("PYRS_CPYTHON_LIB", &lib_path)
-        .env("PYTHONPATH", &site_packages)
-        .arg("-S")
-        .arg("-c")
-        .arg(source)
-        .output()
-        .expect("spawn pyrs scientific bridge smoke");
-    if !output.status.success() {
-        panic!(
-            "scientific bridge smoke failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "True");
 }
 
 #[test]

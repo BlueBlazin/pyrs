@@ -71,21 +71,19 @@ jobs:
             --out perf/numpy_gate_source_build_latest.json \
             --timeout 20
 
-      - name: Install NumPy wheel for bridge probe (non-blocking)
+      - name: Install NumPy wheel for direct probe (non-blocking)
         continue-on-error: true
         run: python3 -m pip install -q "numpy==2.4.2"
 
-      - name: NumPy bring-up probe via CPython ABI bridge (non-blocking)
+      - name: NumPy direct-mode probe (non-blocking)
         continue-on-error: true
-        env:
-          PYRS_ENABLE_CPYTHON_ABI_BRIDGE: "1"
         run: |
           python3 scripts/probe_numpy_gate.py \
             --pyrs target/debug/pyrs \
             --cpython-lib "$PYRS_CPYTHON_LIB" \
             --probe-local-numpy \
             --python-probe-bin python3 \
-            --out perf/numpy_gate_bridge_latest.json \
+            --out perf/numpy_gate_direct_latest.json \
             --timeout 20
 
       - name: Upload NumPy bring-up artifact
@@ -104,12 +102,12 @@ jobs:
           path: perf/numpy_gate_source_build_latest.json
           if-no-files-found: ignore
 
-      - name: Upload NumPy bridge-mode artifact
+      - name: Upload NumPy direct-mode artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: numpy-bridge-gate
-          path: perf/numpy_gate_bridge_latest.json
+          name: numpy-direct-gate
+          path: perf/numpy_gate_direct_latest.json
           if-no-files-found: ignore
 
       - name: Dispatch hotpath benchmark smoke (non-blocking)

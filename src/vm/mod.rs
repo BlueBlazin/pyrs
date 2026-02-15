@@ -8,7 +8,6 @@ mod builtins_numeric_time;
 mod builtins_os;
 mod builtins_system_misc;
 mod containers;
-mod cpython_abi_bridge;
 mod ops;
 mod stdlib;
 mod vm_bootstrap_import;
@@ -755,10 +754,6 @@ pub struct Vm {
     extension_capsule_registry: HashMap<String, ExtensionCapsuleRegistryEntry>,
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     next_extension_callable_id: u64,
-    cpython_abi_bridge: Option<cpython_abi_bridge::CpythonAbiBridge>,
-    cpython_proxy_registry: HashMap<u64, usize>,
-    next_cpython_proxy_id: u64,
-    cpython_proxy_class: Option<ObjRef>,
     local_shim_fallback_enabled: bool,
     prefer_pure_json_when_available: bool,
     prefer_pure_pickle_when_available: bool,
@@ -782,7 +777,6 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
-        self.release_cpython_proxy_registry();
         for state in self.extension_module_state_registry.values() {
             if state.state != 0 {
                 if let Some(finalize_func) = state.finalize_func {
@@ -903,10 +897,6 @@ impl Vm {
             extension_capsule_registry: HashMap::new(),
             extension_module_state_registry: HashMap::new(),
             next_extension_callable_id: 1,
-            cpython_abi_bridge: None,
-            cpython_proxy_registry: HashMap::new(),
-            next_cpython_proxy_id: 1,
-            cpython_proxy_class: None,
             // Shim fallback is restricted by LOCAL_SHIM_MODULES and only used when normal
             // path resolution fails, so keep it enabled by default (allow explicit opt-out).
             local_shim_fallback_enabled: !env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
