@@ -1960,6 +1960,10 @@ impl ModuleCapiContext {
     }
 
     fn sync_cpython_refcount(&mut self, handle: PyrsObjectHandle) {
+        self.sync_cpython_storage(handle);
+    }
+
+    fn sync_cpython_storage(&mut self, handle: PyrsObjectHandle) {
         let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied() else {
             return;
         };
@@ -1972,6 +1976,9 @@ impl ModuleCapiContext {
         else {
             return;
         };
+        // Pull direct raw-storage writes (e.g. macro-style tuple/list mutations in native code)
+        // back into the Value graph before we mirror Value state into raw headers.
+        self.sync_value_from_cpython_storage(handle, ptr);
         if let Some(slot) = self.capsules.get(&handle) {
             // SAFETY: `raw` points to owned capsule-compatible storage for this handle.
             unsafe {
@@ -5841,7 +5848,7 @@ pub unsafe extern "C" fn PyList_Size(list: *mut c_void) -> isize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyList_Append(list: *mut c_void, item: *mut c_void) -> i32 {
     with_active_cpython_context_mut(|context| {
-        let item_value = match context.cpython_value_from_ptr(item) {
+        let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
             Some(value) => value,
             None => {
                 context.set_error("PyList_Append received unknown item pointer");
@@ -5852,19 +5859,24 @@ pub unsafe extern "C" fn PyList_Append(list: *mut c_void, item: *mut c_void) -> 
             context.set_error("PyList_Append received unknown list pointer");
             return -1;
         };
-        let Some(slot) = context.objects.get_mut(&handle) else {
-            context.set_error("PyList_Append list handle is not available");
-            return -1;
-        };
-        let Value::List(list_obj) = &mut slot.value else {
-            context.set_error("PyList_Append expected list object");
-            return -1;
-        };
-        let Object::List(values) = &mut *list_obj.kind_mut() else {
-            context.set_error("PyList_Append encountered invalid list storage");
-            return -1;
-        };
-        values.push(item_value);
+        {
+            let Some(slot) = context.objects.get_mut(&handle) else {
+                context.set_error("PyList_Append list handle is not available");
+                return -1;
+            };
+            let Value::List(list_obj) = &mut slot.value else {
+                context.set_error("PyList_Append expected list object");
+                return -1;
+            };
+            let Object::List(values) = &mut *list_obj.kind_mut() else {
+                context.set_error("PyList_Append encountered invalid list storage");
+                return -1;
+            };
+            values.push(item_value);
+        }
+        // Keep owned CPython list storage (`ob_size` / `ob_item`) synchronized for native callers
+        // that access list internals directly between C-API calls.
+        context.sync_cpython_storage(handle);
         0
     })
     .unwrap_or_else(|err| {
@@ -6260,6 +6272,16 @@ pub unsafe extern "C" fn PyDict_SetItem(
             context.set_error("PyDict_SetItem received unknown value pointer");
             return -1;
         };
+        if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+            eprintln!(
+                "[cpy-dict-set] dict={:p} key_ptr={:p} key={} value_ptr={:p} value_tag={}",
+                dict,
+                key,
+                cpython_debug_compare_value(&key_value),
+                value,
+                cpython_value_debug_tag(&item_value)
+            );
+        }
         match dict_set_value_checked(&dict_obj, key_value, item_value) {
             Ok(()) => 0,
             Err(err) => {
@@ -6289,9 +6311,27 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
             context.set_error("PyDict_GetItem received unknown key pointer");
             return std::ptr::null_mut();
         };
+        if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+            eprintln!(
+                "[cpy-dict-get] dict={:p} key_ptr={:p} key={}",
+                dict,
+                key,
+                cpython_debug_compare_value(&key_value)
+            );
+        }
         let Some(value) = dict_get_value(&dict_obj, &key_value) else {
+            if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+                eprintln!("[cpy-dict-get] dict={:p} miss", dict);
+            }
             return std::ptr::null_mut();
         };
+        if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+            eprintln!(
+                "[cpy-dict-get] dict={:p} hit value_tag={}",
+                dict,
+                cpython_value_debug_tag(&value)
+            );
+        }
         context.alloc_cpython_ptr_for_value(value)
     })
     .unwrap_or_else(|err| {
@@ -7156,8 +7196,25 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void) -> *mut c_void {
+    let trace_getitem = std::env::var_os("PYRS_TRACE_CPY_GETITEM").is_some();
+    if trace_getitem {
+        let key_desc = with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_ptr_or_proxy(key)
+                .map(|value| cpython_debug_compare_value(&value))
+                .unwrap_or_else(|| "<unknown>".to_string())
+        })
+        .unwrap_or_else(|_| "<no-context>".to_string());
+        eprintln!(
+            "[cpy-getitem] object_ptr={:p} key_ptr={:p} key={}",
+            object, key, key_desc
+        );
+    }
     let callable = unsafe { PyObject_GetAttrString(object, c"__getitem__".as_ptr()) };
     if callable.is_null() {
+        if trace_getitem {
+            eprintln!("[cpy-getitem] callable lookup failed");
+        }
         return std::ptr::null_mut();
     }
     let key = match cpython_value_from_ptr(key) {
@@ -7170,6 +7227,20 @@ pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void)
     };
     let result = cpython_call_object(callable, vec![key], HashMap::new());
     unsafe { Py_DecRef(callable) };
+    if trace_getitem {
+        if result.is_null() {
+            eprintln!("[cpy-getitem] result=<null>");
+        } else {
+            let result_tag = with_active_cpython_context_mut(|context| {
+                context
+                    .cpython_value_from_ptr_or_proxy(result)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            })
+            .unwrap_or_else(|_| "<no-context>".to_string());
+            eprintln!("[cpy-getitem] result={:p} tag={}", result, result_tag);
+        }
+    }
     result
 }
 
@@ -7278,6 +7349,70 @@ fn cpython_rich_compare_slot_name(op: i32) -> Option<&'static std::ffi::CStr> {
     }
 }
 
+fn cpython_swapped_compare_op(op: i32) -> Option<i32> {
+    match op {
+        0 => Some(4),
+        1 => Some(5),
+        2 => Some(2),
+        3 => Some(3),
+        4 => Some(0),
+        5 => Some(1),
+        _ => None,
+    }
+}
+
+fn cpython_compare_op_symbol(op: i32) -> &'static str {
+    match op {
+        0 => "<",
+        1 => "<=",
+        2 => "==",
+        3 => "!=",
+        4 => ">",
+        5 => ">=",
+        _ => "?",
+    }
+}
+
+fn cpython_type_name_for_object_ptr(object: *mut c_void) -> String {
+    if object.is_null() {
+        return "<null>".to_string();
+    }
+    // SAFETY: caller provides a potential PyObject pointer and we guard all nulls.
+    unsafe {
+        let Some(head) = object.cast::<CpythonObjectHead>().as_ref() else {
+            return "<unknown>".to_string();
+        };
+        let ty = head.ob_type.cast::<CpythonTypeObject>();
+        if ty.is_null() {
+            return "<unknown>".to_string();
+        }
+        c_name_to_string((*ty).tp_name).unwrap_or_else(|_| "<unnamed>".to_string())
+    }
+}
+
+fn cpython_is_not_implemented_ptr(value: *mut c_void) -> bool {
+    if value.is_null() {
+        return false;
+    }
+    if value == std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>() {
+        return true;
+    }
+    with_active_cpython_context_mut(|context| {
+        let Some(mapped) = context.cpython_value_from_ptr(value) else {
+            return false;
+        };
+        if context.vm.is_null() {
+            return false;
+        }
+        // SAFETY: VM pointer is valid for the C-API context lifetime.
+        let vm = unsafe { &*context.vm };
+        vm.builtins
+            .get("NotImplemented")
+            .is_some_and(|not_implemented| *not_implemented == mapped)
+    })
+    .unwrap_or(false)
+}
+
 fn cpython_debug_compare_value(value: &Value) -> String {
     match value {
         Value::Tuple(tuple_obj) => {
@@ -7305,31 +7440,120 @@ fn cpython_debug_compare_value(value: &Value) -> String {
     }
 }
 
+fn cpython_debug_tuple_raw_ptrs(
+    context: &ModuleCapiContext,
+    object: *mut c_void,
+) -> Option<String> {
+    if object.is_null() || !context.owns_cpython_allocation_ptr(object) {
+        return None;
+    }
+    // SAFETY: owned tuple pointers use CPython-compatible varobject header
+    // followed by contiguous `PyObject*` item slots.
+    unsafe {
+        let head = object.cast::<CpythonVarObjectHead>();
+        let len = (*head).ob_size.max(0) as usize;
+        if len == 0 {
+            return Some("[]".to_string());
+        }
+        let items_ptr = cpython_tuple_items_ptr(object);
+        let mut rendered = Vec::with_capacity(len);
+        for idx in 0..len {
+            let item = *items_ptr.add(idx);
+            rendered.push(format!("{:p}", item));
+        }
+        Some(format!("[{}]", rendered.join(",")))
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_RichCompare(
     left: *mut c_void,
     right: *mut c_void,
     op: i32,
 ) -> *mut c_void {
+    if left.is_null() || right.is_null() {
+        cpython_set_error("PyObject_RichCompare received null operand");
+        return std::ptr::null_mut();
+    }
     let Some(slot_name) = cpython_rich_compare_slot_name(op) else {
         cpython_set_error("PyObject_RichCompare received invalid compare op");
         return std::ptr::null_mut();
     };
-    let callable = unsafe { PyObject_GetAttrString(left, slot_name.as_ptr()) };
-    if callable.is_null() {
-        return std::ptr::null_mut();
-    }
-    let right = match cpython_value_from_ptr(right) {
+    let right_value = match cpython_value_from_ptr(right) {
         Ok(value) => value,
         Err(err) => {
             cpython_set_error(err);
-            unsafe { Py_DecRef(callable) };
             return std::ptr::null_mut();
         }
     };
-    let result = cpython_call_object(callable, vec![right], HashMap::new());
-    unsafe { Py_DecRef(callable) };
-    result
+    let left_value = match cpython_value_from_ptr(left) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+
+    enum RichCompareAttempt {
+        Missing,
+        Value(*mut c_void),
+        Error,
+    }
+
+    let try_call =
+        |receiver_ptr: *mut c_void, method_name: &std::ffi::CStr, arg: Value| -> RichCompareAttempt {
+            let callable = unsafe { PyObject_GetAttrString(receiver_ptr, method_name.as_ptr()) };
+            if callable.is_null() {
+                unsafe { PyErr_Clear() };
+                return RichCompareAttempt::Missing;
+            }
+            let result = cpython_call_object(callable, vec![arg], HashMap::new());
+            unsafe { Py_DecRef(callable) };
+            if result.is_null() {
+                RichCompareAttempt::Error
+            } else {
+                RichCompareAttempt::Value(result)
+            }
+        };
+
+    match try_call(left, slot_name, right_value.clone()) {
+        RichCompareAttempt::Value(result) => {
+            if !cpython_is_not_implemented_ptr(result) {
+                return result;
+            }
+            unsafe { Py_DecRef(result) };
+        }
+        RichCompareAttempt::Error => return std::ptr::null_mut(),
+        RichCompareAttempt::Missing => {}
+    }
+
+    let swapped_op = cpython_swapped_compare_op(op).expect("valid compare op has swapped mapping");
+    let swapped_slot_name =
+        cpython_rich_compare_slot_name(swapped_op).expect("valid compare op has slot");
+    match try_call(right, swapped_slot_name, left_value.clone()) {
+        RichCompareAttempt::Value(result) => {
+            if !cpython_is_not_implemented_ptr(result) {
+                return result;
+            }
+            unsafe { Py_DecRef(result) };
+        }
+        RichCompareAttempt::Error => return std::ptr::null_mut(),
+        RichCompareAttempt::Missing => {}
+    }
+
+    match op {
+        2 => cpython_new_ptr_for_value(Value::Bool(left == right)),
+        3 => cpython_new_ptr_for_value(Value::Bool(left != right)),
+        _ => {
+            cpython_set_error(format!(
+                "TypeError: '{}' not supported between instances of '{}' and '{}'",
+                cpython_compare_op_symbol(op),
+                cpython_type_name_for_object_ptr(left),
+                cpython_type_name_for_object_ptr(right)
+            ));
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -7338,30 +7562,89 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
     right: *mut c_void,
     op: i32,
 ) -> i32 {
+    let trace_compare_errors = std::env::var_os("PYRS_TRACE_CPY_COMPARE_ERRORS").is_some();
+    if left == right {
+        if op == 2 {
+            return 1;
+        }
+        if op == 3 {
+            return 0;
+        }
+    }
     let trace_compare = std::env::var_os("PYRS_TRACE_CPY_COMPARE").is_some();
     if trace_compare && op == 2 {
-        let left_desc = match cpython_value_from_ptr(left) {
-            Ok(value) => cpython_debug_compare_value(&value),
-            Err(err) => format!("ERR({err})"),
-        };
-        let right_desc = match cpython_value_from_ptr(right) {
-            Ok(value) => cpython_debug_compare_value(&value),
-            Err(err) => format!("ERR({err})"),
-        };
+        let mut left_raw = String::new();
+        let mut right_raw = String::new();
+        let left_desc = with_active_cpython_context_mut(|context| {
+            left_raw = cpython_debug_tuple_raw_ptrs(context, left).unwrap_or_default();
+            match context.cpython_value_from_ptr(left) {
+                Some(value) => cpython_debug_compare_value(&value),
+                None => "ERR(unknown)".to_string(),
+            }
+        })
+        .unwrap_or_else(|err| format!("ERR({err})"));
+        let right_desc = with_active_cpython_context_mut(|context| {
+            right_raw = cpython_debug_tuple_raw_ptrs(context, right).unwrap_or_default();
+            match context.cpython_value_from_ptr(right) {
+                Some(value) => cpython_debug_compare_value(&value),
+                None => "ERR(unknown)".to_string(),
+            }
+        })
+        .unwrap_or_else(|err| format!("ERR({err})"));
         eprintln!(
-            "[cpy-cmp] eq left_ptr={:p} right_ptr={:p} left={} right={}",
-            left, right, left_desc, right_desc
+            "[cpy-cmp] eq left_ptr={:p} right_ptr={:p} left={} right={} left_raw={} right_raw={}",
+            left, right, left_desc, right_desc, left_raw, right_raw
         );
     }
     let value = unsafe { PyObject_RichCompare(left, right, op) };
     if value.is_null() {
+        if trace_compare_errors {
+            eprintln!(
+                "[cpy-cmp-err] PyObject_RichCompare returned null op={} left={:p} right={:p}",
+                op, left, right
+            );
+        }
         if trace_compare && op == 2 {
             eprintln!("[cpy-cmp] eq result=<null>");
         }
         return -1;
     }
+    if cpython_is_not_implemented_ptr(value) {
+        unsafe { Py_DecRef(value) };
+        return match op {
+            2 => {
+                if left == right {
+                    1
+                } else {
+                    0
+                }
+            }
+            3 => {
+                if left == right {
+                    0
+                } else {
+                    1
+                }
+            }
+            _ => {
+                cpython_set_error(format!(
+                    "TypeError: '{}' not supported between instances of '{}' and '{}'",
+                    cpython_compare_op_symbol(op),
+                    cpython_type_name_for_object_ptr(left),
+                    cpython_type_name_for_object_ptr(right)
+                ));
+                -1
+            }
+        };
+    }
     let truth = unsafe { PyObject_IsTrue(value) };
     unsafe { Py_DecRef(value) };
+    if trace_compare_errors && truth < 0 {
+        eprintln!(
+            "[cpy-cmp-err] PyObject_IsTrue failed op={} left={:p} right={:p}",
+            op, left, right
+        );
+    }
     if trace_compare && op == 2 {
         eprintln!("[cpy-cmp] eq truth={truth}");
     }
@@ -8135,6 +8418,16 @@ pub unsafe extern "C" fn _Py_Dealloc(object: *mut c_void) {
     if object.is_null() {
         return;
     }
+    let singleton_ptrs = [
+        std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>(),
+        std::ptr::addr_of_mut!(_Py_TrueStruct).cast::<c_void>(),
+        std::ptr::addr_of_mut!(_Py_FalseStruct).cast::<c_void>(),
+        std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>(),
+        std::ptr::addr_of_mut!(_Py_EllipsisObject).cast::<c_void>(),
+    ];
+    if singleton_ptrs.contains(&object) {
+        return;
+    }
     unsafe { PyObject_Free(object) };
 }
 
@@ -8862,31 +9155,31 @@ pub static _Py_ascii_whitespace: [u8; 128] = py_ascii_whitespace_table();
 #[unsafe(no_mangle)]
 #[used]
 pub static mut _Py_NoneStruct: CpythonObjectHead = CpythonObjectHead {
-    ob_refcnt: 1,
+    ob_refcnt: -1,
     ob_type: std::ptr::null_mut(),
 };
 #[unsafe(no_mangle)]
 #[used]
 pub static mut _Py_NotImplementedStruct: CpythonObjectHead = CpythonObjectHead {
-    ob_refcnt: 1,
+    ob_refcnt: -1,
     ob_type: std::ptr::null_mut(),
 };
 #[unsafe(no_mangle)]
 #[used]
 pub static mut _Py_EllipsisObject: CpythonObjectHead = CpythonObjectHead {
-    ob_refcnt: 1,
+    ob_refcnt: -1,
     ob_type: std::ptr::null_mut(),
 };
 #[unsafe(no_mangle)]
 #[used]
 pub static mut _Py_FalseStruct: CpythonObjectHead = CpythonObjectHead {
-    ob_refcnt: 1,
+    ob_refcnt: -1,
     ob_type: std::ptr::null_mut(),
 };
 #[unsafe(no_mangle)]
 #[used]
 pub static mut _Py_TrueStruct: CpythonObjectHead = CpythonObjectHead {
-    ob_refcnt: 1,
+    ob_refcnt: -1,
     ob_type: std::ptr::null_mut(),
 };
 
