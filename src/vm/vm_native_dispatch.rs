@@ -1525,11 +1525,16 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Int(count)))
             }
-            NativeMethodKind::BytesFind => {
+            NativeMethodKind::BytesFind | NativeMethodKind::BytesIndex => {
                 if args.is_empty() || args.len() > 3 {
-                    return Err(RuntimeError::new(
-                        "find() expects sub, optional start, optional end",
-                    ));
+                    let method_name = if matches!(kind, NativeMethodKind::BytesIndex) {
+                        "index"
+                    } else {
+                        "find"
+                    };
+                    return Err(RuntimeError::new(format!(
+                        "{method_name}() expects sub, optional start, optional end",
+                    )));
                 }
                 let bytes = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
@@ -1585,8 +1590,14 @@ impl Vm {
                 } else {
                     find_bytes_subslice(haystack, &needle)
                 };
-                let index = found.map(|idx| idx as i64 + start).unwrap_or(-1);
-                Ok(NativeCallResult::Value(Value::Int(index)))
+                if let Some(found) = found {
+                    let index = found as i64 + start;
+                    Ok(NativeCallResult::Value(Value::Int(index)))
+                } else if matches!(kind, NativeMethodKind::BytesIndex) {
+                    Err(RuntimeError::new("ValueError: subsection not found"))
+                } else {
+                    Ok(NativeCallResult::Value(Value::Int(-1)))
+                }
             }
             NativeMethodKind::BytesSplitLines => {
                 if args.len() > 1 {
@@ -2297,6 +2308,35 @@ impl Vm {
                         .globals
                         .insert("state_flag".to_string(), Value::Int(state_flag));
                 }
+                Ok(NativeCallResult::Value(Value::None))
+            }
+            NativeMethodKind::ByteArrayAppend => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("append() takes exactly one argument"));
+                }
+                let item = self.io_index_arg_to_int(args.remove(0))?;
+                if !(0..=255).contains(&item) {
+                    return Err(RuntimeError::new(
+                        "ValueError: byte must be in range(0, 256)",
+                    ));
+                }
+                let buffer = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::ByteArray(obj)) => obj.clone(),
+                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                };
+                let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
+                let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
+                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                };
+                if has_exports {
+                    return Err(RuntimeError::new(
+                        "BufferError: Existing exports of data: object cannot be re-sized",
+                    ));
+                }
+                values.push(item as u8);
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::ByteArrayExtend => {
@@ -5832,6 +5872,8 @@ impl Vm {
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
             BuiltinFunction::OsGetEnv => self.builtin_os_getenv(args, kwargs),
+            BuiltinFunction::OsPutEnv => self.builtin_os_putenv(args, kwargs),
+            BuiltinFunction::OsUnsetEnv => self.builtin_os_unsetenv(args, kwargs),
             BuiltinFunction::OsGetTerminalSize => self.builtin_os_get_terminal_size(args, kwargs),
             BuiltinFunction::OsTerminalSize => self.builtin_os_terminal_size(args, kwargs),
             BuiltinFunction::OsOpen => self.builtin_os_open(args, kwargs),
@@ -6251,8 +6293,15 @@ impl Vm {
             BuiltinFunction::CodecsEncode => self.builtin_codecs_encode(args, kwargs),
             BuiltinFunction::CodecsDecode => self.builtin_codecs_decode(args, kwargs),
             BuiltinFunction::CodecsEscapeDecode => self.builtin_codecs_escape_decode(args, kwargs),
+            BuiltinFunction::CodecsMakeIdentityDict => {
+                self.builtin_codecs_make_identity_dict(args, kwargs)
+            }
             BuiltinFunction::CodecsLookup => self.builtin_codecs_lookup(args, kwargs),
             BuiltinFunction::CodecsRegister => self.builtin_codecs_register(args, kwargs),
+            BuiltinFunction::CodecsUnregister => self.builtin_codecs_unregister(args, kwargs),
+            BuiltinFunction::CodecsCodecInfoInit => {
+                self.builtin_codecs_codecinfo_init(args, kwargs)
+            }
             BuiltinFunction::CodecsGetIncrementalEncoder => {
                 self.builtin_codecs_getincrementalencoder(args, kwargs)
             }
@@ -6502,6 +6551,21 @@ impl Vm {
             BuiltinFunction::IoReadText => self.builtin_io_read_text(args, kwargs),
             BuiltinFunction::IoWriteText => self.builtin_io_write_text(args, kwargs),
             BuiltinFunction::IoTextEncoding => self.builtin_io_text_encoding(args, kwargs),
+            BuiltinFunction::IoIncrementalNewlineDecoderInit => {
+                self.builtin_io_incremental_newline_decoder_init(args, kwargs)
+            }
+            BuiltinFunction::IoIncrementalNewlineDecoderDecode => {
+                self.builtin_io_incremental_newline_decoder_decode(args, kwargs)
+            }
+            BuiltinFunction::IoIncrementalNewlineDecoderGetState => {
+                self.builtin_io_incremental_newline_decoder_getstate(args, kwargs)
+            }
+            BuiltinFunction::IoIncrementalNewlineDecoderSetState => {
+                self.builtin_io_incremental_newline_decoder_setstate(args, kwargs)
+            }
+            BuiltinFunction::IoIncrementalNewlineDecoderReset => {
+                self.builtin_io_incremental_newline_decoder_reset(args, kwargs)
+            }
             BuiltinFunction::IoTextIOWrapperInit => {
                 self.builtin_io_textiowrapper_init(args, kwargs)
             }
@@ -6578,6 +6642,9 @@ impl Vm {
             }
             BuiltinFunction::IoBufferedRWPairWritable => {
                 self.builtin_io_buffered_rwpair_writable(args, kwargs)
+            }
+            BuiltinFunction::IoBufferedRWPairIsAtty => {
+                self.builtin_io_buffered_rwpair_isatty(args, kwargs)
             }
             BuiltinFunction::IoBufferedRWPairSeekable => {
                 self.builtin_io_buffered_rwpair_seekable(args, kwargs)

@@ -253,6 +253,7 @@ pub enum NativeMethodKind {
     BytesEndsWith,
     BytesCount,
     BytesFind,
+    BytesIndex,
     BytesSplitLines,
     BytesTranslate,
     BytesJoin,
@@ -260,6 +261,7 @@ pub enum NativeMethodKind {
     BytesLStrip,
     BytesStrip,
     BytesRStrip,
+    ByteArrayAppend,
     ByteArrayExtend,
     ByteArrayClear,
     ByteArrayResize,
@@ -2407,6 +2409,8 @@ pub enum BuiltinFunction {
     OsGetPid,
     OsGetCwd,
     OsGetEnv,
+    OsPutEnv,
+    OsUnsetEnv,
     OsGetTerminalSize,
     OsTerminalSize,
     OsOpen,
@@ -2636,8 +2640,11 @@ pub enum BuiltinFunction {
     CodecsEncode,
     CodecsDecode,
     CodecsEscapeDecode,
+    CodecsMakeIdentityDict,
     CodecsLookup,
     CodecsRegister,
+    CodecsUnregister,
+    CodecsCodecInfoInit,
     CodecsGetIncrementalEncoder,
     CodecsGetIncrementalDecoder,
     CodecsIncrementalEncoderInit,
@@ -2826,6 +2833,11 @@ pub enum BuiltinFunction {
     IoReadText,
     IoWriteText,
     IoTextEncoding,
+    IoIncrementalNewlineDecoderInit,
+    IoIncrementalNewlineDecoderDecode,
+    IoIncrementalNewlineDecoderGetState,
+    IoIncrementalNewlineDecoderSetState,
+    IoIncrementalNewlineDecoderReset,
     IoTextIOWrapperInit,
     IoFileInit,
     IoFileRead,
@@ -2877,6 +2889,7 @@ pub enum BuiltinFunction {
     IoBufferedRWPairClose,
     IoBufferedRWPairReadable,
     IoBufferedRWPairWritable,
+    IoBufferedRWPairIsAtty,
     IoBufferedRWPairSeekable,
     IoBufferedRWPairDetach,
     IoBufferedRWPairPeek,
@@ -3236,6 +3249,7 @@ impl BuiltinFunction {
             | BuiltinFunction::IoBufferedRWPairClose
             | BuiltinFunction::IoBufferedRWPairReadable
             | BuiltinFunction::IoBufferedRWPairWritable
+            | BuiltinFunction::IoBufferedRWPairIsAtty
             | BuiltinFunction::IoBufferedRWPairSeekable
             | BuiltinFunction::IoBufferedRWPairDetach
             | BuiltinFunction::IoBufferedRWPairPeek
@@ -5344,6 +5358,8 @@ impl BuiltinFunction {
             | BuiltinFunction::OsGetPid
             | BuiltinFunction::OsGetCwd
             | BuiltinFunction::OsGetEnv
+            | BuiltinFunction::OsPutEnv
+            | BuiltinFunction::OsUnsetEnv
             | BuiltinFunction::OsGetTerminalSize
             | BuiltinFunction::OsTerminalSize
             | BuiltinFunction::OsOpen
@@ -5451,8 +5467,11 @@ impl BuiltinFunction {
             | BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
             | BuiltinFunction::CodecsEscapeDecode
+            | BuiltinFunction::CodecsMakeIdentityDict
             | BuiltinFunction::CodecsLookup
             | BuiltinFunction::CodecsRegister
+            | BuiltinFunction::CodecsUnregister
+            | BuiltinFunction::CodecsCodecInfoInit
             | BuiltinFunction::CodecsGetIncrementalEncoder
             | BuiltinFunction::CodecsGetIncrementalDecoder
             | BuiltinFunction::CodecsIncrementalEncoderInit
@@ -5572,6 +5591,11 @@ impl BuiltinFunction {
             | BuiltinFunction::IoReadText
             | BuiltinFunction::IoWriteText
             | BuiltinFunction::IoTextEncoding
+            | BuiltinFunction::IoIncrementalNewlineDecoderInit
+            | BuiltinFunction::IoIncrementalNewlineDecoderDecode
+            | BuiltinFunction::IoIncrementalNewlineDecoderGetState
+            | BuiltinFunction::IoIncrementalNewlineDecoderSetState
+            | BuiltinFunction::IoIncrementalNewlineDecoderReset
             | BuiltinFunction::IoTextIOWrapperInit
             | BuiltinFunction::IoFileRead
             | BuiltinFunction::IoFileReadLine
@@ -6356,6 +6380,7 @@ fn normalize_text_encoding_name(name: &str) -> Option<&'static str> {
     let lowered = name.to_ascii_lowercase().replace('_', "-");
     match lowered.as_str() {
         "utf-8" | "utf8" => Some("utf-8"),
+        "utf-8-sig" | "utf8-sig" | "utf-8sig" | "utf8sig" => Some("utf-8-sig"),
         "ascii" | "us-ascii" | "usascii" | "ansi-x3.4-1968" | "ansi-x3.4-1986" | "iso646-us"
         | "cp367" | "646" => Some("ascii"),
         "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" | "cp819" | "l1" => Some("latin-1"),
@@ -6386,6 +6411,11 @@ fn value_to_bytes_with_encoding(
         Value::Str(text) => {
             if matches!(encoding_name.as_str(), "ascii") && !text.is_ascii() {
                 return Err(RuntimeError::new("ascii codec can't encode character"));
+            }
+            if matches!(encoding_name.as_str(), "utf-8-sig") {
+                let mut out = vec![0xEF, 0xBB, 0xBF];
+                out.extend_from_slice(text.as_bytes());
+                return Ok(out);
             }
             if matches!(encoding_name.as_str(), "latin-1" | "latin1") {
                 let mut out = Vec::with_capacity(text.len());
@@ -6838,7 +6868,7 @@ pub fn format_value(value: &Value) -> String {
             Object::List(values) => {
                 let mut parts = Vec::new();
                 for value in values {
-                    parts.push(format_value(value));
+                    parts.push(format_repr(value));
                 }
                 format!("[{}]", parts.join(", "))
             }
@@ -6848,7 +6878,7 @@ pub fn format_value(value: &Value) -> String {
             Object::Tuple(values) => {
                 let mut parts = Vec::new();
                 for value in values {
-                    parts.push(format_value(value));
+                    parts.push(format_repr(value));
                 }
                 if parts.len() == 1 {
                     format!("({},)", parts[0])
@@ -6862,7 +6892,7 @@ pub fn format_value(value: &Value) -> String {
             Object::Dict(values) => {
                 let mut parts = Vec::new();
                 for (key, value) in values {
-                    parts.push(format!("{}: {}", format_value(key), format_value(value)));
+                    parts.push(format!("{}: {}", format_repr(key), format_repr(value)));
                 }
                 format!("{{{}}}", parts.join(", "))
             }
@@ -7006,6 +7036,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::BytesEndsWith => "<bound method bytes.endswith>".to_string(),
                     NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
+                    NativeMethodKind::BytesIndex => "<bound method bytes.index>".to_string(),
                     NativeMethodKind::BytesSplitLines => {
                         "<bound method bytes.splitlines>".to_string()
                     }
@@ -7017,6 +7048,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::BytesLStrip => "<bound method bytes.lstrip>".to_string(),
                     NativeMethodKind::BytesStrip => "<bound method bytes.strip>".to_string(),
                     NativeMethodKind::BytesRStrip => "<bound method bytes.rstrip>".to_string(),
+                    NativeMethodKind::ByteArrayAppend => {
+                        "<bound method bytearray.append>".to_string()
+                    }
                     NativeMethodKind::ByteArrayExtend => {
                         "<bound method bytearray.extend>".to_string()
                     }

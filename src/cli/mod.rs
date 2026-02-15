@@ -182,7 +182,11 @@ fn configure_vm_for_execution(
 }
 
 fn configure_vm_for_command(vm: &mut Vm, import_site: bool) -> Result<(), String> {
+    let pythonpath_entries = detect_pythonpath_entries();
     let (stdlib_paths, strict_site_import) = detect_cpython_stdlib_paths();
+    for path in pythonpath_entries {
+        vm.add_module_path(path);
+    }
     vm.set_sys_no_site_flag(!import_site);
     for stdlib_path in &stdlib_paths {
         vm.add_module_path(stdlib_path.clone());
@@ -219,11 +223,6 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         strict_site_import = true;
         register(PathBuf::from(path));
     }
-    if let Some(path) = env::var_os("PYTHONPATH") {
-        for entry in env::split_paths(&path) {
-            register(entry);
-        }
-    }
     if let Ok(home) = env::var("PYTHONHOME") {
         register(PathBuf::from(home).join("lib").join("python3.14"));
     }
@@ -245,6 +244,24 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
     }
 
     (out, strict_site_import)
+}
+
+fn detect_pythonpath_entries() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let Some(path) = env::var_os("PYTHONPATH") else {
+        return out;
+    };
+    for entry in env::split_paths(&path) {
+        if entry.as_os_str().is_empty() {
+            continue;
+        }
+        let normalized = std::fs::canonicalize(&entry).unwrap_or(entry);
+        if seen.insert(normalized.clone()) {
+            out.push(normalized);
+        }
+    }
+    out
 }
 
 fn run_ast(path: &str) -> Result<(), String> {

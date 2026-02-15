@@ -126,8 +126,10 @@ impl Vm {
             BuiltinFunction::CodecsEncode => "encode",
             BuiltinFunction::CodecsDecode => "decode",
             BuiltinFunction::CodecsEscapeDecode => "escape_decode",
+            BuiltinFunction::CodecsMakeIdentityDict => "make_identity_dict",
             BuiltinFunction::CodecsLookup => "lookup",
             BuiltinFunction::CodecsRegister => "register",
+            BuiltinFunction::CodecsCodecInfoInit => "__init__",
             BuiltinFunction::CodecsGetIncrementalEncoder => "getincrementalencoder",
             BuiltinFunction::CodecsGetIncrementalDecoder => "getincrementaldecoder",
             BuiltinFunction::CodecsIncrementalEncoderInit => "__init__",
@@ -669,8 +671,10 @@ impl Vm {
             BuiltinFunction::CodecsEncode
             | BuiltinFunction::CodecsDecode
             | BuiltinFunction::CodecsEscapeDecode
+            | BuiltinFunction::CodecsMakeIdentityDict
             | BuiltinFunction::CodecsLookup
             | BuiltinFunction::CodecsRegister
+            | BuiltinFunction::CodecsCodecInfoInit
             | BuiltinFunction::CodecsGetIncrementalEncoder
             | BuiltinFunction::CodecsGetIncrementalDecoder
             | BuiltinFunction::CodecsIncrementalEncoderInit
@@ -945,6 +949,24 @@ impl Vm {
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrIndex, receiver))
+            }
+            "translate" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::StrTranslate,
+                    receiver,
+                ))
             }
             _ => Err(RuntimeError::new(format!(
                 "builtin has no attribute '{}'",
@@ -1238,6 +1260,7 @@ impl Vm {
             "endswith" => NativeMethodKind::BytesEndsWith,
             "count" => NativeMethodKind::BytesCount,
             "find" => NativeMethodKind::BytesFind,
+            "index" => NativeMethodKind::BytesIndex,
             "splitlines" => NativeMethodKind::BytesSplitLines,
             "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,
@@ -1245,6 +1268,9 @@ impl Vm {
             "lstrip" => NativeMethodKind::BytesLStrip,
             "strip" => NativeMethodKind::BytesStrip,
             "rstrip" => NativeMethodKind::BytesRStrip,
+            "append" if matches!(receiver_value, Value::ByteArray(_)) => {
+                NativeMethodKind::ByteArrayAppend
+            }
             "extend" if matches!(receiver_value, Value::ByteArray(_)) => {
                 NativeMethodKind::ByteArrayExtend
             }
@@ -4511,6 +4537,14 @@ impl Vm {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
         };
+        if attr_name == "_CHUNK_SIZE"
+            && matches!(
+                &*class_ref.kind(),
+                Object::Class(class_data) if class_data.name == "TextIOWrapper"
+            )
+        {
+            return Err(RuntimeError::new("AttributeError: cannot delete attribute"));
+        }
         if matches!(
             &*class_ref.kind(),
             Object::Class(class_data) if class_data.name == "__csv_dialect__"
@@ -4553,7 +4587,7 @@ impl Vm {
         }
 
         Err(RuntimeError::new(format!(
-            "attribute '{}' does not exist",
+            "AttributeError: attribute '{}' does not exist",
             attr_name
         )))
     }

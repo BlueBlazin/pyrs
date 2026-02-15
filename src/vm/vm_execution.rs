@@ -17,7 +17,7 @@ use super::{
     extract_import_error_name, extract_os_error_errno, extract_os_error_strerror,
     extract_prefixed_exception_message, extract_runtime_error_exception_name,
     extract_runtime_error_final_message, floor_div_values, format_value, infer_os_error_errno,
-    invert_value, is_comprehension_code, is_os_error_family, lshift_values, matmul_values,
+    invert_value, is_comprehension_code, is_import_error_family, is_os_error_family, lshift_values, matmul_values,
     memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
     memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
     module_globals_version, mul_values, neg_value, or_values, pos_value, pow_values, rshift_values,
@@ -517,7 +517,7 @@ impl Vm {
                     .map(|frame| frame.active_exception.is_none())
                     .unwrap_or(false);
                 if safe_for_pending_finalizers {
-                    self.run_pending_del_finalizers();
+                    self.run_pending_del_finalizers(false);
                 }
             }
         }
@@ -5163,7 +5163,39 @@ impl Vm {
             }
             Opcode::MatchException => {
                 let handler_type = self.pop_value()?;
-                let exception = self.pop_value()?;
+                let mut exception = self.pop_value()?;
+                let active_exception = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.active_exception.clone());
+                if !self.value_is_exception_like(&exception)
+                    && let Some(active) = active_exception
+                    && self.value_is_exception_like(&active)
+                {
+                    exception = active;
+                    if let Some(frame) = self.frames.last_mut() {
+                        let top_is_exceptionish = frame
+                            .stack
+                            .last()
+                            .map(|value| {
+                                matches!(value, Value::Exception(_) | Value::ExceptionType(_))
+                            })
+                            .unwrap_or(false);
+                        let second_is_exceptionish = frame
+                            .stack
+                            .get(frame.stack.len().saturating_sub(2))
+                            .map(|value| {
+                                matches!(value, Value::Exception(_) | Value::ExceptionType(_))
+                            })
+                            .unwrap_or(false);
+                        let should_drop_junk = frame.stack.len() >= 2
+                            && !top_is_exceptionish
+                            && second_is_exceptionish;
+                        if should_drop_junk {
+                            frame.stack.pop();
+                        }
+                    }
+                }
                 let matches = self.exception_matches(&exception, &handler_type)?;
                 self.push_value(Value::Bool(matches));
             }
@@ -5700,12 +5732,21 @@ impl Vm {
         if matches!(
             exception_type.as_str(),
             "ImportError" | "ModuleNotFoundError"
-        ) && let Some(name) = extract_import_error_name(&err.message)
-        {
-            exception
-                .attrs
-                .borrow_mut()
-                .insert("name".to_string(), Value::Str(name));
+        ) {
+            let mut attrs = exception.attrs.borrow_mut();
+            attrs.insert(
+                "msg".to_string(),
+                exception
+                    .message
+                    .as_ref()
+                    .map(|message| Value::Str(message.clone()))
+                    .unwrap_or(Value::None),
+            );
+            attrs.insert("name".to_string(), Value::None);
+            attrs.insert("path".to_string(), Value::None);
+            if let Some(name) = extract_import_error_name(&err.message) {
+                attrs.insert("name".to_string(), Value::Str(name));
+            }
         }
         if let Some((code, name)) = sqlite_metadata {
             exception
@@ -5799,6 +5840,14 @@ impl Vm {
                 Ok(Value::Exception(Box::new(exception)))
             }
             _ => Err(RuntimeError::new("can only raise Exception types")),
+        }
+    }
+
+    fn value_is_exception_like(&self, value: &Value) -> bool {
+        match value {
+            Value::Exception(_) | Value::ExceptionType(_) => true,
+            Value::Class(class) => self.class_is_exception_class(class),
+            _ => false,
         }
     }
 
@@ -6050,11 +6099,40 @@ impl Vm {
         args: &[Value],
         kwargs: &HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let _ = kwargs;
+        let mut call_args = args.to_vec();
+        let mut import_error_name = Value::None;
+        let mut import_error_path = Value::None;
+        if is_import_error_family(name) {
+            let mut remaining_kwargs = kwargs.clone();
+            if let Some(msg_kw) = remaining_kwargs.remove("msg") {
+                if call_args.is_empty() {
+                    call_args.push(msg_kw);
+                } else {
+                    return Err(RuntimeError::new(
+                        "ImportError.__init__() got multiple values for argument 'msg'",
+                    ));
+                }
+            }
+            if let Some(value) = remaining_kwargs.remove("name") {
+                import_error_name = value;
+            }
+            if let Some(value) = remaining_kwargs.remove("path") {
+                import_error_path = value;
+            }
+            if !remaining_kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "BaseException.__init__() takes no keyword arguments",
+                ));
+            }
+        } else if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "BaseException.__init__() takes no keyword arguments",
+            ));
+        }
 
         if self.exception_inherits(name, "BaseExceptionGroup") {
-            let message = args.first().map(format_value);
-            let members = if let Some(value) = args.get(1) {
+            let message = call_args.first().map(format_value);
+            let members = if let Some(value) = call_args.get(1) {
                 self.exception_members_from_value(value)?
             } else {
                 Vec::new()
@@ -6063,40 +6141,44 @@ impl Vm {
             exception
                 .attrs
                 .borrow_mut()
-                .insert("args".to_string(), self.heap.alloc_tuple(args.to_vec()));
+                .insert("args".to_string(), self.heap.alloc_tuple(call_args));
             return Ok(Value::Exception(Box::new(exception)));
         }
 
-        let message = exception_message_from_call_args(args);
+        let message = exception_message_from_call_args(&call_args);
         let exception = ExceptionObject::new(name.to_string(), message);
         {
             let mut attrs = exception.attrs.borrow_mut();
-            attrs.insert("args".to_string(), self.heap.alloc_tuple(args.to_vec()));
+            attrs.insert("args".to_string(), self.heap.alloc_tuple(call_args.clone()));
             if matches!(name, "StopIteration" | "StopAsyncIteration") {
-                let value = args.first().cloned().unwrap_or(Value::None);
+                let value = call_args.first().cloned().unwrap_or(Value::None);
                 attrs.insert("value".to_string(), value);
             }
             if is_os_error_family(name) {
-                if let Some(errno) = args
+                if let Some(errno) = call_args
                     .first()
                     .and_then(|value| value_to_int(value.clone()).ok())
                 {
                     attrs.insert("errno".to_string(), Value::Int(errno));
                 }
-                if let Some(strerror) = args.get(1) {
+                if let Some(strerror) = call_args.get(1) {
                     attrs.insert("strerror".to_string(), strerror.clone());
                 }
-                if let Some(filename) = args.get(2) {
-                    attrs.insert("filename".to_string(), filename.clone());
+                if let Some(filename) = call_args.get(2) {
+                    if name == "BlockingIOError" {
+                        attrs.insert("characters_written".to_string(), filename.clone());
+                    } else {
+                        attrs.insert("filename".to_string(), filename.clone());
+                    }
                 }
             }
-            if matches!(name, "ImportError" | "ModuleNotFoundError")
-                && let Some(module_name) = args.iter().find_map(|value| match value {
-                    Value::Str(text) => Some(text.clone()),
-                    _ => None,
-                })
-            {
-                attrs.insert("name".to_string(), Value::Str(module_name));
+            if is_import_error_family(name) {
+                attrs.insert(
+                    "msg".to_string(),
+                    call_args.first().cloned().unwrap_or(Value::None),
+                );
+                attrs.insert("name".to_string(), import_error_name);
+                attrs.insert("path".to_string(), import_error_path);
             }
         }
         Ok(Value::Exception(Box::new(exception)))

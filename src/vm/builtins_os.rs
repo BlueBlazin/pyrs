@@ -5,7 +5,8 @@ use super::{
     Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio, SystemTime,
     TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, UnixStream, Value, Vm, Write, bytes_like_from_value,
     collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
-    dict_get_value, encode_text_bytes, format_value, fs, is_pyrs_executable, is_truthy,
+    dict_get_value, dict_remove_value, dict_set_value, encode_text_bytes, format_value, fs,
+    is_pyrs_executable, is_truthy,
     normalize_codec_encoding, normalize_codec_errors, parse_decimal_bigint_literal,
     parse_modules_to_block_literal, parse_string_formatter, seconds_to_system_time,
     split_formatter_field_name, system_time_to_secs_f64, value_from_bigint, value_to_bigint,
@@ -113,6 +114,71 @@ impl Vm {
             Ok(value) => Ok(Value::Str(value)),
             Err(_) => Ok(default),
         }
+    }
+
+    fn os_update_environ_dict(&mut self, key: &str, value: Option<String>) {
+        let key_value = Value::Str(key.to_string());
+        for module_name in ["os", "posix"] {
+            let Some(module_obj) = self.modules.get(module_name) else {
+                continue;
+            };
+            let module_kind = module_obj.kind();
+            let Object::Module(module_data) = &*module_kind else {
+                continue;
+            };
+            let Some(Value::Dict(environ_obj)) = module_data.globals.get("environ") else {
+                continue;
+            };
+            if let Some(value) = &value {
+                dict_set_value(environ_obj, key_value.clone(), Value::Str(value.clone()));
+            } else {
+                let _ = dict_remove_value(environ_obj, &key_value);
+            }
+        }
+    }
+
+    pub(super) fn builtin_os_putenv(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("os.putenv() expects key and value"));
+        }
+        let key = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("os.putenv() key must be str")),
+        };
+        let value = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("os.putenv() value must be str")),
+        };
+        // SAFETY: Matches CPython behavior for process environment mutation.
+        unsafe {
+            std::env::set_var(&key, &value);
+        }
+        self.os_update_environ_dict(&key, Some(value));
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_os_unsetenv(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("os.unsetenv() expects key"));
+        }
+        let key = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::new("os.unsetenv() key must be str")),
+        };
+        // SAFETY: Matches CPython behavior for process environment mutation.
+        unsafe {
+            std::env::remove_var(&key);
+        }
+        self.os_update_environ_dict(&key, None);
+        Ok(Value::None)
     }
 
     pub(super) fn make_os_terminal_size(&self, columns: i64, lines: i64) -> Value {
@@ -3719,6 +3785,111 @@ impl Vm {
         ]))
     }
 
+    pub(super) fn builtin_codecs_make_identity_dict(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("make_identity_dict() expects one argument"));
+        }
+        let values = self.collect_iterable_values(args[0].clone())?;
+        let mut entries = Vec::with_capacity(values.len());
+        for value in values {
+            let index = value_to_int(value)?;
+            entries.push((Value::Int(index), Value::Int(index)));
+        }
+        Ok(self.heap.alloc_dict(entries))
+    }
+
+    pub(super) fn builtin_codecs_codecinfo_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "CodecInfo.__init__")?;
+        let field_order = [
+            "encode",
+            "decode",
+            "streamreader",
+            "streamwriter",
+            "incrementalencoder",
+            "incrementaldecoder",
+            "name",
+        ];
+        if args.len() > field_order.len() {
+            return Err(RuntimeError::new(
+                "CodecInfo.__init__() received too many positional arguments",
+            ));
+        }
+        let mut values = HashMap::new();
+        for (idx, value) in args.into_iter().enumerate() {
+            values.insert(field_order[idx].to_string(), value);
+        }
+        for field in field_order {
+            if let Some(value) = kwargs.remove(field) {
+                if values.contains_key(field) {
+                    return Err(RuntimeError::new(format!(
+                        "CodecInfo.__init__() got multiple values for '{}'",
+                        field
+                    )));
+                }
+                values.insert(field.to_string(), value);
+            }
+        }
+        let is_text = kwargs
+            .remove("_is_text_encoding")
+            .unwrap_or(Value::Bool(true));
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "CodecInfo.__init__() got an unexpected keyword argument",
+            ));
+        }
+        let defaults = [
+            ("streamreader", Value::None),
+            ("streamwriter", Value::None),
+            ("incrementalencoder", Value::None),
+            ("incrementaldecoder", Value::None),
+            ("name", Value::None),
+        ];
+        for (field, default) in defaults {
+            values.entry(field.to_string()).or_insert(default);
+        }
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data.attrs.insert(
+                "encode".to_string(),
+                values.remove("encode").unwrap_or(Value::None),
+            );
+            instance_data.attrs.insert(
+                "decode".to_string(),
+                values.remove("decode").unwrap_or(Value::None),
+            );
+            instance_data.attrs.insert(
+                "streamreader".to_string(),
+                values.remove("streamreader").unwrap_or(Value::None),
+            );
+            instance_data.attrs.insert(
+                "streamwriter".to_string(),
+                values.remove("streamwriter").unwrap_or(Value::None),
+            );
+            instance_data.attrs.insert(
+                "incrementalencoder".to_string(),
+                values.remove("incrementalencoder").unwrap_or(Value::None),
+            );
+            instance_data.attrs.insert(
+                "incrementaldecoder".to_string(),
+                values.remove("incrementaldecoder").unwrap_or(Value::None),
+            );
+            instance_data
+                .attrs
+                .insert("name".to_string(), values.remove("name").unwrap_or(Value::None));
+            instance_data
+                .attrs
+                .insert("_is_text_encoding".to_string(), is_text);
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_codecs_lookup(
         &mut self,
         mut args: Vec<Value>,
@@ -3727,7 +3898,50 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("lookup() expects one argument"));
         }
-        let encoding = normalize_codec_encoding(args.remove(0))?;
+        let source_name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::new("lookup() expects string encoding name")),
+        };
+        let fallback_name = source_name
+            .trim()
+            .replace('_', "-")
+            .to_ascii_lowercase();
+        let normalized_encoding = normalize_codec_encoding(Value::Str(source_name.clone())).ok();
+        let encoding = normalized_encoding
+            .clone()
+            .unwrap_or_else(|| fallback_name.clone());
+        if normalized_encoding.is_none() {
+            self.import_module("encodings")?;
+            let encodings_module = self
+                .modules
+                .get("encodings")
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("encodings module unavailable"))?;
+            let search_function = self.builtin_getattr(
+                vec![
+                    Value::Module(encodings_module),
+                    Value::Str("search_function".to_string()),
+                ],
+                HashMap::new(),
+            )?;
+            let searched = match self.call_internal_preserving_caller(
+                search_function,
+                vec![Value::Str(encoding)],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("codecs lookup failed"));
+                }
+            };
+            if matches!(searched, Value::None) {
+                return Err(RuntimeError::new(format!(
+                    "LookupError: unknown encoding: {}",
+                    source_name
+                )));
+            }
+            return Ok(searched);
+        }
         let codec_module = self
             .modules
             .get("codecs")
@@ -3793,6 +4007,20 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("register() expects one argument"));
+        }
+        if !self.is_callable_value(&args[0]) {
+            return Err(RuntimeError::new("argument must be callable"));
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_codecs_unregister(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("unregister() expects one argument"));
         }
         if !self.is_callable_value(&args[0]) {
             return Err(RuntimeError::new("argument must be callable"));
@@ -3898,7 +4126,7 @@ impl Vm {
             Value::Str(text) => text,
             _ => return Err(RuntimeError::new("encoder input must be str")),
         };
-        let (encoding, errors) = match &*receiver.kind() {
+        let (encoding, errors, state_flag) = match &*receiver.kind() {
             Object::Instance(instance_data) => {
                 let encoding = match instance_data.attrs.get(CODECS_ATTR_ENCODING) {
                     Some(Value::Str(value)) => value.clone(),
@@ -3908,12 +4136,36 @@ impl Vm {
                     Some(Value::Str(value)) => value.clone(),
                     _ => "strict".to_string(),
                 };
-                (encoding, errors)
+                let state_flag = match instance_data.attrs.get(CODECS_ATTR_STATE_FLAG) {
+                    Some(Value::Int(value)) => *value,
+                    _ => 0,
+                };
+                (encoding, errors, state_flag)
             }
             _ => return Err(RuntimeError::new("incremental encoder is uninitialized")),
         };
-        let encoded = encode_text_bytes(&text, &encoding, &errors)?;
-        Ok(self.heap.alloc_bytes(encoded))
+        let mut encoded = if encoding == "utf-8-sig" {
+            if state_flag == 0 {
+                let mut payload = vec![0xEF, 0xBB, 0xBF];
+                payload.extend_from_slice(text.as_bytes());
+                payload
+            } else {
+                text.into_bytes()
+            }
+        } else {
+            encode_text_bytes(&text, &encoding, &errors)?
+        };
+        if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+            let next_state = if encoding == "utf-8-sig" {
+                1
+            } else {
+                state_flag
+            };
+            instance_data
+                .attrs
+                .insert(CODECS_ATTR_STATE_FLAG.to_string(), Value::Int(next_state));
+        }
+        Ok(self.heap.alloc_bytes(std::mem::take(&mut encoded)))
     }
 
     pub(super) fn builtin_codecs_incremental_encoder_init(
@@ -3961,13 +4213,16 @@ impl Vm {
             instance_data
                 .attrs
                 .insert(CODECS_ATTR_ERRORS.to_string(), Value::Str(errors));
+            instance_data
+                .attrs
+                .insert(CODECS_ATTR_STATE_FLAG.to_string(), Value::Int(0));
         }
         Ok(Value::None)
     }
 
     pub(super) fn builtin_codecs_incremental_encoder_reset(
         &self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
@@ -3975,12 +4230,25 @@ impl Vm {
                 "IncrementalEncoder.reset() expects no arguments",
             ));
         }
+        let receiver = match args.remove(0) {
+            Value::Instance(instance) => instance,
+            _ => {
+                return Err(RuntimeError::new(
+                    "IncrementalEncoder.reset() requires instance receiver",
+                ));
+            }
+        };
+        if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+            instance_data
+                .attrs
+                .insert(CODECS_ATTR_STATE_FLAG.to_string(), Value::Int(0));
+        }
         Ok(Value::None)
     }
 
     pub(super) fn builtin_codecs_incremental_encoder_getstate(
         &self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
@@ -3988,7 +4256,23 @@ impl Vm {
                 "IncrementalEncoder.getstate() expects no arguments",
             ));
         }
-        Ok(Value::Int(0))
+        let receiver = match args.remove(0) {
+            Value::Instance(instance) => instance,
+            _ => {
+                return Err(RuntimeError::new(
+                    "IncrementalEncoder.getstate() requires instance receiver",
+                ));
+            }
+        };
+        let state = match &*receiver.kind() {
+            Object::Instance(instance_data) => match instance_data.attrs.get(CODECS_ATTR_STATE_FLAG)
+            {
+                Some(Value::Int(value)) => *value,
+                _ => 0,
+            },
+            _ => 0,
+        };
+        Ok(Value::Int(state))
     }
 
     pub(super) fn builtin_codecs_incremental_encoder_setstate(
@@ -4001,7 +4285,14 @@ impl Vm {
                 "IncrementalEncoder.setstate() expects state argument",
             ));
         }
-        let _receiver = args.remove(0);
+        let receiver = match args.remove(0) {
+            Value::Instance(instance) => instance,
+            _ => {
+                return Err(RuntimeError::new(
+                    "IncrementalEncoder.setstate() requires instance receiver",
+                ));
+            }
+        };
         let mut state = if !args.is_empty() {
             Some(args.remove(0))
         } else {
@@ -4022,7 +4313,12 @@ impl Vm {
         }
         let state = state
             .ok_or_else(|| RuntimeError::new("IncrementalEncoder.setstate() missing state"))?;
-        let _ = value_to_int(state)?;
+        let state = value_to_int(state)?;
+        if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+            instance_data
+                .attrs
+                .insert(CODECS_ATTR_STATE_FLAG.to_string(), Value::Int(state));
+        }
         Ok(Value::None)
     }
 
@@ -4089,15 +4385,41 @@ impl Vm {
             _ => return Err(RuntimeError::new("incremental decoder is uninitialized")),
         };
 
+        let mut state_flag = state_flag;
         let mut combined = pending;
         combined.extend_from_slice(&input);
-        let (decoded, pending_tail) = if final_decode {
-            (
-                decode_text_bytes(&combined, &encoding, &errors)?,
-                Vec::new(),
-            )
+        let decode_encoding = if encoding == "utf-8-sig" {
+            const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+            if state_flag == 0 {
+                if combined.starts_with(&UTF8_BOM) {
+                    combined.drain(..3);
+                    state_flag = 1;
+                } else if !final_decode
+                    && !combined.is_empty()
+                    && UTF8_BOM.starts_with(combined.as_slice())
+                {
+                    let pending_value = self.heap.alloc_bytes(combined);
+                    if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                        instance_data
+                            .attrs
+                            .insert(CODECS_ATTR_PENDING.to_string(), pending_value);
+                        instance_data
+                            .attrs
+                            .insert(CODECS_ATTR_STATE_FLAG.to_string(), Value::Int(state_flag));
+                    }
+                    return Ok(Value::Str(String::new()));
+                } else {
+                    state_flag = 1;
+                }
+            }
+            "utf-8"
         } else {
-            let max_tail = match encoding.as_str() {
+            encoding.as_str()
+        };
+        let (decoded, pending_tail) = if final_decode {
+            (decode_text_bytes(&combined, decode_encoding, &errors)?, Vec::new())
+        } else {
+            let max_tail = match decode_encoding {
                 "utf-8" => 3usize,
                 "utf-16" | "utf-16-le" | "utf-16-be" => 1usize,
                 "utf-32" | "utf-32-le" | "utf-32-be" => 3usize,
@@ -4107,7 +4429,7 @@ impl Vm {
             let mut parsed = None;
             for tail_len in 0..=max_try {
                 let split_at = combined.len() - tail_len;
-                match decode_text_bytes(&combined[..split_at], &encoding, &errors) {
+                match decode_text_bytes(&combined[..split_at], decode_encoding, &errors) {
                     Ok(text) => {
                         parsed = Some((text, combined[split_at..].to_vec()));
                         break;
@@ -4118,7 +4440,7 @@ impl Vm {
             match parsed {
                 Some(value) => value,
                 None => (
-                    decode_text_bytes(&combined, &encoding, &errors)?,
+                    decode_text_bytes(&combined, decode_encoding, &errors)?,
                     Vec::new(),
                 ),
             }

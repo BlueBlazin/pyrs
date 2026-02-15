@@ -381,6 +381,8 @@ impl Vm {
                 ("getpid", BuiltinFunction::OsGetPid),
                 ("getcwd", BuiltinFunction::OsGetCwd),
                 ("getenv", BuiltinFunction::OsGetEnv),
+                ("putenv", BuiltinFunction::OsPutEnv),
+                ("unsetenv", BuiltinFunction::OsUnsetEnv),
                 ("get_terminal_size", BuiltinFunction::OsGetTerminalSize),
                 ("open", BuiltinFunction::OsOpen),
                 ("pipe", BuiltinFunction::OsPipe),
@@ -525,6 +527,8 @@ impl Vm {
                 ("getpid", BuiltinFunction::OsGetPid),
                 ("getcwd", BuiltinFunction::OsGetCwd),
                 ("getenv", BuiltinFunction::OsGetEnv),
+                ("putenv", BuiltinFunction::OsPutEnv),
+                ("unsetenv", BuiltinFunction::OsUnsetEnv),
                 ("open", BuiltinFunction::OsOpen),
                 ("pipe", BuiltinFunction::OsPipe),
                 ("read", BuiltinFunction::OsRead),
@@ -1593,6 +1597,27 @@ impl Vm {
             "IncrementalEncoder".to_string(),
             Vec::new(),
         ));
+        let codec_class = self
+            .heap
+            .alloc_class(ClassObject::new("Codec".to_string(), Vec::new()));
+        if let Value::Class(class_obj) = &codec_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("codecs".to_string()));
+        }
+        if let Value::Class(class_obj) = &codec_info_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("codecs".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::CodecsCodecInfoInit),
+            );
+        }
         if let Value::Class(class_obj) = &incremental_decoder_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
@@ -1659,8 +1684,10 @@ impl Vm {
                 ("encode", BuiltinFunction::CodecsEncode),
                 ("decode", BuiltinFunction::CodecsDecode),
                 ("escape_decode", BuiltinFunction::CodecsEscapeDecode),
+                ("make_identity_dict", BuiltinFunction::CodecsMakeIdentityDict),
                 ("lookup", BuiltinFunction::CodecsLookup),
                 ("register", BuiltinFunction::CodecsRegister),
+                ("unregister", BuiltinFunction::CodecsUnregister),
                 (
                     "getincrementalencoder",
                     BuiltinFunction::CodecsGetIncrementalEncoder,
@@ -1672,6 +1699,7 @@ impl Vm {
             ],
             vec![
                 ("BOM_UTF8", self.heap.alloc_bytes(vec![0xEF, 0xBB, 0xBF])),
+                ("Codec", codec_class),
                 ("CodecInfo", codec_info_class),
                 ("IncrementalDecoder", incremental_decoder_class),
                 ("IncrementalEncoder", incremental_encoder_class),
@@ -2890,9 +2918,29 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::CollectionsUserDictTypeRepr),
             );
         }
+        let user_list_bases = self
+            .modules
+            .get("builtins")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("list").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class_obj) => Some(vec![class_obj]),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                match self
+                    .heap
+                    .alloc_class(ClassObject::new("list".to_string(), Vec::new()))
+                {
+                    Value::Class(class_obj) => vec![class_obj],
+                    _ => Vec::new(),
+                }
+            });
         let user_list_class = match self
             .heap
-            .alloc_class(ClassObject::new("UserList".to_string(), Vec::new()))
+            .alloc_class(ClassObject::new("UserList".to_string(), user_list_bases))
         {
             Value::Class(obj) => obj,
             _ => unreachable!(),
@@ -4311,6 +4359,10 @@ impl Vm {
                             Value::Builtin(BuiltinFunction::IoBufferedRWPairWritable),
                         );
                         class_data.attrs.insert(
+                            "isatty".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairIsAtty),
+                        );
+                        class_data.attrs.insert(
                             "seekable".to_string(),
                             Value::Builtin(BuiltinFunction::IoBufferedRWPairSeekable),
                         );
@@ -4419,13 +4471,37 @@ impl Vm {
                     self.heap
                         .alloc_class(ClassObject::new("Writer".to_string(), Vec::new())),
                 ),
-                (
-                    "IncrementalNewlineDecoder",
-                    self.heap.alloc_class(ClassObject::new(
+                {
+                    let class = self.heap.alloc_class(ClassObject::new(
                         "IncrementalNewlineDecoder".to_string(),
                         Vec::new(),
-                    )),
-                ),
+                    ));
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderInit),
+                        );
+                        class_data.attrs.insert(
+                            "decode".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderDecode),
+                        );
+                        class_data.attrs.insert(
+                            "getstate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderGetState),
+                        );
+                        class_data.attrs.insert(
+                            "setstate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderSetState),
+                        );
+                        class_data.attrs.insert(
+                            "reset".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderReset),
+                        );
+                    }
+                    ("IncrementalNewlineDecoder", class)
+                },
                 (
                     "UnsupportedOperation",
                     Value::ExceptionType("UnsupportedOperation".to_string()),
@@ -4901,6 +4977,10 @@ impl Vm {
                             Value::Builtin(BuiltinFunction::IoBufferedRWPairWritable),
                         );
                         class_data.attrs.insert(
+                            "isatty".to_string(),
+                            Value::Builtin(BuiltinFunction::IoBufferedRWPairIsAtty),
+                        );
+                        class_data.attrs.insert(
                             "seekable".to_string(),
                             Value::Builtin(BuiltinFunction::IoBufferedRWPairSeekable),
                         );
@@ -4998,13 +5078,37 @@ impl Vm {
                     }
                     ("TextIOBase", class)
                 },
-                (
-                    "IncrementalNewlineDecoder",
-                    self.heap.alloc_class(ClassObject::new(
+                {
+                    let class = self.heap.alloc_class(ClassObject::new(
                         "IncrementalNewlineDecoder".to_string(),
                         Vec::new(),
-                    )),
-                ),
+                    ));
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        class_data.attrs.insert(
+                            "__init__".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderInit),
+                        );
+                        class_data.attrs.insert(
+                            "decode".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderDecode),
+                        );
+                        class_data.attrs.insert(
+                            "getstate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderGetState),
+                        );
+                        class_data.attrs.insert(
+                            "setstate".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderSetState),
+                        );
+                        class_data.attrs.insert(
+                            "reset".to_string(),
+                            Value::Builtin(BuiltinFunction::IoIncrementalNewlineDecoderReset),
+                        );
+                    }
+                    ("IncrementalNewlineDecoder", class)
+                },
                 (
                     "UnsupportedOperation",
                     Value::ExceptionType("UnsupportedOperation".to_string()),
@@ -5962,7 +6066,16 @@ impl Vm {
 
         self.register_module(name, module.clone());
         self.link_module_chain(name, module.clone());
-        self.exec_module_for_loader(&module, name, loader_name, &source_info)?;
+        if let Err(err) = self.exec_module_for_loader(&module, name, loader_name, &source_info) {
+            self.unregister_module(name);
+            if let Some((parent, child)) = name.rsplit_once('.')
+                && let Some(parent_module) = self.modules.get(parent)
+                && let Object::Module(parent_data) = &mut *parent_module.kind_mut()
+            {
+                parent_data.globals.remove(child);
+            }
+            return Err(err);
+        }
         Ok(module)
     }
 

@@ -9,6 +9,9 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Any temporary workaround must be explicitly marked and tracked with closure criteria in:
   - `docs/STUB_ACCOUNTING.md`, or
   - `docs/ALGO_AUDIT_BACKLOG.md`.
+- Do not use test-by-test attribute patching as a development strategy.
+- For stdlib-facing behavior, implement from CPython reference first (`Modules/*.c`, `Objects/*.c`, `Lib/*.py`) and Python 3.14 docs, then validate with tests.
+- Avoid bootstrap-only mock surfaces that diverge from CPython architecture (e.g. prefer native `_module` substrate + CPython `Lib/*.py` layer instead of replacement modules when CPython provides one).
 
 ## Scope and Constraints
 - Target version: CPython 3.14

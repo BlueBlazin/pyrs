@@ -1426,10 +1426,10 @@ impl Vm {
         };
         let shutdown_result = self.builtin_atexit_run_exitfuncs(Vec::new(), HashMap::new());
         self.run_weakref_atexit_finalizers();
+        self.run_pending_del_finalizers(true);
         if pushed_shutdown_frame {
             let _ = self.frames.pop();
         }
-        self.run_pending_del_finalizers();
         if self.import_perf_enabled {
             eprintln!(
                 "[import-perf] source_compiles={} pyc_attempts={} pyc_fallbacks={}",
@@ -1634,6 +1634,11 @@ impl Vm {
         }
         let (exception_message, sqlite_metadata) =
             strip_sqlite_exception_metadata(exception_message);
+        let is_import_error = is_import_error_family(exception_type.as_str());
+        let import_error_msg = exception_message
+            .as_ref()
+            .map(|text| Value::Str(text.clone()))
+            .unwrap_or(Value::None);
         let exception = ExceptionObject::new(exception_type, exception_message);
         let args = if let Some(message) = &exception.message {
             self.heap.alloc_tuple(vec![Value::Str(message.clone())])
@@ -1643,6 +1648,11 @@ impl Vm {
         {
             let mut attrs = exception.attrs.borrow_mut();
             attrs.insert("args".to_string(), args);
+            if is_import_error {
+                attrs.insert("msg".to_string(), import_error_msg);
+                attrs.insert("name".to_string(), Value::None);
+                attrs.insert("path".to_string(), Value::None);
+            }
             if let Some((code, name)) = sqlite_metadata {
                 attrs.insert("sqlite_errorcode".to_string(), Value::Int(code));
                 attrs.insert("sqlite_errorname".to_string(), Value::Str(name));
@@ -1720,10 +1730,10 @@ impl Vm {
         }
     }
 
-    fn run_pending_del_finalizers(&mut self) {
+    fn run_pending_del_finalizers(&mut self, force_all: bool) {
         let mut ready = Vec::new();
         for (id, instance) in &self.pending_del_instances {
-            if instance.strong_count() == 1 {
+            if force_all || instance.strong_count() == 1 {
                 ready.push((*id, instance.clone()));
             }
         }
@@ -2059,7 +2069,7 @@ impl Vm {
     }
 
     pub fn gc_collect(&mut self) -> usize {
-        self.run_pending_del_finalizers();
+        self.run_pending_del_finalizers(false);
         let roots = self.collect_gc_roots();
         let unreachable = self.heap.unreachable_objects(&roots);
         let unreachable_count = unreachable.len();
@@ -6432,6 +6442,7 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
     };
     match name.as_str() {
         "utf-8" | "utf8" => Ok("utf-8".to_string()),
+        "utf-8-sig" | "utf8-sig" | "utf-8sig" | "utf8sig" => Ok("utf-8-sig".to_string()),
         "utf-16" | "utf16" => Ok("utf-16".to_string()),
         "utf-16-le" | "utf16-le" | "utf-16le" | "utf16le" => Ok("utf-16-le".to_string()),
         "utf-16-be" | "utf16-be" | "utf-16be" | "utf16be" => Ok("utf-16-be".to_string()),
@@ -6566,6 +6577,11 @@ fn decode_escape_bytes(input: &[u8], errors: &str) -> Result<Vec<u8>, RuntimeErr
 fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>, RuntimeError> {
     match encoding {
         "utf-8" => Ok(text.as_bytes().to_vec()),
+        "utf-8-sig" => {
+            let mut out = vec![0xEF, 0xBB, 0xBF];
+            out.extend_from_slice(text.as_bytes());
+            Ok(out)
+        }
         "utf-16" => {
             let mut out = Vec::new();
             out.extend_from_slice(&[0xFF, 0xFE]);
@@ -6657,6 +6673,14 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
 fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<String, RuntimeError> {
     match encoding {
         "utf-8" => decode_utf8_bytes(bytes, errors),
+        "utf-8-sig" => {
+            let payload = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                &bytes[3..]
+            } else {
+                bytes
+            };
+            decode_utf8_bytes(payload, errors)
+        }
         "utf-16" => {
             if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
                 decode_utf16_bytes(&bytes[2..], errors, true)
@@ -8542,12 +8566,27 @@ fn is_os_error_family(name: &str) -> bool {
     matches!(
         name,
         "OSError"
+            | "BlockingIOError"
+            | "ChildProcessError"
+            | "ConnectionError"
+            | "BrokenPipeError"
+            | "ConnectionAbortedError"
+            | "ConnectionRefusedError"
+            | "ConnectionResetError"
             | "FileNotFoundError"
             | "FileExistsError"
+            | "InterruptedError"
+            | "ProcessLookupError"
+            | "TimeoutError"
             | "PermissionError"
             | "NotADirectoryError"
             | "IsADirectoryError"
     )
+}
+
+#[inline]
+fn is_import_error_family(name: &str) -> bool {
+    matches!(name, "ImportError" | "ModuleNotFoundError")
 }
 
 fn extract_os_error_errno(message: &str) -> Option<i64> {

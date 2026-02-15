@@ -153,3 +153,34 @@ fn cli_no_args_honors_site_import_flag_for_stdin_execution() {
     );
     assert_eq!(code, 0, "stderr:\n{stderr}");
 }
+
+#[test]
+fn cli_preserves_pythonpath_entries_that_are_not_stdlib_roots() {
+    let root = temp_root("cli_pythonpath_entries");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let extra = root.join("extra_path");
+    fs::create_dir_all(&extra).expect("create extra module root");
+    fs::write(extra.join("hello_from_path.py"), "VALUE = 123\n").expect("write helper module");
+
+    let script = root.join("main.py");
+    fs::write(
+        &script,
+        "import hello_from_path\nassert hello_from_path.VALUE == 123\n",
+    )
+    .expect("write script");
+
+    let mut cmd = Command::new(pyrs_bin());
+    cmd.current_dir(&root);
+    cmd.arg(script.to_string_lossy().to_string());
+    cmd.env("PYRS_CPYTHON_LIB", stdlib.as_os_str());
+    let pythonpath =
+        std::env::join_paths([extra.as_os_str()]).expect("join PYTHONPATH for test");
+    cmd.env("PYTHONPATH", pythonpath);
+    let output = cmd.output().expect("run pyrs");
+    let code = output.status.code().unwrap_or(1);
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+}

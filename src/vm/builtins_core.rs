@@ -11,8 +11,9 @@ use super::{
     compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
     dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
     encode_text_bytes, exception_type_is_subclass, format_float_hex, format_repr, format_value,
-    frame_cell_value, is_missing_attribute_error, is_runtime_type_name_marker,
-    normalize_codec_encoding, normalize_codec_errors, ordering_from_cmp_value,
+    frame_cell_value, is_import_error_family, is_missing_attribute_error, is_os_error_family,
+    is_runtime_type_name_marker, normalize_codec_encoding, normalize_codec_errors,
+    ordering_from_cmp_value,
     parse_hex_float_literal, parser, round_float_with_ndigits, runtime_error_matches_exception,
     value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
     weakref_target_id, weakref_target_object, with_bytes_like_source,
@@ -303,6 +304,23 @@ impl Vm {
             return Err(RuntimeError::new("repr() expects one argument"));
         }
         let value = args.remove(0);
+        if let Value::Instance(instance) = &value
+            && let Object::Instance(instance_data) = &*instance.kind()
+        {
+            let is_text_wrapper = matches!(
+                &*instance_data.class.kind(),
+                Object::Class(class_data) if class_data.name == "TextIOWrapper"
+            );
+            let is_uninitialized = matches!(
+                instance_data.attrs.get("__pyrs_text_uninitialized"),
+                Some(Value::Bool(true))
+            ) || !instance_data.attrs.contains_key("buffer");
+            if is_text_wrapper && is_uninitialized {
+                return Err(RuntimeError::new(
+                    "ValueError: I/O operation on uninitialized object",
+                ));
+            }
+        }
         if matches!(&value, Value::Instance(_) | Value::Exception(_)) {
             match self.builtin_getattr(
                 vec![value.clone(), Value::Str("__repr__".to_string())],
@@ -3674,9 +3692,9 @@ impl Vm {
     pub(super) fn builtin_exception_type_init(
         &mut self,
         mut args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.is_empty() {
+        if args.is_empty() {
             return Err(RuntimeError::new(
                 "BaseException.__init__() takes no keyword arguments",
             ));
@@ -3684,15 +3702,47 @@ impl Vm {
         let receiver = args.remove(0);
         match receiver {
             Value::Instance(instance) => {
-                let is_exception_instance = match &*instance.kind() {
+                let exception_name = match &*instance.kind() {
                     Object::Instance(instance_data) => {
-                        self.class_is_exception_class(&instance_data.class)
+                        if !self.class_is_exception_class(&instance_data.class) {
+                            return Err(RuntimeError::new(
+                                "descriptor '__init__' requires a 'BaseException' object",
+                            ));
+                        }
+                        match &*instance_data.class.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "BaseException".to_string(),
+                        }
                     }
-                    _ => false,
+                    _ => {
+                        return Err(RuntimeError::new(
+                            "descriptor '__init__' requires a 'BaseException' object",
+                        ));
+                    }
                 };
-                if !is_exception_instance {
+                let import_error_family = is_import_error_family(exception_name.as_str());
+                let mut import_error_name = Value::None;
+                let mut import_error_path = Value::None;
+                if import_error_family {
+                    if let Some(msg_kw) = kwargs.remove("msg") {
+                        if args.is_empty() {
+                            args.push(msg_kw);
+                        } else {
+                            return Err(RuntimeError::new(
+                                "ImportError.__init__() got multiple values for argument 'msg'",
+                            ));
+                        }
+                    }
+                    if let Some(value) = kwargs.remove("name") {
+                        import_error_name = value;
+                    }
+                    if let Some(value) = kwargs.remove("path") {
+                        import_error_path = value;
+                    }
+                }
+                if !kwargs.is_empty() {
                     return Err(RuntimeError::new(
-                        "descriptor '__init__' requires a 'BaseException' object",
+                        "BaseException.__init__() takes no keyword arguments",
                     ));
                 }
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
@@ -3714,6 +3764,44 @@ impl Vm {
                         let value = args.first().cloned().unwrap_or(Value::None);
                         instance_data.attrs.insert("value".to_string(), value);
                     }
+                    if is_os_error_family(exception_name.as_str()) {
+                        if let Some(errno) = args
+                            .first()
+                            .and_then(|value| value_to_int(value.clone()).ok())
+                        {
+                            instance_data
+                                .attrs
+                                .insert("errno".to_string(), Value::Int(errno));
+                        }
+                        if let Some(strerror) = args.get(1) {
+                            instance_data
+                                .attrs
+                                .insert("strerror".to_string(), strerror.clone());
+                        }
+                        if let Some(third) = args.get(2) {
+                            if exception_name == "BlockingIOError" {
+                                instance_data
+                                    .attrs
+                                    .insert("characters_written".to_string(), third.clone());
+                            } else {
+                                instance_data
+                                    .attrs
+                                    .insert("filename".to_string(), third.clone());
+                            }
+                        }
+                    }
+                    if import_error_family {
+                        instance_data.attrs.insert(
+                            "msg".to_string(),
+                            args.first().cloned().unwrap_or(Value::None),
+                        );
+                        instance_data
+                            .attrs
+                            .insert("name".to_string(), import_error_name);
+                        instance_data
+                            .attrs
+                            .insert("path".to_string(), import_error_path);
+                    }
                     return Ok(Value::None);
                 }
                 Err(RuntimeError::new(
@@ -3721,6 +3809,31 @@ impl Vm {
                 ))
             }
             Value::Exception(mut exception) => {
+                let import_error_family = is_import_error_family(exception.name.as_str());
+                let mut import_error_name = Value::None;
+                let mut import_error_path = Value::None;
+                if import_error_family {
+                    if let Some(msg_kw) = kwargs.remove("msg") {
+                        if args.is_empty() {
+                            args.push(msg_kw);
+                        } else {
+                            return Err(RuntimeError::new(
+                                "ImportError.__init__() got multiple values for argument 'msg'",
+                            ));
+                        }
+                    }
+                    if let Some(value) = kwargs.remove("name") {
+                        import_error_name = value;
+                    }
+                    if let Some(value) = kwargs.remove("path") {
+                        import_error_path = value;
+                    }
+                }
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "BaseException.__init__() takes no keyword arguments",
+                    ));
+                }
                 let mut attrs = exception.attrs.borrow_mut();
                 attrs.insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
                 if matches!(
@@ -3736,6 +3849,32 @@ impl Vm {
                     exception.message = Some(format_value(&args[0]));
                 } else if args.is_empty() {
                     exception.message = None;
+                }
+                if is_os_error_family(exception.name.as_str()) {
+                    if let Some(errno) = args
+                        .first()
+                        .and_then(|value| value_to_int(value.clone()).ok())
+                    {
+                        attrs.insert("errno".to_string(), Value::Int(errno));
+                    }
+                    if let Some(strerror) = args.get(1) {
+                        attrs.insert("strerror".to_string(), strerror.clone());
+                    }
+                    if let Some(third) = args.get(2) {
+                        if exception.name == "BlockingIOError" {
+                            attrs.insert("characters_written".to_string(), third.clone());
+                        } else {
+                            attrs.insert("filename".to_string(), third.clone());
+                        }
+                    }
+                }
+                if import_error_family {
+                    attrs.insert(
+                        "msg".to_string(),
+                        args.first().cloned().unwrap_or(Value::None),
+                    );
+                    attrs.insert("name".to_string(), import_error_name);
+                    attrs.insert("path".to_string(), import_error_path);
                 }
                 Ok(Value::None)
             }
@@ -6941,7 +7080,7 @@ impl Vm {
                     && module_data.globals.remove(&name).is_none()
                 {
                     return Err(RuntimeError::new(format!(
-                        "module attribute '{}' does not exist",
+                        "AttributeError: module attribute '{}' does not exist",
                         name
                     )));
                 }
@@ -6955,7 +7094,7 @@ impl Vm {
                     && class_data.attrs.remove(&name).is_none()
                 {
                     return Err(RuntimeError::new(format!(
-                        "class attribute '{}' does not exist",
+                        "AttributeError: class attribute '{}' does not exist",
                         name
                     )));
                 }

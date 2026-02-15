@@ -183,7 +183,7 @@ fn executes_name_expression_with_global() {
 #[test]
 fn type_repr_matches_cpython_for_builtin_type_objects() {
     let source = "ok = (repr(type(7)) == \"<class 'int'>\" and repr(int) == \"<class 'int'>\" and repr(type) == \"<class 'type'>\")\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
@@ -193,7 +193,7 @@ fn type_repr_matches_cpython_for_builtin_type_objects() {
 #[test]
 fn type_str_matches_cpython_for_builtin_type_objects() {
     let source = "ok = (str(type(7)) == \"<class 'int'>\" and str(int) == \"<class 'int'>\" and str(type) == \"<class 'type'>\")\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
+    let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
@@ -5151,6 +5151,76 @@ ok = bytes_ok and typed_iter_ok and ndim_iter_err
 }
 
 #[test]
+fn bytes_and_bytearray_index_method_parity_baseline() {
+    let source = r#"ok = (b"abc".index(b"b") == 1 and bytearray(b"abc").index(b"c") == 2)
+missing = False
+try:
+    b"abc".index(b"z")
+except ValueError:
+    missing = True
+ok = ok and missing
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytearray_append_method_parity_baseline() {
+    let source = r#"buf = bytearray(b"ab")
+buf.append(99)
+range_error = False
+try:
+    buf.append(256)
+except ValueError:
+    range_error = True
+ok = (buf == bytearray(b"abc")) and range_error
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_buffered_writer_blocking_error_exposes_characters_written() {
+    let source = r#"import _io
+class Raw(_io.RawIOBase):
+    def __init__(self):
+        self.block = False
+    def writable(self):
+        return True
+    def write(self, b):
+        if self.block:
+            self.block = False
+            return None
+        return len(b)
+raw = Raw()
+buf = _io.BufferedWriter(raw, 4)
+buf.write(b"ab")
+raw.block = True
+caught = False
+chars = None
+errno = None
+try:
+    buf.write(b"cdef")
+except BlockingIOError as exc:
+    caught = True
+    chars = getattr(exc, "characters_written", None)
+    errno = getattr(exc, "errno", None)
+ok = caught and isinstance(chars, int) and chars >= 0 and errno == 11
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn memoryview_strided_slice_is_noncontiguous_writable_view() {
     let source = r#"buf = bytearray(b"ABCDE")
 view = memoryview(buf)[::2]
@@ -9353,6 +9423,48 @@ ok = api_ok and iter_ok and b.closed and closed_enter and closed_read and closed
 }
 
 #[test]
+fn _io_incremental_newline_decoder_basic_semantics() {
+    let source = r#"import _io, codecs
+dec = _io.IncrementalNewlineDecoder(None, True)
+part1 = dec.decode("a\r")
+part2 = dec.decode("\n", final=True)
+state = dec.getstate()
+dec.setstate(state)
+dec.reset()
+ok_none = (part1 == "a" and part2 == "\n" and dec.newlines is None and state == (b"", 0))
+
+inner = codecs.getincrementaldecoder("utf-8")()
+wrapped = _io.IncrementalNewlineDecoder(inner, False)
+raw1 = wrapped.decode(b"x\r")
+raw2 = wrapped.decode(b"\n", final=True)
+ok_wrapped = (raw1 == "x" and raw2 == "\r\n" and wrapped.newlines == "\r\n")
+ok = ok_none and ok_wrapped
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_incremental_newline_decoder_uninitialized_guard() {
+    let source = r#"import _io
+uninitialized = _io.IncrementalNewlineDecoder.__new__(_io.IncrementalNewlineDecoder)
+ok = False
+try:
+    uninitialized.decode("x")
+except ValueError:
+    ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn _io_stringio_and_bytesio_extra_method_surface_parity() {
     let source = r#"import _io
 s = _io.StringIO("a\nb\n")
@@ -9394,6 +9506,82 @@ ok = (
     readlines_ok and flush_bytes_ok and isatty_bytes_ok and flush_bytes_closed
     and isatty_bytes_closed
 )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_buffered_rwpair_isatty_or_semantics() {
+    let source = r#"import _io
+class Reader(_io.RawIOBase):
+    def readable(self):
+        return True
+    def writable(self):
+        return False
+    def read(self, n=-1):
+        return b""
+    def isatty(self):
+        return False
+
+class Writer(_io.RawIOBase):
+    def readable(self):
+        return False
+    def writable(self):
+        return True
+    def write(self, b):
+        return len(b)
+    def isatty(self):
+        return True
+
+pair = _io.BufferedRWPair(Reader(), Writer())
+ok = (pair.isatty() is True)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn _io_buffered_rwpair_close_prefers_reader_error_with_writer_context() {
+    let source = r#"import _io
+class Reader(_io.RawIOBase):
+    def readable(self):
+        return True
+    def writable(self):
+        return False
+    def read(self, n=-1):
+        return b""
+    def close(self):
+        reader_non_existing
+
+class Writer(_io.RawIOBase):
+    def readable(self):
+        return False
+    def writable(self):
+        return True
+    def write(self, b):
+        return len(b)
+    def close(self):
+        writer_non_existing
+
+pair = _io.BufferedRWPair(Reader(), Writer())
+reader_err = False
+writer_ctx = False
+try:
+    pair.close()
+except NameError as exc:
+    reader_err = ("reader_non_existing" in str(exc))
+    writer_ctx = (
+        isinstance(exc.__context__, NameError)
+        and "writer_non_existing" in str(exc.__context__)
+    )
+ok = reader_err and writer_ctx and (pair.closed is False)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -9896,6 +10084,35 @@ ok = (data == 'a\nb\nc\n' and lines == ['a\n', 'b\n', 'c\n'])
 }
 
 #[test]
+fn io_open_read_accepts_none_size_argument() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_read_none_{unique}.txt"));
+    std::fs::write(&temp, b"payload").expect("write sample file");
+
+    let source = format!(
+        r#"import io
+path = {path:?}
+reader = io.open(path, 'r')
+data = reader.read(None)
+pos = reader.tell()
+reader.close()
+ok = (data == 'payload' and pos == 7)
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp);
+}
+
+#[test]
 fn io_open_preserves_newline_bytes_when_newline_empty() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -9954,6 +10171,317 @@ ok = (payload == b'a\r\nb\r\n')
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 
     let _ = std::fs::remove_file(temp);
+}
+
+#[test]
+fn io_open_bom_encodings_emit_once_and_respect_seek_modes() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time should be monotonic")
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!("pyrs_io_bom_seek_{unique}.txt"));
+    let source = format!(
+        r#"import io
+import os
+
+ok = True
+path = {path:?}
+for charset in ('utf-8-sig', 'utf-16', 'utf-32'):
+    with io.open(path, 'w', encoding=charset) as f:
+        count = f.write('aaa')
+        pos = f.tell()
+    with io.open(path, 'rb') as f:
+        ok = ok and (f.read() == 'aaa'.encode(charset))
+    with io.open(path, 'a', encoding=charset) as f:
+        count2 = f.write('xxx')
+    with io.open(path, 'rb') as f:
+        ok = ok and (f.read() == 'aaaxxx'.encode(charset))
+    with io.open(path, 'r+', encoding=charset) as f:
+        f.seek(pos)
+        f.write('zzz')
+        f.seek(0)
+        f.write('bbb')
+    with io.open(path, 'rb') as f:
+        ok = ok and (f.read() == 'bbbzzz'.encode(charset))
+    with io.open(path, 'a', encoding=charset) as f:
+        f.seek(0)
+        f.seek(0, 2)
+        f.write('yyy')
+    with io.open(path, 'rb') as f:
+        ok = ok and (f.read() == 'bbbzzzyyy'.encode(charset))
+    ok = ok and (count == 3 and count2 == 3)
+os.remove(path)
+"#,
+        path = temp.display().to_string()
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_write_through_uses_buffer_write_without_forced_flush() {
+    let source = r#"import io
+
+flush_called = []
+write_called = []
+
+class BufferedWriter(io.BufferedWriter):
+    def flush(self, *args, **kwargs):
+        flush_called.append(True)
+        return super().flush(*args, **kwargs)
+
+    def write(self, *args, **kwargs):
+        write_called.append(True)
+        return super().write(*args, **kwargs)
+
+rawio = io.BytesIO()
+bufio = BufferedWriter(rawio, 2)
+textio = io.TextIOWrapper(bufio, encoding='ascii', write_through=True)
+textio.write('a')
+first_ok = (flush_called == [] and write_called == [True] and rawio.getvalue() == b'')
+write_called = []
+textio.write('a' * 10)
+second_ok = (write_called == [True] and rawio.getvalue() == b'a' * 11)
+ok = first_ok and second_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_close_prefers_close_error_with_flush_context() {
+    let source = r#"import io
+
+buffer = io.BytesIO(b'data')
+def bad_flush():
+    raise OSError('flush')
+def bad_close():
+    raise OSError('close')
+buffer.close = bad_close
+txt = io.TextIOWrapper(buffer, encoding='ascii')
+txt.flush = bad_flush
+
+close_args = None
+context_args = None
+try:
+    txt.close()
+except OSError as exc:
+    close_args = exc.args
+    context_args = exc.__context__.args if exc.__context__ else None
+
+closed_state = txt.closed
+
+# Silence destructor path.
+buffer.close = lambda: None
+txt.flush = lambda: None
+
+ok = (close_args == ('close',) and context_args == ('flush',) and closed_state is False)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_init_exposes_line_buffering_and_write_through_flags() {
+    let source = r#"import io
+
+raw = io.BytesIO(b'\xc3\xa9\n\n')
+buffer = io.BufferedReader(raw, 1000)
+text = io.TextIOWrapper(buffer, encoding='utf-8')
+text.__init__(buffer, encoding='latin-1', newline='\r\n')
+first_ok = (
+    text.encoding == 'latin-1'
+    and text.line_buffering is False
+    and text.write_through is False
+)
+text.__init__(buffer, encoding='utf-8', line_buffering=True, write_through=True)
+second_ok = (
+    text.encoding == 'utf-8'
+    and text.line_buffering is True
+    and text.write_through is True
+)
+ok = first_ok and second_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_failed_reinit_marks_object_uninitialized() {
+    let source = r#"import io
+
+raw = io.BytesIO(b'abc\n')
+buffer = io.BufferedReader(raw, 1000)
+text = io.TextIOWrapper(buffer, encoding='utf-8')
+
+init_failed = False
+try:
+    text.__init__(buffer, encoding='utf-8', newline='xyzzy')
+except ValueError:
+    init_failed = True
+
+checks = []
+for call in (
+    lambda: repr(text),
+    lambda: text.read(),
+    lambda: text.readline(),
+    lambda: text.write('x'),
+    lambda: text.readable(),
+    lambda: text.writable(),
+    lambda: text.seekable(),
+    lambda: text.seek(0),
+    lambda: text.tell(),
+    lambda: text.flush(),
+    lambda: text.close(),
+    lambda: text.fileno(),
+    lambda: text.detach(),
+):
+    try:
+        call()
+        checks.append(False)
+    except Exception as exc:
+        checks.append(type(exc).__name__ == 'ValueError' and 'uninitialized object' in str(exc))
+
+ok = init_failed and all(checks)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_repr_without_init_raises_uninitialized_value_error() {
+    let source = r#"import io
+t = io.TextIOWrapper.__new__(io.TextIOWrapper)
+ok = False
+try:
+    repr(t)
+except Exception as exc:
+    ok = (type(exc).__name__ == 'ValueError' and 'uninitialized object' in str(exc))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_can_readline_from_buffer_without_fd() {
+    let source = r#"import io
+
+raw = io.BytesIO(b'abc\nxyz\n')
+buffer = io.BufferedReader(raw, 8)
+text = io.TextIOWrapper(buffer, encoding='utf-8')
+line1 = text.readline()
+line2 = text.readline()
+ok = (line1 == 'abc\n' and line2 == 'xyz\n')
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_rejects_surrogate_and_nul_in_encoding_and_errors() {
+    let source = r#"import io
+
+checks = []
+
+for kw, value, exc_name in (
+    ('encoding', '\udcfe', 'UnicodeEncodeError'),
+    ('errors', '\udcfe', 'UnicodeEncodeError'),
+    ('encoding', 'utf-8\0', 'ValueError'),
+    ('errors', 'strict\0', 'ValueError'),
+):
+    stream = io.BytesIO()
+    try:
+        io.TextIOWrapper(stream, **{kw: value})
+    except Exception as exc:
+        checks.append(type(exc).__name__ == exc_name)
+
+ok = (len(checks) == 4 and all(checks))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_of_container_uses_repr_for_string_members() {
+    let source = r#"payload = {'encoding': 'utf-8', 'errors': 'strict'}
+items = ['x', 'y']
+ok = (
+    str(payload) == "{'encoding': 'utf-8', 'errors': 'strict'}"
+    and str(items) == "['x', 'y']"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_deleting_missing_chunk_size_raises_attribute_error() {
+    let source = r#"import io
+t = io.TextIOWrapper(io.BytesIO(), encoding='ascii')
+before = t._CHUNK_SIZE
+caught = False
+try:
+    del t._CHUNK_SIZE
+except AttributeError:
+    caught = True
+ok = caught and t._CHUNK_SIZE == before
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_text_wrapper_detach_flushes_buffer_and_second_detach_raises_value_error() {
+    let source = r#"import io
+
+raw = io.BytesIO()
+buffer = io.BufferedWriter(raw)
+text = io.TextIOWrapper(buffer, encoding='ascii')
+text.write('howdy')
+detached = text.detach()
+first_ok = (detached is buffer and raw.getvalue() == b'howdy')
+second_ok = False
+try:
+    text.detach()
+except ValueError:
+    second_ok = True
+ok = first_ok and second_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -12471,6 +12999,29 @@ ok = (seen == "present" and missing == "fallback")
 }
 
 #[test]
+fn os_putenv_and_unsetenv_update_lookup_surfaces() {
+    let source = r#"import os
+key = "__PYRS_ENV_PUTENV_TEST__"
+prior = os.getenv(key)
+os.putenv(key, "set-via-putenv")
+seen_environ = os.environ.get(key)
+seen_getenv = os.getenv(key)
+os.unsetenv(key)
+missing = os.getenv(key)
+if prior is not None:
+    os.putenv(key, prior)
+else:
+    os.unsetenv(key)
+ok = (seen_environ == "set-via-putenv" and seen_getenv == "set-via-putenv" and missing is None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_fspath_supports_str_bytes_and_pathlike() {
     let source = r#"import os
 class PathLike:
@@ -12669,7 +13220,15 @@ ok = (
 #[test]
 fn exceptions_accept_keyword_attributes() {
     let source = r#"err = ImportError("boom", name="pkg.mod", path="/tmp/pkg/mod.py")
-ok = (err is not None)
+missing = ModuleNotFoundError("missing", name="pkg.missing")
+ok = (
+    err.msg == "boom"
+    and err.name == "pkg.mod"
+    and err.path == "/tmp/pkg/mod.py"
+    and missing.msg == "missing"
+    and missing.name == "pkg.missing"
+    and missing.path is None
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

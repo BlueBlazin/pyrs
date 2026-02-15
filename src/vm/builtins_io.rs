@@ -4,13 +4,18 @@ use super::{
     SeekFrom, StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
     bytes_like_from_value, class_attr_walk, classify_runtime_error, extract_os_error_errno,
     extract_os_error_strerror, extract_prefixed_exception_message,
-    extract_runtime_error_exception_name, extract_runtime_error_final_message, format_value, fs,
-    infer_os_error_errno, is_os_error_family, is_truthy, memoryview_bounds, value_to_f64,
-    value_to_int,
+    extract_runtime_error_exception_name, extract_runtime_error_final_message, format_value,
+    infer_os_error_errno, is_os_error_family, is_truthy, memoryview_bounds,
+    value_to_f64, value_to_int, decode_text_bytes, encode_text_bytes, fs,
 };
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
+const IO_BUFFERED_ATTR_WRITE_BUF: &str = "__pyrs_buffered_write_buf";
 const IO_BUFFERED_ATTR_BUF_SIZE: &str = "__pyrs_buffer_size";
+const IO_TEXT_ATTR_BOM_EMITTED: &str = "__pyrs_text_bom_emitted";
+const IO_TEXT_ATTR_UNINITIALIZED: &str = "__pyrs_text_uninitialized";
+const IO_TEXT_ATTR_CHUNK_SIZE: &str = "_CHUNK_SIZE";
+const IO_TEXT_ATTR_WRITE_BUF: &str = "__pyrs_text_write_buf";
 const IO_BUFFERED_DEFAULT_SIZE: i64 = 8192;
 
 pub(super) struct IoOpenPath {
@@ -451,6 +456,10 @@ impl Vm {
             Self::instance_attr_set(text_ref, "buffer", Value::Instance(buffer_ref.clone()))?;
             Self::instance_attr_set(text_ref, "raw", Value::Instance(raw_ref.clone()))?;
             Self::instance_attr_set(text_ref, "_line_buffering", Value::Bool(line_buffering))?;
+            Self::instance_attr_set(text_ref, "line_buffering", Value::Bool(line_buffering))?;
+            Self::instance_attr_set(text_ref, "_write_through", Value::Bool(false))?;
+            Self::instance_attr_set(text_ref, "write_through", Value::Bool(false))?;
+            self.io_seed_text_bom_state_from_tell(text_ref)?;
         }
         Ok(text_instance)
     }
@@ -459,17 +468,58 @@ impl Vm {
         &mut self,
         encoding: &str,
     ) -> Result<(), RuntimeError> {
-        match self.call_builtin(
+        let codec_info = match self.call_builtin(
             BuiltinFunction::CodecsLookup,
             vec![Value::Str(encoding.to_string())],
             HashMap::new(),
         ) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(RuntimeError::new(format!(
-                "LookupError: unknown encoding: {}",
+            Ok(value) => value,
+            Err(err) if err.message.contains("unsupported encoding") => {
+                self.import_module("codecs").map_err(|_| {
+                    RuntimeError::new(format!("LookupError: unknown encoding: {}", encoding))
+                })?;
+                let Some(codecs_module) = self.modules.get("codecs").cloned() else {
+                    return Err(RuntimeError::new(format!(
+                        "LookupError: unknown encoding: {}",
+                        encoding
+                    )));
+                };
+                let lookup = self.builtin_getattr(
+                    vec![Value::Module(codecs_module), Value::Str("lookup".to_string())],
+                    HashMap::new(),
+                )?;
+                match self.call_internal_preserving_caller(
+                    lookup,
+                    vec![Value::Str(encoding.to_string())],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "codecs.lookup() failed",
+                        ));
+                    }
+                }
+            }
+            Err(_) => {
+                return Err(RuntimeError::new(format!(
+                    "LookupError: unknown encoding: {}",
+                    encoding
+                )))
+            }
+        };
+        if let Ok(is_text_encoding) = self.builtin_getattr(
+            vec![codec_info, Value::Str("_is_text_encoding".to_string())],
+            HashMap::new(),
+        )
+            && !is_truthy(&is_text_encoding)
+        {
+            return Err(RuntimeError::new(format!(
+                "LookupError: '{}' is not a text encoding",
                 encoding
-            ))),
+            )));
         }
+        Ok(())
     }
 
     pub(super) fn io_open_path_from_value(
@@ -614,6 +664,346 @@ impl Vm {
         }
     }
 
+    fn io_incremental_newline_uninitialized_error() -> RuntimeError {
+        RuntimeError::new("ValueError: I/O operation on uninitialized object")
+    }
+
+    fn io_incremental_newline_attr(instance: &ObjRef, name: &str) -> Result<Value, RuntimeError> {
+        Self::instance_attr_get(instance, name)
+            .ok_or_else(Self::io_incremental_newline_uninitialized_error)
+    }
+
+    fn io_incremental_newline_newlines_value(&mut self, seennl: i64) -> Value {
+        match seennl {
+            0 => Value::None,
+            1 => Value::Str("\n".to_string()),
+            2 => Value::Str("\r".to_string()),
+            3 => self.heap.alloc_tuple(vec![
+                Value::Str("\r".to_string()),
+                Value::Str("\n".to_string()),
+            ]),
+            4 => Value::Str("\r\n".to_string()),
+            5 => self.heap.alloc_tuple(vec![
+                Value::Str("\n".to_string()),
+                Value::Str("\r\n".to_string()),
+            ]),
+            6 => self.heap.alloc_tuple(vec![
+                Value::Str("\r".to_string()),
+                Value::Str("\r\n".to_string()),
+            ]),
+            _ => self.heap.alloc_tuple(vec![
+                Value::Str("\r".to_string()),
+                Value::Str("\n".to_string()),
+                Value::Str("\r\n".to_string()),
+            ]),
+        }
+    }
+
+    pub(super) fn builtin_io_incremental_newline_decoder_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance =
+            self.take_bound_instance_arg(&mut args, "IncrementalNewlineDecoder.__init__")?;
+        let mut decoder = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("decoder")
+        };
+        let mut translate = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("translate")
+        };
+        let mut errors = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("errors")
+        };
+        if decoder.is_some() && kwargs.contains_key("decoder") {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.__init__() got multiple values for argument 'decoder'",
+            ));
+        }
+        if translate.is_some() && kwargs.contains_key("translate") {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.__init__() got multiple values for argument 'translate'",
+            ));
+        }
+        if errors.is_some() && kwargs.contains_key("errors") {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.__init__() got multiple values for argument 'errors'",
+            ));
+        }
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.__init__() got unexpected arguments",
+            ));
+        }
+        let decoder = decoder.take().ok_or_else(|| {
+            RuntimeError::new("IncrementalNewlineDecoder.__init__() missing decoder")
+        })?;
+        let translate = translate.take().ok_or_else(|| {
+            RuntimeError::new("IncrementalNewlineDecoder.__init__() missing translate")
+        })?;
+        let errors = errors.take().unwrap_or(Value::Str("strict".to_string()));
+        if !matches!(errors, Value::Str(_)) {
+            return Err(RuntimeError::new("TypeError: errors must be str"));
+        }
+        Self::instance_attr_set(&instance, "decoder", decoder)?;
+        Self::instance_attr_set(&instance, "translate", Value::Bool(is_truthy(&translate)))?;
+        Self::instance_attr_set(&instance, "seennl", Value::Int(0))?;
+        Self::instance_attr_set(&instance, "pendingcr", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "newlines", Value::None)?;
+        Self::instance_attr_set(&instance, "errors", errors)?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_io_incremental_newline_decoder_decode(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance =
+            self.take_bound_instance_arg(&mut args, "IncrementalNewlineDecoder.decode")?;
+        let input = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.decode() missing input",
+            ));
+        };
+        let mut final_flag = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("final")
+        };
+        if final_flag.is_some() && kwargs.contains_key("final") {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.decode() got multiple values for argument 'final'",
+            ));
+        }
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.decode() got unexpected arguments",
+            ));
+        }
+        let final_flag = final_flag
+            .take()
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let decoder = Self::io_incremental_newline_attr(&instance, "decoder")?;
+        let translate = is_truthy(&Self::io_incremental_newline_attr(&instance, "translate")?);
+        let mut seennl = value_to_int(Self::io_incremental_newline_attr(&instance, "seennl")?)
+            .map_err(|_| RuntimeError::new("decoder state is invalid"))?;
+        let mut pendingcr = is_truthy(&Self::io_incremental_newline_attr(&instance, "pendingcr")?);
+
+        let mut output = if matches!(decoder, Value::None) {
+            match input {
+                Value::Str(text) => text,
+                _ => {
+                    return Err(RuntimeError::new(
+                        "TypeError: IncrementalNewlineDecoder with decoder=None expects str input",
+                    ));
+                }
+            }
+        } else {
+            let decode_method = self.builtin_getattr(
+                vec![decoder.clone(), Value::Str("decode".to_string())],
+                HashMap::new(),
+            )?;
+            let mut call_kwargs = HashMap::new();
+            call_kwargs.insert("final".to_string(), Value::Bool(final_flag));
+            let value = match self.call_internal_preserving_caller(
+                decode_method,
+                vec![input],
+                call_kwargs,
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "IncrementalNewlineDecoder.decode failed",
+                    ));
+                }
+            };
+            match value {
+                Value::Str(text) => text,
+                _ => {
+                    return Err(RuntimeError::new(
+                        "TypeError: decoder.decode() should return str",
+                    ));
+                }
+            }
+        };
+
+        if pendingcr && (!output.is_empty() || final_flag) {
+            output = format!("\r{output}");
+            pendingcr = false;
+        }
+        if output.ends_with('\r') && !final_flag {
+            output.pop();
+            pendingcr = true;
+        }
+
+        let crlf = output.matches("\r\n").count() as i64;
+        let cr = output.matches('\r').count() as i64 - crlf;
+        let lf = output.matches('\n').count() as i64 - crlf;
+        if lf > 0 {
+            seennl |= 1;
+        }
+        if cr > 0 {
+            seennl |= 2;
+        }
+        if crlf > 0 {
+            seennl |= 4;
+        }
+
+        if translate {
+            if crlf > 0 {
+                output = output.replace("\r\n", "\n");
+            }
+            if cr > 0 {
+                output = output.replace('\r', "\n");
+            }
+        }
+
+        Self::instance_attr_set(&instance, "seennl", Value::Int(seennl))?;
+        Self::instance_attr_set(&instance, "pendingcr", Value::Bool(pendingcr))?;
+        let newlines = self.io_incremental_newline_newlines_value(seennl);
+        Self::instance_attr_set(&instance, "newlines", newlines)?;
+        Ok(Value::Str(output))
+    }
+
+    pub(super) fn builtin_io_incremental_newline_decoder_getstate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.getstate() expects no arguments",
+            ));
+        }
+        let instance =
+            self.take_bound_instance_arg(&mut args, "IncrementalNewlineDecoder.getstate")?;
+        let decoder = Self::io_incremental_newline_attr(&instance, "decoder")?;
+        let pendingcr = is_truthy(&Self::io_incremental_newline_attr(&instance, "pendingcr")?);
+        let (buf, mut flag) = if matches!(decoder, Value::None) {
+            (self.heap.alloc_bytes(Vec::new()), 0)
+        } else {
+            let getstate = self.builtin_getattr(
+                vec![decoder.clone(), Value::Str("getstate".to_string())],
+                HashMap::new(),
+            )?;
+            let value =
+                match self.call_internal_preserving_caller(getstate, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "IncrementalNewlineDecoder.getstate failed",
+                        ));
+                    }
+                };
+            let Value::Tuple(tuple_obj) = value else {
+                return Err(RuntimeError::new("TypeError: illegal decoder state"));
+            };
+            let Object::Tuple(items) = &*tuple_obj.kind() else {
+                return Err(RuntimeError::new("TypeError: illegal decoder state"));
+            };
+            if items.len() != 2 {
+                return Err(RuntimeError::new("TypeError: illegal decoder state"));
+            }
+            let flag = value_to_int(items[1].clone())
+                .map_err(|_| RuntimeError::new("TypeError: illegal decoder state"))?;
+            (items[0].clone(), flag)
+        };
+        flag <<= 1;
+        if pendingcr {
+            flag |= 1;
+        }
+        Ok(self.heap.alloc_tuple(vec![buf, Value::Int(flag)]))
+    }
+
+    pub(super) fn builtin_io_incremental_newline_decoder_setstate(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.setstate() expects one argument",
+            ));
+        }
+        let instance =
+            self.take_bound_instance_arg(&mut args, "IncrementalNewlineDecoder.setstate")?;
+        let state = args.remove(0);
+        let Value::Tuple(tuple_obj) = state else {
+            return Err(RuntimeError::new("TypeError: state must be a tuple"));
+        };
+        let Object::Tuple(items) = &*tuple_obj.kind() else {
+            return Err(RuntimeError::new("TypeError: state must be a tuple"));
+        };
+        if items.len() != 2 {
+            return Err(RuntimeError::new("TypeError: state must be a tuple"));
+        }
+        let buf = items[0].clone();
+        let flag = value_to_int(items[1].clone())
+            .map_err(|_| RuntimeError::new("TypeError: state flag must be int"))?;
+        let pendingcr = (flag & 1) != 0;
+        Self::instance_attr_set(&instance, "pendingcr", Value::Bool(pendingcr))?;
+        let decoder = Self::io_incremental_newline_attr(&instance, "decoder")?;
+        if !matches!(decoder, Value::None) {
+            let setstate = self.builtin_getattr(
+                vec![decoder.clone(), Value::Str("setstate".to_string())],
+                HashMap::new(),
+            )?;
+            let state = self.heap.alloc_tuple(vec![buf, Value::Int(flag >> 1)]);
+            match self.call_internal_preserving_caller(setstate, vec![state], HashMap::new())? {
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "IncrementalNewlineDecoder.setstate failed",
+                    ));
+                }
+            }
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_io_incremental_newline_decoder_reset(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "IncrementalNewlineDecoder.reset() expects no arguments",
+            ));
+        }
+        let instance =
+            self.take_bound_instance_arg(&mut args, "IncrementalNewlineDecoder.reset")?;
+        Self::instance_attr_set(&instance, "seennl", Value::Int(0))?;
+        Self::instance_attr_set(&instance, "pendingcr", Value::Bool(false))?;
+        Self::instance_attr_set(&instance, "newlines", Value::None)?;
+        let decoder = Self::io_incremental_newline_attr(&instance, "decoder")?;
+        if !matches!(decoder, Value::None) {
+            let reset = self.builtin_getattr(
+                vec![decoder.clone(), Value::Str("reset".to_string())],
+                HashMap::new(),
+            )?;
+            match self.call_internal_preserving_caller(reset, Vec::new(), HashMap::new())? {
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "IncrementalNewlineDecoder.reset failed",
+                    ));
+                }
+            }
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_io_textiowrapper_init(
         &mut self,
         mut args: Vec<Value>,
@@ -623,25 +1013,27 @@ impl Vm {
             Some(Value::Instance(instance)) => instance.clone(),
             _ => {
                 return Err(RuntimeError::new(
-                    "TextIOWrapper.__init__() expects self and buffer",
+                    "TypeError: TextIOWrapper.__init__() expects self and buffer",
                 ));
             }
         };
         args.remove(0);
+        // Match CPython: failed __init__ leaves the wrapper uninitialized.
+        Self::instance_attr_set(&instance, IO_TEXT_ATTR_UNINITIALIZED, Value::Bool(true))?;
         let buffer_value = if !args.is_empty() {
             args.remove(0)
         } else if let Some(value) = kwargs.remove("buffer") {
             value
         } else {
             return Err(RuntimeError::new(
-                "TextIOWrapper.__init__() missing required buffer argument",
+                "TypeError: TextIOWrapper.__init__() missing required buffer argument",
             ));
         };
         let buffer_instance = match buffer_value {
             Value::Instance(instance) => instance,
             _ => {
                 return Err(RuntimeError::new(
-                    "TextIOWrapper() argument 1 must be file object",
+                    "TypeError: TextIOWrapper() argument 1 must be file object",
                 ));
             }
         };
@@ -673,7 +1065,7 @@ impl Vm {
                 .is_ok();
         if buffer_fd.is_none() && !buffer_is_bytesio && !buffer_is_file_like {
             return Err(RuntimeError::new(
-                "TextIOWrapper() argument 1 must be file object",
+                "TypeError: TextIOWrapper() argument 1 must be file object",
             ));
         }
 
@@ -692,11 +1084,20 @@ impl Vm {
         } else {
             kwargs.remove("newline")
         };
+        let line_buffering = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("line_buffering")
+        };
+        let write_through = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("write_through")
+        };
         if !args.is_empty() {
-            args.remove(0);
-        }
-        if !args.is_empty() {
-            args.remove(0);
+            return Err(RuntimeError::new(
+                "TypeError: TextIOWrapper.__init__() takes at most 7 arguments",
+            ));
         }
         for key in kwargs.keys() {
             if !matches!(
@@ -704,7 +1105,7 @@ impl Vm {
                 "encoding" | "errors" | "newline" | "line_buffering" | "write_through" | "buffer"
             ) {
                 return Err(RuntimeError::new(
-                    "TextIOWrapper.__init__() got unexpected keyword argument",
+                    "TypeError: TextIOWrapper.__init__() got unexpected keyword argument",
                 ));
             }
         }
@@ -772,15 +1173,30 @@ impl Vm {
             "_closefd",
             Value::Bool(closefd && buffer_fd.is_some()),
         )?;
+        let has_surrogate = |value: &str| {
+            value
+                .chars()
+                .any(|ch| matches!(ch as u32, 0xD800..=0xDFFF))
+        };
         let encoding_value = match encoding.unwrap_or(Value::None) {
             Value::None => Value::Str("utf-8".to_string()),
             Value::Str(value) => {
+                if value.contains('\0') {
+                    return Err(RuntimeError::new(
+                        "ValueError: embedded null character in encoding",
+                    ));
+                }
+                if !value.is_ascii() || has_surrogate(&value) {
+                    return Err(RuntimeError::new(
+                        "UnicodeEncodeError: surrogates not allowed in encoding",
+                    ));
+                }
                 self.ensure_known_text_encoding(&value)?;
                 Value::Str(value)
             }
             _ => {
                 return Err(RuntimeError::new(
-                    "TextIOWrapper encoding must be str or None",
+                    "TypeError: TextIOWrapper encoding must be str or None",
                 ));
             }
         };
@@ -788,10 +1204,22 @@ impl Vm {
         Self::instance_attr_set(&instance, "encoding", encoding_value)?;
         let errors_value = match errors.unwrap_or(Value::None) {
             Value::None => Value::Str("strict".to_string()),
-            Value::Str(value) => Value::Str(value),
+            Value::Str(value) => {
+                if value.contains('\0') {
+                    return Err(RuntimeError::new(
+                        "ValueError: embedded null character in errors",
+                    ));
+                }
+                if !value.is_ascii() || has_surrogate(&value) {
+                    return Err(RuntimeError::new(
+                        "UnicodeEncodeError: surrogates not allowed in errors",
+                    ));
+                }
+                Value::Str(value)
+            }
             _ => {
                 return Err(RuntimeError::new(
-                    "TextIOWrapper errors must be str or None",
+                    "TypeError: TextIOWrapper errors must be str or None",
                 ));
             }
         };
@@ -809,7 +1237,7 @@ impl Vm {
             }
             _ => {
                 return Err(RuntimeError::new(
-                    "TextIOWrapper newline must be str or None",
+                    "TypeError: TextIOWrapper newline must be str or None",
                 ));
             }
         };
@@ -822,13 +1250,42 @@ impl Vm {
             Value::Str(value) => Value::Str(value.clone()),
             _ => Value::None,
         };
+        let line_buffering_value = Value::Bool(
+            line_buffering
+                .as_ref()
+                .map(is_truthy)
+                .unwrap_or(false),
+        );
+        let write_through_value = Value::Bool(
+            write_through
+                .as_ref()
+                .map(is_truthy)
+                .unwrap_or(false),
+        );
         Self::instance_attr_set(&instance, "newlines", observed_newlines)?;
+        Self::instance_attr_set(&instance, "_line_buffering", line_buffering_value.clone())?;
+        Self::instance_attr_set(&instance, "line_buffering", line_buffering_value)?;
+        Self::instance_attr_set(&instance, "_write_through", write_through_value.clone())?;
+        Self::instance_attr_set(&instance, "write_through", write_through_value)?;
+        Self::instance_attr_set(
+            &instance,
+            IO_TEXT_ATTR_CHUNK_SIZE,
+            Value::Int(IO_BUFFERED_DEFAULT_SIZE),
+        )?;
+        Self::instance_attr_set(
+            &instance,
+            IO_TEXT_ATTR_WRITE_BUF,
+            self.heap.alloc_bytes(Vec::new()),
+        )?;
         Self::instance_attr_set(
             &instance,
             "buffer",
             Value::Instance(buffer_instance.clone()),
         )?;
         Self::instance_attr_set(&instance, "raw", Value::Instance(buffer_instance))?;
+        Self::instance_attr_set(&instance, IO_TEXT_ATTR_BOM_EMITTED, Value::Bool(false))?;
+        Self::instance_attr_set(&instance, IO_TEXT_ATTR_UNINITIALIZED, Value::Bool(false))?;
+        self.io_seed_text_bom_state_from_tell(&instance)?;
         Ok(Value::None)
     }
 
@@ -1390,6 +1847,32 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("newlines".to_string(), observed_newlines);
+            instance_data
+                .attrs
+                .insert("_line_buffering".to_string(), Value::Bool(false));
+            instance_data
+                .attrs
+                .insert("line_buffering".to_string(), Value::Bool(false));
+            instance_data
+                .attrs
+                .insert("_write_through".to_string(), Value::Bool(false));
+            instance_data
+                .attrs
+                .insert("write_through".to_string(), Value::Bool(false));
+            instance_data
+                .attrs
+                .insert(IO_TEXT_ATTR_BOM_EMITTED.to_string(), Value::Bool(false));
+            instance_data.attrs.insert(
+                IO_TEXT_ATTR_CHUNK_SIZE.to_string(),
+                Value::Int(IO_BUFFERED_DEFAULT_SIZE),
+            );
+            instance_data.attrs.insert(
+                IO_TEXT_ATTR_WRITE_BUF.to_string(),
+                self.heap.alloc_bytes(Vec::new()),
+            );
+            instance_data
+                .attrs
+                .insert(IO_TEXT_ATTR_UNINITIALIZED.to_string(), Value::Bool(false));
         }
         if !binary {
             instance_data
@@ -1418,6 +1901,51 @@ impl Vm {
         )
     }
 
+    fn io_text_is_uninitialized(instance: &ObjRef) -> bool {
+        matches!(
+            Self::instance_attr_get(instance, IO_TEXT_ATTR_UNINITIALIZED),
+            Some(Value::Bool(true))
+        )
+    }
+
+    fn io_ensure_text_initialized(instance: &ObjRef) -> Result<(), RuntimeError> {
+        if Self::io_text_is_uninitialized(instance) {
+            Err(RuntimeError::new(
+                "ValueError: I/O operation on uninitialized object",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn io_text_chunk_size(instance: &ObjRef) -> usize {
+        match Self::instance_attr_get(instance, IO_TEXT_ATTR_CHUNK_SIZE) {
+            Some(Value::Int(value)) if value > 0 => value as usize,
+            Some(Value::BigInt(value)) => value
+                .to_i64()
+                .filter(|size| *size > 0)
+                .map(|size| size as usize)
+                .unwrap_or(IO_BUFFERED_DEFAULT_SIZE as usize),
+            _ => IO_BUFFERED_DEFAULT_SIZE as usize,
+        }
+    }
+
+    fn io_text_write_buffer(instance: &ObjRef) -> Result<Vec<u8>, RuntimeError> {
+        let Some(value) = Self::instance_attr_get(instance, IO_TEXT_ATTR_WRITE_BUF) else {
+            return Ok(Vec::new());
+        };
+        bytes_like_from_value(value)
+            .map_err(|_| RuntimeError::new("TypeError: internal text buffer must be bytes-like"))
+    }
+
+    fn io_text_store_write_buffer(
+        &mut self,
+        instance: &ObjRef,
+        bytes: Vec<u8>,
+    ) -> Result<(), RuntimeError> {
+        Self::instance_attr_set(instance, IO_TEXT_ATTR_WRITE_BUF, self.heap.alloc_bytes(bytes))
+    }
+
     fn io_buffered_read_buffer(instance: &ObjRef) -> Result<Vec<u8>, RuntimeError> {
         let Some(value) = Self::instance_attr_get(instance, IO_BUFFERED_ATTR_READ_BUF) else {
             return Ok(Vec::new());
@@ -1436,6 +1964,113 @@ impl Vm {
             IO_BUFFERED_ATTR_READ_BUF,
             self.heap.alloc_bytes(bytes),
         )
+    }
+
+    fn io_buffered_write_buffer(instance: &ObjRef) -> Result<Vec<u8>, RuntimeError> {
+        let Some(value) = Self::instance_attr_get(instance, IO_BUFFERED_ATTR_WRITE_BUF) else {
+            return Ok(Vec::new());
+        };
+        bytes_like_from_value(value)
+            .map_err(|_| RuntimeError::new("TypeError: internal buffered data must be bytes-like"))
+    }
+
+    fn io_buffered_store_write_buffer(
+        &mut self,
+        instance: &ObjRef,
+        bytes: Vec<u8>,
+    ) -> Result<(), RuntimeError> {
+        Self::instance_attr_set(
+            instance,
+            IO_BUFFERED_ATTR_WRITE_BUF,
+            self.heap.alloc_bytes(bytes),
+        )
+    }
+
+    fn io_buffered_raw_write_via_method(
+        &mut self,
+        write_method: &Value,
+        payload: &[u8],
+        fallback: &str,
+    ) -> Result<Option<usize>, RuntimeError> {
+        let chunk = self.heap.alloc_bytes(payload.to_vec());
+        let result = match self.call_internal_preserving_caller(
+            write_method.clone(),
+            vec![chunk],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception(fallback));
+            }
+        };
+        let count = match result {
+            Value::Int(value) => value,
+            Value::Bool(value) => i64::from(value),
+            Value::BigInt(value) => value
+                .to_i64()
+                .ok_or_else(|| RuntimeError::new("OSError: raw write() returned invalid length"))?,
+            Value::None => return Ok(None),
+            _ => {
+                return Err(RuntimeError::new(
+                    "OSError: raw write() returned invalid length",
+                ));
+            }
+        };
+        if count < 0 || (count as usize) > payload.len() {
+            return Err(RuntimeError::new(
+                "OSError: raw write() returned invalid length",
+            ));
+        }
+        Ok(Some(count as usize))
+    }
+
+    fn io_buffered_drain_write_buffer(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
+        let pending = Self::io_buffered_write_buffer(instance)?;
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let raw = Self::io_buffered_raw_from_instance(instance)?;
+        let write_method =
+            self.builtin_getattr(vec![raw, Value::Str("write".to_string())], HashMap::new())?;
+        let mut written = 0usize;
+        while written < pending.len() {
+            let result = self.io_buffered_raw_write_via_method(
+                &write_method,
+                &pending[written..],
+                "buffered flush failed",
+            )?;
+            let Some(count) = result else {
+                self.io_buffered_store_write_buffer(instance, pending[written..].to_vec())?;
+                return Err(self.io_raise_blocking_write_error(0, "buffered flush failed"));
+            };
+            if count == 0 {
+                self.io_buffered_store_write_buffer(instance, pending[written..].to_vec())?;
+                return Err(self.io_raise_blocking_write_error(0, "buffered flush failed"));
+            }
+            written += count;
+        }
+        self.io_buffered_store_write_buffer(instance, Vec::new())?;
+        Ok(())
+    }
+
+    fn io_buffered_rewind_raw_after_readahead(
+        &mut self,
+        instance: &ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let cached = Self::io_buffered_read_buffer(instance)?;
+        if cached.is_empty() {
+            return Ok(());
+        }
+        let rewind = cached.len() as i64;
+        self.io_buffered_delegate_method(
+            instance,
+            "seek",
+            vec![Value::Int(-rewind), Value::Int(1)],
+            HashMap::new(),
+            "buffered write failed",
+        )?;
+        self.io_buffered_store_read_buffer(instance, Vec::new())?;
+        Ok(())
     }
 
     fn io_buffered_buffer_size(instance: &ObjRef) -> usize {
@@ -1524,7 +2159,7 @@ impl Vm {
 
     fn io_buffered_rwpair_endpoint(instance: &ObjRef, attr: &str) -> Result<Value, RuntimeError> {
         Self::instance_attr_get(instance, attr)
-            .ok_or_else(|| RuntimeError::new("BufferedRWPair is uninitialized"))
+            .ok_or_else(|| RuntimeError::new("ValueError: I/O operation on uninitialized object"))
     }
 
     fn io_buffered_delegate_method(
@@ -1711,6 +2346,40 @@ impl Vm {
             .map_err(|_| RuntimeError::new(fallback))
     }
 
+    fn io_raise_blocking_write_error(
+        &mut self,
+        characters_written: i64,
+        fallback: &str,
+    ) -> RuntimeError {
+        let exception = ExceptionObject::new(
+            "BlockingIOError".to_string(),
+            Some("write could not complete without blocking".to_string()),
+        );
+        exception.attrs.borrow_mut().insert(
+            "characters_written".to_string(),
+            Value::Int(characters_written),
+        );
+        exception
+            .attrs
+            .borrow_mut()
+            .insert("errno".to_string(), Value::Int(11));
+        exception.attrs.borrow_mut().insert(
+            "strerror".to_string(),
+            Value::Str("write could not complete without blocking".to_string()),
+        );
+        let args = self.heap.alloc_tuple(vec![
+            Value::Int(11),
+            Value::Str("write could not complete without blocking".to_string()),
+            Value::Int(characters_written),
+        ]);
+        exception
+            .attrs
+            .borrow_mut()
+            .insert("args".to_string(), args);
+        let _ = self.raise_exception(Value::Exception(Box::new(exception)));
+        self.runtime_error_from_active_exception(fallback)
+    }
+
     fn io_runtime_error_from_exception_value(&self, exc: &Value, fallback: &str) -> RuntimeError {
         match exc {
             Value::Exception(exception) => {
@@ -1755,6 +2424,7 @@ impl Vm {
         if buffer_size <= 0 {
             let _ = Self::instance_attr_set(&instance, "raw", Value::None);
             let _ = self.io_buffered_store_read_buffer(&instance, Vec::new());
+            let _ = self.io_buffered_store_write_buffer(&instance, Vec::new());
             return Err(RuntimeError::new(
                 "ValueError: buffer_size must be positive",
             ));
@@ -1764,7 +2434,13 @@ impl Vm {
                 "{owner_name}() received unexpected arguments"
             )));
         }
-        for required in ["read", "readline", "write", "seek", "tell"] {
+        let required_methods: &[&str] = match owner_name.as_str() {
+            "BufferedWriter" => &["write"],
+            "BufferedReader" => &["read"],
+            "BufferedRandom" => &["read", "write", "seek"],
+            _ => &["read", "readline", "write", "seek", "tell"],
+        };
+        for required in required_methods {
             let method = self.builtin_getattr(
                 vec![raw.clone(), Value::Str(required.to_string())],
                 HashMap::new(),
@@ -1774,6 +2450,11 @@ impl Vm {
                     "TypeError: raw stream does not provide required I/O methods",
                 ));
             }
+        }
+        if let Value::Instance(raw_instance) = &raw
+            && let Some(Value::Int(fd)) = Self::instance_attr_get(raw_instance, "_fd")
+        {
+            let _ = Self::instance_attr_set(&instance, "_fd", Value::Int(fd));
         }
         Self::instance_attr_set(&instance, "raw", raw)?;
         Self::instance_attr_set(&instance, "__IOBase_closed", Value::Bool(false))?;
@@ -1785,6 +2466,7 @@ impl Vm {
             Value::Int(buffer_size),
         )?;
         self.io_buffered_store_read_buffer(&instance, Vec::new())?;
+        self.io_buffered_store_write_buffer(&instance, Vec::new())?;
         Ok(Value::None)
     }
 
@@ -1813,6 +2495,13 @@ impl Vm {
         )?;
         if !is_truthy(&readable) {
             return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+        }
+        let writable = self.builtin_io_buffered_writable(
+            vec![Value::Instance(instance.clone())],
+            HashMap::new(),
+        )?;
+        if is_truthy(&writable) {
+            self.io_buffered_drain_write_buffer(&instance)?;
         }
         let size = match args.pop() {
             None | Some(Value::None) => -1,
@@ -1961,6 +2650,13 @@ impl Vm {
         if !is_truthy(&readable) {
             return Err(RuntimeError::new("UnsupportedOperation: not readable"));
         }
+        let writable = self.builtin_io_buffered_writable(
+            vec![Value::Instance(instance.clone())],
+            HashMap::new(),
+        )?;
+        if is_truthy(&writable) {
+            self.io_buffered_drain_write_buffer(&instance)?;
+        }
         let size = match args.pop() {
             None | Some(Value::None) => -1,
             Some(value) => self.io_index_arg_to_int(value)?,
@@ -2059,6 +2755,13 @@ impl Vm {
         if !is_truthy(&readable) {
             return Err(RuntimeError::new("UnsupportedOperation: not readable"));
         }
+        let writable = self.builtin_io_buffered_writable(
+            vec![Value::Instance(instance.clone())],
+            HashMap::new(),
+        )?;
+        if is_truthy(&writable) {
+            self.io_buffered_drain_write_buffer(&instance)?;
+        }
         let hint = match args.pop() {
             None | Some(Value::None) => 0,
             Some(value) => self.io_index_arg_to_int(value)?,
@@ -2116,6 +2819,13 @@ impl Vm {
         if !is_truthy(&readable) {
             return Err(RuntimeError::new("UnsupportedOperation: not readable"));
         }
+        let writable = self.builtin_io_buffered_writable(
+            vec![Value::Instance(instance.clone())],
+            HashMap::new(),
+        )?;
+        if is_truthy(&writable) {
+            self.io_buffered_drain_write_buffer(&instance)?;
+        }
         if let Err(err) = self.io_buffered_probe_raw_readinto_for_readline(&instance) {
             if let Some(cause_message) = err.message.strip_prefix("TypeError: ") {
                 let cause = Value::Exception(Box::new(ExceptionObject::new(
@@ -2153,7 +2863,20 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "BufferedIOBase.write expects one argument",
+            ));
+        }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.write")?;
+        if Self::io_buffered_is_uninitialized(&instance) {
+            return Err(RuntimeError::new(
+                "ValueError: I/O operation on uninitialized object",
+            ));
+        }
+        if Self::iobase_is_closed(&instance) {
+            return Err(RuntimeError::new("ValueError: write to closed file"));
+        }
         let writable = self.builtin_io_buffered_writable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
@@ -2161,7 +2884,90 @@ impl Vm {
         if !is_truthy(&writable) {
             return Err(RuntimeError::new("UnsupportedOperation: not writable"));
         }
-        self.io_buffered_delegate_method(&instance, "write", args, kwargs, "buffered write failed")
+        self.io_buffered_rewind_raw_after_readahead(&instance)?;
+        let payload = bytes_like_from_value(args.remove(0))
+            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+        let buffer_size = Self::io_buffered_buffer_size(&instance).max(1);
+        let mut buffered = Self::io_buffered_write_buffer(&instance)?;
+        let available = buffer_size.saturating_sub(buffered.len());
+        if payload.len() <= available && payload.len() < buffer_size {
+            buffered.extend_from_slice(&payload);
+            self.io_buffered_store_write_buffer(&instance, buffered)?;
+            return Ok(Value::Int(payload.len() as i64));
+        }
+
+        if !buffered.is_empty()
+            && let Err(err) = self.io_buffered_drain_write_buffer(&instance)
+        {
+            if !self.active_exception_is("BlockingIOError") {
+                return Err(err);
+            }
+            let mut pending = Self::io_buffered_write_buffer(&instance)?;
+            let refill_avail = buffer_size.saturating_sub(pending.len());
+            if payload.len() <= refill_avail {
+                self.clear_active_exception();
+                pending.extend_from_slice(&payload);
+                self.io_buffered_store_write_buffer(&instance, pending)?;
+                return Ok(Value::Int(payload.len() as i64));
+            }
+            if refill_avail > 0 {
+                pending.extend_from_slice(&payload[..refill_avail]);
+            }
+            self.io_buffered_store_write_buffer(&instance, pending)?;
+            self.clear_active_exception();
+            return Err(
+                self.io_raise_blocking_write_error(refill_avail as i64, "buffered write failed")
+            );
+        }
+
+        let raw = Self::io_buffered_raw_from_instance(&instance)?;
+        let write_method =
+            self.builtin_getattr(vec![raw, Value::Str("write".to_string())], HashMap::new())?;
+        let mut written = 0usize;
+        while payload.len() - written >= buffer_size {
+            let result = self.io_buffered_raw_write_via_method(
+                &write_method,
+                &payload[written..],
+                "buffered write failed",
+            )?;
+            let Some(count) = result else {
+                let remaining = payload.len() - written;
+                if remaining > buffer_size {
+                    self.io_buffered_store_write_buffer(
+                        &instance,
+                        payload[written..written + buffer_size].to_vec(),
+                    )?;
+                    written += buffer_size;
+                    return Err(
+                        self.io_raise_blocking_write_error(written as i64, "buffered write failed")
+                    );
+                }
+                break;
+            };
+            if count == 0 {
+                let remaining = payload.len() - written;
+                if remaining > buffer_size {
+                    self.io_buffered_store_write_buffer(
+                        &instance,
+                        payload[written..written + buffer_size].to_vec(),
+                    )?;
+                    written += buffer_size;
+                    return Err(
+                        self.io_raise_blocking_write_error(written as i64, "buffered write failed")
+                    );
+                }
+                break;
+            }
+            written += count;
+        }
+
+        if written < payload.len() {
+            let mut tail = Self::io_buffered_write_buffer(&instance)?;
+            tail.extend_from_slice(&payload[written..]);
+            self.io_buffered_store_write_buffer(&instance, tail)?;
+            written = payload.len();
+        }
+        Ok(Value::Int(written as i64))
     }
 
     pub(super) fn builtin_io_buffered_flush(
@@ -2178,6 +2984,7 @@ impl Vm {
         if Self::iobase_is_closed(&instance) {
             return Err(RuntimeError::new("I/O operation on closed file."));
         }
+        self.io_buffered_drain_write_buffer(&instance)?;
         self.io_buffered_delegate_method(
             &instance,
             "flush",
@@ -2300,6 +3107,7 @@ impl Vm {
         }
         Self::instance_attr_set(&instance, "raw", Value::None)?;
         self.io_buffered_store_read_buffer(&instance, Vec::new())?;
+        self.io_buffered_store_write_buffer(&instance, Vec::new())?;
         Ok(raw)
     }
 
@@ -2344,6 +3152,7 @@ impl Vm {
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
         }
+        self.io_buffered_drain_write_buffer(&instance)?;
         if args.is_empty() {
             return Err(RuntimeError::new(
                 "TypeError: seek expected at least 1 argument",
@@ -2397,6 +3206,7 @@ impl Vm {
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
         }
+        self.io_buffered_drain_write_buffer(&instance)?;
         let raw_position = self.io_buffered_delegate_method(
             &instance,
             "tell",
@@ -2441,13 +3251,48 @@ impl Vm {
         if !is_truthy(&seekable) {
             return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
         }
-        self.io_buffered_delegate_method(
+        self.io_buffered_drain_write_buffer(&instance)?;
+        let mut restore_position: Option<i64> = None;
+        if args.is_empty() {
+            let raw_position = self.io_buffered_delegate_method(
+                &instance,
+                "tell",
+                Vec::new(),
+                HashMap::new(),
+                "buffered truncate failed",
+            )?;
+            let raw_pos = value_to_int(raw_position)
+                .map_err(|_| RuntimeError::new("OSError: tell() returned an invalid position"))?;
+            if raw_pos < 0 {
+                return Err(RuntimeError::new(
+                    "OSError: tell() returned an invalid position",
+                ));
+            }
+            let cached = Self::io_buffered_read_buffer(&instance)?;
+            let logical_pos = (raw_pos - cached.len() as i64).max(0);
+            if !cached.is_empty() {
+                restore_position = Some(logical_pos);
+            }
+            args.push(Value::Int(logical_pos));
+        }
+        let result = self.io_buffered_delegate_method(
             &instance,
             "truncate",
             args,
             kwargs,
             "buffered truncate failed",
-        )
+        )?;
+        if let Some(position) = restore_position {
+            self.io_buffered_delegate_method(
+                &instance,
+                "seek",
+                vec![Value::Int(position), Value::Int(0)],
+                HashMap::new(),
+                "buffered truncate failed",
+            )?;
+        }
+        self.io_buffered_store_read_buffer(&instance, Vec::new())?;
+        Ok(result)
     }
 
     pub(super) fn builtin_io_buffered_readable(
@@ -2765,33 +3610,50 @@ impl Vm {
         }
         let writer = Self::io_buffered_rwpair_endpoint(&instance, "__pyrs_rwpair_writer")?;
         let reader = Self::io_buffered_rwpair_endpoint(&instance, "__pyrs_rwpair_reader")?;
-        let close_endpoint = |vm: &mut Vm, endpoint: Value, label: &str| -> Option<RuntimeError> {
-            let method = match vm.builtin_getattr(
-                vec![endpoint, Value::Str("close".to_string())],
-                HashMap::new(),
-            ) {
-                Ok(value) => value,
-                Err(err) => return Some(err),
-            };
-            match vm.call_internal(method, Vec::new(), HashMap::new()) {
-                Ok(InternalCallOutcome::Value(_)) => None,
-                Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                    Some(vm.runtime_error_from_active_exception(label))
+        let close_endpoint =
+            |vm: &mut Vm, endpoint: Value, label: &str| -> Result<Option<Value>, RuntimeError> {
+                let method = match vm.builtin_getattr(
+                    vec![endpoint, Value::Str("close".to_string())],
+                    HashMap::new(),
+                ) {
+                    Ok(value) => value,
+                    Err(err) => return Ok(Some(vm.io_exception_value_from_runtime_error(err)?)),
+                };
+                match vm.call_internal_preserving_caller(method, Vec::new(), HashMap::new()) {
+                    Ok(InternalCallOutcome::Value(_)) => Ok(None),
+                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                        Ok(Some(vm.io_take_active_exception_value(label)?))
+                    }
+                    Err(err) => Ok(Some(vm.io_exception_value_from_runtime_error(err)?)),
                 }
-                Err(err) => Some(err),
-            }
-        };
-        let writer_error = close_endpoint(self, writer, "BufferedRWPair.close writer failed");
-        let reader_error = close_endpoint(self, reader, "BufferedRWPair.close reader failed");
+            };
+        let writer_error = close_endpoint(self, writer, "BufferedRWPair.close writer failed")?;
+        let reader_error = close_endpoint(self, reader, "BufferedRWPair.close reader failed")?;
         if writer_error.is_none() {
             Self::iobase_mark_closed(&instance)?;
         }
-        if let Some(err) = writer_error {
-            return Err(err);
+        if let Some(mut reader_exc) = reader_error {
+            if let (Value::Exception(reader_exception), Some(Value::Exception(writer_exception))) =
+                (&mut reader_exc, writer_error.clone())
+            {
+                reader_exception.context = Some(writer_exception);
+            }
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = Some(reader_exc.clone());
+            }
+            return Err(self.io_runtime_error_from_exception_value(
+                &reader_exc,
+                "BufferedRWPair.close reader failed",
+            ));
         }
-        if let Some(err) = reader_error {
-            Self::iobase_mark_closed(&instance)?;
-            return Err(err);
+        if let Some(writer_exc) = writer_error {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = Some(writer_exc.clone());
+            }
+            return Err(self.io_runtime_error_from_exception_value(
+                &writer_exc,
+                "BufferedRWPair.close writer failed",
+            ));
         }
         Ok(Value::None)
     }
@@ -2838,6 +3700,39 @@ impl Vm {
             "BufferedRWPair.writable failed",
         )?;
         Ok(Value::Bool(is_truthy(&value)))
+    }
+
+    pub(super) fn builtin_io_buffered_rwpair_isatty(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "BufferedRWPair.isatty expects no arguments",
+            ));
+        }
+        let instance = self.receiver_from_value(&args.remove(0))?;
+        let reader = self.io_buffered_rwpair_delegate_method(
+            &instance,
+            "__pyrs_rwpair_reader",
+            "isatty",
+            Vec::new(),
+            HashMap::new(),
+            "BufferedRWPair.isatty failed",
+        )?;
+        if is_truthy(&reader) {
+            return Ok(Value::Bool(true));
+        }
+        let writer = self.io_buffered_rwpair_delegate_method(
+            &instance,
+            "__pyrs_rwpair_writer",
+            "isatty",
+            Vec::new(),
+            HashMap::new(),
+            "BufferedRWPair.isatty failed",
+        )?;
+        Ok(Value::Bool(is_truthy(&writer)))
     }
 
     pub(super) fn builtin_io_buffered_rwpair_seekable(
@@ -3407,6 +4302,307 @@ impl Vm {
         }
     }
 
+    pub(super) fn io_file_encoding(instance: &ObjRef) -> Option<String> {
+        match Self::instance_attr_get(instance, "_encoding") {
+            Some(Value::Str(encoding)) => Some(encoding),
+            _ => None,
+        }
+    }
+
+    pub(super) fn io_file_errors(instance: &ObjRef) -> Option<String> {
+        match Self::instance_attr_get(instance, "_errors") {
+            Some(Value::Str(errors)) => Some(errors),
+            _ => None,
+        }
+    }
+
+    fn io_encoding_bom_prefix(encoding: &str) -> Option<&'static [u8]> {
+        match encoding {
+            "utf-8-sig" => Some(&[0xEF, 0xBB, 0xBF]),
+            "utf-16" => Some(&[0xFF, 0xFE]),
+            "utf-32" => Some(&[0xFF, 0xFE, 0x00, 0x00]),
+            _ => None,
+        }
+    }
+
+    fn io_text_bom_emitted(instance: &ObjRef) -> bool {
+        matches!(
+            Self::instance_attr_get(instance, IO_TEXT_ATTR_BOM_EMITTED),
+            Some(Value::Bool(true))
+        )
+    }
+
+    fn io_seed_text_bom_state_from_position(
+        &mut self,
+        instance: &ObjRef,
+        position: i64,
+    ) -> Result<(), RuntimeError> {
+        let Some(encoding) = Self::io_file_encoding(instance) else {
+            return Ok(());
+        };
+        if Self::io_encoding_bom_prefix(&encoding).is_some() {
+            Self::instance_attr_set(
+                instance,
+                IO_TEXT_ATTR_BOM_EMITTED,
+                Value::Bool(position != 0),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn io_seed_text_bom_state_from_tell(
+        &mut self,
+        instance: &ObjRef,
+    ) -> Result<(), RuntimeError> {
+        let Some(encoding) = Self::io_file_encoding(instance) else {
+            return Ok(());
+        };
+        if Self::io_encoding_bom_prefix(&encoding).is_none() {
+            return Ok(());
+        }
+        match self.builtin_io_file_tell(vec![Value::Instance(instance.clone())], HashMap::new()) {
+            Ok(position) => {
+                let pos = value_to_int(position)?;
+                self.io_seed_text_bom_state_from_position(instance, pos)?;
+            }
+            Err(_) => {
+                self.clear_active_exception();
+            }
+        }
+        Ok(())
+    }
+
+    fn io_encode_text_write_payload(
+        &mut self,
+        instance: &ObjRef,
+        text: String,
+    ) -> Result<(Vec<u8>, i64), RuntimeError> {
+        let char_len = text.chars().count() as i64;
+        let newline = Self::io_file_newline(instance);
+        let translated = Self::io_translate_write_newlines(text, newline.as_deref());
+        let encoding = Self::io_file_encoding(instance).unwrap_or_else(|| "utf-8".to_string());
+        let errors = Self::io_file_errors(instance).unwrap_or_else(|| "strict".to_string());
+        let mut payload = match encode_text_bytes(&translated, &encoding, &errors) {
+            Ok(bytes) => bytes,
+            Err(err) if err.message.contains("unsupported encoding") => {
+                self.io_encode_text_via_codec_lookup(&translated, &encoding, &errors)?
+            }
+            Err(err) => return Err(err),
+        };
+        if let Some(prefix) = Self::io_encoding_bom_prefix(&encoding) {
+            if Self::io_text_bom_emitted(instance) {
+                if payload.starts_with(prefix) {
+                    payload.drain(..prefix.len());
+                }
+            } else {
+                Self::instance_attr_set(instance, IO_TEXT_ATTR_BOM_EMITTED, Value::Bool(true))?;
+            }
+        }
+        Ok((payload, char_len))
+    }
+
+    fn io_decode_text_read_payload(
+        &mut self,
+        instance: &ObjRef,
+        payload: &[u8],
+    ) -> Result<String, RuntimeError> {
+        let encoding = Self::io_file_encoding(instance).unwrap_or_else(|| "utf-8".to_string());
+        let errors = Self::io_file_errors(instance).unwrap_or_else(|| "strict".to_string());
+        match decode_text_bytes(payload, &encoding, &errors) {
+            Ok(text) => Ok(text),
+            Err(err) if err.message.contains("unsupported encoding") => {
+                self.io_decode_text_via_codec_lookup(payload, &encoding, &errors)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn io_codec_result_first_value(&self, value: Value, opname: &str) -> Result<Value, RuntimeError> {
+        let Value::Tuple(tuple_obj) = value else {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {opname} codec must return a tuple",
+            )));
+        };
+        let Object::Tuple(items) = &*tuple_obj.kind() else {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {opname} codec must return a tuple",
+            )));
+        };
+        items.first().cloned().ok_or_else(|| {
+            RuntimeError::new(format!(
+                "TypeError: {opname} codec must return a non-empty tuple",
+            ))
+        })
+    }
+
+    fn io_encode_text_via_codec_lookup(
+        &mut self,
+        text: &str,
+        encoding: &str,
+        errors: &str,
+    ) -> Result<Vec<u8>, RuntimeError> {
+        let codec_info = self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        )?;
+        let encode = self.builtin_getattr(
+            vec![codec_info, Value::Str("encode".to_string())],
+            HashMap::new(),
+        )?;
+        let encoded = match self.call_internal_preserving_caller(
+            encode,
+            vec![Value::Str(text.to_string()), Value::Str(errors.to_string())],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("encode() failed"));
+            }
+        };
+        let first = self.io_codec_result_first_value(encoded, "encode")?;
+        bytes_like_from_value(first).map_err(|_| {
+            RuntimeError::new("TypeError: encoder should return a bytes object")
+        })
+    }
+
+    fn io_decode_text_via_codec_lookup(
+        &mut self,
+        payload: &[u8],
+        encoding: &str,
+        errors: &str,
+    ) -> Result<String, RuntimeError> {
+        let codec_info = self.call_builtin(
+            BuiltinFunction::CodecsLookup,
+            vec![Value::Str(encoding.to_string())],
+            HashMap::new(),
+        )?;
+        let decode = self.builtin_getattr(
+            vec![codec_info, Value::Str("decode".to_string())],
+            HashMap::new(),
+        )?;
+        let decoded = match self.call_internal_preserving_caller(
+            decode,
+            vec![
+                self.heap.alloc_bytes(payload.to_vec()),
+                Value::Str(errors.to_string()),
+            ],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("decode() failed"));
+            }
+        };
+        let first = self.io_codec_result_first_value(decoded, "decode")?;
+        match first {
+            Value::Str(text) => Ok(text),
+            _ => Err(RuntimeError::new(
+                "TypeError: decoder should return a string result",
+            )),
+        }
+    }
+
+    fn io_file_delegate_buffer_method(
+        &mut self,
+        instance: &ObjRef,
+        method: &str,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        fallback: &str,
+    ) -> Result<Value, RuntimeError> {
+        let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") else {
+            return Err(RuntimeError::new("invalid file object"));
+        };
+        if buffer.id() == instance.id() {
+            return Err(RuntimeError::new("invalid file object"));
+        }
+        let method_value = self.builtin_getattr(
+            vec![
+                Value::Instance(buffer),
+                Value::Str(method.to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        match self.call_internal_preserving_caller(method_value, args, kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception(fallback))
+            }
+        }
+    }
+
+    fn io_write_text_payload_via_buffer(
+        &mut self,
+        instance: &ObjRef,
+        payload: Vec<u8>,
+    ) -> Result<(), RuntimeError> {
+        let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") else {
+            return Err(RuntimeError::new("invalid file object"));
+        };
+        if buffer.id() == instance.id() {
+            return Err(RuntimeError::new("invalid file object"));
+        }
+        let write = self.builtin_getattr(
+            vec![
+                Value::Instance(buffer),
+                Value::Str("write".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let payload_value = self.heap.alloc_bytes(payload);
+        match self.call_internal_preserving_caller(
+            write,
+            vec![payload_value],
+            HashMap::new(),
+        )? {
+            InternalCallOutcome::Value(_) => Ok(()),
+            InternalCallOutcome::CallerExceptionHandled => Err(
+                self.runtime_error_from_active_exception("write() failed"),
+            ),
+        }
+    }
+
+    fn io_write_text_payload_direct(
+        &mut self,
+        instance: &ObjRef,
+        payload: Vec<u8>,
+    ) -> Result<(), RuntimeError> {
+        if payload.is_empty() {
+            return Ok(());
+        }
+        if let Some(buffer) = Self::io_file_text_buffer_bytesio(instance) {
+            let payload_value = self.heap.alloc_bytes(payload);
+            let _ =
+                self.builtin_bytesio_write(vec![Value::Instance(buffer), payload_value], HashMap::new())?;
+            return Ok(());
+        }
+        match self.io_file_fd_from_instance(instance) {
+            Ok(fd) => {
+                let file = self
+                    .open_files
+                    .get_mut(&fd)
+                    .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+                file.write_all(&payload)
+                    .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+                Ok(())
+            }
+            Err(err) if err.message == "invalid file object" => {
+                self.io_write_text_payload_via_buffer(instance, payload)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn io_text_flush_pending_write_buffer(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
+        let pending = Self::io_text_write_buffer(instance)?;
+        if pending.is_empty() {
+            return Ok(());
+        }
+        self.io_write_text_payload_direct(instance, pending)?;
+        self.io_text_store_write_buffer(instance, Vec::new())
+    }
+
     pub(super) fn io_file_text_buffer_bytesio(instance: &ObjRef) -> Option<ObjRef> {
         if Self::io_file_is_binary(instance) {
             return None;
@@ -3531,6 +4727,10 @@ impl Vm {
             return Err(RuntimeError::new("read() expects optional size"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "read")?;
+        Self::io_ensure_text_initialized(&instance)?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_text_flush_pending_write_buffer(&instance)?;
+        }
         if Self::iobase_is_closed(&instance) {
             return Err(RuntimeError::new(
                 "ValueError: I/O operation on closed file.",
@@ -3541,8 +4741,12 @@ impl Vm {
             return Err(RuntimeError::new("UnsupportedOperation: not readable"));
         }
         let size = if let Some(value) = args.pop() {
-            let size = value_to_int(value)?;
-            if size < 0 { None } else { Some(size as usize) }
+            if matches!(value, Value::None) {
+                None
+            } else {
+                let size = value_to_int(value)?;
+                if size < 0 { None } else { Some(size as usize) }
+            }
         } else {
             None
         };
@@ -3553,8 +4757,7 @@ impl Vm {
             }
             let bytes_value = self.builtin_bytesio_read(read_args, HashMap::new())?;
             let bytes = bytes_like_from_value(bytes_value)?;
-            let text = String::from_utf8(bytes)
-                .map_err(|_| RuntimeError::new("read() encountered non-UTF-8 bytes"))?;
+            let text = self.io_decode_text_read_payload(&instance, &bytes)?;
             let newline = Self::io_file_newline(&instance);
             let normalized = if newline.is_none() {
                 Self::io_normalize_universal_newlines(&text)
@@ -3563,13 +4766,28 @@ impl Vm {
             };
             return Ok(Value::Str(normalized));
         }
-        let fd = self.io_file_fd_from_instance(&instance)?;
-        let bytes = self.io_file_read_bytes(fd, size)?;
+        let bytes = match self.io_file_fd_from_instance(&instance) {
+            Ok(fd) => self.io_file_read_bytes(fd, size)?,
+            Err(err) if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" => {
+                let mut call_args = Vec::new();
+                if let Some(limit) = size {
+                    call_args.push(Value::Int(limit as i64));
+                }
+                let delegated = self.io_file_delegate_buffer_method(
+                    &instance,
+                    "read",
+                    call_args,
+                    HashMap::new(),
+                    "read() failed",
+                )?;
+                bytes_like_from_value(delegated)?
+            }
+            Err(err) => return Err(err),
+        };
         if Self::io_file_is_binary(&instance) {
             Ok(self.heap.alloc_bytes(bytes))
         } else {
-            let text = String::from_utf8(bytes)
-                .map_err(|_| RuntimeError::new("read() encountered non-UTF-8 bytes"))?;
+            let text = self.io_decode_text_read_payload(&instance, &bytes)?;
             let newline = Self::io_file_newline(&instance);
             let normalized = if newline.is_none() {
                 Self::io_normalize_universal_newlines(&text)
@@ -3589,6 +4807,10 @@ impl Vm {
             return Err(RuntimeError::new("readinto() expects one argument"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "readinto")?;
+        Self::io_ensure_text_initialized(&instance)?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_text_flush_pending_write_buffer(&instance)?;
+        }
         if Self::iobase_is_closed(&instance) {
             return Err(RuntimeError::new(
                 "ValueError: I/O operation on closed file.",
@@ -3622,6 +4844,10 @@ impl Vm {
             return Err(RuntimeError::new("readline() expects optional size"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "readline")?;
+        Self::io_ensure_text_initialized(&instance)?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_text_flush_pending_write_buffer(&instance)?;
+        }
         if Self::iobase_is_closed(&instance) {
             return Err(RuntimeError::new(
                 "ValueError: I/O operation on closed file.",
@@ -3652,8 +4878,7 @@ impl Vm {
             }
             let bytes_value = self.builtin_bytesio_readline(read_args, HashMap::new())?;
             let bytes = bytes_like_from_value(bytes_value)?;
-            let text = String::from_utf8(bytes)
-                .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
+            let text = self.io_decode_text_read_payload(&instance, &bytes)?;
             let newline = Self::io_file_newline(&instance);
             let normalized = if newline.is_none() {
                 Self::io_normalize_universal_newlines(&text)
@@ -3662,7 +4887,32 @@ impl Vm {
             };
             return Ok(Value::Str(normalized));
         }
-        let fd = self.io_file_fd_from_instance(&instance)?;
+        let fd = match self.io_file_fd_from_instance(&instance) {
+            Ok(fd) => fd,
+            Err(err) if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" => {
+                let mut call_args = Vec::new();
+                if let Some(max_len) = limit {
+                    call_args.push(Value::Int(max_len as i64));
+                }
+                let delegated = self.io_file_delegate_buffer_method(
+                    &instance,
+                    "readline",
+                    call_args,
+                    HashMap::new(),
+                    "readline() failed",
+                )?;
+                let bytes = bytes_like_from_value(delegated)?;
+                let text = self.io_decode_text_read_payload(&instance, &bytes)?;
+                let newline = Self::io_file_newline(&instance);
+                let normalized = if newline.is_none() {
+                    Self::io_normalize_universal_newlines(&text)
+                } else {
+                    text
+                };
+                return Ok(Value::Str(normalized));
+            }
+            Err(err) => return Err(err),
+        };
         let binary = Self::io_file_is_binary(&instance);
         let newline = if binary {
             None
@@ -3745,8 +4995,7 @@ impl Vm {
         if binary {
             Ok(self.heap.alloc_bytes(out))
         } else {
-            let text = String::from_utf8(out)
-                .map_err(|_| RuntimeError::new("readline() encountered non-UTF-8 bytes"))?;
+            let text = self.io_decode_text_read_payload(&instance, &out)?;
             let normalized = if newline.is_none() {
                 Self::io_normalize_universal_newlines(&text)
             } else {
@@ -3765,6 +5014,7 @@ impl Vm {
             return Err(RuntimeError::new("readlines() expects optional hint"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "readlines")?;
+        Self::io_ensure_text_initialized(&instance)?;
         let hint = if let Some(value) = args.pop() {
             let parsed = value_to_int(value)?;
             if parsed <= 0 {
@@ -3811,6 +5061,7 @@ impl Vm {
             return Err(RuntimeError::new("write() expects one argument"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "write")?;
+        Self::io_ensure_text_initialized(&instance)?;
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('w')
             || mode.starts_with('a')
@@ -3819,38 +5070,58 @@ impl Vm {
         {
             return Err(RuntimeError::new("UnsupportedOperation: not writable"));
         }
-        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
-            let text = match args.remove(0) {
-                Value::Str(text) => text,
-                _ => return Err(RuntimeError::new("write() argument must be str")),
-            };
-            let newline = Self::io_file_newline(&instance);
-            let translated = Self::io_translate_write_newlines(text.clone(), newline.as_deref());
-            let payload = self.heap.alloc_bytes(translated.into_bytes());
-            let _ =
-                self.builtin_bytesio_write(vec![Value::Instance(buffer), payload], HashMap::new())?;
-            return Ok(Value::Int(text.chars().count() as i64));
-        }
-        let fd = self.io_file_fd_from_instance(&instance)?;
-        let payload = if Self::io_file_is_binary(&instance) {
-            self.value_to_bytes_payload(args.remove(0))?
+        let (payload, write_result) = if Self::io_file_is_binary(&instance) {
+            let payload = self.value_to_bytes_payload(args.remove(0))?;
+            let length = payload.len() as i64;
+            (payload, Value::Int(length))
         } else {
             match args.remove(0) {
                 Value::Str(text) => {
-                    let newline = Self::io_file_newline(&instance);
-                    let translated = Self::io_translate_write_newlines(text, newline.as_deref());
-                    translated.into_bytes()
+                    let (payload, char_count) = self.io_encode_text_write_payload(&instance, text)?;
+                    (payload, Value::Int(char_count))
                 }
                 _ => return Err(RuntimeError::new("write() argument must be str")),
             }
         };
-        let file = self
-            .open_files
-            .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
-        file.write_all(&payload)
-            .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
-        Ok(Value::Int(payload.len() as i64))
+        if Self::io_file_is_binary(&instance) {
+            let fd = self.io_file_fd_from_instance(&instance)?;
+            let file = self
+                .open_files
+                .get_mut(&fd)
+                .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            file.write_all(&payload)
+                .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
+        } else {
+            let chunk_size = Self::io_text_chunk_size(&instance).max(1);
+            let mut buffered = Self::io_text_write_buffer(&instance)?;
+            if payload.len() >= chunk_size {
+                if !buffered.is_empty() {
+                    self.io_write_text_payload_direct(&instance, buffered.clone())?;
+                    buffered.clear();
+                }
+                self.io_text_store_write_buffer(&instance, buffered)?;
+                self.io_write_text_payload_direct(&instance, payload)?;
+            } else {
+                buffered.extend_from_slice(&payload);
+                if buffered.len() > chunk_size {
+                    self.io_write_text_payload_direct(&instance, buffered.clone())?;
+                    buffered.clear();
+                }
+                self.io_text_store_write_buffer(&instance, buffered)?;
+                let write_through = matches!(
+                    Self::instance_attr_get(&instance, "_write_through"),
+                    Some(Value::Bool(true))
+                );
+                let line_buffering = matches!(
+                    Self::instance_attr_get(&instance, "_line_buffering"),
+                    Some(Value::Bool(true))
+                );
+                if write_through || (line_buffering && payload.contains(&b'\n')) {
+                    self.io_text_flush_pending_write_buffer(&instance)?;
+                }
+            }
+        }
+        Ok(write_result)
     }
 
     pub(super) fn builtin_io_file_writelines(
@@ -3864,6 +5135,7 @@ impl Vm {
             ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "writelines")?;
+        Self::io_ensure_text_initialized(&instance)?;
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('w')
             || mode.starts_with('a')
@@ -3891,6 +5163,10 @@ impl Vm {
             return Err(RuntimeError::new("truncate() expects optional size"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "truncate")?;
+        Self::io_ensure_text_initialized(&instance)?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_text_flush_pending_write_buffer(&instance)?;
+        }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('w')
             || mode.starts_with('a')
@@ -3941,6 +5217,10 @@ impl Vm {
             ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "seek")?;
+        Self::io_ensure_text_initialized(&instance)?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_text_flush_pending_write_buffer(&instance)?;
+        }
         if args.is_empty() {
             return Err(RuntimeError::new("seek() missing offset argument"));
         }
@@ -3961,14 +5241,19 @@ impl Vm {
             ));
         }
         if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
-            return self.builtin_bytesio_seek(
+            let position = self.builtin_bytesio_seek(
                 vec![
                     Value::Instance(buffer),
                     Value::Int(offset),
                     Value::Int(whence),
                 ],
                 HashMap::new(),
-            );
+            )?;
+            if !Self::io_file_is_binary(&instance) {
+                let pos = value_to_int(position.clone())?;
+                self.io_seed_text_bom_state_from_position(&instance, pos)?;
+            }
+            return Ok(position);
         }
         let fd = self.io_file_fd_from_instance(&instance)?;
         let file = self
@@ -3987,6 +5272,9 @@ impl Vm {
             _ => return Err(RuntimeError::new("invalid whence")),
         }
         .map_err(|err| RuntimeError::new(format!("OSError: {err}")))?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_seed_text_bom_state_from_position(&instance, position as i64)?;
+        }
         Ok(Value::Int(position as i64))
     }
 
@@ -3999,6 +5287,10 @@ impl Vm {
             return Err(RuntimeError::new("tell() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "tell")?;
+        Self::io_ensure_text_initialized(&instance)?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_text_flush_pending_write_buffer(&instance)?;
+        }
         let seekable =
             self.builtin_io_file_seekable(vec![Value::Instance(instance.clone())], HashMap::new())?;
         if !is_truthy(&seekable) {
@@ -4027,6 +5319,7 @@ impl Vm {
             return Err(RuntimeError::new("close() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "close")?;
+        Self::io_ensure_text_initialized(&instance)?;
         if matches!(
             Self::instance_attr_get(&instance, "_closed"),
             Some(Value::Bool(true))
@@ -4040,25 +5333,84 @@ impl Vm {
             ],
             HashMap::new(),
         )?;
-        let flush_error = match self.call_internal(flush_method, Vec::new(), HashMap::new()) {
+        let flush_error = match self.call_internal_preserving_caller(
+            flush_method,
+            Vec::new(),
+            HashMap::new(),
+        ) {
             Ok(InternalCallOutcome::Value(_)) => None,
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                Some(self.runtime_error_from_active_exception("close() failed"))
+                Some(self.io_take_active_exception_value("close() failed")?)
             }
-            Err(err) => Some(err),
+            Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
         };
-        if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
-            let _ = self.builtin_bytesio_close(vec![Value::Instance(buffer)], HashMap::new())?;
+        let (close_error, close_succeeded) = if let Some(Value::Instance(buffer)) =
+            Self::instance_attr_get(&instance, "buffer")
+            && buffer.id() != instance.id()
+        {
+            let close_method = self.builtin_getattr(
+                vec![
+                    Value::Instance(buffer.clone()),
+                    Value::Str("close".to_string()),
+                ],
+                HashMap::new(),
+            )?;
+            let close_error = match self.call_internal_preserving_caller(
+                close_method,
+                Vec::new(),
+                HashMap::new(),
+            ) {
+                Ok(InternalCallOutcome::Value(_)) => None,
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    Some(self.io_take_active_exception_value("close() failed")?)
+                }
+                Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
+            };
+            let mut close_succeeded = close_error.is_none();
+            if close_succeeded {
+                let buffer_closed = self
+                    .builtin_getattr(
+                        vec![
+                            Value::Instance(buffer),
+                            Value::Str("closed".to_string()),
+                        ],
+                        HashMap::new(),
+                    )
+                    .map(|value| is_truthy(&value))
+                    .unwrap_or(true);
+                close_succeeded = buffer_closed;
+            }
+            (close_error, close_succeeded)
+        } else {
+            let close_error = match self.io_file_close_instance(&instance) {
+                Ok(()) => None,
+                Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
+            };
+            let close_succeeded = close_error.is_none();
+            (close_error, close_succeeded)
+        };
+
+        if close_succeeded {
             Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
             Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
-            if let Some(err) = flush_error {
-                return Err(err);
-            }
-            return Ok(Value::None);
         }
-        self.io_file_close_instance(&instance)?;
-        if let Some(err) = flush_error {
-            return Err(err);
+
+        if let Some(mut close_exc) = close_error {
+            if let (Value::Exception(close_exception), Some(Value::Exception(flush_exception))) =
+                (&mut close_exc, flush_error.clone())
+            {
+                close_exception.context = Some(flush_exception);
+            }
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = Some(close_exc.clone());
+            }
+            return Err(self.io_runtime_error_from_exception_value(&close_exc, "close() failed"));
+        }
+        if let Some(flush_exc) = flush_error {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = Some(flush_exc.clone());
+            }
+            return Err(self.io_runtime_error_from_exception_value(&flush_exc, "close() failed"));
         }
         Ok(Value::None)
     }
@@ -4072,6 +5424,10 @@ impl Vm {
             return Err(RuntimeError::new("flush() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "flush")?;
+        Self::io_ensure_text_initialized(&instance)?;
+        if !Self::io_file_is_binary(&instance) {
+            self.io_text_flush_pending_write_buffer(&instance)?;
+        }
         if Self::io_file_text_buffer_bytesio(&instance).is_some() {
             return Ok(Value::None);
         }
@@ -4083,13 +5439,26 @@ impl Vm {
         {
             return Ok(Value::None);
         }
-        let fd = self.io_file_fd_from_instance(&instance)?;
-        let file = self
-            .open_files
-            .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
-        file.flush()
-            .map_err(|err| RuntimeError::new(format!("flush failed: {err}")))?;
+        match self.io_file_fd_from_instance(&instance) {
+            Ok(fd) => {
+                let file = self
+                    .open_files
+                    .get_mut(&fd)
+                    .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+                file.flush()
+                    .map_err(|err| RuntimeError::new(format!("flush failed: {err}")))?;
+            }
+            Err(err) if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" => {
+                let _ = self.io_file_delegate_buffer_method(
+                    &instance,
+                    "flush",
+                    Vec::new(),
+                    HashMap::new(),
+                    "flush() failed",
+                )?;
+            }
+            Err(err) => return Err(err),
+        }
         Ok(Value::None)
     }
 
@@ -4140,6 +5509,7 @@ impl Vm {
             return Err(RuntimeError::new("__enter__() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "__enter__")?;
+        Self::io_ensure_text_initialized(&instance)?;
         if matches!(
             Self::instance_attr_get(&instance, "_closed"),
             Some(Value::Bool(true))
@@ -4160,7 +5530,8 @@ impl Vm {
             return Err(RuntimeError::new("__exit__() expects up to 3 arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "__exit__")?;
-        self.io_file_close_instance(&instance)?;
+        Self::io_ensure_text_initialized(&instance)?;
+        let _ = self.builtin_io_file_close(vec![Value::Instance(instance)], HashMap::new())?;
         Ok(Value::Bool(false))
     }
 
@@ -4173,6 +5544,7 @@ impl Vm {
             return Err(RuntimeError::new("fileno() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "fileno")?;
+        Self::io_ensure_text_initialized(&instance)?;
         if Self::io_file_text_buffer_bytesio(&instance).is_some() {
             return Err(RuntimeError::new("OSError: fileno"));
         }
@@ -4193,16 +5565,33 @@ impl Vm {
             return Err(RuntimeError::new("detach() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "detach")?;
-        if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer")
-            && buffer.id() != instance.id()
-        {
-            Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
-            Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
-            Self::instance_attr_set(&instance, "buffer", Value::None)?;
-            Self::instance_attr_set(&instance, "raw", Value::None)?;
-            return Ok(Value::Instance(buffer));
+        Self::io_ensure_text_initialized(&instance)?;
+        let buffer = match Self::instance_attr_get(&instance, "buffer") {
+            Some(Value::Instance(buffer)) if buffer.id() != instance.id() => buffer,
+            _ => {
+                return Err(RuntimeError::new(
+                    "ValueError: underlying buffer has been detached",
+                ))
+            }
+        };
+        let flush = self.builtin_getattr(
+            vec![
+                Value::Instance(instance.clone()),
+                Value::Str("flush".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        match self.call_internal_preserving_caller(flush, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(_) => {}
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("detach() failed"));
+            }
         }
-        Err(RuntimeError::new("detach"))
+        Self::instance_attr_set(&instance, "_closed", Value::Bool(true))?;
+        Self::instance_attr_set(&instance, "closed", Value::Bool(true))?;
+        Self::instance_attr_set(&instance, "buffer", Value::None)?;
+        Self::instance_attr_set(&instance, "raw", Value::None)?;
+        Ok(Value::Instance(buffer))
     }
 
     pub(super) fn builtin_io_file_readable(
@@ -4214,6 +5603,7 @@ impl Vm {
             return Err(RuntimeError::new("readable() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "readable")?;
+        Self::io_ensure_text_initialized(&instance)?;
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         Ok(Value::Bool(mode.starts_with('r') || mode.contains('+')))
     }
@@ -4227,6 +5617,7 @@ impl Vm {
             return Err(RuntimeError::new("writable() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "writable")?;
+        Self::io_ensure_text_initialized(&instance)?;
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         Ok(Value::Bool(
             mode.starts_with('w')
@@ -4245,6 +5636,7 @@ impl Vm {
             return Err(RuntimeError::new("seekable() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "seekable")?;
+        Self::io_ensure_text_initialized(&instance)?;
         if let Some(Value::Instance(buffer)) = Self::instance_attr_get(&instance, "buffer")
             && buffer.id() != instance.id()
         {
