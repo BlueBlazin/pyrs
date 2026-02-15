@@ -199,6 +199,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - CPython enum probe regression: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`.
 - Keep docs updated in the same checkpoint as behavior changes.
 - Keep worktrees clean; commit small focused checkpoints.
+- Start each user-facing progress update with a brief executive summary of what was completed in that round before detailed notes.
 - End every assistant turn with immediate next `3-6` concrete steps.
 
 ## Test Loop Policy
