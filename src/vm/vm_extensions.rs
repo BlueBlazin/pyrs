@@ -195,6 +195,37 @@ pub struct CpythonTypeObject {
     tp_setattro: *mut c_void,
     tp_as_buffer: *mut c_void,
     tp_flags: usize,
+    tp_doc: *const c_char,
+    tp_traverse: *mut c_void,
+    tp_clear: *mut c_void,
+    tp_richcompare: *mut c_void,
+    tp_weaklistoffset: isize,
+    tp_iter: *mut c_void,
+    tp_iternext: *mut c_void,
+    tp_methods: *mut c_void,
+    tp_members: *mut c_void,
+    tp_getset: *mut c_void,
+    tp_base: *mut CpythonTypeObject,
+    tp_dict: *mut c_void,
+    tp_descr_get: *mut c_void,
+    tp_descr_set: *mut c_void,
+    tp_dictoffset: isize,
+    tp_init: *mut c_void,
+    tp_alloc: *mut c_void,
+    tp_new: *mut c_void,
+    tp_free: *mut c_void,
+    tp_is_gc: *mut c_void,
+    tp_bases: *mut c_void,
+    tp_mro: *mut c_void,
+    tp_cache: *mut c_void,
+    tp_subclasses: *mut c_void,
+    tp_weaklist: *mut c_void,
+    tp_del: *mut c_void,
+    tp_version_tag: u32,
+    tp_finalize: *mut c_void,
+    tp_vectorcall: *mut c_void,
+    tp_watched: u8,
+    tp_versions_used: u16,
 }
 
 #[repr(C)]
@@ -500,6 +531,10 @@ fn initialize_cpython_compat_type_objects() {
     INIT.call_once(|| unsafe {
         let type_ptr = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
         PyType_Type.ob_type = type_ptr;
+        PyType_Type.tp_call = cpython_type_tp_call as *mut c_void;
+        PyType_Type.tp_alloc = PyType_GenericAlloc as *mut c_void;
+        PyType_Type.tp_new = PyType_GenericNew as *mut c_void;
+        PyType_Type.tp_base = std::ptr::addr_of_mut!(PyBaseObject_Type);
 
         let type_objects: &mut [*mut CpythonTypeObject] = &mut [
             std::ptr::addr_of_mut!(PyBaseObject_Type),
@@ -526,6 +561,9 @@ fn initialize_cpython_compat_type_objects() {
         ];
         for ty in type_objects {
             (**ty).ob_type = type_ptr;
+            if (**ty).tp_base.is_null() && *ty != std::ptr::addr_of_mut!(PyBaseObject_Type) {
+                (**ty).tp_base = std::ptr::addr_of_mut!(PyBaseObject_Type);
+            }
         }
 
         _Py_NoneStruct.ob_type = std::ptr::addr_of_mut!(PyBaseObject_Type).cast();
@@ -960,7 +998,14 @@ impl ModuleCapiContext {
         args: &[Value],
         kwargs: &HashMap<String, Value>,
     ) -> Option<*mut c_void> {
+        let trace_calls = std::env::var_os("PYRS_TRACE_CPY_CALLS").is_some();
         if callable.is_null() || self.vm.is_null() {
+            if trace_calls {
+                eprintln!(
+                    "[cpy-call] skip native callable={:p} reason=null-callable-or-vm",
+                    callable
+                );
+            }
             return None;
         }
         // SAFETY: caller passes a potential PyObject pointer; guard nulls above.
@@ -968,12 +1013,36 @@ impl ModuleCapiContext {
             .map(|head| head.ob_type)
             .unwrap_or(std::ptr::null_mut())
             .cast::<CpythonTypeObject>();
+        if trace_calls
+            && let Some(tag_value) = self.cpython_value_from_ptr(callable)
+        {
+            eprintln!(
+                "[cpy-call] callable={:p} tag={}",
+                callable,
+                cpython_value_debug_tag(&tag_value)
+            );
+        }
         if type_ptr.is_null() {
+            if trace_calls {
+                eprintln!(
+                    "[cpy-call] skip native callable={:p} reason=null-type",
+                    callable
+                );
+            }
             return None;
         }
         // SAFETY: `type_ptr` is derived from object header and validated non-null.
         let tp_call_raw = unsafe { (*type_ptr).tp_call };
         if tp_call_raw.is_null() {
+            if trace_calls {
+                eprintln!(
+                    "[cpy-call] skip native callable={:p} type={:p} reason=null-tp_call (PyType_Type={:p} tp_call={:p})",
+                    callable,
+                    type_ptr,
+                    (&raw mut PyType_Type),
+                    unsafe { PyType_Type.tp_call }
+                );
+            }
             return None;
         }
         let call: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
@@ -995,6 +1064,16 @@ impl ModuleCapiContext {
                 .collect::<Vec<_>>();
             self.alloc_cpython_ptr_for_value(vm.heap.alloc_dict(entries))
         };
+        if trace_calls {
+            eprintln!(
+                "[cpy-call] native callable={:p} type={:p} tp_call={:p} args={} kwargs={}",
+                callable,
+                type_ptr,
+                tp_call_raw,
+                args.len(),
+                kwargs.len()
+            );
+        }
         Some(unsafe { call(callable, args_ptr, kwargs_ptr) })
     }
 
@@ -3214,20 +3293,22 @@ fn cpython_call_object(
     kwargs: HashMap<String, Value>,
 ) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
+        let callable_ptr = callable;
         if context.vm.is_null() {
             context.set_error("missing VM context for object call");
             return std::ptr::null_mut();
         }
-        if let Some(result) = context.try_native_tp_call(callable, &args, &kwargs) {
+        if let Some(result) = context.try_native_tp_call(callable_ptr, &args, &kwargs) {
             return result;
         }
-        let Some(callable) = context.cpython_value_from_ptr(callable) else {
+        let Some(callable) = context.cpython_value_from_ptr(callable_ptr) else {
             context.set_error("unknown callable object pointer");
             return std::ptr::null_mut();
         };
         if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
             eprintln!(
-                "[cpy-api] cpython_call_object callable={}",
+                "[cpy-api] cpython_call_object ptr={:p} callable={}",
+                callable_ptr,
                 cpython_value_debug_tag(&callable)
             );
         }
@@ -5132,7 +5213,11 @@ pub unsafe extern "C" fn PyTuple_New(size: isize) -> *mut c_void {
         let tuple = vm
             .heap
             .alloc(Object::Tuple(vec![Value::None; size as usize]));
-        context.alloc_cpython_ptr_for_value(Value::Tuple(tuple))
+        let ptr = context.alloc_cpython_ptr_for_value(Value::Tuple(tuple));
+        if std::env::var_os("PYRS_TRACE_CPY_TUPLE").is_some() {
+            eprintln!("[cpy-tuple] new size={} ptr={:p}", size, ptr);
+        }
+        ptr
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -5142,6 +5227,20 @@ pub unsafe extern "C" fn PyTuple_New(size: isize) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyTuple_Size(tuple: *mut c_void) -> isize {
+    if tuple.is_null() {
+        cpython_set_error("PyTuple_Size expected tuple object");
+        return -1;
+    }
+    if let Ok(Some(size)) = with_active_cpython_context_mut(|context| {
+        if context.owns_cpython_allocation_ptr(tuple) {
+            // SAFETY: owned tuple pointers use CPython-compatible varobject header.
+            let size = unsafe { (*tuple.cast::<CpythonVarObjectHead>()).ob_size };
+            return Some(size.max(0));
+        }
+        None
+    }) {
+        return size;
+    }
     match cpython_value_from_ptr(tuple) {
         Ok(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
             Object::Tuple(values) => values.len() as isize,
@@ -5164,6 +5263,37 @@ pub unsafe extern "C" fn PyTuple_Size(tuple: *mut c_void) -> isize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyTuple_GetItem(tuple: *mut c_void, index: isize) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
+        if context.owns_cpython_allocation_ptr(tuple) {
+            // SAFETY: owned tuple pointers use CPython-compatible varobject header
+            // followed by contiguous `PyObject*` item slots.
+            unsafe {
+                let head = tuple.cast::<CpythonVarObjectHead>();
+                let len = (*head).ob_size.max(0) as usize;
+                let idx = if index < 0 { len as isize + index } else { index };
+                if idx < 0 || idx as usize >= len {
+                    context.set_error("PyTuple_GetItem index out of range");
+                    return std::ptr::null_mut();
+                }
+                let items_ptr = tuple
+                    .cast::<u8>()
+                    .add(std::mem::size_of::<CpythonVarObjectHead>())
+                    .cast::<*mut c_void>();
+                let raw_item = *items_ptr.add(idx as usize);
+                if !raw_item.is_null() {
+                    if let Some(value) = context.cpython_value_from_ptr_or_proxy(raw_item) {
+                        if let Some(tuple_handle) = context.cpython_handle_from_ptr(tuple)
+                            && let Some(tuple_slot) = context.objects.get_mut(&tuple_handle)
+                            && let Value::Tuple(tuple_obj) = &mut tuple_slot.value
+                            && let Object::Tuple(values) = &mut *tuple_obj.kind_mut()
+                            && (idx as usize) < values.len()
+                        {
+                            values[idx as usize] = value.clone();
+                        }
+                        return context.alloc_cpython_ptr_for_value(value);
+                    }
+                }
+            }
+        }
         let Some(value) = context.cpython_value_from_ptr(tuple) else {
             context.set_error("PyTuple_GetItem received unknown tuple pointer");
             return std::ptr::null_mut();
@@ -5263,6 +5393,12 @@ pub unsafe extern "C" fn PyTuple_SetItem(
         }
         if let Some(item_handle) = item_handle {
             let _ = context.decref(item_handle);
+        }
+        if std::env::var_os("PYRS_TRACE_CPY_TUPLE").is_some() {
+            eprintln!(
+                "[cpy-tuple] set ptr={:p} index={} item={:p}",
+                tuple, index, item
+            );
         }
         0
     })
@@ -6110,7 +6246,7 @@ pub unsafe extern "C" fn PyObject_CallFunction(
     std::ptr::null_mut()
 }
 
-#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn PyObject_CallFunctionObjArgs(
     callable: *mut c_void,
     arg0: *mut c_void,
@@ -6121,7 +6257,7 @@ pub unsafe extern "C" fn PyObject_CallFunctionObjArgs(
     unsafe { PyObject_CallOneArg(callable, arg0) }
 }
 
-#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn PyObject_CallMethod(
     object: *mut c_void,
     method: *const c_char,
@@ -6136,13 +6272,13 @@ pub unsafe extern "C" fn PyObject_CallMethod(
     result
 }
 
-#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn PyArg_ParseTuple(_args: *mut c_void, _format: *const c_char) -> i32 {
     cpython_set_error("PyArg_ParseTuple variadic output parsing is not implemented");
     0
 }
 
-#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
 pub unsafe extern "C" fn PyArg_ParseTupleAndKeywords(
     _args: *mut c_void,
     _kwargs: *mut c_void,
@@ -6801,6 +6937,95 @@ pub unsafe extern "C" fn PyObject_Print(
     0
 }
 
+unsafe extern "C" fn cpython_type_tp_call(
+    callable: *mut c_void,
+    args: *mut c_void,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    let trace_calls = std::env::var_os("PYRS_TRACE_CPY_CALLS").is_some();
+    if callable.is_null() {
+        cpython_set_error("type call received null callable");
+        return std::ptr::null_mut();
+    }
+    if callable == (&raw mut PyType_Type).cast() {
+        let positional = match cpython_positional_args_from_tuple_object(args) {
+            Ok(values) => values,
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let keywords = match cpython_keyword_args_from_dict_object(kwargs) {
+            Ok(values) => values,
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        if positional.len() == 1 && keywords.is_empty() {
+            let ptr = cpython_new_ptr_for_value(positional[0].clone());
+            if ptr.is_null() {
+                return std::ptr::null_mut();
+            }
+            // SAFETY: object pointer was materialized by `cpython_new_ptr_for_value`.
+            let ty = unsafe { (*ptr.cast::<CpythonObjectHead>()).ob_type };
+            unsafe { Py_XIncRef(ty) };
+            return ty;
+        }
+    }
+    let ty = callable.cast::<CpythonTypeObject>();
+    // SAFETY: callable points to a PyTypeObject-compatible struct.
+    let new_slot = unsafe { (*ty).tp_new };
+    if trace_calls {
+        // SAFETY: callable points to a PyTypeObject-compatible struct.
+        let init_slot = unsafe { (*ty).tp_init };
+        eprintln!(
+            "[cpy-type-call] callable={:p} tp_new={:p} tp_init={:p} args_ptr={:p} kwargs_ptr={:p}",
+            callable,
+            new_slot,
+            init_slot,
+            args,
+            kwargs
+        );
+    }
+    let object = if new_slot.is_null() {
+        unsafe { PyType_GenericNew(callable, args, kwargs) }
+    } else {
+        let new_fn: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+            // SAFETY: tp_new follows CPython `newfunc` signature.
+            unsafe { std::mem::transmute(new_slot) };
+        unsafe { new_fn(callable, args, kwargs) }
+    };
+    if trace_calls {
+        let object_type = if object.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: object returned by tp_new is expected to be PyObject-compatible.
+            unsafe { (*object.cast::<CpythonObjectHead>()).ob_type }
+        };
+        eprintln!(
+            "[cpy-type-call] tp_new_result object={:p} object_type={:p}",
+            object, object_type
+        );
+    }
+    if object.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: callable points to a PyTypeObject-compatible struct.
+    let init_slot = unsafe { (*ty).tp_init };
+    if !init_slot.is_null() {
+        let init_fn: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
+            // SAFETY: tp_init follows CPython `initproc` signature.
+            unsafe { std::mem::transmute(init_slot) };
+        let status = unsafe { init_fn(object, args, kwargs) };
+        if status < 0 {
+            unsafe { Py_DecRef(object) };
+            return std::ptr::null_mut();
+        }
+    }
+    object
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_GetFlags(ty: *mut c_void) -> usize {
     if ty.is_null() {
@@ -6817,24 +7042,124 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
     if subtype.is_null() || ty.is_null() {
         return 0;
     }
-    if subtype == ty || ty == (&raw mut PyBaseObject_Type).cast() {
-        return 1;
+    let target = ty.cast::<CpythonTypeObject>();
+    let mut current = subtype.cast::<CpythonTypeObject>();
+    while !current.is_null() {
+        if current == target || current == (&raw mut PyBaseObject_Type) {
+            return 1;
+        }
+        // SAFETY: current is checked non-null.
+        current = unsafe { (*current).tp_base };
     }
     0
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyType_Ready(_ty: *mut c_void) -> i32 {
+pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
+    if ty.is_null() {
+        cpython_set_error("PyType_Ready received null type");
+        return -1;
+    }
+    // SAFETY: caller provided non-null type pointer.
+    let ty = ty.cast::<CpythonTypeObject>();
+    // SAFETY: `ty` is valid for mutation during type ready.
+    unsafe {
+        if (*ty).ob_type.is_null() {
+            (*ty).ob_type = (&raw mut PyType_Type).cast();
+        }
+        if (*ty).tp_base.is_null()
+            && ty != (&raw mut PyBaseObject_Type)
+            && ty != (&raw mut PyType_Type)
+        {
+            (*ty).tp_base = &raw mut PyBaseObject_Type;
+        }
+        let base = (*ty).tp_base;
+        if (*ty).tp_basicsize <= 0 {
+            if !base.is_null() && (*base).tp_basicsize > 0 {
+                (*ty).tp_basicsize = (*base).tp_basicsize;
+            } else {
+                (*ty).tp_basicsize = std::mem::size_of::<CpythonObjectHead>() as isize;
+            }
+        }
+        if (*ty).tp_call.is_null() && !base.is_null() {
+            (*ty).tp_call = (*base).tp_call;
+        }
+        if (*ty).tp_init.is_null() && !base.is_null() {
+            (*ty).tp_init = (*base).tp_init;
+        }
+        if (*ty).tp_alloc.is_null() && !base.is_null() {
+            (*ty).tp_alloc = (*base).tp_alloc;
+        }
+        if (*ty).tp_new.is_null() && !base.is_null() {
+            (*ty).tp_new = (*base).tp_new;
+        }
+        if (*ty).tp_free.is_null() && !base.is_null() {
+            (*ty).tp_free = (*base).tp_free;
+        }
+        if (*ty).tp_getattro.is_null() && !base.is_null() {
+            (*ty).tp_getattro = (*base).tp_getattro;
+        }
+        if (*ty).tp_setattro.is_null() && !base.is_null() {
+            (*ty).tp_setattro = (*base).tp_setattro;
+        }
+        if (*ty).tp_repr.is_null() && !base.is_null() {
+            (*ty).tp_repr = (*base).tp_repr;
+        }
+        if (*ty).tp_str.is_null() && !base.is_null() {
+            (*ty).tp_str = (*base).tp_str;
+        }
+        if (*ty).tp_basicsize <= 0 {
+            (*ty).tp_basicsize = std::mem::size_of::<CpythonObjectHead>() as isize;
+        }
+        if (*ty).tp_alloc.is_null() {
+            (*ty).tp_alloc = PyType_GenericAlloc as *mut c_void;
+        }
+        if (*ty).tp_free.is_null() {
+            (*ty).tp_free = PyObject_Free as *mut c_void;
+        }
+        if (*ty).tp_new.is_null() {
+            (*ty).tp_new = PyType_GenericNew as *mut c_void;
+        }
+    }
     0
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GenericAlloc(subtype: *mut c_void, nitems: isize) -> *mut c_void {
+    if subtype.is_null() {
+        cpython_set_error("PyType_GenericAlloc received null subtype");
+        return std::ptr::null_mut();
+    }
+    let ty = subtype.cast::<CpythonTypeObject>();
+    // SAFETY: subtype is checked non-null.
+    let itemsize = unsafe { (*ty).tp_itemsize };
+    if itemsize > 0 || nitems > 0 {
+        unsafe { _PyObject_NewVar(ty, nitems.max(0)) }
+    } else {
+        unsafe { _PyObject_New(ty) }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_GenericNew(
-    _subtype: *mut c_void,
+    subtype: *mut c_void,
     _args: *mut c_void,
     _kwargs: *mut c_void,
 ) -> *mut c_void {
-    cpython_new_ptr_for_value(Value::None)
+    if subtype.is_null() {
+        cpython_set_error("PyType_GenericNew received null subtype");
+        return std::ptr::null_mut();
+    }
+    let ty = subtype.cast::<CpythonTypeObject>();
+    // SAFETY: subtype is checked non-null.
+    let alloc = unsafe { (*ty).tp_alloc };
+    if alloc.is_null() {
+        return unsafe { PyType_GenericAlloc(subtype, 0) };
+    }
+    let alloc_fn: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
+        // SAFETY: tp_alloc slot follows CPython allocfunc signature.
+        unsafe { std::mem::transmute(alloc) };
+    unsafe { alloc_fn(subtype, 0) }
 }
 
 #[unsafe(no_mangle)]
@@ -6867,16 +7192,37 @@ pub unsafe extern "C" fn PyObject_GC_Del(object: *mut c_void) {
 pub unsafe extern "C" fn PyObject_ClearWeakRefs(_object: *mut c_void) {}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyObject_Init(object: *mut c_void, _ty: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn PyObject_Init(object: *mut c_void, ty: *mut c_void) -> *mut c_void {
+    if object.is_null() || ty.is_null() {
+        cpython_set_error("PyObject_Init received null object/type");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller guarantees object points to writable PyObject-compatible memory.
+    unsafe {
+        let head = object.cast::<CpythonObjectHead>();
+        (*head).ob_refcnt = 1;
+        (*head).ob_type = ty;
+    }
     object
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_InitVar(
     object: *mut c_void,
-    _ty: *mut c_void,
-    _size: isize,
+    ty: *mut c_void,
+    size: isize,
 ) -> *mut c_void {
+    if object.is_null() || ty.is_null() {
+        cpython_set_error("PyObject_InitVar received null object/type");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller guarantees object points to writable PyVarObject-compatible memory.
+    unsafe {
+        let head = object.cast::<CpythonVarObjectHead>();
+        (*head).ob_base.ob_refcnt = 1;
+        (*head).ob_base.ob_type = ty;
+        (*head).ob_size = size;
+    }
     object
 }
 
@@ -7561,6 +7907,14 @@ pub unsafe extern "C" fn Py_IncRef(object: *mut c_void) {
     let _ = with_active_cpython_context_mut(|context| {
         if let Some(handle) = context.cpython_handle_from_ptr(object) {
             let _ = context.incref(handle);
+            return;
+        }
+        if !object.is_null() {
+            // SAFETY: C extensions are expected to pass valid PyObject* values.
+            let head = unsafe { object.cast::<CpythonObjectHead>().as_mut() };
+            if let Some(head) = head {
+                head.ob_refcnt = head.ob_refcnt.saturating_add(1);
+            }
         }
     });
 }
@@ -7570,6 +7924,16 @@ pub unsafe extern "C" fn Py_DecRef(object: *mut c_void) {
     let _ = with_active_cpython_context_mut(|context| {
         if let Some(handle) = context.cpython_handle_from_ptr(object) {
             let _ = context.decref(handle);
+            return;
+        }
+        if !object.is_null() {
+            // SAFETY: C extensions are expected to pass valid PyObject* values.
+            let head = unsafe { object.cast::<CpythonObjectHead>().as_mut() };
+            if let Some(head) = head
+                && head.ob_refcnt > 0
+            {
+                head.ob_refcnt -= 1;
+            }
         }
     });
 }
@@ -7741,6 +8105,37 @@ const fn empty_type(name: *const c_char) -> CpythonTypeObject {
         tp_setattro: std::ptr::null_mut(),
         tp_as_buffer: std::ptr::null_mut(),
         tp_flags: EMPTY_TYPE_FLAGS,
+        tp_doc: std::ptr::null(),
+        tp_traverse: std::ptr::null_mut(),
+        tp_clear: std::ptr::null_mut(),
+        tp_richcompare: std::ptr::null_mut(),
+        tp_weaklistoffset: 0,
+        tp_iter: std::ptr::null_mut(),
+        tp_iternext: std::ptr::null_mut(),
+        tp_methods: std::ptr::null_mut(),
+        tp_members: std::ptr::null_mut(),
+        tp_getset: std::ptr::null_mut(),
+        tp_base: std::ptr::null_mut(),
+        tp_dict: std::ptr::null_mut(),
+        tp_descr_get: std::ptr::null_mut(),
+        tp_descr_set: std::ptr::null_mut(),
+        tp_dictoffset: 0,
+        tp_init: std::ptr::null_mut(),
+        tp_alloc: std::ptr::null_mut(),
+        tp_new: std::ptr::null_mut(),
+        tp_free: std::ptr::null_mut(),
+        tp_is_gc: std::ptr::null_mut(),
+        tp_bases: std::ptr::null_mut(),
+        tp_mro: std::ptr::null_mut(),
+        tp_cache: std::ptr::null_mut(),
+        tp_subclasses: std::ptr::null_mut(),
+        tp_weaklist: std::ptr::null_mut(),
+        tp_del: std::ptr::null_mut(),
+        tp_version_tag: 0,
+        tp_finalize: std::ptr::null_mut(),
+        tp_vectorcall: std::ptr::null_mut(),
+        tp_watched: 0,
+        tp_versions_used: 0,
     }
 }
 
@@ -7963,6 +8358,9 @@ static KEEP2_PYTYPE_ISSUBTYPE: unsafe extern "C" fn(*mut c_void, *mut c_void) ->
     PyType_IsSubtype;
 #[used]
 static KEEP2_PYTYPE_READY: unsafe extern "C" fn(*mut c_void) -> i32 = PyType_Ready;
+#[used]
+static KEEP2_PYTYPE_GENERICALLOC: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
+    PyType_GenericAlloc;
 #[used]
 static KEEP2_PYTYPE_GENERICNEW: unsafe extern "C" fn(
     *mut c_void,

@@ -98,12 +98,14 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
 - Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
-- Current first direct-mode blocker for NumPy is no longer missing symbols or early CPU-init crashes; `_multiarray_umath` now reaches deeper `Py_mod_exec` semantic paths and currently fails on dtype-instance/type-identity validation during module bootstrap.
+- Current first direct-mode blocker for NumPy is no longer missing symbols or early CPU-init crashes; `_multiarray_umath` now reaches deeper `Py_mod_exec` semantic paths and currently fails in DType loop-registration/bootstrap with `DType tuple length does not match ufunc number of operands`.
 - Recent direct-mode bring-up deltas:
   - `datetime.datetime_CAPI` capsule baseline is now registered for `PyCapsule_Import`.
   - `math.trunc` landed for stdlib parity used during NumPy init.
   - `sys.modules` identity is now stable across imports (no dict-object replacement on each register/unregister).
   - `_Py_BuildValue` now routes through a C varargs shim (`build.rs` + `src/vm/cpython_varargs_shim.c`) with partial format coverage (`()`, `O`, `N`, `s`, tuple `(...)` for `O/N/i/l/k/n/d/f/s`, `{ON}`, `{s:O}`, `{s:N}`).
+  - C-side varargs parser/call surfaces now include `PyArg_ParseTuple`, `PyArg_ParseTupleAndKeywords`, `PyObject_CallFunctionObjArgs`, and `PyObject_CallMethod`.
+  - `PyTypeObject` compat layout now includes init/alloc/new/call slots used by direct extension type construction paths.
 - Failures are signal, not noise; they should be used to drive substrate work in:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`
   - `docs/EXTENSION_PACKAGING_CONTRACT.md`
