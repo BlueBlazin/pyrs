@@ -110,6 +110,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
   - direct shared-object imports now fall back from `pyrs_extension_init_v1` to `PyInit_<module>` when CPython-style symbols are present.
   - CPython single-phase init compatibility slice is landed and smoke-covered (`tests/extension_smoke.rs::imports_direct_cpython_style_single_phase_extension`): `PyModule_Create2`, `PyModule_AddObjectRef`, `PyModule_AddIntConstant`, `PyModule_AddStringConstant`, core constructors, `PyErr_*`, and `Py_[X]IncRef/Py_[X]DecRef`.
+  - direct CPython compatibility surface now exports the `_multiarray_umath` unresolved symbol set (public `Py*` plus internal `_Py*`) so NumPy reaches module-init execution instead of failing at dynamic-link resolution.
+  - current NumPy direct-mode blocker is no longer symbol resolution; it is module-init semantics: `_multiarray_umath` `Py_mod_exec` currently fails with `cannot load module more than once per process`.
+  - extension slot tracing is now available via `PYRS_TRACE_EXT_SLOTS=1` for `Py_mod_create` / `Py_mod_exec` debugging in direct `PyInit_*` mode.
   - CPython-ABI bridge runtime/env path has been removed; scientific-stack gating is now direct-mode only (`perf/numpy_gate_direct_latest.json`).
   - when `VIRTUAL_ENV` is set, runtime now sets `sys.prefix`/`sys.exec_prefix` to the venv root so startup `site` handling picks up venv `site-packages`.
 - Newly landed parity checkpoints:

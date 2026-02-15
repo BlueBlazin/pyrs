@@ -97,7 +97,8 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Import-probe and source-build modes both produce actionable failure diagnostics in JSON.
 - Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
 - Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
-- Current first direct-mode blocker for NumPy is unresolved CPython C-API type/runtime symbol export (`PyBaseObject_Type` and related surfaces).
+- Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
+- Current first direct-mode blocker for NumPy is module-init semantics in `Py_mod_exec` (`cannot load module more than once per process`) during `_multiarray_umath` bring-up.
 - Failures are signal, not noise; they should be used to drive substrate work in:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`
   - `docs/EXTENSION_PACKAGING_CONTRACT.md`
