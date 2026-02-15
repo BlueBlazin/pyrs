@@ -7907,14 +7907,6 @@ pub unsafe extern "C" fn Py_IncRef(object: *mut c_void) {
     let _ = with_active_cpython_context_mut(|context| {
         if let Some(handle) = context.cpython_handle_from_ptr(object) {
             let _ = context.incref(handle);
-            return;
-        }
-        if !object.is_null() {
-            // SAFETY: C extensions are expected to pass valid PyObject* values.
-            let head = unsafe { object.cast::<CpythonObjectHead>().as_mut() };
-            if let Some(head) = head {
-                head.ob_refcnt = head.ob_refcnt.saturating_add(1);
-            }
         }
     });
 }
@@ -7924,16 +7916,6 @@ pub unsafe extern "C" fn Py_DecRef(object: *mut c_void) {
     let _ = with_active_cpython_context_mut(|context| {
         if let Some(handle) = context.cpython_handle_from_ptr(object) {
             let _ = context.decref(handle);
-            return;
-        }
-        if !object.is_null() {
-            // SAFETY: C extensions are expected to pass valid PyObject* values.
-            let head = unsafe { object.cast::<CpythonObjectHead>().as_mut() };
-            if let Some(head) = head
-                && head.ob_refcnt > 0
-            {
-                head.ob_refcnt -= 1;
-            }
         }
     });
 }
