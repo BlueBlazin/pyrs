@@ -21,7 +21,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
-use std::ffi::c_void;
+use std::ffi::{CString, c_void};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
@@ -77,6 +77,10 @@ struct Block {
     stack_len: usize,
 }
 
+unsafe extern "C" {
+    fn free(ptr: *mut c_void);
+}
+
 #[derive(Debug, Clone)]
 struct TraceFrame {
     filename: String,
@@ -99,6 +103,7 @@ struct ModuleSourceInfo {
 enum ExtensionCallableKind {
     Positional(PyrsCFunctionV1),
     WithKeywords(PyrsCFunctionKwV1),
+    CpythonMethod { method_def: usize },
 }
 
 #[derive(Clone)]
@@ -752,6 +757,11 @@ pub struct Vm {
     extension_libraries: Vec<SharedLibraryHandle>,
     extension_callable_registry: HashMap<u64, ExtensionCallableEntry>,
     extension_capsule_registry: HashMap<String, ExtensionCapsuleRegistryEntry>,
+    extension_contextvar_registry: HashMap<usize, Value>,
+    extension_contextvar_allocations: Vec<*mut u8>,
+    extension_pinned_cpython_allocations: Vec<*mut c_void>,
+    extension_pinned_cpython_allocation_set: HashSet<usize>,
+    extension_pinned_capsule_names: HashMap<usize, CString>,
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     extension_init_in_progress: HashSet<String>,
     extension_initialized_names: HashSet<String>,
@@ -812,6 +822,25 @@ impl Drop for Vm {
             }
         }
         self.extension_capsule_registry.clear();
+        self.extension_contextvar_registry.clear();
+        for raw in self.extension_contextvar_allocations.drain(..) {
+            if !raw.is_null() {
+                // SAFETY: pointers were allocated with Box::into_raw in PyContextVar_New.
+                unsafe {
+                    drop(Box::from_raw(raw));
+                }
+            }
+        }
+        for raw in self.extension_pinned_cpython_allocations.drain(..) {
+            if !raw.is_null() {
+                // SAFETY: pointers were allocated via libc malloc in C-API compat paths.
+                unsafe {
+                    free(raw);
+                }
+            }
+        }
+        self.extension_pinned_cpython_allocation_set.clear();
+        self.extension_pinned_capsule_names.clear();
         // Break reference cycles before field teardown so per-VM object graphs
         // do not accumulate across harness runs.
         self.heap.collect_cycles(&[]);
@@ -898,6 +927,11 @@ impl Vm {
             extension_libraries: Vec::new(),
             extension_callable_registry: HashMap::new(),
             extension_capsule_registry: HashMap::new(),
+            extension_contextvar_registry: HashMap::new(),
+            extension_contextvar_allocations: Vec::new(),
+            extension_pinned_cpython_allocations: Vec::new(),
+            extension_pinned_cpython_allocation_set: HashSet::new(),
+            extension_pinned_capsule_names: HashMap::new(),
             extension_module_state_registry: HashMap::new(),
             extension_init_in_progress: HashSet::new(),
             extension_initialized_names: HashSet::new(),
