@@ -15,7 +15,7 @@ This installs:
 - `cargo-llvm-cov` (`cargo llvm-cov`)
 - `cargo-flamegraph` (`cargo flamegraph`)
 
-## AddressSanitizer / UndefinedBehaviorSanitizer
+## AddressSanitizer
 
 Status on this machine:
 
@@ -36,14 +36,16 @@ RUSTFLAGS="-Zsanitizer=address" \
 cargo +nightly test -Zbuild-std --target aarch64-apple-darwin --test extension_smoke
 ```
 
-UBSan command pattern:
+ASan NumPy import probe:
 
 ```bash
-RUSTFLAGS="-Zsanitizer=undefined" \
-cargo +nightly test -Zbuild-std --target aarch64-apple-darwin --test extension_smoke
+RUSTFLAGS="-Zsanitizer=address" \
+cargo +nightly run -Zbuild-std --target aarch64-apple-darwin --bin pyrs -- -S -c \
+  "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"
 ```
 
 Notes:
 
 - Sanitizers require nightly (`-Zsanitizer` + `-Zbuild-std`).
 - Start with targeted tests (`--test extension_smoke`) before full-suite runs.
+- On this target/toolchain (`aarch64-apple-darwin`), rustc does not accept `-Zsanitizer=undefined`; UBSan is currently unavailable through Rust sanitizer flags here.
