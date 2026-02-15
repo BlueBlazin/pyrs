@@ -63,6 +63,8 @@ type PyDictNextFn = unsafe extern "C" fn(
 const CPYTHON_PROXY_ID_ATTR: &str = "__pyrs_cpython_proxy_id__";
 const CPYTHON_PROXY_CLASS_NAME: &str = "__pyrs_cpython_proxy__";
 const CPYTHON_PROXY_MODE_ENV: &str = "PYRS_ENABLE_CPYTHON_ABI_BRIDGE";
+const CPYTHON_PROXY_MODULES_ENV: &str = "PYRS_CPYTHON_ABI_BRIDGE_MODULES";
+const CPYTHON_PROXY_DEFAULT_MODULE_PREFIXES: &[&str] = &["numpy", "scipy", "pandas", "matplotlib"];
 
 #[cfg(target_os = "macos")]
 const RTLD_GLOBAL: i32 = 0x8;
@@ -476,6 +478,46 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn parse_module_allowlist(raw: &str) -> Vec<String> {
+    let mut modules = Vec::new();
+    for token in raw.split(',') {
+        let normalized = token.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        if modules
+            .iter()
+            .any(|existing: &String| existing == normalized)
+        {
+            continue;
+        }
+        modules.push(normalized.to_string());
+    }
+    modules
+}
+
+fn cpython_bridge_module_allowlist() -> Vec<String> {
+    if let Ok(raw) = std::env::var(CPYTHON_PROXY_MODULES_ENV) {
+        let parsed = parse_module_allowlist(&raw);
+        if !parsed.is_empty() {
+            return parsed;
+        }
+    }
+    CPYTHON_PROXY_DEFAULT_MODULE_PREFIXES
+        .iter()
+        .map(|module| module.to_string())
+        .collect()
+}
+
+fn module_name_in_allowlist(module_name: &str, allowlist: &[String]) -> bool {
+    allowlist.iter().any(|prefix| {
+        module_name == prefix
+            || module_name
+                .strip_prefix(prefix)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+    })
+}
+
 fn libpython_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(explicit) = std::env::var_os("PYRS_CPYTHON_LIBPYTHON") {
@@ -498,7 +540,8 @@ impl Vm {
         if !env_flag_enabled(CPYTHON_PROXY_MODE_ENV) {
             return false;
         }
-        module_name == "numpy" || module_name.starts_with("numpy.")
+        let allowlist = cpython_bridge_module_allowlist();
+        module_name_in_allowlist(module_name, &allowlist)
     }
 
     pub(super) fn ensure_cpython_abi_bridge(&mut self) -> Result<(), RuntimeError> {
@@ -511,22 +554,26 @@ impl Vm {
     }
 
     pub(super) fn release_cpython_proxy_registry(&mut self) {
+        let pointers = self.take_cpython_proxy_registry_pointers();
         let Some(bridge) = self.cpython_abi_bridge.as_ref() else {
-            self.cpython_proxy_registry.clear();
             return;
         };
-        let pointers = self
-            .cpython_proxy_registry
-            .values()
-            .copied()
-            .collect::<Vec<_>>();
         let _ = bridge.with_gil(|| {
             for ptr in pointers {
                 bridge.decref_owned(ptr as *mut PyObject);
             }
             Ok(())
         });
+    }
+
+    fn take_cpython_proxy_registry_pointers(&mut self) -> Vec<usize> {
+        let pointers = self
+            .cpython_proxy_registry
+            .values()
+            .copied()
+            .collect::<Vec<_>>();
         self.cpython_proxy_registry.clear();
+        pointers
     }
 
     fn ensure_cpython_proxy_class(&mut self) -> ObjRef {
@@ -1537,5 +1584,40 @@ impl Vm {
                     .map_err(|err| err.message)
             })
             .map_err(RuntimeError::new)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Vm, module_name_in_allowlist, parse_module_allowlist};
+
+    #[test]
+    fn parse_module_allowlist_trims_and_deduplicates_entries() {
+        let parsed = parse_module_allowlist(" numpy, scipy ,numpy, , pandas ,matplotlib ");
+        assert_eq!(parsed, vec!["numpy", "scipy", "pandas", "matplotlib"]);
+    }
+
+    #[test]
+    fn module_name_in_allowlist_matches_exact_and_submodule_names() {
+        let allowlist = vec!["numpy".to_string(), "pandas".to_string()];
+        assert!(module_name_in_allowlist("numpy", &allowlist));
+        assert!(module_name_in_allowlist("numpy.linalg", &allowlist));
+        assert!(module_name_in_allowlist("pandas.core.series", &allowlist));
+        assert!(!module_name_in_allowlist("num", &allowlist));
+        assert!(!module_name_in_allowlist("panda", &allowlist));
+        assert!(!module_name_in_allowlist("pandasx.core", &allowlist));
+    }
+
+    #[test]
+    fn taking_proxy_registry_pointers_clears_registry_state() {
+        let mut vm = Vm::new();
+        vm.cpython_proxy_registry.insert(1, 0x11);
+        vm.cpython_proxy_registry.insert(2, 0x22);
+
+        let mut pointers = vm.take_cpython_proxy_registry_pointers();
+        pointers.sort_unstable();
+
+        assert_eq!(pointers, vec![0x11, 0x22]);
+        assert!(vm.cpython_proxy_registry.is_empty());
     }
 }
