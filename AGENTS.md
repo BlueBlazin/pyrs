@@ -105,11 +105,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke now includes buffer/capsule interop bridge coverage (`dynamic_extension_can_bridge_buffer_pointer_through_capsule`).
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
-  - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
-  - probe script now supports optional scientific-stack cases (`--include-scientific-stack`) and module-aware local probe mode (`--probe-local-stack`), with local artifact `perf/numpy_gate_stack_latest.json`.
+  - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_direct_latest.json` and `perf/numpy_gate_source_build_latest.json`).
+  - probe script now supports optional scientific-stack cases (`--include-scientific-stack`) and module-aware local probe mode (`--probe-local-stack`), with direct-mode artifact updates in `perf/numpy_gate_direct_latest.json`.
   - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
-  - NumPy probe diagnostics now distinguish ABI-mode mismatches (`pyrs_extension_init_v1` vs CPython `PyInit_*`) from generic missing-symbol failures.
-  - CPython-ABI bridge mode now defaults to `numpy`/`scipy`/`pandas`/`matplotlib` module families (override via `PYRS_CPYTHON_ABI_BRIDGE_MODULES`; force-off via `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=0`); NumPy gate and optional scientific-stack smoke are green locally (`perf/numpy_gate_latest.json`, `perf/numpy_gate_stack_latest.json`).
+  - direct shared-object imports now fall back from `pyrs_extension_init_v1` to `PyInit_<module>` when CPython-style symbols are present.
+  - CPython single-phase init compatibility slice is landed and smoke-covered (`tests/extension_smoke.rs::imports_direct_cpython_style_single_phase_extension`): `PyModule_Create2`, `PyModule_AddObjectRef`, `PyModule_AddIntConstant`, `PyModule_AddStringConstant`, core constructors, `PyErr_*`, and `Py_[X]IncRef/Py_[X]DecRef`.
+  - CPython-ABI bridge runtime/env path has been removed; scientific-stack gating is now direct-mode only (`perf/numpy_gate_direct_latest.json`).
   - when `VIRTUAL_ENV` is set, runtime now sets `sys.prefix`/`sys.exec_prefix` to the venv root so startup `site` handling picks up venv `site-packages`.
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
@@ -180,7 +181,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - local shim retirement checkpoint: `shims/pyexpat.py` and `shims/pkgutil.py` are removed; native runtime fallbacks now cover `pyexpat` and `pkgutil` surfaces.
   - allowlist-restricted local shim fallback remains enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`) for `importlib.resources` only.
   - REPL checkpoint: no-arg CLI path now starts an interactive `reedline` REPL (`RSPYTHON` banner, Python syntax highlighting, Tab=4-space indentation, Shift-Tab/Ctrl-Space completion menu, dotted member completion, multiline, `%time` one-shot timing, `:paste`/`:timing`/`:reset` controls, optional startup script `~/.pyrsrc`/`PYRS_REPL_INIT`), while non-interactive no-arg runs consume stdin as script input (CPython-like `python < file.py` behavior).
-  - REPL expression echo now routes through Python-level `repr(...)` protocol (instead of raw `format_repr` fallback), so bridge-backed objects like NumPy arrays display CPython-style repr text in interactive output.
+  - REPL expression echo now routes through Python-level `repr(...)` protocol (instead of raw `format_repr` fallback), so extension-backed objects display CPython-style repr text in interactive output.
   - builtin type-repr checkpoint: `repr(type(7))`, `repr(int)`, and `repr(type)` now match CPython class-style formatting (`<class 'int'>`, `<class 'type'>`) instead of generic `<builtin>`.
 - Extended probe remaining red modules: none (`50/50` smoke green).
 

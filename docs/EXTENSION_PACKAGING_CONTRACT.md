@@ -17,12 +17,13 @@ This document defines how native-extension packaging/build will work for `pyrs` 
 - Import path can discover extension manifests with suffix `.pyrs-ext`.
 - Loader can instantiate a manifest-backed extension module via `pyrs.ExtensionFileLoader`.
 - Manifest dynamic entrypoint is supported via `entrypoint=dynamic:<symbol>` + `library=<path>`.
-- Direct shared-object imports are supported (`module.so` / `module.dylib` / `module.pyd`) using default init symbol `pyrs_extension_init_v1`.
+- Direct shared-object imports are supported (`module.so` / `module.dylib` / `module.pyd`) with default init symbol `pyrs_extension_init_v1` and fallback to `PyInit_<module>`.
 - Tagged CPython-style shared-object names are recognized for import resolution (e.g. `module.cpython-314-*.so`).
 - First C-API header/symbol slice is shipped in `/Users/$USER/pyrs/include/pyrs_capi.h`.
 - Builtin `_sysconfigdata__*` now exposes extension-build essentials (`SOABI`, `EXT_SUFFIX`, `CC`, `LDSHARED`, include/lib dir hints) for source-build toolchains.
 - Extension smoke now includes a compile+import flow that consumes these `_sysconfigdata__*` build vars end-to-end.
 - Loaded dynamic modules now expose explicit symbol metadata (`__pyrs_extension_expected_symbol__`, `__pyrs_extension_symbol_family__`) for ABI-mode diagnostics.
+- A CPython single-phase init compatibility slice is available for direct `PyInit_<module>` entrypoints (`PyModule_Create2`, `PyModule_AddObjectRef`, `PyModule_AddIntConstant`, `PyModule_AddStringConstant`, core constructors, `PyErr_*`, and refcount helpers).
 
 This is still an early substrate, not full C-extension compatibility.
 
@@ -89,7 +90,7 @@ Unsupported extension paths must fail explicitly with:
 - missing/invalid manifest keys,
 - unimplemented C-ABI surfaces.
 
-Current loader diagnostic baseline explicitly flags CPython-style `PyInit_*` symbol-only modules as unsupported when `pyrs_extension_init_v1` is absent.
+Current loader behavior tries `pyrs_extension_init_v1` first and then `PyInit_<module>` for direct shared-object imports; unsupported/missing C-ABI surfaces still fail explicitly.
 
 No silent fallback is allowed for native-extension errors.
 

@@ -963,10 +963,7 @@ impl Vm {
                         .globals
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::StrTranslate,
-                    receiver,
-                ))
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrTranslate, receiver))
             }
             _ => Err(RuntimeError::new(format!(
                 "builtin has no attribute '{}'",

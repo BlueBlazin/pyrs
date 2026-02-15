@@ -2,7 +2,7 @@
 
 Status: active (Milestone 15).
 
-Purpose: track first real extension-ecosystem execution gates for NumPy, plus optional bridge-mode scientific-stack probes.
+Purpose: track direct native-extension execution gates for NumPy and the scientific stack.
 
 ## Gate Definitions
 
@@ -76,7 +76,7 @@ This performs:
 
 If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the report still captures runtime probe results.
 
-## Scientific-Stack Probe Command (Bridge Mode)
+## Scientific-Stack Probe Command (Direct Mode)
 
 ```bash
 python3 scripts/probe_numpy_gate.py \
@@ -85,7 +85,7 @@ python3 scripts/probe_numpy_gate.py \
   --include-scientific-stack \
   --probe-local-stack \
   --python-probe-bin .venv-ext314/bin/python \
-  --out perf/numpy_gate_stack_latest.json \
+  --out perf/numpy_gate_direct_latest.json \
   --timeout 30
 ```
 
@@ -93,16 +93,11 @@ If a probed local module is not installed, its dependent cases are recorded as `
 
 ## Current Expected State
 
-- CPython-ABI bridge mode is enabled by default for allowed module families.
-- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=0` disables bridge mode.
-- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1` force-enables bridge mode.
-- Default bridge allowlist: `numpy`, `scipy`, `pandas`, `matplotlib` (and submodules).
-- Optional override: `PYRS_CPYTHON_ABI_BRIDGE_MODULES=<comma-separated-prefixes>`.
-- With that mode enabled and local NumPy available, both gate cases are expected to pass.
-- Without that mode enabled, failures are expected until direct CPython-extension ABI closure is complete.
+- CPython ABI bridge mode has been removed; probes run in direct mode only.
 - Import-probe and source-build modes both produce actionable failure diagnostics in JSON.
-- Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`abi-mode-mismatch`, `missing-symbol`, etc.).
-- Probe output now classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `abi-mode-mismatch`, `init-failure`) to guide C-API/loader closure work.
+- Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
+- Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
+- Current first direct-mode blocker for NumPy is unresolved CPython C-API type/runtime symbol export (`PyBaseObject_Type` and related surfaces).
 - Failures are signal, not noise; they should be used to drive substrate work in:
   - `docs/EXTENSION_CAPABILITY_MATRIX.md`
   - `docs/EXTENSION_PACKAGING_CONTRACT.md`

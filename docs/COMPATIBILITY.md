@@ -56,9 +56,9 @@ Status:
 - `[~]` `libpyrs-capi` v1 header/symbol slice landed (`include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md`), including positional+keyword callable registration, init-scoped object handles/type getters, and import-time error state; broader runtime contract still pending
 - `[~]` Extension source-build packaging substrate is in progress (`_sysconfigdata__*` baseline now provides `SOABI`/`EXT_SUFFIX`/`CC`/`LDSHARED` and include/lib hints)
 - `[~]` NumPy bring-up import + source-build probes landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`)
-- `[~]` CPython-ABI bridge mode allowlist now covers `numpy`/`scipy`/`pandas`/`matplotlib` families by default (override via `PYRS_CPYTHON_ABI_BRIDGE_MODULES`)
-- `[~]` NumPy bridge-mode gates are green locally (`import numpy`, `int(np.array([1,2,3]).sum())`) and in CI non-blocking lane (`perf/numpy_gate_bridge_latest.json`)
-- `[~]` Optional scientific-stack bridge smoke (`scipy`/`pandas`/`matplotlib`) is green locally when packages are installed (`perf/numpy_gate_stack_latest.json`)
+- `[~]` Direct shared-object imports now fall back from `pyrs_extension_init_v1` to CPython-style `PyInit_<module>` when present
+- `[~]` CPython single-phase init compatibility baseline is landed for direct modules (`PyModule_Create2`, `PyModule_Add*Constant`, object constructors, `PyErr_*`, refcount helpers); smoke-covered via `tests/extension_smoke.rs::imports_direct_cpython_style_single_phase_extension`
+- `[~]` NumPy/SciPy/Pandas/Matplotlib now run only in direct-mode probing (`perf/numpy_gate_direct_latest.json`); CPython bridge mode removed
 - `[~]` Runtime now honors `VIRTUAL_ENV` for `sys.prefix`/`sys.exec_prefix` so activated venv `site-packages` are visible during normal startup
 - `[ ]` PEP 489 multi-phase init and module lifecycle closure
 - `[ ]` NumPy/SciPy/Pandas/Matplotlib production import + functional gate closure

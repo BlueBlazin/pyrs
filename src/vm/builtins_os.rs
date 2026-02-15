@@ -6,11 +6,10 @@ use super::{
     TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, UnixStream, Value, Vm, Write, bytes_like_from_value,
     collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
     dict_get_value, dict_remove_value, dict_set_value, encode_text_bytes, format_value, fs,
-    is_pyrs_executable, is_truthy,
-    normalize_codec_encoding, normalize_codec_errors, parse_decimal_bigint_literal,
-    parse_modules_to_block_literal, parse_string_formatter, seconds_to_system_time,
-    split_formatter_field_name, system_time_to_secs_f64, value_from_bigint, value_to_bigint,
-    value_to_f64, value_to_int, value_to_process_text,
+    is_pyrs_executable, is_truthy, normalize_codec_encoding, normalize_codec_errors,
+    parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
+    seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64, value_from_bigint,
+    value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
 };
 
 const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
@@ -3791,7 +3790,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("make_identity_dict() expects one argument"));
+            return Err(RuntimeError::new(
+                "make_identity_dict() expects one argument",
+            ));
         }
         let values = self.collect_iterable_values(args[0].clone())?;
         let mut entries = Vec::with_capacity(values.len());
@@ -3880,9 +3881,10 @@ impl Vm {
                 "incrementaldecoder".to_string(),
                 values.remove("incrementaldecoder").unwrap_or(Value::None),
             );
-            instance_data
-                .attrs
-                .insert("name".to_string(), values.remove("name").unwrap_or(Value::None));
+            instance_data.attrs.insert(
+                "name".to_string(),
+                values.remove("name").unwrap_or(Value::None),
+            );
             instance_data
                 .attrs
                 .insert("_is_text_encoding".to_string(), is_text);
@@ -3902,10 +3904,7 @@ impl Vm {
             Value::Str(name) => name,
             _ => return Err(RuntimeError::new("lookup() expects string encoding name")),
         };
-        let fallback_name = source_name
-            .trim()
-            .replace('_', "-")
-            .to_ascii_lowercase();
+        let fallback_name = source_name.trim().replace('_', "-").to_ascii_lowercase();
         let normalized_encoding = normalize_codec_encoding(Value::Str(source_name.clone())).ok();
         let encoding = normalized_encoding
             .clone()
@@ -4265,11 +4264,12 @@ impl Vm {
             }
         };
         let state = match &*receiver.kind() {
-            Object::Instance(instance_data) => match instance_data.attrs.get(CODECS_ATTR_STATE_FLAG)
-            {
-                Some(Value::Int(value)) => *value,
-                _ => 0,
-            },
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(CODECS_ATTR_STATE_FLAG) {
+                    Some(Value::Int(value)) => *value,
+                    _ => 0,
+                }
+            }
             _ => 0,
         };
         Ok(Value::Int(state))
@@ -4417,7 +4417,10 @@ impl Vm {
             encoding.as_str()
         };
         let (decoded, pending_tail) = if final_decode {
-            (decode_text_bytes(&combined, decode_encoding, &errors)?, Vec::new())
+            (
+                decode_text_bytes(&combined, decode_encoding, &errors)?,
+                Vec::new(),
+            )
         } else {
             let max_tail = match decode_encoding {
                 "utf-8" => 3usize,

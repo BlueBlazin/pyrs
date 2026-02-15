@@ -13,10 +13,9 @@ use super::{
     encode_text_bytes, exception_type_is_subclass, format_float_hex, format_repr, format_value,
     frame_cell_value, is_import_error_family, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, normalize_codec_encoding, normalize_codec_errors,
-    ordering_from_cmp_value,
-    parse_hex_float_literal, parser, round_float_with_ndigits, runtime_error_matches_exception,
-    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
-    weakref_target_id, weakref_target_object, with_bytes_like_source,
+    ordering_from_cmp_value, parse_hex_float_literal, parser, round_float_with_ndigits,
+    runtime_error_matches_exception, value_from_bigint, value_from_object_ref, value_to_bigint,
+    value_to_f64, value_to_int, weakref_target_id, weakref_target_object, with_bytes_like_source,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -598,10 +597,13 @@ impl Vm {
         let previous = self.get_global(TEMP_REPR_NAME);
         self.set_global(TEMP_REPR_NAME, value);
         let render_result = (|| -> Result<String, RuntimeError> {
-            let expr = parser::parse_expression("repr(__pyrs_repl_repr_target__)")
-                .map_err(|err| RuntimeError::new(format!("repr() parse failed: {}", err.message)))?;
-            let code = compiler::compile_expression_with_filename(&expr, "<repl-repr>")
-                .map_err(|err| RuntimeError::new(format!("repr() compile failed: {}", err.message)))?;
+            let expr =
+                parser::parse_expression("repr(__pyrs_repl_repr_target__)").map_err(|err| {
+                    RuntimeError::new(format!("repr() parse failed: {}", err.message))
+                })?;
+            let code = compiler::compile_expression_with_filename(&expr, "<repl-repr>").map_err(
+                |err| RuntimeError::new(format!("repr() compile failed: {}", err.message)),
+            )?;
             match self.execute(&code)? {
                 Value::Str(text) => Ok(text),
                 _ => Err(RuntimeError::new("__repr__ returned non-string")),

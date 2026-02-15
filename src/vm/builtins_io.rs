@@ -2,11 +2,11 @@ use super::{
     AsRawFd, BigInt, BuiltinFunction, ClassObject, ExceptionObject, GeneratorResumeOutcome,
     HashMap, InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek,
     SeekFrom, StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
-    bytes_like_from_value, class_attr_walk, classify_runtime_error, extract_os_error_errno,
-    extract_os_error_strerror, extract_prefixed_exception_message,
-    extract_runtime_error_exception_name, extract_runtime_error_final_message, format_value,
-    infer_os_error_errno, is_os_error_family, is_truthy, memoryview_bounds,
-    value_to_f64, value_to_int, decode_text_bytes, encode_text_bytes, fs,
+    bytes_like_from_value, class_attr_walk, classify_runtime_error, decode_text_bytes,
+    encode_text_bytes, extract_os_error_errno, extract_os_error_strerror,
+    extract_prefixed_exception_message, extract_runtime_error_exception_name,
+    extract_runtime_error_final_message, format_value, fs, infer_os_error_errno,
+    is_os_error_family, is_truthy, memoryview_bounds, value_to_f64, value_to_int,
 };
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
@@ -485,7 +485,10 @@ impl Vm {
                     )));
                 };
                 let lookup = self.builtin_getattr(
-                    vec![Value::Module(codecs_module), Value::Str("lookup".to_string())],
+                    vec![
+                        Value::Module(codecs_module),
+                        Value::Str("lookup".to_string()),
+                    ],
                     HashMap::new(),
                 )?;
                 match self.call_internal_preserving_caller(
@@ -495,9 +498,9 @@ impl Vm {
                 )? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception(
-                            "codecs.lookup() failed",
-                        ));
+                        return Err(
+                            self.runtime_error_from_active_exception("codecs.lookup() failed")
+                        );
                     }
                 }
             }
@@ -505,14 +508,13 @@ impl Vm {
                 return Err(RuntimeError::new(format!(
                     "LookupError: unknown encoding: {}",
                     encoding
-                )))
+                )));
             }
         };
         if let Ok(is_text_encoding) = self.builtin_getattr(
             vec![codec_info, Value::Str("_is_text_encoding".to_string())],
             HashMap::new(),
-        )
-            && !is_truthy(&is_text_encoding)
+        ) && !is_truthy(&is_text_encoding)
         {
             return Err(RuntimeError::new(format!(
                 "LookupError: '{}' is not a text encoding",
@@ -1173,11 +1175,8 @@ impl Vm {
             "_closefd",
             Value::Bool(closefd && buffer_fd.is_some()),
         )?;
-        let has_surrogate = |value: &str| {
-            value
-                .chars()
-                .any(|ch| matches!(ch as u32, 0xD800..=0xDFFF))
-        };
+        let has_surrogate =
+            |value: &str| value.chars().any(|ch| matches!(ch as u32, 0xD800..=0xDFFF));
         let encoding_value = match encoding.unwrap_or(Value::None) {
             Value::None => Value::Str("utf-8".to_string()),
             Value::Str(value) => {
@@ -1250,18 +1249,10 @@ impl Vm {
             Value::Str(value) => Value::Str(value.clone()),
             _ => Value::None,
         };
-        let line_buffering_value = Value::Bool(
-            line_buffering
-                .as_ref()
-                .map(is_truthy)
-                .unwrap_or(false),
-        );
-        let write_through_value = Value::Bool(
-            write_through
-                .as_ref()
-                .map(is_truthy)
-                .unwrap_or(false),
-        );
+        let line_buffering_value =
+            Value::Bool(line_buffering.as_ref().map(is_truthy).unwrap_or(false));
+        let write_through_value =
+            Value::Bool(write_through.as_ref().map(is_truthy).unwrap_or(false));
         Self::instance_attr_set(&instance, "newlines", observed_newlines)?;
         Self::instance_attr_set(&instance, "_line_buffering", line_buffering_value.clone())?;
         Self::instance_attr_set(&instance, "line_buffering", line_buffering_value)?;
@@ -1943,7 +1934,11 @@ impl Vm {
         instance: &ObjRef,
         bytes: Vec<u8>,
     ) -> Result<(), RuntimeError> {
-        Self::instance_attr_set(instance, IO_TEXT_ATTR_WRITE_BUF, self.heap.alloc_bytes(bytes))
+        Self::instance_attr_set(
+            instance,
+            IO_TEXT_ATTR_WRITE_BUF,
+            self.heap.alloc_bytes(bytes),
+        )
     }
 
     fn io_buffered_read_buffer(instance: &ObjRef) -> Result<Vec<u8>, RuntimeError> {
@@ -4350,10 +4345,7 @@ impl Vm {
         Ok(())
     }
 
-    fn io_seed_text_bom_state_from_tell(
-        &mut self,
-        instance: &ObjRef,
-    ) -> Result<(), RuntimeError> {
+    fn io_seed_text_bom_state_from_tell(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
         let Some(encoding) = Self::io_file_encoding(instance) else {
             return Ok(());
         };
@@ -4417,7 +4409,11 @@ impl Vm {
         }
     }
 
-    fn io_codec_result_first_value(&self, value: Value, opname: &str) -> Result<Value, RuntimeError> {
+    fn io_codec_result_first_value(
+        &self,
+        value: Value,
+        opname: &str,
+    ) -> Result<Value, RuntimeError> {
         let Value::Tuple(tuple_obj) = value else {
             return Err(RuntimeError::new(format!(
                 "TypeError: {opname} codec must return a tuple",
@@ -4461,9 +4457,8 @@ impl Vm {
             }
         };
         let first = self.io_codec_result_first_value(encoded, "encode")?;
-        bytes_like_from_value(first).map_err(|_| {
-            RuntimeError::new("TypeError: encoder should return a bytes object")
-        })
+        bytes_like_from_value(first)
+            .map_err(|_| RuntimeError::new("TypeError: encoder should return a bytes object"))
     }
 
     fn io_decode_text_via_codec_lookup(
@@ -4518,10 +4513,7 @@ impl Vm {
             return Err(RuntimeError::new("invalid file object"));
         }
         let method_value = self.builtin_getattr(
-            vec![
-                Value::Instance(buffer),
-                Value::Str(method.to_string()),
-            ],
+            vec![Value::Instance(buffer), Value::Str(method.to_string())],
             HashMap::new(),
         )?;
         match self.call_internal_preserving_caller(method_value, args, kwargs)? {
@@ -4544,22 +4536,15 @@ impl Vm {
             return Err(RuntimeError::new("invalid file object"));
         }
         let write = self.builtin_getattr(
-            vec![
-                Value::Instance(buffer),
-                Value::Str("write".to_string()),
-            ],
+            vec![Value::Instance(buffer), Value::Str("write".to_string())],
             HashMap::new(),
         )?;
         let payload_value = self.heap.alloc_bytes(payload);
-        match self.call_internal_preserving_caller(
-            write,
-            vec![payload_value],
-            HashMap::new(),
-        )? {
+        match self.call_internal_preserving_caller(write, vec![payload_value], HashMap::new())? {
             InternalCallOutcome::Value(_) => Ok(()),
-            InternalCallOutcome::CallerExceptionHandled => Err(
-                self.runtime_error_from_active_exception("write() failed"),
-            ),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("write() failed"))
+            }
         }
     }
 
@@ -4573,8 +4558,10 @@ impl Vm {
         }
         if let Some(buffer) = Self::io_file_text_buffer_bytesio(instance) {
             let payload_value = self.heap.alloc_bytes(payload);
-            let _ =
-                self.builtin_bytesio_write(vec![Value::Instance(buffer), payload_value], HashMap::new())?;
+            let _ = self.builtin_bytesio_write(
+                vec![Value::Instance(buffer), payload_value],
+                HashMap::new(),
+            )?;
             return Ok(());
         }
         match self.io_file_fd_from_instance(instance) {
@@ -4594,7 +4581,10 @@ impl Vm {
         }
     }
 
-    fn io_text_flush_pending_write_buffer(&mut self, instance: &ObjRef) -> Result<(), RuntimeError> {
+    fn io_text_flush_pending_write_buffer(
+        &mut self,
+        instance: &ObjRef,
+    ) -> Result<(), RuntimeError> {
         let pending = Self::io_text_write_buffer(instance)?;
         if pending.is_empty() {
             return Ok(());
@@ -4768,7 +4758,9 @@ impl Vm {
         }
         let bytes = match self.io_file_fd_from_instance(&instance) {
             Ok(fd) => self.io_file_read_bytes(fd, size)?,
-            Err(err) if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" => {
+            Err(err)
+                if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" =>
+            {
                 let mut call_args = Vec::new();
                 if let Some(limit) = size {
                     call_args.push(Value::Int(limit as i64));
@@ -4889,7 +4881,9 @@ impl Vm {
         }
         let fd = match self.io_file_fd_from_instance(&instance) {
             Ok(fd) => fd,
-            Err(err) if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" => {
+            Err(err)
+                if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" =>
+            {
                 let mut call_args = Vec::new();
                 if let Some(max_len) = limit {
                     call_args.push(Value::Int(max_len as i64));
@@ -5077,7 +5071,8 @@ impl Vm {
         } else {
             match args.remove(0) {
                 Value::Str(text) => {
-                    let (payload, char_count) = self.io_encode_text_write_payload(&instance, text)?;
+                    let (payload, char_count) =
+                        self.io_encode_text_write_payload(&instance, text)?;
                     (payload, Value::Int(char_count))
                 }
                 _ => return Err(RuntimeError::new("write() argument must be str")),
@@ -5333,17 +5328,14 @@ impl Vm {
             ],
             HashMap::new(),
         )?;
-        let flush_error = match self.call_internal_preserving_caller(
-            flush_method,
-            Vec::new(),
-            HashMap::new(),
-        ) {
-            Ok(InternalCallOutcome::Value(_)) => None,
-            Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                Some(self.io_take_active_exception_value("close() failed")?)
-            }
-            Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
-        };
+        let flush_error =
+            match self.call_internal_preserving_caller(flush_method, Vec::new(), HashMap::new()) {
+                Ok(InternalCallOutcome::Value(_)) => None,
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    Some(self.io_take_active_exception_value("close() failed")?)
+                }
+                Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
+            };
         let (close_error, close_succeeded) = if let Some(Value::Instance(buffer)) =
             Self::instance_attr_get(&instance, "buffer")
             && buffer.id() != instance.id()
@@ -5370,10 +5362,7 @@ impl Vm {
             if close_succeeded {
                 let buffer_closed = self
                     .builtin_getattr(
-                        vec![
-                            Value::Instance(buffer),
-                            Value::Str("closed".to_string()),
-                        ],
+                        vec![Value::Instance(buffer), Value::Str("closed".to_string())],
                         HashMap::new(),
                     )
                     .map(|value| is_truthy(&value))
@@ -5448,7 +5437,9 @@ impl Vm {
                 file.flush()
                     .map_err(|err| RuntimeError::new(format!("flush failed: {err}")))?;
             }
-            Err(err) if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" => {
+            Err(err)
+                if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" =>
+            {
                 let _ = self.io_file_delegate_buffer_method(
                     &instance,
                     "flush",
@@ -5571,7 +5562,7 @@ impl Vm {
             _ => {
                 return Err(RuntimeError::new(
                     "ValueError: underlying buffer has been detached",
-                ))
+                ));
             }
         };
         let flush = self.builtin_getattr(

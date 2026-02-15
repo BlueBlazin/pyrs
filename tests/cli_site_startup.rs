@@ -176,8 +176,7 @@ fn cli_preserves_pythonpath_entries_that_are_not_stdlib_roots() {
     cmd.current_dir(&root);
     cmd.arg(script.to_string_lossy().to_string());
     cmd.env("PYRS_CPYTHON_LIB", stdlib.as_os_str());
-    let pythonpath =
-        std::env::join_paths([extra.as_os_str()]).expect("join PYTHONPATH for test");
+    let pythonpath = std::env::join_paths([extra.as_os_str()]).expect("join PYTHONPATH for test");
     cmd.env("PYTHONPATH", pythonpath);
     let output = cmd.output().expect("run pyrs");
     let code = output.status.code().unwrap_or(1);
