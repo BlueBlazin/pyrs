@@ -2,7 +2,7 @@
 
 Status: active (Milestone 15).
 
-Purpose: track first real extension-ecosystem execution gates for NumPy.
+Purpose: track first real extension-ecosystem execution gates for NumPy, plus optional bridge-mode scientific-stack probes.
 
 ## Gate Definitions
 
@@ -15,6 +15,13 @@ Purpose: track first real extension-ecosystem execution gates for NumPy.
      - `assert int(a.sum()) == 6`
 
 These are intentionally small but strict: they verify import path + first ndarray runtime path.
+
+Optional scientific-stack cases are also available via `--include-scientific-stack`:
+- `scipy_import`
+- `pandas_import`
+- `pandas_series_sum`
+- `matplotlib_import`
+- `matplotlib_pyplot_smoke`
 
 ## Import-Probe Command
 
@@ -46,6 +53,7 @@ python3 scripts/probe_numpy_gate.py \
 
 Report field:
 - `local_numpy_probe.status = FOUND|NOT_FOUND|ERROR|SKIP`
+- `local_module_probe.modules.<name>.status = FOUND|NOT_FOUND`
 
 When `FOUND`, the probe injects the detected site-packages root into `PYTHONPATH` for gate cases.
 
@@ -71,9 +79,27 @@ This performs:
 
 If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the report still captures runtime probe results.
 
+## Scientific-Stack Probe Command (Bridge Mode)
+
+```bash
+PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
+python3 scripts/probe_numpy_gate.py \
+  --pyrs target/debug/pyrs \
+  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --include-scientific-stack \
+  --probe-local-stack \
+  --python-probe-bin .venv-ext314/bin/python \
+  --out perf/numpy_gate_stack_latest.json \
+  --timeout 30
+```
+
+If a probed local module is not installed, its dependent cases are recorded as `SKIP` rather than `FAIL`.
+
 ## Current Expected State
 
-- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1` enables an explicit CPython-ABI bridge path for NumPy module imports (`numpy` and `numpy.*`).
+- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1` enables an explicit CPython-ABI bridge path for allowed module families.
+- Default bridge allowlist: `numpy`, `scipy`, `pandas`, `matplotlib` (and submodules).
+- Optional override: `PYRS_CPYTHON_ABI_BRIDGE_MODULES=<comma-separated-prefixes>`.
 - With that mode enabled and local NumPy available, both gate cases are expected to pass.
 - Without that mode enabled, failures are expected until direct CPython-extension ABI closure is complete.
 - Import-probe and source-build modes both produce actionable failure diagnostics in JSON.

@@ -106,9 +106,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - keyword-callable smoke now asserts negative keyword/error paths (`unknown keyword`, invalid keyword value type, and positional-only callable rejecting kwargs) to harden C-API call semantics.
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
+  - probe script now supports optional scientific-stack cases (`--include-scientific-stack`) and module-aware local probe mode (`--probe-local-stack`), with local artifact `perf/numpy_gate_stack_latest.json`.
   - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
   - NumPy probe diagnostics now distinguish ABI-mode mismatches (`pyrs_extension_init_v1` vs CPython `PyInit_*`) from generic missing-symbol failures.
-  - CPython-ABI bridge mode for NumPy is now landed behind `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1`: `import numpy` and `int(np.array([1,2,3]).sum()) == 6` are green in local probe runs (`perf/numpy_gate_latest.json`).
+  - CPython-ABI bridge mode (`PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1`) now defaults to `numpy`/`scipy`/`pandas`/`matplotlib` module families (override via `PYRS_CPYTHON_ABI_BRIDGE_MODULES`); NumPy gate and optional scientific-stack smoke are green locally (`perf/numpy_gate_latest.json`, `perf/numpy_gate_stack_latest.json`).
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
   - `threading.Condition.__enter__/__exit__` baseline.
