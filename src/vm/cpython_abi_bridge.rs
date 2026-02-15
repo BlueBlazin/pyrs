@@ -469,13 +469,20 @@ unsafe extern "C" {
     fn dlerror() -> *const c_char;
 }
 
-fn env_flag_enabled(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
-        })
-        .unwrap_or(false)
+fn env_flag_value(name: &str) -> Option<bool> {
+    let raw = std::env::var(name).ok()?;
+    env_flag_value_from_raw(&raw)
+}
+
+fn env_flag_value_from_raw(raw: &str) -> Option<bool> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if matches!(normalized.as_str(), "1" | "true" | "yes" | "on") {
+        return Some(true);
+    }
+    if matches!(normalized.as_str(), "0" | "false" | "no" | "off") {
+        return Some(false);
+    }
+    None
 }
 
 fn parse_module_allowlist(raw: &str) -> Vec<String> {
@@ -537,7 +544,8 @@ fn libpython_candidates() -> Vec<PathBuf> {
 
 impl Vm {
     pub(super) fn cpython_abi_bridge_enabled_for_module(&self, module_name: &str) -> bool {
-        if !env_flag_enabled(CPYTHON_PROXY_MODE_ENV) {
+        let bridge_mode_enabled = env_flag_value(CPYTHON_PROXY_MODE_ENV).unwrap_or(true);
+        if !bridge_mode_enabled {
             return false;
         }
         let allowlist = cpython_bridge_module_allowlist();
@@ -550,7 +558,87 @@ impl Vm {
         }
         let bridge = CpythonAbiBridge::load().map_err(RuntimeError::new)?;
         self.cpython_abi_bridge = Some(bridge);
+        self.sync_cpython_bridge_import_paths()?;
         Ok(())
+    }
+
+    fn sync_cpython_bridge_import_paths(&mut self) -> Result<(), RuntimeError> {
+        let bridge_ptr = self
+            .cpython_abi_bridge
+            .as_ref()
+            .map(|bridge| bridge as *const CpythonAbiBridge)
+            .ok_or_else(|| RuntimeError::new("cpython bridge is not initialized"))?;
+        let path_entries = self
+            .module_paths
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        // SAFETY: bridge_ptr points to self-owned bridge storage that remains valid
+        // for the duration of this method.
+        let bridge = unsafe { &*bridge_ptr };
+        bridge
+            .with_gil(|| {
+                let sys = bridge.import_module("sys")?;
+                let sys_path = bridge.object_get_attr(sys, "path")?;
+
+                // SAFETY: API pointers are validated during bridge initialization and
+                // all calls below are made while the GIL is held.
+                unsafe {
+                    let append = bridge.object_get_attr(sys_path, "append")?;
+                    for entry in &path_entries {
+                        let c_entry = CString::new(entry.as_bytes())
+                            .map_err(|_| "invalid module path contains NUL byte".to_string())?;
+                        let py_entry = (bridge.py_unicode_from_string_and_size)(
+                            c_entry.as_ptr(),
+                            entry.len() as PySsizeT,
+                        );
+                        if py_entry.is_null() {
+                            bridge.decref_owned(append);
+                            bridge.decref_owned(sys_path);
+                            bridge.decref_owned(sys);
+                            return Err(bridge.last_exception_message(
+                                "failed to allocate unicode path entry",
+                            ));
+                        }
+                        let tuple = (bridge.py_tuple_new)(1);
+                        if tuple.is_null() {
+                            bridge.decref_owned(py_entry);
+                            bridge.decref_owned(append);
+                            bridge.decref_owned(sys_path);
+                            bridge.decref_owned(sys);
+                            return Err(bridge.last_exception_message(
+                                "failed to allocate tuple for sys.path.append()",
+                            ));
+                        }
+                        if (bridge.py_tuple_set_item)(tuple, 0, py_entry) != 0 {
+                            bridge.decref_owned(py_entry);
+                            bridge.decref_owned(tuple);
+                            bridge.decref_owned(append);
+                            bridge.decref_owned(sys_path);
+                            bridge.decref_owned(sys);
+                            return Err(bridge.last_exception_message(
+                                "failed to build append argument tuple",
+                            ));
+                        }
+                        let append_result = bridge.object_call(append, tuple, std::ptr::null_mut());
+                        bridge.decref_owned(tuple);
+                        match append_result {
+                            Ok(value) => bridge.decref_owned(value),
+                            Err(err) => {
+                                bridge.decref_owned(append);
+                                bridge.decref_owned(sys_path);
+                                bridge.decref_owned(sys);
+                                return Err(err);
+                            }
+                        }
+                    }
+                    bridge.decref_owned(append);
+                    bridge.decref_owned(sys_path);
+                    bridge.decref_owned(sys);
+                }
+                Ok(())
+            })
+            .map_err(RuntimeError::new)
     }
 
     pub(super) fn release_cpython_proxy_registry(&mut self) {
@@ -1589,7 +1677,9 @@ impl Vm {
 
 #[cfg(test)]
 mod tests {
-    use super::{Vm, module_name_in_allowlist, parse_module_allowlist};
+    use super::{
+        Vm, env_flag_value_from_raw, module_name_in_allowlist, parse_module_allowlist,
+    };
 
     #[test]
     fn parse_module_allowlist_trims_and_deduplicates_entries() {
@@ -1619,5 +1709,16 @@ mod tests {
 
         assert_eq!(pointers, vec![0x11, 0x22]);
         assert!(vm.cpython_proxy_registry.is_empty());
+    }
+
+    #[test]
+    fn env_flag_value_from_raw_parses_true_and_false_forms() {
+        assert_eq!(env_flag_value_from_raw("1"), Some(true));
+        assert_eq!(env_flag_value_from_raw(" true "), Some(true));
+        assert_eq!(env_flag_value_from_raw("ON"), Some(true));
+        assert_eq!(env_flag_value_from_raw("0"), Some(false));
+        assert_eq!(env_flag_value_from_raw(" false "), Some(false));
+        assert_eq!(env_flag_value_from_raw("Off"), Some(false));
+        assert_eq!(env_flag_value_from_raw("maybe"), None);
     }
 }

@@ -59,6 +59,7 @@ Status:
 - `[~]` CPython-ABI bridge mode allowlist now covers `numpy`/`scipy`/`pandas`/`matplotlib` families by default (override via `PYRS_CPYTHON_ABI_BRIDGE_MODULES`)
 - `[~]` NumPy bridge-mode gates are green locally (`import numpy`, `int(np.array([1,2,3]).sum())`) and in CI non-blocking lane (`perf/numpy_gate_bridge_latest.json`)
 - `[~]` Optional scientific-stack bridge smoke (`scipy`/`pandas`/`matplotlib`) is green locally when packages are installed (`perf/numpy_gate_stack_latest.json`)
+- `[~]` Runtime now honors `VIRTUAL_ENV` for `sys.prefix`/`sys.exec_prefix` so activated venv `site-packages` are visible during normal startup
 - `[ ]` PEP 489 multi-phase init and module lifecycle closure
 - `[ ]` NumPy/SciPy/Pandas/Matplotlib production import + functional gate closure
 

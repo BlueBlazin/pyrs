@@ -26,7 +26,6 @@ Optional scientific-stack cases are also available via `--include-scientific-sta
 ## Import-Probe Command
 
 ```bash
-PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
   --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
@@ -41,7 +40,6 @@ Optional strict mode (`--strict`) returns non-zero if any gate fails.
 To distinguish environment absence (`module-not-found`) from runtime ABI issues, you can probe a local Python for an installed NumPy and reuse its site-packages root:
 
 ```bash
-PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
   --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
@@ -62,7 +60,6 @@ When `FOUND`, the probe injects the detected site-packages root into `PYTHONPATH
 When a local NumPy source checkout is available, run:
 
 ```bash
-PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
   --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
@@ -82,7 +79,6 @@ If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the r
 ## Scientific-Stack Probe Command (Bridge Mode)
 
 ```bash
-PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
   --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
@@ -97,7 +93,9 @@ If a probed local module is not installed, its dependent cases are recorded as `
 
 ## Current Expected State
 
-- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1` enables an explicit CPython-ABI bridge path for allowed module families.
+- CPython-ABI bridge mode is enabled by default for allowed module families.
+- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=0` disables bridge mode.
+- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1` force-enables bridge mode.
 - Default bridge allowlist: `numpy`, `scipy`, `pandas`, `matplotlib` (and submodules).
 - Optional override: `PYRS_CPYTHON_ABI_BRIDGE_MODULES=<comma-separated-prefixes>`.
 - With that mode enabled and local NumPy available, both gate cases are expected to pass.

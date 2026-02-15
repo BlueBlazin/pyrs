@@ -138,6 +138,16 @@ fn scientific_stack_site_packages_path() -> Option<PathBuf> {
     None
 }
 
+fn unique_temp_dir(prefix: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "{prefix}_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time works")
+            .as_nanos()
+    ))
+}
+
 fn int_string(value: Option<Value>) -> Option<String> {
     match value {
         Some(Value::Int(number)) => Some(number.to_string()),
@@ -5485,6 +5495,42 @@ fn cpython_abi_bridge_scientific_stack_smoke_when_site_packages_are_available() 
         );
     }
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "True");
+}
+
+#[test]
+fn startup_honors_virtual_env_prefix_for_site_packages() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        eprintln!("skipping virtualenv site-packages startup test (pyrs binary not found)");
+        return;
+    };
+    let temp_venv = unique_temp_dir("pyrs_vm_virtualenv");
+    let site_packages = temp_venv.join("lib/python3.14/site-packages");
+    std::fs::create_dir_all(&site_packages).expect("create temp venv site-packages");
+    let script = "import sys\np = [x.replace('\\\\\\\\', '/') for x in sys.path]\nprint(any(x.endswith('/lib/python3.14/site-packages') for x in p))\nprint(sys.prefix)\nprint(sys.base_prefix)\n";
+    let output = Command::new(pyrs_bin)
+        .env("VIRTUAL_ENV", &temp_venv)
+        .arg("-c")
+        .arg(script)
+        .output()
+        .expect("spawn pyrs virtualenv startup check");
+    if !output.status.success() {
+        panic!(
+            "virtualenv startup check failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next(), Some("True"));
+    let prefix = lines.next().unwrap_or_default().replace('\\', "/");
+    let base_prefix = lines.next().unwrap_or_default().replace('\\', "/");
+    let expected_prefix = temp_venv.to_string_lossy().replace('\\', "/");
+    assert_eq!(prefix, expected_prefix);
+    assert_ne!(
+        base_prefix, expected_prefix,
+        "base_prefix should preserve non-venv interpreter prefix"
+    );
+    let _ = std::fs::remove_dir_all(&temp_venv);
 }
 
 #[test]

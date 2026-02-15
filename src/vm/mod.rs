@@ -2488,7 +2488,17 @@ impl Vm {
                     inferred_prefix = parent.to_path_buf();
                 }
             }
-            let prefix = inferred_prefix.to_string_lossy().to_string();
+            let inferred_prefix_str = inferred_prefix.to_string_lossy().to_string();
+            let venv_prefix = std::env::var_os("VIRTUAL_ENV")
+                .map(PathBuf::from)
+                .filter(|path| path.is_dir())
+                .map(|path| path.to_string_lossy().to_string());
+            let prefix = venv_prefix
+                .clone()
+                .unwrap_or_else(|| inferred_prefix_str.clone());
+            let exec_prefix = prefix.clone();
+            let base_prefix = inferred_prefix_str.clone();
+            let base_exec_prefix = inferred_prefix_str.clone();
             module_data
                 .globals
                 .insert("executable".to_string(), Value::Str(executable));
@@ -2497,13 +2507,13 @@ impl Vm {
                 .insert("prefix".to_string(), Value::Str(prefix.clone()));
             module_data
                 .globals
-                .insert("base_prefix".to_string(), Value::Str(prefix.clone()));
+                .insert("base_prefix".to_string(), Value::Str(base_prefix));
             module_data
                 .globals
-                .insert("exec_prefix".to_string(), Value::Str(prefix.clone()));
+                .insert("exec_prefix".to_string(), Value::Str(exec_prefix));
             module_data
                 .globals
-                .insert("base_exec_prefix".to_string(), Value::Str(prefix));
+                .insert("base_exec_prefix".to_string(), Value::Str(base_exec_prefix));
             let platform = match std::env::consts::OS {
                 "macos" => "darwin",
                 other => other,
