@@ -1,15 +1,17 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::{Path, PathBuf};
 
 use crate::extensions::{
-    ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
+    CpythonExtensionInit, ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
     PYRS_TYPE_DICT, PYRS_TYPE_FLOAT, PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR,
     PYRS_TYPE_TUPLE, PyrsApiV1, PyrsBufferInfoV1, PyrsBufferInfoV2, PyrsBufferViewV1,
     PyrsCFunctionKwV1, PyrsCFunctionV1, PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1,
-    PyrsModuleStateFreeV1, PyrsObjectHandle, PyrsWritableBufferViewV1, load_dynamic_initializer,
-    parse_extension_manifest, path_is_shared_library,
+    PyrsModuleStateFreeV1, PyrsObjectHandle, PyrsWritableBufferViewV1, SharedLibraryHandle,
+    load_dynamic_initializer, load_dynamic_symbol, parse_extension_manifest,
+    path_is_shared_library,
 };
 use crate::runtime::{
     BoundMethod, NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
@@ -46,6 +48,45 @@ struct BufferInfoSnapshot {
     format_text: String,
 }
 
+#[repr(C)]
+struct CpythonCompatObject {
+    handle: PyrsObjectHandle,
+}
+
+#[repr(C)]
+struct CpythonModuleDefBase {
+    _ob_refcnt: usize,
+    _ob_type: *mut c_void,
+    _m_init: Option<unsafe extern "C" fn() -> *mut c_void>,
+    _m_index: isize,
+    _m_copy: *mut c_void,
+}
+
+#[repr(C)]
+struct CpythonMethodDef {
+    ml_name: *const c_char,
+    ml_meth: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void>,
+    ml_flags: i32,
+    ml_doc: *const c_char,
+}
+
+#[repr(C)]
+struct CpythonModuleDef {
+    _m_base: CpythonModuleDefBase,
+    m_name: *const c_char,
+    m_doc: *const c_char,
+    m_size: isize,
+    m_methods: *mut CpythonMethodDef,
+    m_slots: *mut c_void,
+    _m_traverse: *mut c_void,
+    _m_clear: *mut c_void,
+    _m_free: Option<unsafe extern "C" fn(*mut c_void)>,
+}
+
+thread_local! {
+    static ACTIVE_CPYTHON_INIT_CONTEXT: Cell<*mut ModuleCapiContext> = const { Cell::new(std::ptr::null_mut()) };
+}
+
 struct ModuleCapiContext {
     vm: *mut Vm,
     module: ObjRef,
@@ -56,6 +97,8 @@ struct ModuleCapiContext {
     scratch_strings: Vec<CString>,
     scratch_isize_arrays: Vec<Vec<isize>>,
     buffer_pins: HashMap<PyrsObjectHandle, usize>,
+    cpython_objects_by_ptr: HashMap<usize, PyrsObjectHandle>,
+    cpython_allocations: Vec<*mut CpythonCompatObject>,
 }
 
 impl Drop for ModuleCapiContext {
@@ -91,6 +134,12 @@ impl Drop for ModuleCapiContext {
                 }
             }
         }
+        for raw in self.cpython_allocations.drain(..) {
+            // SAFETY: pointers were allocated with `Box::into_raw` in this context.
+            unsafe {
+                drop(Box::from_raw(raw));
+            }
+        }
     }
 }
 
@@ -106,6 +155,8 @@ impl ModuleCapiContext {
             scratch_strings: Vec::new(),
             scratch_isize_arrays: Vec::new(),
             buffer_pins: HashMap::new(),
+            cpython_objects_by_ptr: HashMap::new(),
+            cpython_allocations: Vec::new(),
         }
     }
 
@@ -131,6 +182,37 @@ impl ModuleCapiContext {
         self.objects
             .insert(handle, CapiObjectSlot { value, refcount: 1 });
         handle
+    }
+
+    fn alloc_cpython_ptr_for_handle(&mut self, handle: PyrsObjectHandle) -> *mut c_void {
+        let raw = Box::into_raw(Box::new(CpythonCompatObject { handle }));
+        self.cpython_objects_by_ptr.insert(raw as usize, handle);
+        self.cpython_allocations.push(raw);
+        raw.cast()
+    }
+
+    fn alloc_cpython_ptr_for_value(&mut self, value: Value) -> *mut c_void {
+        let handle = self.alloc_object(value);
+        self.alloc_cpython_ptr_for_handle(handle)
+    }
+
+    fn cpython_handle_from_ptr(&self, object: *mut c_void) -> Option<PyrsObjectHandle> {
+        self.cpython_objects_by_ptr.get(&(object as usize)).copied()
+    }
+
+    fn cpython_value_from_ptr(&self, object: *mut c_void) -> Option<Value> {
+        let handle = self.cpython_handle_from_ptr(object)?;
+        self.object_value(handle)
+    }
+
+    fn cpython_module_obj_from_ptr(&self, object: *mut c_void) -> Result<ObjRef, String> {
+        let value = self
+            .cpython_value_from_ptr(object)
+            .ok_or_else(|| "invalid CPython object pointer".to_string())?;
+        match value {
+            Value::Module(module) => Ok(module),
+            _ => Err("CPython object is not a module".to_string()),
+        }
     }
 
     fn alloc_capsule(
@@ -2047,6 +2129,376 @@ unsafe fn capi_context_mut<'a>(module_ctx: *mut c_void) -> Option<&'a mut Module
     // SAFETY: caller guarantees `module_ctx` points to a valid `ModuleCapiContext`.
     Some(unsafe { &mut *(module_ctx as *mut ModuleCapiContext) })
 }
+
+fn with_active_cpython_context_mut<R>(
+    f: impl FnOnce(&mut ModuleCapiContext) -> R,
+) -> Result<R, String> {
+    ACTIVE_CPYTHON_INIT_CONTEXT.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            return Err("no active CPython extension init context".to_string());
+        }
+        // SAFETY: the pointer is set only while the owning `ModuleCapiContext` is alive.
+        Ok(f(unsafe { &mut *ptr }))
+    })
+}
+
+fn cpython_set_active_context(context: *mut ModuleCapiContext) -> *mut ModuleCapiContext {
+    ACTIVE_CPYTHON_INIT_CONTEXT.with(|cell| {
+        let previous = cell.get();
+        cell.set(context);
+        previous
+    })
+}
+
+fn cpython_set_error(message: impl Into<String>) {
+    let message = message.into();
+    let _ = with_active_cpython_context_mut(|context| {
+        context.set_error(message);
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModuleDef_Init(module: *mut c_void) -> *mut c_void {
+    module
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> *mut c_void {
+    if module.is_null() {
+        cpython_set_error("PyModule_Create2 received null module definition");
+        return std::ptr::null_mut();
+    }
+    let module = module.cast::<CpythonModuleDef>();
+    let result = with_active_cpython_context_mut(|context| {
+        if !unsafe { (*module).m_name.is_null() } {
+            let name_result = unsafe { c_name_to_string((*module).m_name) };
+            if let Err(err) = name_result {
+                context.set_error(format!("PyModule_Create2 invalid module name: {err}"));
+                return std::ptr::null_mut();
+            }
+        }
+        context.alloc_cpython_ptr_for_value(Value::Module(context.module.clone()))
+    });
+    match result {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_AddObjectRef(
+    module: *mut c_void,
+    name: *const c_char,
+    value: *mut c_void,
+) -> i32 {
+    match with_active_cpython_context_mut(|context| {
+        let attr_name = match unsafe { c_name_to_string(name) } {
+            Ok(name) => name,
+            Err(err) => {
+                context.set_error(format!("PyModule_AddObjectRef invalid name: {err}"));
+                return -1;
+            }
+        };
+        let module_obj = match context.cpython_module_obj_from_ptr(module) {
+            Ok(module_obj) => module_obj,
+            Err(err) => {
+                context.set_error(format!("PyModule_AddObjectRef invalid module: {err}"));
+                return -1;
+            }
+        };
+        let value = match context.cpython_value_from_ptr(value) {
+            Some(value) => value,
+            None => {
+                context.set_error("PyModule_AddObjectRef invalid value object");
+                return -1;
+            }
+        };
+        let Object::Module(module_data) = &mut *module_obj.kind_mut() else {
+            context.set_error("PyModule_AddObjectRef module no longer valid");
+            return -1;
+        };
+        module_data.globals.insert(attr_name, value);
+        0
+    }) {
+        Ok(status) => status,
+        Err(err) => {
+            cpython_set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_AddObject(
+    module: *mut c_void,
+    name: *const c_char,
+    value: *mut c_void,
+) -> i32 {
+    let status = unsafe { PyModule_AddObjectRef(module, name, value) };
+    if status != 0 || value.is_null() {
+        return status;
+    }
+    let _ = with_active_cpython_context_mut(|context| {
+        if let Some(handle) = context.cpython_handle_from_ptr(value) {
+            let _ = context.decref(handle);
+        }
+    });
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_AddIntConstant(
+    module: *mut c_void,
+    name: *const c_char,
+    value: i64,
+) -> i32 {
+    let object = unsafe { PyLong_FromLongLong(value) };
+    if object.is_null() {
+        return -1;
+    }
+    unsafe { PyModule_AddObject(module, name, object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_AddStringConstant(
+    module: *mut c_void,
+    name: *const c_char,
+    value: *const c_char,
+) -> i32 {
+    let object = unsafe { PyUnicode_FromString(value) };
+    if object.is_null() {
+        return -1;
+    }
+    unsafe { PyModule_AddObject(module, name, object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromLong(value: i64) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        context.alloc_cpython_ptr_for_value(Value::Int(value))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromLongLong(value: i64) -> *mut c_void {
+    unsafe { PyLong_FromLong(value) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBool_FromLong(value: i64) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        context.alloc_cpython_ptr_for_value(Value::Bool(value != 0))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFloat_FromDouble(value: f64) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        context.alloc_cpython_ptr_for_value(Value::Float(value))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_FromString(value: *const c_char) -> *mut c_void {
+    match unsafe { c_name_to_string(value) } {
+        Ok(text) => with_active_cpython_context_mut(|context| {
+            context.alloc_cpython_ptr_for_value(Value::Str(text))
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }),
+        Err(err) => {
+            cpython_set_error(format!(
+                "PyUnicode_FromString received invalid string: {err}"
+            ));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_FromStringAndSize(
+    value: *const c_char,
+    len: isize,
+) -> *mut c_void {
+    if len < 0 {
+        cpython_set_error("PyBytes_FromStringAndSize received negative length");
+        return std::ptr::null_mut();
+    }
+    if value.is_null() && len != 0 {
+        cpython_set_error("PyBytes_FromStringAndSize received null pointer with non-zero length");
+        return std::ptr::null_mut();
+    }
+    let bytes = if len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: caller guarantees `value` points to at least `len` bytes.
+        unsafe { std::slice::from_raw_parts(value.cast::<u8>(), len as usize).to_vec() }
+    };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyBytes_FromStringAndSize missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for the extension context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let bytes_obj = vm.heap.alloc(Object::Bytes(bytes));
+        context.alloc_cpython_ptr_for_value(Value::Bytes(bytes_obj))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *const c_char) {
+    match unsafe { c_name_to_string(message) } {
+        Ok(message) => cpython_set_error(message),
+        Err(err) => cpython_set_error(format!("PyErr_SetString invalid message: {err}")),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_Occurred() -> *mut c_void {
+    match with_active_cpython_context_mut(|context| context.last_error.is_some()) {
+        Ok(true) => 1usize as *mut c_void,
+        Ok(false) => std::ptr::null_mut(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_Clear() {
+    let _ = with_active_cpython_context_mut(|context| {
+        context.clear_error();
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_IncRef(object: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        if let Some(handle) = context.cpython_handle_from_ptr(object) {
+            let _ = context.incref(handle);
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_DecRef(object: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        if let Some(handle) = context.cpython_handle_from_ptr(object) {
+            let _ = context.decref(handle);
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_XIncRef(object: *mut c_void) {
+    if !object.is_null() {
+        unsafe { Py_IncRef(object) };
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_XDecRef(object: *mut c_void) {
+    if !object.is_null() {
+        unsafe { Py_DecRef(object) };
+    }
+}
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyExc_Exception: *mut c_void = std::ptr::null_mut();
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyExc_ImportError: *mut c_void = std::ptr::null_mut();
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyExc_RuntimeError: *mut c_void = std::ptr::null_mut();
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyExc_TypeError: *mut c_void = std::ptr::null_mut();
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyExc_ValueError: *mut c_void = std::ptr::null_mut();
+
+#[used]
+static KEEP_PYMODULEDEF_INIT: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyModuleDef_Init;
+#[used]
+static KEEP_PYMODULE_CREATE2: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
+    PyModule_Create2;
+#[used]
+static KEEP_PYMODULE_ADD_OBJECT_REF: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *mut c_void,
+) -> i32 = PyModule_AddObjectRef;
+#[used]
+static KEEP_PYMODULE_ADD_OBJECT: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *mut c_void,
+) -> i32 = PyModule_AddObject;
+#[used]
+static KEEP_PYMODULE_ADD_INT_CONSTANT: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    i64,
+) -> i32 = PyModule_AddIntConstant;
+#[used]
+static KEEP_PYMODULE_ADD_STRING_CONSTANT: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *const c_char,
+) -> i32 = PyModule_AddStringConstant;
+#[used]
+static KEEP_PYLONG_FROM_LONG: unsafe extern "C" fn(i64) -> *mut c_void = PyLong_FromLong;
+#[used]
+static KEEP_PYLONG_FROM_LONGLONG: unsafe extern "C" fn(i64) -> *mut c_void = PyLong_FromLongLong;
+#[used]
+static KEEP_PYBOOL_FROM_LONG: unsafe extern "C" fn(i64) -> *mut c_void = PyBool_FromLong;
+#[used]
+static KEEP_PYFLOAT_FROM_DOUBLE: unsafe extern "C" fn(f64) -> *mut c_void = PyFloat_FromDouble;
+#[used]
+static KEEP_PYUNICODE_FROM_STRING: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+    PyUnicode_FromString;
+#[used]
+static KEEP_PYBYTES_FROM_STRING_AND_SIZE: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+) -> *mut c_void = PyBytes_FromStringAndSize;
+#[used]
+static KEEP_PYERR_SET_STRING: unsafe extern "C" fn(*mut c_void, *const c_char) = PyErr_SetString;
+#[used]
+static KEEP_PYERR_OCCURRED: unsafe extern "C" fn() -> *mut c_void = PyErr_Occurred;
+#[used]
+static KEEP_PYERR_CLEAR: unsafe extern "C" fn() = PyErr_Clear;
+#[used]
+static KEEP_PY_INCREF: unsafe extern "C" fn(*mut c_void) = Py_IncRef;
+#[used]
+static KEEP_PY_DECREF: unsafe extern "C" fn(*mut c_void) = Py_DecRef;
+#[used]
+static KEEP_PY_XINCREF: unsafe extern "C" fn(*mut c_void) = Py_XIncRef;
+#[used]
+static KEEP_PY_XDECREF: unsafe extern "C" fn(*mut c_void) = Py_XDecRef;
 
 unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
     if name.is_null() {
@@ -4280,43 +4732,141 @@ impl Vm {
         library_path: &Path,
         symbol: &str,
     ) -> Result<(), RuntimeError> {
-        let (handle, initializer) = load_dynamic_initializer(library_path, symbol).map_err(|err| {
-            if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 {
-                let cpython_symbol = Self::cpython_init_symbol_for_module(module_name);
-                RuntimeError::new(format!(
-                    "{err}; expected '{}'. CPython-style extension symbols such as '{}' are not supported yet",
-                    PYRS_DYNAMIC_INIT_SYMBOL_V1, cpython_symbol
-                ))
-            } else {
-                RuntimeError::new(err)
-            }
-        })?;
-        let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
-        let api = self.capi_api_v1();
-        // SAFETY: initializer is resolved from the shared object symbol with expected signature;
-        // pointers are valid for the duration of the call.
-        let status = unsafe {
-            initializer(
-                &api as *const PyrsApiV1,
-                (&mut module_ctx as *mut ModuleCapiContext).cast(),
-            )
-        };
-        if status != 0 {
-            let message = module_ctx
-                .last_error
-                .as_deref()
-                .map(|text| format!(": {text}"))
-                .unwrap_or_default();
-            return Err(RuntimeError::new(format!(
-                "extension '{}' initializer '{}' failed with status {}{}",
-                module_name, symbol, status, message
-            )));
+        enum ResolvedInit {
+            Pyrs {
+                handle: SharedLibraryHandle,
+                initializer: crate::extensions::PyrsExtensionInitV1,
+            },
+            Cpython {
+                handle: SharedLibraryHandle,
+                initializer: CpythonExtensionInit,
+            },
         }
-        if let Some(message) = module_ctx.last_error.as_deref() {
-            return Err(RuntimeError::new(format!(
-                "extension '{}' initializer '{}' reported error despite success: {}",
-                module_name, symbol, message
-            )));
+
+        let (resolved_symbol, resolved_init): (String, ResolvedInit) = if symbol
+            .starts_with("PyInit_")
+        {
+            let (handle, init) = load_dynamic_symbol::<CpythonExtensionInit>(library_path, symbol)
+                .map_err(RuntimeError::new)?;
+            (
+                symbol.to_string(),
+                ResolvedInit::Cpython {
+                    handle,
+                    initializer: init,
+                },
+            )
+        } else {
+            match load_dynamic_initializer(library_path, symbol) {
+                Ok((handle, init)) => (
+                    symbol.to_string(),
+                    ResolvedInit::Pyrs {
+                        handle,
+                        initializer: init,
+                    },
+                ),
+                Err(pyrs_err) if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 => {
+                    let cpython_symbol = Self::cpython_init_symbol_for_module(module_name);
+                    match load_dynamic_symbol::<CpythonExtensionInit>(library_path, &cpython_symbol)
+                    {
+                        Ok((handle, init)) => (
+                            cpython_symbol,
+                            ResolvedInit::Cpython {
+                                handle,
+                                initializer: init,
+                            },
+                        ),
+                        Err(cpython_err) => {
+                            return Err(RuntimeError::new(format!(
+                                "{pyrs_err}; fallback '{}' also failed: {cpython_err}",
+                                cpython_symbol
+                            )));
+                        }
+                    }
+                }
+                Err(err) => return Err(RuntimeError::new(err)),
+            }
+        };
+
+        let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
+        let init_result = match resolved_init {
+            ResolvedInit::Pyrs {
+                handle,
+                initializer,
+            } => {
+                let api = self.capi_api_v1();
+                // SAFETY: initializer is resolved from the shared object symbol with expected signature;
+                // pointers are valid for the duration of the call.
+                let status = unsafe {
+                    initializer(
+                        &api as *const PyrsApiV1,
+                        (&mut module_ctx as *mut ModuleCapiContext).cast(),
+                    )
+                };
+                if status != 0 {
+                    let message = module_ctx
+                        .last_error
+                        .as_deref()
+                        .map(|text| format!(": {text}"))
+                        .unwrap_or_default();
+                    return Err(RuntimeError::new(format!(
+                        "extension '{}' initializer '{}' failed with status {}{}",
+                        module_name, resolved_symbol, status, message
+                    )));
+                }
+                if let Some(message) = module_ctx.last_error.as_deref() {
+                    return Err(RuntimeError::new(format!(
+                        "extension '{}' initializer '{}' reported error despite success: {}",
+                        module_name, resolved_symbol, message
+                    )));
+                }
+                self.extension_libraries.push(handle);
+                std::ptr::null_mut()
+            }
+            ResolvedInit::Cpython {
+                handle,
+                initializer,
+            } => {
+                let previous_context =
+                    cpython_set_active_context(&mut module_ctx as *mut ModuleCapiContext);
+                // SAFETY: symbol was resolved with `unsafe extern "C" fn() -> *mut c_void`.
+                let result = unsafe { initializer() };
+                cpython_set_active_context(previous_context);
+                self.extension_libraries.push(handle);
+                result
+            }
+        };
+
+        if resolved_symbol.starts_with("PyInit_") {
+            if init_result.is_null() {
+                let message = module_ctx
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| "extension returned null module".to_string());
+                return Err(RuntimeError::new(format!(
+                    "extension '{}' initializer '{}' failed: {}",
+                    module_name, resolved_symbol, message
+                )));
+            }
+            let returned = module_ctx
+                .cpython_value_from_ptr(init_result)
+                .ok_or_else(|| {
+                    RuntimeError::new(format!(
+                        "extension '{}' initializer '{}' returned unknown PyObject pointer",
+                        module_name, resolved_symbol
+                    ))
+                })?;
+            let Value::Module(returned_module) = returned else {
+                return Err(RuntimeError::new(format!(
+                    "extension '{}' initializer '{}' did not return a module object",
+                    module_name, resolved_symbol
+                )));
+            };
+            if returned_module.id() != module.id() {
+                return Err(RuntimeError::new(format!(
+                    "extension '{}' initializer '{}' returned unexpected module instance",
+                    module_name, resolved_symbol
+                )));
+            }
         }
 
         let Object::Module(module_data) = &mut *module.kind_mut() else {
@@ -4331,24 +4881,27 @@ impl Vm {
         );
         module_data.globals.insert(
             "__pyrs_extension_symbol__".to_string(),
-            Value::Str(symbol.to_string()),
+            Value::Str(resolved_symbol.clone()),
         );
-        let symbol_family = if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 {
+        module_data.globals.insert(
+            "__pyrs_extension_entrypoint__".to_string(),
+            Value::Str(format!("dynamic:{resolved_symbol}")),
+        );
+        let symbol_family = if resolved_symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 {
             "pyrs-v1"
-        } else if symbol.starts_with("PyInit_") {
+        } else if resolved_symbol.starts_with("PyInit_") {
             "cpython"
         } else {
             "custom"
         };
         module_data.globals.insert(
             "__pyrs_extension_expected_symbol__".to_string(),
-            Value::Str(symbol.to_string()),
+            Value::Str(resolved_symbol),
         );
         module_data.globals.insert(
             "__pyrs_extension_symbol_family__".to_string(),
             Value::Str(symbol_family.to_string()),
         );
-        self.extension_libraries.push(handle);
         Ok(())
     }
 

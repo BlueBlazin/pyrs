@@ -714,6 +714,7 @@ pub type PyrsModuleStateFinalizeV1 = unsafe extern "C" fn(state: *mut c_void);
 
 pub type PyrsExtensionInitV1 =
     unsafe extern "C" fn(api: *const PyrsApiV1, module_ctx: *mut c_void) -> i32;
+pub type CpythonExtensionInit = unsafe extern "C" fn() -> *mut c_void;
 
 #[cfg(unix)]
 pub struct SharedLibraryHandle {
@@ -817,6 +818,19 @@ pub fn load_dynamic_initializer(
     Ok((handle, initializer))
 }
 
+#[cfg(unix)]
+pub fn load_dynamic_symbol<T>(
+    library_path: &Path,
+    symbol: &str,
+) -> Result<(SharedLibraryHandle, T), String>
+where
+    T: Copy,
+{
+    let handle = SharedLibraryHandle::open(library_path)?;
+    let resolved = handle.symbol::<T>(symbol)?;
+    Ok((handle, resolved))
+}
+
 #[cfg(not(unix))]
 #[derive(Default)]
 pub struct SharedLibraryHandle;
@@ -826,6 +840,20 @@ pub fn load_dynamic_initializer(
     library_path: &Path,
     _symbol: &str,
 ) -> Result<(SharedLibraryHandle, PyrsExtensionInitV1), String> {
+    Err(format!(
+        "dynamic extension loading is not supported on this target for '{}'",
+        library_path.display()
+    ))
+}
+
+#[cfg(not(unix))]
+pub fn load_dynamic_symbol<T>(
+    library_path: &Path,
+    _symbol: &str,
+) -> Result<(SharedLibraryHandle, T), String>
+where
+    T: Copy,
+{
     Err(format!(
         "dynamic extension loading is not supported on this target for '{}'",
         library_path.display()

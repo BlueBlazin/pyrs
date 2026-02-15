@@ -86,6 +86,46 @@ fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<()
     Ok(())
 }
 
+fn compile_shared_extension_with_cpython_compat(
+    source_path: &Path,
+    output_path: &Path,
+) -> Result<(), String> {
+    let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include");
+    let mut cmd = Command::new("cc");
+    cmd.arg("-fPIC");
+    #[cfg(target_os = "macos")]
+    {
+        cmd.arg("-dynamiclib");
+        cmd.arg("-undefined").arg("dynamic_lookup");
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        cmd.arg("-shared");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        cmd.arg("-shared");
+    }
+    cmd.arg("-I")
+        .arg(include_dir)
+        .arg(source_path)
+        .arg("-o")
+        .arg(output_path);
+
+    let output = cmd
+        .output()
+        .map_err(|err| format!("failed to invoke C compiler: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "C compiler failed (status={}):\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
 fn query_pyrs_build_vars(bin: &Path) -> Result<HashMap<String, String>, String> {
     let snippet = r#"import sys
 name = f"_sysconfigdata_{sys.abiflags}_{sys.platform}_{getattr(sys.implementation, '_multiarch', '')}"
@@ -466,42 +506,64 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
 }
 
 #[test]
-fn direct_cpython_style_symbol_reports_explicit_unsupported_error() {
+fn imports_direct_cpython_style_single_phase_extension() {
     let Some(bin) = pyrs_bin() else {
-        eprintln!("skipping cpython-symbol smoke (pyrs binary not found)");
+        eprintln!("skipping cpython-init smoke (pyrs binary not found)");
         return;
     };
     if !has_c_compiler() {
-        eprintln!("skipping cpython-symbol smoke (cc not available)");
+        eprintln!("skipping cpython-init smoke (cc not available)");
         return;
     }
 
-    let temp_root = unique_temp_dir("ext_smoke_cpython_symbol");
+    let temp_root = unique_temp_dir("ext_smoke_cpython_init");
     fs::create_dir_all(&temp_root).expect("temp dir should be created");
 
-    let source_path = temp_root.join("cpython_symbol_only.c");
+    let source_path = temp_root.join("cpython_single_phase.c");
     fs::write(
         &source_path,
-        r#"#include "pyrs_capi.h"
+        r#"#include "pyrs_cpython_compat.h"
 
-int PyInit_cpython_symbol_only(void) {
-    return 0;
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_single_phase",
+    "single phase module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_single_phase(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "ANSWER", 42) != 0) {
+        return 0;
+    }
+    if (PyModule_AddStringConstant(module, "SOURCE", "cpython-single-phase") != 0) {
+        return 0;
+    }
+    return module;
 }
 "#,
     )
     .expect("source should be written");
 
-    let library_path = temp_root.join(importable_module_library_filename("cpython_symbol_only"));
-    compile_shared_extension(&source_path, &library_path)
-        .expect("cp-style symbol shared object should build");
+    let library_path = temp_root.join(importable_module_library_filename("cpython_single_phase"));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython-style extension shared object should build");
 
-    run_import_snippet_expect_error(
+    run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_symbol_only",
-        "CPython-style extension symbols",
+        "import cpython_single_phase\nassert cpython_single_phase.ANSWER == 42\nassert cpython_single_phase.SOURCE == 'cpython-single-phase'\nassert cpython_single_phase.__pyrs_extension_symbol_family__ == 'cpython'\nassert cpython_single_phase.__pyrs_extension_expected_symbol__ == 'PyInit_cpython_single_phase'",
     )
-    .expect("cpython-only symbol should produce explicit unsupported diagnostic");
+    .expect("cpython single-phase extension import should succeed");
 
     let _ = fs::remove_file(library_path);
     let _ = fs::remove_file(source_path);

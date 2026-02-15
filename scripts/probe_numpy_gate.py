@@ -66,6 +66,11 @@ def classify_failure(stderr: str) -> dict[str, str]:
         diagnostics["missing_symbol"] = symbol_match.group(1)
         diagnostics["kind"] = "missing-symbol"
         return diagnostics
+    flat_ns_match = re.search(r"symbol not found in flat namespace '_([^']+)'", stderr)
+    if flat_ns_match:
+        diagnostics["missing_symbol"] = flat_ns_match.group(1)
+        diagnostics["kind"] = "missing-symbol"
+        return diagnostics
     if "unsupported extension ABI" in stderr:
         diagnostics["kind"] = "abi-mismatch"
         return diagnostics
