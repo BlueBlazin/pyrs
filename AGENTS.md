@@ -12,6 +12,7 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Do not use test-by-test attribute patching as a development strategy.
 - For stdlib-facing behavior, implement from CPython reference first (`Modules/*.c`, `Objects/*.c`, `Lib/*.py`) and Python 3.14 docs, then validate with tests.
 - Avoid bootstrap-only mock surfaces that diverge from CPython architecture (e.g. prefer native `_module` substrate + CPython `Lib/*.py` layer instead of replacement modules when CPython provides one).
+- For NumPy/scientific-stack bring-up, do not use trial-and-error patch churn: drive fixes from CPython source + Python 3.14 C-API docs, close root causes in the ABI substrate, and record each blocker/fix in `docs/NUMPY_BRINGUP_GATE.md`.
 
 ## Scope and Constraints
 - Target version: CPython 3.14
