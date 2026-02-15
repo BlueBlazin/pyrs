@@ -99,6 +99,7 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
 - Current first direct-mode blocker for NumPy is no longer missing symbols or early CPU-init crashes; `_multiarray_umath` now reaches deeper `Py_mod_exec` semantic paths and currently fails in DType loop-registration/bootstrap with `DType tuple length does not match ufunc number of operands`.
+- Extension-init failure reporting now preserves the first meaningful per-module `Py_mod_exec` failure across retry attempts, preventing fallback noise like `cannot load module more than once per process` from masking the root blocker.
 - Recent direct-mode bring-up deltas:
   - `datetime.datetime_CAPI` capsule baseline is now registered for `PyCapsule_Import`.
   - `math.trunc` landed for stdlib parity used during NumPy init.

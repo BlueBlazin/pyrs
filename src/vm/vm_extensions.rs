@@ -711,13 +711,25 @@ impl ModuleCapiContext {
     #[track_caller]
     fn set_error(&mut self, message: impl Into<String>) {
         let message = message.into();
+        let is_reentry_guard = message == "cannot load module more than once per process"
+            || message == "extension returned null module";
         if self.first_error.is_none() {
+            if !is_reentry_guard {
+                self.first_error = Some(message.clone());
+            }
+        } else if is_reentry_guard {
+            // Keep first_error pinned to the earliest meaningful diagnostic.
+        } else if self
+            .first_error
+            .as_deref()
+            .is_some_and(|first| {
+                first == "cannot load module more than once per process"
+                    || first == "extension returned null module"
+            })
+        {
             self.first_error = Some(message.clone());
         }
-        if self.last_error.is_some()
-            && (message == "cannot load module more than once per process"
-                || message == "extension returned null module")
-        {
+        if self.last_error.is_some() && is_reentry_guard {
             return;
         }
         if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
@@ -11371,6 +11383,9 @@ impl Vm {
             }
             return Ok(());
         }
+        if let Some(message) = self.extension_init_failures.get(module_name).cloned() {
+            return Err(RuntimeError::new(message));
+        }
         if let Object::Module(module_data) = &*module.kind()
             && matches!(
                 module_data.globals.get("__pyrs_extension_initialized__"),
@@ -11384,6 +11399,12 @@ impl Vm {
                 );
             }
             return Ok(());
+        }
+        if let Object::Module(module_data) = &*module.kind()
+            && let Some(Value::Str(message)) =
+                module_data.globals.get("__pyrs_extension_init_error__")
+        {
+            return Err(RuntimeError::new(message.clone()));
         }
         self.extension_init_in_progress
             .insert(module_name.to_string());
@@ -11562,22 +11583,40 @@ impl Vm {
                                         unsafe { std::mem::transmute(value) };
                                     let status = unsafe { exec(module_ptr) };
                                     if status != 0 {
+                                        if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+                                            eprintln!(
+                                                "[ext-slot] module={} slot_exec_status={} first_error={:?} last_error={:?}",
+                                                module_name,
+                                                status,
+                                                module_ctx.first_error,
+                                                module_ctx.last_error
+                                            );
+                                        }
                                         cpython_set_active_context(previous_context);
                                         let message = module_ctx
                                             .first_error
                                             .clone()
                                             .or_else(|| module_ctx.last_error.clone())
                                             .unwrap_or_else(|| "Py_mod_exec failed".to_string());
+                                        let full_error = format!(
+                                            "extension '{}' initializer '{}' Py_mod_exec failed: {}",
+                                            module_name, resolved_symbol, message
+                                        );
+                                        if let Object::Module(module_data) = &mut *module.kind_mut() {
+                                            module_data.globals.insert(
+                                                "__pyrs_extension_init_error__".to_string(),
+                                                Value::Str(full_error.clone()),
+                                            );
+                                        }
+                                        self.extension_init_failures
+                                            .insert(module_name.to_string(), full_error.clone());
                                         if trace_slots {
                                             eprintln!(
                                                 "[ext-load] module={} slot_exec_error={}",
                                                 module_name, message
                                             );
                                         }
-                                        return Err(RuntimeError::new(format!(
-                                            "extension '{}' initializer '{}' Py_mod_exec failed: {}",
-                                            module_name, resolved_symbol, message
-                                        )));
+                                        return Err(RuntimeError::new(full_error));
                                     }
                                 }
                                 // SAFETY: move to next slot entry.
@@ -11668,6 +11707,8 @@ impl Vm {
             "__pyrs_extension_initialized__".to_string(),
             Value::Bool(true),
         );
+        module_data.globals.remove("__pyrs_extension_init_error__");
+        self.extension_init_failures.remove(module_name);
         self.extension_initialized_names
             .insert(module_name.to_string());
         if trace_slots {

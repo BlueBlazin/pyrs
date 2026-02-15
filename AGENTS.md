@@ -117,6 +117,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `PyObject_CallFunction` now has C-side varargs parsing coverage for core formats (`O`/`N`/`s`/`i`/`l`/`k`/`n`/`d`/`f`, plus tuple-wrapped forms) via `src/vm/cpython_varargs_shim.c`.
   - C-side varargs handling now also covers `PyArg_ParseTuple`, `PyArg_ParseTupleAndKeywords`, `PyObject_CallFunctionObjArgs`, and `PyObject_CallMethod` in `src/vm/cpython_varargs_shim.c`.
   - `PyTypeObject` compat layout has been expanded through allocation/init/new/call slots, `PyType_Ready` now seeds baseline inherited slots, and `PyType_Type.tp_call` now routes through a CPython-style `tp_new`/`tp_init` call bridge.
+  - extension init now caches first per-module dynamic-init failure (`extension_init_failures`) so repeated import retries report the original `Py_mod_exec` blocker instead of masking it behind reentry noise.
   - current NumPy direct-mode blocker is now deep `_multiarray_umath` semantic closure around DType loop-registration/bootstrap (`DType tuple length does not match ufunc number of operands`), after varargs/bootstrap blockers were removed.
   - extension slot tracing is now available via `PYRS_TRACE_EXT_SLOTS=1` for `Py_mod_create` / `Py_mod_exec` debugging in direct `PyInit_*` mode.
   - CPython-ABI bridge runtime/env path has been removed; scientific-stack gating is now direct-mode only (`perf/numpy_gate_direct_latest.json`).

@@ -755,6 +755,7 @@ pub struct Vm {
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     extension_init_in_progress: HashSet<String>,
     extension_initialized_names: HashSet<String>,
+    extension_init_failures: HashMap<String, String>,
     next_extension_callable_id: u64,
     local_shim_fallback_enabled: bool,
     prefer_pure_json_when_available: bool,
@@ -900,6 +901,7 @@ impl Vm {
             extension_module_state_registry: HashMap::new(),
             extension_init_in_progress: HashSet::new(),
             extension_initialized_names: HashSet::new(),
+            extension_init_failures: HashMap::new(),
             next_extension_callable_id: 1,
             // Shim fallback is restricted by LOCAL_SHIM_MODULES and only used when normal
             // path resolution fails, so keep it enabled by default (allow explicit opt-out).
