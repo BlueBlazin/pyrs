@@ -2378,6 +2378,7 @@ pub enum BuiltinFunction {
     MathCopySign,
     MathFloor,
     MathCeil,
+    MathTrunc,
     MathIsFinite,
     MathIsInf,
     MathIsNaN,
@@ -5327,6 +5328,7 @@ impl BuiltinFunction {
             | BuiltinFunction::MathCopySign
             | BuiltinFunction::MathFloor
             | BuiltinFunction::MathCeil
+            | BuiltinFunction::MathTrunc
             | BuiltinFunction::MathIsFinite
             | BuiltinFunction::MathIsInf
             | BuiltinFunction::MathIsNaN

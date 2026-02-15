@@ -7934,6 +7934,30 @@ fn call_builtin_with_kwargs(
             }
             builtin.call(heap, args)
         }
+        BuiltinFunction::ContextVar => {
+            if let Some(name) = kwargs.remove("name") {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(
+                        "ContextVar() got multiple values for argument 'name'",
+                    ));
+                }
+                args.push(name);
+            }
+            if let Some(default) = kwargs.remove("default") {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "ContextVar() got multiple values for argument 'default'",
+                    ));
+                }
+                args.push(default);
+            }
+            if !kwargs.is_empty() {
+                return Err(RuntimeError::new(
+                    "ContextVar() got an unexpected keyword argument",
+                ));
+            }
+            builtin.call(heap, args)
+        }
         BuiltinFunction::TypingTypeVar
         | BuiltinFunction::TypingParamSpec
         | BuiltinFunction::TypingTypeVarTuple

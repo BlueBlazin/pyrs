@@ -274,6 +274,7 @@ impl Vm {
                 ("acos", BuiltinFunction::MathAcos),
                 ("floor", BuiltinFunction::MathFloor),
                 ("ceil", BuiltinFunction::MathCeil),
+                ("trunc", BuiltinFunction::MathTrunc),
                 ("isfinite", BuiltinFunction::MathIsFinite),
                 ("isinf", BuiltinFunction::MathIsInf),
                 ("isnan", BuiltinFunction::MathIsNaN),
@@ -5843,7 +5844,7 @@ impl Vm {
             _ => None,
         };
         let mut preserved_entries: HashMap<String, Value> = HashMap::new();
-        if let Some(Value::Dict(existing)) = existing_modules
+        if let Some(Value::Dict(existing)) = &existing_modules
             && let Object::Dict(existing_entries) = &*existing.kind()
         {
             for (key, value) in existing_entries.iter() {
@@ -5872,6 +5873,12 @@ impl Vm {
         }
         for (name, value) in preserved_entries {
             entries.push((Value::Str(name), value));
+        }
+        if let Some(Value::Dict(existing)) = existing_modules {
+            if let Object::Dict(existing_entries) = &mut *existing.kind_mut() {
+                *existing_entries = crate::runtime::DictObject::new(entries);
+                return;
+            }
         }
         let modules_dict = self.heap.alloc_dict(entries);
         if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
@@ -6036,6 +6043,18 @@ impl Vm {
             let parent_caller_depth = self.frames.len();
             let _ = self.load_module(parent)?;
             self.run_pending_import_frames(parent_caller_depth)?;
+            // Parent package initialization may import this child module as a side effect.
+            // Re-check caches before creating/executing the module a second time.
+            if let Some(module) = self.modules.get(name).cloned() {
+                return Ok(module);
+            }
+            if let Some(modules_dict) = self.sys_dict_obj("modules")
+                && let Some(Value::Module(module)) =
+                    dict_get_value(&modules_dict, &Value::Str(name.to_string()))
+            {
+                self.modules.insert(name.to_string(), module.clone());
+                return Ok(module);
+            }
         }
 
         let source_info = self

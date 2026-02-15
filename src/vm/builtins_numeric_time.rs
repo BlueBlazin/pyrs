@@ -614,6 +614,25 @@ impl Vm {
         Ok(Value::Int(value as i64))
     }
 
+    pub(super) fn builtin_math_trunc(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("trunc() expects one argument"));
+        }
+        match args[0].clone() {
+            Value::Int(_) | Value::BigInt(_) => Ok(args[0].clone()),
+            other => {
+                let truncated = value_to_f64(other)?.trunc();
+                let bigint = BigInt::from_f64_integral(truncated)
+                    .ok_or_else(|| RuntimeError::new("cannot convert float to int"))?;
+                Ok(value_from_bigint(bigint))
+            }
+        }
+    }
+
     pub(super) fn builtin_math_isfinite(
         &mut self,
         args: Vec<Value>,

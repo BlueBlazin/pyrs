@@ -5841,6 +5841,7 @@ impl Vm {
             BuiltinFunction::MathCopySign => self.builtin_math_copysign(args, kwargs),
             BuiltinFunction::MathFloor => self.builtin_math_floor(args, kwargs),
             BuiltinFunction::MathCeil => self.builtin_math_ceil(args, kwargs),
+            BuiltinFunction::MathTrunc => self.builtin_math_trunc(args, kwargs),
             BuiltinFunction::MathIsFinite => self.builtin_math_isfinite(args, kwargs),
             BuiltinFunction::MathIsInf => self.builtin_math_isinf(args, kwargs),
             BuiltinFunction::MathIsNaN => self.builtin_math_isnan(args, kwargs),

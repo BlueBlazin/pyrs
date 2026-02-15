@@ -121,6 +121,49 @@ struct CpythonModuleDefSlot {
 }
 
 #[repr(C)]
+struct CpythonDateTimeCapi {
+    date_type: *mut c_void,
+    datetime_type: *mut c_void,
+    time_type: *mut c_void,
+    delta_type: *mut c_void,
+    tzinfo_type: *mut c_void,
+    timezone_utc: *mut c_void,
+    date_from_date: unsafe extern "C" fn(i32, i32, i32, *mut c_void) -> *mut c_void,
+    datetime_from_date_and_time: unsafe extern "C" fn(
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        *mut c_void,
+        *mut c_void,
+    ) -> *mut c_void,
+    time_from_time:
+        unsafe extern "C" fn(i32, i32, i32, i32, *mut c_void, *mut c_void) -> *mut c_void,
+    delta_from_delta: unsafe extern "C" fn(i32, i32, i32, i32, *mut c_void) -> *mut c_void,
+    timezone_from_timezone: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
+    datetime_from_timestamp:
+        unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void,
+    date_from_timestamp: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
+    datetime_from_date_and_time_and_fold: unsafe extern "C" fn(
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        i32,
+        *mut c_void,
+        i32,
+        *mut c_void,
+    ) -> *mut c_void,
+    time_from_time_and_fold:
+        unsafe extern "C" fn(i32, i32, i32, i32, *mut c_void, i32, *mut c_void) -> *mut c_void,
+}
+
+#[repr(C)]
 pub struct CpythonTypeObject {
     ob_refcnt: isize,
     ob_type: *mut c_void,
@@ -151,6 +194,124 @@ pub struct CpythonComplexValue {
     real: f64,
     imag: f64,
 }
+
+const PYRS_DATETIME_CAPSULE_NAME: &str = "datetime.datetime_CAPI";
+
+unsafe extern "C" fn datetime_capi_unimplemented() -> *mut c_void {
+    cpython_set_error("datetime C-API constructor is not implemented");
+    std::ptr::null_mut()
+}
+
+unsafe extern "C" fn datetime_capi_date_from_date(
+    _year: i32,
+    _month: i32,
+    _day: i32,
+    _typ: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_datetime_from_date_and_time(
+    _year: i32,
+    _month: i32,
+    _day: i32,
+    _hour: i32,
+    _minute: i32,
+    _second: i32,
+    _microsecond: i32,
+    _tzinfo: *mut c_void,
+    _typ: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_time_from_time(
+    _hour: i32,
+    _minute: i32,
+    _second: i32,
+    _microsecond: i32,
+    _tzinfo: *mut c_void,
+    _typ: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_delta_from_delta(
+    _days: i32,
+    _seconds: i32,
+    _microseconds: i32,
+    _normalize: i32,
+    _typ: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_timezone_from_timezone(
+    _offset: *mut c_void,
+    _name: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_datetime_from_timestamp(
+    _typ: *mut c_void,
+    _args: *mut c_void,
+    _kwargs: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_date_from_timestamp(
+    _typ: *mut c_void,
+    _args: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_datetime_from_date_and_time_and_fold(
+    _year: i32,
+    _month: i32,
+    _day: i32,
+    _hour: i32,
+    _minute: i32,
+    _second: i32,
+    _microsecond: i32,
+    _tzinfo: *mut c_void,
+    _fold: i32,
+    _typ: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+unsafe extern "C" fn datetime_capi_time_from_time_and_fold(
+    _hour: i32,
+    _minute: i32,
+    _second: i32,
+    _microsecond: i32,
+    _tzinfo: *mut c_void,
+    _fold: i32,
+    _typ: *mut c_void,
+) -> *mut c_void {
+    unsafe { datetime_capi_unimplemented() }
+}
+
+static mut PYRS_DATETIME_CAPI: CpythonDateTimeCapi = CpythonDateTimeCapi {
+    date_type: std::ptr::null_mut(),
+    datetime_type: std::ptr::null_mut(),
+    time_type: std::ptr::null_mut(),
+    delta_type: std::ptr::null_mut(),
+    tzinfo_type: std::ptr::null_mut(),
+    timezone_utc: std::ptr::null_mut(),
+    date_from_date: datetime_capi_date_from_date,
+    datetime_from_date_and_time: datetime_capi_datetime_from_date_and_time,
+    time_from_time: datetime_capi_time_from_time,
+    delta_from_delta: datetime_capi_delta_from_delta,
+    timezone_from_timezone: datetime_capi_timezone_from_timezone,
+    datetime_from_timestamp: datetime_capi_datetime_from_timestamp,
+    date_from_timestamp: datetime_capi_date_from_timestamp,
+    datetime_from_date_and_time_and_fold: datetime_capi_datetime_from_date_and_time_and_fold,
+    time_from_time_and_fold: datetime_capi_time_from_time_and_fold,
+};
 
 #[repr(C)]
 pub struct CpythonBuffer {
@@ -191,6 +352,7 @@ unsafe extern "C" {
     fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> c_double;
     fn strtol(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_long;
     fn strtoul(nptr: *const c_char, endptr: *mut *mut c_char, base: c_int) -> c_ulong;
+    fn Py_BuildValue(format: *const c_char, ...) -> *mut c_void;
 }
 
 struct ModuleCapiContext {
@@ -204,6 +366,8 @@ struct ModuleCapiContext {
     scratch_isize_arrays: Vec<Vec<isize>>,
     buffer_pins: HashMap<PyrsObjectHandle, usize>,
     cpython_objects_by_ptr: HashMap<usize, PyrsObjectHandle>,
+    cpython_ptr_by_handle: HashMap<PyrsObjectHandle, *mut CpythonCompatObject>,
+    cpython_object_handles_by_id: HashMap<u64, PyrsObjectHandle>,
     cpython_allocations: Vec<*mut CpythonCompatObject>,
 }
 
@@ -262,6 +426,8 @@ impl ModuleCapiContext {
             scratch_isize_arrays: Vec::new(),
             buffer_pins: HashMap::new(),
             cpython_objects_by_ptr: HashMap::new(),
+            cpython_ptr_by_handle: HashMap::new(),
+            cpython_object_handles_by_id: HashMap::new(),
             cpython_allocations: Vec::new(),
         }
     }
@@ -284,15 +450,29 @@ impl ModuleCapiContext {
     }
 
     fn alloc_object(&mut self, value: Value) -> PyrsObjectHandle {
+        if let Some(object_id) = Self::identity_object_id(&value)
+            && let Some(existing) = self.cpython_object_handles_by_id.get(&object_id).copied()
+            && let Some(slot) = self.objects.get_mut(&existing)
+        {
+            slot.refcount = slot.refcount.saturating_add(1);
+            return existing;
+        }
         let handle = self.allocate_handle();
+        if let Some(object_id) = Self::identity_object_id(&value) {
+            self.cpython_object_handles_by_id.insert(object_id, handle);
+        }
         self.objects
             .insert(handle, CapiObjectSlot { value, refcount: 1 });
         handle
     }
 
     fn alloc_cpython_ptr_for_handle(&mut self, handle: PyrsObjectHandle) -> *mut c_void {
+        if let Some(existing) = self.cpython_ptr_by_handle.get(&handle).copied() {
+            return existing.cast();
+        }
         let raw = Box::into_raw(Box::new(CpythonCompatObject { handle }));
         self.cpython_objects_by_ptr.insert(raw as usize, handle);
+        self.cpython_ptr_by_handle.insert(handle, raw);
         self.cpython_allocations.push(raw);
         raw.cast()
     }
@@ -307,8 +487,40 @@ impl ModuleCapiContext {
     }
 
     fn cpython_value_from_ptr(&self, object: *mut c_void) -> Option<Value> {
+        if object.is_null() {
+            return None;
+        }
+        let raw = object as usize;
+        // Support direct singleton pointers used by C extensions.
+        if raw == std::ptr::addr_of!(_Py_NoneStruct) as usize {
+            return Some(Value::None);
+        }
+        if raw == std::ptr::addr_of!(_Py_TrueStruct) as usize {
+            return Some(Value::Bool(true));
+        }
+        if raw == std::ptr::addr_of!(_Py_FalseStruct) as usize {
+            return Some(Value::Bool(false));
+        }
         let handle = self.cpython_handle_from_ptr(object)?;
         self.object_value(handle)
+    }
+
+    fn cpython_value_from_ptr_or_proxy(&mut self, object: *mut c_void) -> Option<Value> {
+        if let Some(value) = self.cpython_value_from_ptr(object) {
+            return Some(value);
+        }
+        if object.is_null() || self.vm.is_null() {
+            return None;
+        }
+        // SAFETY: VM pointer is valid for the C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let proxy = vm.heap.alloc_dict(vec![(
+            Value::Str("__pyrs_cpython_proxy_ptr__".to_string()),
+            Value::Int(object as usize as i64),
+        )]);
+        let handle = self.alloc_object(proxy.clone());
+        self.cpython_objects_by_ptr.insert(object as usize, handle);
+        Some(proxy)
     }
 
     fn cpython_module_obj_from_ptr(&self, object: *mut c_void) -> Result<ObjRef, String> {
@@ -318,6 +530,30 @@ impl ModuleCapiContext {
         match value {
             Value::Module(module) => Ok(module),
             _ => Err("CPython object is not a module".to_string()),
+        }
+    }
+
+    fn identity_object_id(value: &Value) -> Option<u64> {
+        match value {
+            Value::List(obj)
+            | Value::Tuple(obj)
+            | Value::Dict(obj)
+            | Value::DictKeys(obj)
+            | Value::Set(obj)
+            | Value::FrozenSet(obj)
+            | Value::Bytes(obj)
+            | Value::ByteArray(obj)
+            | Value::MemoryView(obj)
+            | Value::Iterator(obj)
+            | Value::Generator(obj)
+            | Value::Module(obj)
+            | Value::Class(obj)
+            | Value::Instance(obj)
+            | Value::Super(obj)
+            | Value::Function(obj)
+            | Value::BoundMethod(obj)
+            | Value::Cell(obj) => Some(obj.id()),
+            _ => None,
         }
     }
 
@@ -665,12 +901,22 @@ impl ModuleCapiContext {
     fn decref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
         if let Some(slot) = self.objects.get_mut(&handle) {
             if slot.refcount == 0 {
-                self.objects.remove(&handle);
+                if let Some(removed) = self.objects.remove(&handle) {
+                    if let Some(object_id) = Self::identity_object_id(&removed.value) {
+                        self.cpython_object_handles_by_id.remove(&object_id);
+                    }
+                }
+                self.cpython_ptr_by_handle.remove(&handle);
                 return Ok(());
             }
             slot.refcount -= 1;
             if slot.refcount == 0 {
-                self.objects.remove(&handle);
+                if let Some(removed) = self.objects.remove(&handle) {
+                    if let Some(object_id) = Self::identity_object_id(&removed.value) {
+                        self.cpython_object_handles_by_id.remove(&object_id);
+                    }
+                }
+                self.cpython_ptr_by_handle.remove(&handle);
             }
             return Ok(());
         }
@@ -739,6 +985,9 @@ impl ModuleCapiContext {
         }
         // SAFETY: VM pointer is valid for the context lifetime.
         let vm = unsafe { &mut *self.vm };
+        if requested_name == PYRS_DATETIME_CAPSULE_NAME {
+            vm.ensure_builtin_datetime_capi_capsule();
+        }
         if let Some(entry) = vm.extension_capsule_registry.get(requested_name) {
             return Ok(entry.pointer as *mut c_void);
         }
@@ -3835,10 +4084,13 @@ pub unsafe extern "C" fn PyContextVar_New(
         let default = if default_value.is_null() {
             Value::None
         } else {
-            match context.cpython_value_from_ptr(default_value) {
+            match context.cpython_value_from_ptr_or_proxy(default_value) {
                 Some(value) => value,
                 None => {
-                    context.set_error("PyContextVar_New received unknown default pointer");
+                    context.set_error(format!(
+                        "PyContextVar_New received unknown default pointer {:p}",
+                        default_value
+                    ));
                     return std::ptr::null_mut();
                 }
             }
@@ -4379,7 +4631,7 @@ pub unsafe extern "C" fn PyTuple_SetItem(
             context.set_error("PyTuple_SetItem received unknown tuple pointer");
             return -1;
         };
-        let item_value = match context.cpython_value_from_ptr(item) {
+        let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
             Some(value) => value,
             None => {
                 context.set_error("PyTuple_SetItem received unknown item pointer");
@@ -4531,11 +4783,11 @@ pub unsafe extern "C" fn PyDict_SetItem(
             context.set_error("PyDict_SetItem expected dict object");
             return -1;
         };
-        let Some(key_value) = context.cpython_value_from_ptr(key) else {
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
             context.set_error("PyDict_SetItem received unknown key pointer");
             return -1;
         };
-        let Some(item_value) = context.cpython_value_from_ptr(value) else {
+        let Some(item_value) = context.cpython_value_from_ptr_or_proxy(value) else {
             context.set_error("PyDict_SetItem received unknown value pointer");
             return -1;
         };
@@ -5301,22 +5553,6 @@ pub unsafe extern "C" fn PyArg_UnpackTuple(
         return 0;
     }
     1
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Py_BuildValue(format: *const c_char) -> *mut c_void {
-    if format.is_null() {
-        return cpython_new_ptr_for_value(Value::None);
-    }
-    let Ok(spec) = (unsafe { c_name_to_string(format) }) else {
-        cpython_set_error("Py_BuildValue received invalid format string");
-        return std::ptr::null_mut();
-    };
-    if spec == "()" {
-        return unsafe { PyTuple_New(0) };
-    }
-    cpython_set_error("Py_BuildValue variadic value building is not implemented");
-    std::ptr::null_mut()
 }
 
 #[unsafe(no_mangle)]
@@ -7215,7 +7451,7 @@ static KEEP3_PYARG_UNPACKTUPLE: unsafe extern "C" fn(
     isize,
 ) -> i32 = PyArg_UnpackTuple;
 #[used]
-static KEEP3_PY_BUILDVALUE: unsafe extern "C" fn(*const c_char) -> *mut c_void = Py_BuildValue;
+static KEEP3_PY_BUILDVALUE: unsafe extern "C" fn(*const c_char, ...) -> *mut c_void = Py_BuildValue;
 #[used]
 static KEEP3_PYVECTORCALL_CALL: unsafe extern "C" fn(
     *mut c_void,
@@ -9750,6 +9986,33 @@ enum ExtensionExecutionPlan {
 }
 
 impl Vm {
+    fn ensure_builtin_datetime_capi_capsule(&mut self) {
+        if self
+            .extension_capsule_registry
+            .contains_key(PYRS_DATETIME_CAPSULE_NAME)
+        {
+            return;
+        }
+        // SAFETY: static capsule storage and exported type/singleton symbols live for
+        // process lifetime; registry stores raw pointers as opaque capsule payloads.
+        unsafe {
+            PYRS_DATETIME_CAPI.date_type = std::ptr::addr_of_mut!(PyType_Type).cast();
+            PYRS_DATETIME_CAPI.datetime_type = std::ptr::addr_of_mut!(PyType_Type).cast();
+            PYRS_DATETIME_CAPI.time_type = std::ptr::addr_of_mut!(PyType_Type).cast();
+            PYRS_DATETIME_CAPI.delta_type = std::ptr::addr_of_mut!(PyType_Type).cast();
+            PYRS_DATETIME_CAPI.tzinfo_type = std::ptr::addr_of_mut!(PyType_Type).cast();
+            PYRS_DATETIME_CAPI.timezone_utc = std::ptr::addr_of_mut!(_Py_NoneStruct).cast();
+            self.extension_capsule_registry.insert(
+                PYRS_DATETIME_CAPSULE_NAME.to_string(),
+                super::ExtensionCapsuleRegistryEntry {
+                    pointer: std::ptr::addr_of_mut!(PYRS_DATETIME_CAPI) as usize,
+                    context: 0,
+                    destructor: None,
+                },
+            );
+        }
+    }
+
     fn prune_extension_module_state_registry(&mut self) {
         let live_module_ids: std::collections::HashSet<u64> =
             self.modules.values().map(|module| module.id()).collect();
@@ -10066,10 +10329,25 @@ impl Vm {
         library_path: &Path,
         symbol: &str,
     ) -> Result<(), RuntimeError> {
+        let trace_slots = std::env::var_os("PYRS_TRACE_EXT_SLOTS").is_some();
+        if trace_slots {
+            eprintln!(
+                "[ext-load] module={} begin initialized={} in_progress={}",
+                module_name,
+                self.extension_initialized_names.contains(module_name),
+                self.extension_init_in_progress.contains(module_name)
+            );
+        }
         if self.extension_init_in_progress.contains(module_name) {
+            if trace_slots {
+                eprintln!("[ext-load] module={} skip=init_in_progress", module_name);
+            }
             return Ok(());
         }
         if self.extension_initialized_names.contains(module_name) {
+            if trace_slots {
+                eprintln!("[ext-load] module={} skip=already_initialized", module_name);
+            }
             if let Some(existing) = self.modules.get(module_name).cloned()
                 && existing.id() != module.id()
                 && let Object::Module(existing_data) = &*existing.kind()
@@ -10085,6 +10363,12 @@ impl Vm {
                 Some(Value::Bool(true))
             )
         {
+            if trace_slots {
+                eprintln!(
+                    "[ext-load] module={} skip=module_flag_initialized",
+                    module_name
+                );
+            }
             return Ok(());
         }
         self.extension_init_in_progress
@@ -10211,17 +10495,28 @@ impl Vm {
             } else {
                 let previous_context =
                     cpython_set_active_context(&mut module_ctx as *mut ModuleCapiContext);
-                // CPython multi-phase extensions return PyModuleDef* from PyInit_*.
-                // Try creating a module object from that definition.
-                let mut module_ptr = unsafe { PyModule_Create2(init_result, 1013) };
+                // CPython multi-phase extensions return `PyModuleDef*` from `PyInit_*`.
+                // Our import path already created the target module object, so use that
+                // module as the execution target and drive slot execution from `m_slots`.
+                let mut module_ptr =
+                    module_ctx.alloc_cpython_ptr_for_value(Value::Module(module.clone()));
                 if !module_ptr.is_null() {
                     let module_def = init_result.cast::<CpythonModuleDef>();
                     if !module_def.is_null() {
-                        let trace_slots = std::env::var_os("PYRS_TRACE_EXT_SLOTS").is_some();
                         // SAFETY: module_def points to extension-provided PyModuleDef layout.
                         let slots_ptr = unsafe { (*module_def).m_slots };
                         if !slots_ptr.is_null() {
+                            let mut slot_index = 0usize;
                             let mut cursor = slots_ptr.cast::<CpythonModuleDefSlot>();
+                            let module_spec_ptr = match &*module.kind() {
+                                Object::Module(module_data) => module_data
+                                    .globals
+                                    .get("__spec__")
+                                    .cloned()
+                                    .map(|spec| module_ctx.alloc_cpython_ptr_for_value(spec))
+                                    .unwrap_or(std::ptr::null_mut()),
+                                _ => std::ptr::null_mut(),
+                            };
                             loop {
                                 // SAFETY: slots array is terminated by {0, NULL}.
                                 let slot = unsafe { (*cursor).slot };
@@ -10232,8 +10527,8 @@ impl Vm {
                                 }
                                 if trace_slots {
                                     eprintln!(
-                                        "[ext-slot] module={} symbol={} slot={} value={:p}",
-                                        module_name, resolved_symbol, slot, value
+                                        "[ext-slot] module={} symbol={} index={} slot={} value={:p}",
+                                        module_name, resolved_symbol, slot_index, slot, value
                                     );
                                 }
                                 if slot == 1 && !value.is_null() {
@@ -10243,9 +10538,7 @@ impl Vm {
                                         *mut c_void,
                                     )
                                         -> *mut c_void = unsafe { std::mem::transmute(value) };
-                                    // We do not currently materialize an import spec object.
-                                    let created =
-                                        unsafe { create(std::ptr::null_mut(), init_result) };
+                                    let created = unsafe { create(module_spec_ptr, init_result) };
                                     if !created.is_null() {
                                         module_ptr = created;
                                     }
@@ -10260,6 +10553,12 @@ impl Vm {
                                             .last_error
                                             .clone()
                                             .unwrap_or_else(|| "Py_mod_exec failed".to_string());
+                                        if trace_slots {
+                                            eprintln!(
+                                                "[ext-load] module={} slot_exec_error={}",
+                                                module_name, message
+                                            );
+                                        }
                                         return Err(RuntimeError::new(format!(
                                             "extension '{}' initializer '{}' Py_mod_exec failed: {}",
                                             module_name, resolved_symbol, message
@@ -10268,12 +10567,16 @@ impl Vm {
                                 }
                                 // SAFETY: move to next slot entry.
                                 cursor = unsafe { cursor.add(1) };
+                                slot_index += 1;
                             }
                         }
                     }
                 }
                 cpython_set_active_context(previous_context);
                 if module_ptr.is_null() {
+                    if trace_slots {
+                        eprintln!("[ext-load] module={} unknown_module_ptr", module_name);
+                    }
                     return Err(RuntimeError::new(format!(
                         "extension '{}' initializer '{}' returned unknown PyObject pointer",
                         module_name, resolved_symbol
@@ -10289,12 +10592,23 @@ impl Vm {
                     })?
             };
             let Value::Module(returned_module) = returned else {
+                if trace_slots {
+                    eprintln!("[ext-load] module={} non_module_return", module_name);
+                }
                 return Err(RuntimeError::new(format!(
                     "extension '{}' initializer '{}' did not return a module object",
                     module_name, resolved_symbol
                 )));
             };
             if returned_module.id() != module.id() {
+                if trace_slots {
+                    eprintln!(
+                        "[ext-load] module={} unexpected_module_instance returned_id={} expected_id={}",
+                        module_name,
+                        returned_module.id(),
+                        module.id()
+                    );
+                }
                 return Err(RuntimeError::new(format!(
                     "extension '{}' initializer '{}' returned unexpected module instance",
                     module_name, resolved_symbol
@@ -10341,6 +10655,9 @@ impl Vm {
         );
         self.extension_initialized_names
             .insert(module_name.to_string());
+        if trace_slots {
+            eprintln!("[ext-load] module={} done", module_name);
+        }
         Ok(())
     }
 

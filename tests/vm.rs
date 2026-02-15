@@ -6773,6 +6773,37 @@ path_nonempty = len(sys.path) >= 1\n";
 }
 
 #[test]
+fn sys_modules_dict_identity_is_stable_across_imports() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock should be monotonic")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_sys_modules_identity_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+    std::fs::write(temp_dir.join("moda.py"), "value = 1\n").expect("moda source should be written");
+    std::fs::write(temp_dir.join("modb.py"), "value = 2\n").expect("modb source should be written");
+    let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\n\
+before = id(sys.modules)\n\
+sys.path.insert(0, {path_literal:?})\n\
+import moda\n\
+import modb\n\
+after = id(sys.modules)\n\
+same = before == after\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("same"), Some(Value::Bool(true)));
+    let _ = std::fs::remove_file(temp_dir.join("moda.py"));
+    let _ = std::fs::remove_file(temp_dir.join("modb.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn imports_random_module_and_is_seed_deterministic() {
     let source = "\
 import random\n\
