@@ -10,6 +10,7 @@ extern PyObject *PyTuple_New(long size);
 extern int PyTuple_SetItem(PyObject *tuple, long index, PyObject *item);
 extern PyObject *PyDict_New(void);
 extern int PyDict_SetItem(PyObject *dict, PyObject *key, PyObject *value);
+extern PyObject *PyObject_CallObject(PyObject *callable, PyObject *args);
 extern PyObject *PyUnicode_FromString(const char *s);
 extern PyObject *PyLong_FromLong(long value);
 extern PyObject *PyFloat_FromDouble(double value);
@@ -210,4 +211,105 @@ PyObject *Py_BuildValue(const char *format, ...) {
     va_end(ap);
     pyrs_py_buildvalue_error("Py_BuildValue format is not implemented");
     return NULL;
+}
+
+static int pyrs_count_call_units(const char *format) {
+    if (format == NULL) {
+        return -1;
+    }
+    size_t len = strlen(format);
+    size_t start = 0;
+    size_t end = len;
+    if (len >= 2 && format[0] == '(' && format[len - 1] == ')') {
+        start = 1;
+        end = len - 1;
+    }
+    int count = 0;
+    for (size_t i = start; i < end; i++) {
+        char unit = format[i];
+        if (unit == ',' || unit == ' ' || unit == '\t') {
+            continue;
+        }
+        if (unit == '(' || unit == ')' || unit == '{' || unit == '}' || unit == ':') {
+            return -1;
+        }
+        count++;
+    }
+    return count;
+}
+
+__attribute__((used)) PyObject *PyObject_CallFunction(PyObject *callable, const char *format, ...) {
+    if (callable == NULL) {
+        pyrs_py_buildvalue_error("PyObject_CallFunction received null callable");
+        return NULL;
+    }
+    if (format == NULL || format[0] == '\0' || strcmp(format, "()") == 0) {
+        return PyObject_CallObject(callable, NULL);
+    }
+
+    int unit_count = pyrs_count_call_units(format);
+    if (unit_count < 0) {
+        pyrs_py_buildvalue_error("PyObject_CallFunction format is not implemented");
+        return NULL;
+    }
+
+    PyObject *args_tuple = PyTuple_New((long)unit_count);
+    if (args_tuple == NULL) {
+        return NULL;
+    }
+
+    size_t len = strlen(format);
+    size_t start = 0;
+    size_t end = len;
+    if (len >= 2 && format[0] == '(' && format[len - 1] == ')') {
+        start = 1;
+        end = len - 1;
+    }
+
+    va_list ap;
+    va_start(ap, format);
+    int out_index = 0;
+    for (size_t i = start; i < end; i++) {
+        char unit = format[i];
+        if (unit == ',' || unit == ' ' || unit == '\t') {
+            continue;
+        }
+
+        PyObject *value = NULL;
+        if (unit == 'O' || unit == 'N') {
+            value = va_arg(ap, PyObject *);
+            if (unit == 'O' && value != NULL) {
+                Py_IncRef(value);
+            }
+        } else if (unit == 'i') {
+            int v = va_arg(ap, int);
+            value = PyLong_FromLong((long)v);
+        } else if (unit == 'l' || unit == 'k' || unit == 'n') {
+            long v = va_arg(ap, long);
+            value = PyLong_FromLong(v);
+        } else if (unit == 'd' || unit == 'f') {
+            double v = va_arg(ap, double);
+            value = PyFloat_FromDouble(v);
+        } else if (unit == 's') {
+            const char *text = va_arg(ap, const char *);
+            value = PyUnicode_FromString(text != NULL ? text : "");
+        } else {
+            va_end(ap);
+            Py_DecRef(args_tuple);
+            pyrs_py_buildvalue_error("PyObject_CallFunction format is not implemented");
+            return NULL;
+        }
+
+        if (value == NULL || PyTuple_SetItem(args_tuple, (long)out_index, value) != 0) {
+            va_end(ap);
+            Py_DecRef(args_tuple);
+            return NULL;
+        }
+        out_index++;
+    }
+    va_end(ap);
+
+    PyObject *result = PyObject_CallObject(callable, args_tuple);
+    Py_DecRef(args_tuple);
+    return result;
 }

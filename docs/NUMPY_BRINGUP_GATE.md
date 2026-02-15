@@ -98,7 +98,7 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
 - Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
-- Current first direct-mode blocker for NumPy is no longer missing symbols; `_multiarray_umath` now enters deeper `Py_mod_exec` paths but crashes in native CPU feature init (`npy_cpu_baseline_list`) after additional C-API/bootstrap work.
+- Current first direct-mode blocker for NumPy is no longer missing symbols or early CPU-init crashes; `_multiarray_umath` now reaches deeper `Py_mod_exec` semantic paths and currently fails on dtype-instance/type-identity validation during module bootstrap.
 - Recent direct-mode bring-up deltas:
   - `datetime.datetime_CAPI` capsule baseline is now registered for `PyCapsule_Import`.
   - `math.trunc` landed for stdlib parity used during NumPy init.
