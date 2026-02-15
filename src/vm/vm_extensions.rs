@@ -7392,40 +7392,6 @@ pub unsafe extern "C" fn PyMethod_New(function: *mut c_void, self_obj: *mut c_vo
     function
 }
 
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn pyrs_capi_pyarg_parsetuple_legacy(
-    _args: *mut c_void,
-    _format: *const c_char,
-) -> i32 {
-    let format_text = if _format.is_null() {
-        "<null>".to_string()
-    } else {
-        unsafe { c_name_to_string(_format) }.unwrap_or_else(|_| "<invalid>".to_string())
-    };
-    cpython_set_error(format!(
-        "PyArg_ParseTuple variadic output parsing is not implemented (format={format_text})"
-    ));
-    0
-}
-
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn pyrs_capi_pyarg_parsetuple_keywords_legacy(
-    _args: *mut c_void,
-    _kwargs: *mut c_void,
-    _format: *const c_char,
-    _keywords: *mut *const c_char,
-) -> i32 {
-    let format_text = if _format.is_null() {
-        "<null>".to_string()
-    } else {
-        unsafe { c_name_to_string(_format) }.unwrap_or_else(|_| "<invalid>".to_string())
-    };
-    cpython_set_error(format!(
-        "PyArg_ParseTupleAndKeywords variadic output parsing is not implemented (format={format_text})"
-    ));
-    0
-}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyArg_VaParseTupleAndKeywords(
     _args: *mut c_void,
