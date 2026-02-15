@@ -19,6 +19,7 @@ These are intentionally small but strict: they verify import path + first ndarra
 ## Import-Probe Command
 
 ```bash
+PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
   --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
@@ -33,6 +34,7 @@ Optional strict mode (`--strict`) returns non-zero if any gate fails.
 To distinguish environment absence (`module-not-found`) from runtime ABI issues, you can probe a local Python for an installed NumPy and reuse its site-packages root:
 
 ```bash
+PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
   --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
@@ -52,6 +54,7 @@ When `FOUND`, the probe injects the detected site-packages root into `PYTHONPATH
 When a local NumPy source checkout is available, run:
 
 ```bash
+PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1 \
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
   --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
@@ -70,8 +73,10 @@ If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the r
 
 ## Current Expected State
 
-- Before real C-extension substrate closure, this probe is expected to report failures.
-- Import-probe and source-build mode both produce actionable failure diagnostics in JSON.
+- `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1` enables an explicit CPython-ABI bridge path for NumPy module imports (`numpy` and `numpy.*`).
+- With that mode enabled and local NumPy available, both gate cases are expected to pass.
+- Without that mode enabled, failures are expected until direct CPython-extension ABI closure is complete.
+- Import-probe and source-build modes both produce actionable failure diagnostics in JSON.
 - Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`abi-mode-mismatch`, `missing-symbol`, etc.).
 - Probe output now classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `abi-mode-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Failures are signal, not noise; they should be used to drive substrate work in:

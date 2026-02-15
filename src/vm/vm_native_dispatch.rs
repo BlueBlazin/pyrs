@@ -5718,6 +5718,18 @@ impl Vm {
             BuiltinFunction::Compile => self.builtin_compile(args, kwargs),
             BuiltinFunction::PlatformLibcVer => self.builtin_platform_libc_ver(args, kwargs),
             BuiltinFunction::PlatformWin32IsIot => self.builtin_platform_win32_is_iot(args, kwargs),
+            BuiltinFunction::CpythonProxyModuleGetAttr => {
+                self.builtin_cpython_proxy_module_getattr(args, kwargs)
+            }
+            BuiltinFunction::CpythonProxyGetAttribute => {
+                self.builtin_cpython_proxy_getattribute(args, kwargs)
+            }
+            BuiltinFunction::CpythonProxyCall => self.builtin_cpython_proxy_call(args, kwargs),
+            BuiltinFunction::CpythonProxyRepr => self.builtin_cpython_proxy_repr(args, kwargs),
+            BuiltinFunction::CpythonProxyStr => self.builtin_cpython_proxy_str(args, kwargs),
+            BuiltinFunction::CpythonProxyBool => self.builtin_cpython_proxy_bool(args, kwargs),
+            BuiltinFunction::CpythonProxyInt => self.builtin_cpython_proxy_int(args, kwargs),
+            BuiltinFunction::CpythonProxyFloat => self.builtin_cpython_proxy_float(args, kwargs),
             BuiltinFunction::GetAttr => self.builtin_getattr(args, kwargs),
             BuiltinFunction::SetAttr => self.builtin_setattr_with_class_version(args, kwargs),
             BuiltinFunction::DelAttr => self.builtin_delattr_with_class_version(args, kwargs),

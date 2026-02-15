@@ -1684,7 +1684,10 @@ impl Vm {
                 ("encode", BuiltinFunction::CodecsEncode),
                 ("decode", BuiltinFunction::CodecsDecode),
                 ("escape_decode", BuiltinFunction::CodecsEscapeDecode),
-                ("make_identity_dict", BuiltinFunction::CodecsMakeIdentityDict),
+                (
+                    "make_identity_dict",
+                    BuiltinFunction::CodecsMakeIdentityDict,
+                ),
                 ("lookup", BuiltinFunction::CodecsLookup),
                 ("register", BuiltinFunction::CodecsRegister),
                 ("unregister", BuiltinFunction::CodecsUnregister),
@@ -6884,6 +6887,20 @@ impl Vm {
                 return self.return_imported_module(module, caller_depth);
             }
         }
+        if self.cpython_abi_bridge_enabled_for_module(name) {
+            match self.import_module_via_cpython_abi_bridge(name) {
+                Ok(module) => return self.return_imported_module(module, caller_depth),
+                Err(err) => {
+                    if std::env::var_os("PYRS_TRACE_IMPORT").is_some() {
+                        eprintln!(
+                            "[import] cpython-abi-bridge miss for module '{}': {}",
+                            name, err.message
+                        );
+                    }
+                }
+            }
+        }
+
         match self.load_module(name) {
             Ok(module) => self.return_imported_module(module, caller_depth),
             Err(load_err) => {

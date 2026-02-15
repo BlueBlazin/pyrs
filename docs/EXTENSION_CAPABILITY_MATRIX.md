@@ -48,8 +48,8 @@ Legend:
 | Gate | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
 | Extension smoke gate (compiled native fixture + `hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | CI covers manifest-only, compiled-manifest, direct shared-object, tagged-filename, len/getitem + iterator + mixed-surface cross-API fixtures, invalid-handle resilience fixture, and error-path fixtures. |
-| NumPy import gate (`import numpy`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Probe scaffold is landed; gate currently expected-red until C-extension substrate matures. |
-| NumPy ndarray smoke (`np.array([...]).sum()`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` | Same as above. |
+| NumPy import gate (`import numpy`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` + `perf/numpy_gate_latest.json` | CPython-ABI bridge mode (`PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1`) now runs `import numpy` green in local probe runs; direct native CPython-extension execution mode remains open. |
+| NumPy ndarray smoke (`np.array([...]).sum()`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` + `perf/numpy_gate_latest.json` | CPython-ABI bridge mode (`PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1`) now runs `int(np.array([1,2,3]).sum()) == 6` green in local probe runs; direct native CPython-extension execution mode remains open. |
 | Pandas/matplotlib/scipy smoke gates | PLANNED | milestone-15 bring-up | - | Starts after NumPy substrate closure. |
 
 ## Policy

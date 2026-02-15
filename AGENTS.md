@@ -108,6 +108,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_latest.json` and `perf/numpy_gate_source_build_latest.json`).
   - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
   - NumPy probe diagnostics now distinguish ABI-mode mismatches (`pyrs_extension_init_v1` vs CPython `PyInit_*`) from generic missing-symbol failures.
+  - CPython-ABI bridge mode for NumPy is now landed behind `PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1`: `import numpy` and `int(np.array([1,2,3]).sum()) == 6` are green in local probe runs (`perf/numpy_gate_latest.json`).
 - Newly landed parity checkpoints:
   - `math.gcd()` baseline (unblocks `fractions` common path).
   - `threading.Condition.__enter__/__exit__` baseline.

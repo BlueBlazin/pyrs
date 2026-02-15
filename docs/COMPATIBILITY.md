@@ -56,6 +56,7 @@ Status:
 - `[~]` `libpyrs-capi` v1 header/symbol slice landed (`include/pyrs_capi.h`, `docs/EXTENSION_CAPI_V1.md`), including positional+keyword callable registration, init-scoped object handles/type getters, and import-time error state; broader runtime contract still pending
 - `[~]` Extension source-build packaging substrate is in progress (`_sysconfigdata__*` baseline now provides `SOABI`/`EXT_SUFFIX`/`CC`/`LDSHARED` and include/lib hints)
 - `[~]` NumPy bring-up import + source-build probes landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`)
+- `[~]` CPython-ABI bridge mode for NumPy (`PYRS_ENABLE_CPYTHON_ABI_BRIDGE=1`) now passes local probe gates (`import numpy`, `int(np.array([1,2,3]).sum())`)
 - `[ ]` PEP 489 multi-phase init and module lifecycle closure
 - `[ ]` NumPy/SciPy/Pandas/Matplotlib production import + functional gate closure
 
