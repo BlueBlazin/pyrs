@@ -111,7 +111,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - direct shared-object imports now fall back from `pyrs_extension_init_v1` to `PyInit_<module>` when CPython-style symbols are present.
   - CPython single-phase init compatibility slice is landed and smoke-covered (`tests/extension_smoke.rs::imports_direct_cpython_style_single_phase_extension`): `PyModule_Create2`, `PyModule_AddObjectRef`, `PyModule_AddIntConstant`, `PyModule_AddStringConstant`, core constructors, `PyErr_*`, and `Py_[X]IncRef/Py_[X]DecRef`.
   - direct CPython compatibility surface now exports the `_multiarray_umath` unresolved symbol set (public `Py*` plus internal `_Py*`) so NumPy reaches module-init execution instead of failing at dynamic-link resolution.
-  - current NumPy direct-mode blocker is no longer symbol resolution; it is module-init semantics: `_multiarray_umath` `Py_mod_exec` currently fails with `cannot load module more than once per process`.
+  - direct NumPy bring-up now includes `datetime.datetime_CAPI` capsule registry baseline, `math.trunc`, and partial `_Py_BuildValue` varargs coverage via C shim (`build.rs`, `src/vm/cpython_varargs_shim.c`).
+  - current NumPy direct-mode blocker is no longer link-time symbols; `_multiarray_umath` now enters deeper native init and currently crashes in `npy_cpu_baseline_list` during `Py_mod_exec` paths.
   - extension slot tracing is now available via `PYRS_TRACE_EXT_SLOTS=1` for `Py_mod_create` / `Py_mod_exec` debugging in direct `PyInit_*` mode.
   - CPython-ABI bridge runtime/env path has been removed; scientific-stack gating is now direct-mode only (`perf/numpy_gate_direct_latest.json`).
   - when `VIRTUAL_ENV` is set, runtime now sets `sys.prefix`/`sys.exec_prefix` to the venv root so startup `site` handling picks up venv `site-packages`.
@@ -119,6 +120,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `math.gcd()` baseline (unblocks `fractions` common path).
   - `threading.Condition.__enter__/__exit__` baseline.
   - `datetime.date/datetime.strftime()` baseline.
+  - `math.trunc()` baseline.
   - `_operator._compare_digest` baseline and `_operator` module registration.
   - `collections.deque` class surface (`__init__`, `append*`, `pop*`, `extend*`, `clear`, `__len__`, `__iter__`) wired into module bootstrap.
   - `bytes` / `bytearray` constructor VM paths now accept generator/iterator/iterable payloads and explicit `encoding`/`errors` argument forms.
