@@ -9842,6 +9842,141 @@ PyInit_cpython_api_batch68_probe(void) {
 }
 
 #[test]
+fn cpython_compat_runtime_unicode_abi_batch69_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch69 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch69 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch69");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch69_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *compiled = Py_CompileString("x = 1\n", "<batch69>", 257);
+    int compile_ok = (compiled != 0) ? 1 : 0;
+    Py_XDECREF(compiled);
+
+    PyObject *utf7 = PyUnicode_DecodeUTF7("hello", 5, 0);
+    int utf7_ok = (utf7 != 0) ? 1 : 0;
+
+    PyObject *encoded = utf7 ? PyUnicode_EncodeCodePage(65001, utf7, 0) : 0;
+    int encode_cp_ok = (encoded != 0) ? 1 : 0;
+    Py_XDECREF(encoded);
+
+    PyObject *decoded_charmap = PyUnicode_DecodeCharmap("abc", 3, 0, 0);
+    int decode_charmap_ok = (decoded_charmap != 0) ? 1 : 0;
+    Py_XDECREF(decoded_charmap);
+
+    PyObject *mapping_src = PyUnicode_FromString("abc");
+    PyObject *mapping = mapping_src ? PyUnicode_BuildEncodingMap(mapping_src) : 0;
+    int build_map_ok = (mapping != 0) ? 1 : 0;
+    Py_XDECREF(mapping);
+    Py_XDECREF(mapping_src);
+
+    PyObject *src = PyUnicode_FromString("abc");
+    PyObject *mbcs = src ? PyUnicode_AsMBCSString(src) : 0;
+    int as_mbcs_ok = (mbcs != 0) ? 1 : 0;
+    Py_XDECREF(mbcs);
+
+    PyObject *as_charmap = src ? PyUnicode_AsCharmapString(src, 0) : 0;
+    int as_charmap_ok = (as_charmap != 0) ? 1 : 0;
+    Py_XDECREF(as_charmap);
+
+    PyObject *translate_table = PyDict_New();
+    PyObject *translated = (src && translate_table) ? PyUnicode_Translate(src, translate_table, 0) : 0;
+    int translate_ok = (translated != 0) ? 1 : 0;
+    Py_XDECREF(translated);
+    Py_XDECREF(translate_table);
+
+    PyObject *resized = src;
+    int resize_rc = PyUnicode_Resize(&resized, 5);
+    int resize_ok = (resize_rc == 0 && resized != 0 && PyUnicode_GetLength(resized) == 5) ? 1 : 0;
+    Py_XDECREF(resized);
+
+    PyObject *one = PyLong_FromLong(1);
+    PyObject *one_type = one ? PyObject_Type(one) : 0;
+    Py_XDECREF(one);
+    Py_XDECREF(one_type);
+    Py_XDECREF(utf7);
+
+    return Py_BuildValue(
+        "(iiiiiiii)",
+        compile_ok,
+        utf7_ok,
+        encode_cp_ok,
+        decode_charmap_ok,
+        build_map_ok,
+        as_mbcs_ok,
+        as_charmap_ok,
+        translate_ok,
+        resize_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe runtime/unicode ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch69_probe",
+    "cpython api batch69 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch69_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch69_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch69 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch69_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch69 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

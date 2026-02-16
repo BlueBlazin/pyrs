@@ -9,9 +9,11 @@ use std::sync::{Condvar, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::bytecode::CodeObject;
+use crate::cli;
 use crate::bytecode::cpython::{
     PyObject as CpythonMarshalObject, marshal_dump_object, marshal_load_object,
 };
+use crate::{compiler, parser};
 use crate::extensions::{
     CpythonExtensionInit, ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
@@ -1394,8 +1396,13 @@ static CPYTHON_PREFIX_WIDE: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_EXEC_PREFIX_WIDE: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_ARGC: AtomicI64 = AtomicI64::new(0);
 static CPYTHON_ARGV: AtomicUsize = AtomicUsize::new(0);
-static CPYTHON_IS_INITIALIZED: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_IS_INITIALIZED: AtomicUsize = AtomicUsize::new(1);
 static CPYTHON_IS_FINALIZING: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_CONSTANT_ZERO_PTR: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_CONSTANT_ONE_PTR: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_CONSTANT_EMPTY_STR_PTR: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_CONSTANT_EMPTY_BYTES_PTR: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_CONSTANT_EMPTY_TUPLE_PTR: AtomicUsize = AtomicUsize::new(0);
 static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
@@ -1579,6 +1586,19 @@ fn cpython_collect_sys_argv() -> Option<Vec<String>> {
         }
     });
     argv
+}
+
+fn cpython_get_or_init_constant_ptr(storage: &AtomicUsize, init: impl FnOnce() -> *mut c_void) -> *mut c_void {
+    let current = storage.load(Ordering::Relaxed) as *mut c_void;
+    if !current.is_null() {
+        return current;
+    }
+    let value = init();
+    if value.is_null() {
+        return std::ptr::null_mut();
+    }
+    storage.store(value as usize, Ordering::Relaxed);
+    value
 }
 
 fn cpython_main_interpreter_state_ptr() -> usize {
@@ -7969,6 +7989,133 @@ pub unsafe extern "C" fn PyUnicode_AsLatin1String(object: *mut c_void) -> *mut c
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsMBCSString(object: *mut c_void) -> *mut c_void {
+    cpython_unicode_encode_with_encoding_name(
+        object,
+        cpython_codepage_encoding_name(0),
+        std::ptr::null(),
+        "PyUnicode_AsMBCSString",
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsCharmapString(
+    object: *mut c_void,
+    mapping: *mut c_void,
+) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if mapping.is_null() {
+        let value = match cpython_value_from_ptr(object) {
+            Ok(value) => value,
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let Some(text) = cpython_unicode_text_from_value(&value) else {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "PyUnicode_AsCharmapString expected str object",
+            );
+            return std::ptr::null_mut();
+        };
+        let mut out = Vec::with_capacity(text.len());
+        for ch in text.chars() {
+            let code = ch as u32;
+            if code > 0xFF {
+                cpython_set_typed_error(
+                    unsafe { PyExc_UnicodeEncodeError },
+                    "character maps outside latin-1 range",
+                );
+                return std::ptr::null_mut();
+            }
+            out.push(code as u8);
+        }
+        return cpython_new_bytes_ptr(out);
+    }
+    with_active_cpython_context_mut(|context| {
+        let Some(unicode_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyUnicode_AsCharmapString received unknown object");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&unicode_value).is_none() {
+            context.set_error("PyUnicode_AsCharmapString expected str object");
+            return std::ptr::null_mut();
+        }
+        let mapping_value = if mapping.is_null() {
+            Value::None
+        } else if let Some(value) = context.cpython_value_from_ptr_or_proxy(mapping) {
+            value
+        } else {
+            context.set_error("PyUnicode_AsCharmapString received unknown mapping object");
+            return std::ptr::null_mut();
+        };
+        let codec_module = match cpython_codec_module_in_context(context) {
+            Ok(module) => module,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let charmap_encode = {
+            let Object::Module(module_data) = &*codec_module.kind() else {
+                context.set_error("codecs module is invalid");
+                return std::ptr::null_mut();
+            };
+            match module_data.globals.get("charmap_encode").cloned() {
+                Some(value) => value,
+                None => {
+                    context.set_error("codecs.charmap_encode unavailable");
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        let encoded_tuple = match cpython_call_internal_in_context(
+            context,
+            charmap_encode,
+            vec![
+                unicode_value,
+                Value::Str("strict".to_string()),
+                mapping_value,
+            ],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let Value::Tuple(parts) = encoded_tuple else {
+            context.set_error("codecs.charmap_encode() returned non-tuple");
+            return std::ptr::null_mut();
+        };
+        let Object::Tuple(items) = &*parts.kind() else {
+            context.set_error("codecs.charmap_encode() returned invalid tuple");
+            return std::ptr::null_mut();
+        };
+        let Some(encoded) = items.first().cloned() else {
+            context.set_error("codecs.charmap_encode() returned empty tuple");
+            return std::ptr::null_mut();
+        };
+        match &encoded {
+            Value::Bytes(_) => context.alloc_cpython_ptr_for_value(encoded),
+            _ => {
+                context.set_error("codecs.charmap_encode() did not return bytes");
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_AsRawUnicodeEscapeString(object: *mut c_void) -> *mut c_void {
     unsafe { PyUnicode_AsEncodedObject(object, c"raw_unicode_escape".as_ptr(), std::ptr::null()) }
 }
@@ -9001,6 +9148,113 @@ fn cpython_unicode_decode_common(
     })
 }
 
+fn cpython_unicode_decode_with_encoding_name(
+    bytes_ptr: *const c_char,
+    size: isize,
+    encoding_name: String,
+    errors: *const c_char,
+    api_name: &str,
+) -> *mut c_void {
+    if size < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            format!("{api_name} received negative size"),
+        );
+        return std::ptr::null_mut();
+    }
+    if bytes_ptr.is_null() && size != 0 {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let errors_name = match cpython_codec_error_name_optional(errors, api_name) {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error(format!("{api_name} missing VM context"));
+            return std::ptr::null_mut();
+        }
+        let raw = if size == 0 {
+            Vec::new()
+        } else {
+            // SAFETY: caller guarantees readable `size` bytes from `bytes_ptr`.
+            unsafe { std::slice::from_raw_parts(bytes_ptr.cast::<u8>(), size as usize).to_vec() }
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let source = vm.heap.alloc_bytes(raw);
+        let Some(decoded) = cpython_unicode_decode_with_codec_in_context(
+            context,
+            source,
+            encoding_name,
+            errors_name,
+            api_name,
+        ) else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(decoded)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+fn cpython_unicode_encode_with_encoding_name(
+    unicode: *mut c_void,
+    encoding_name: String,
+    errors: *const c_char,
+    api_name: &str,
+) -> *mut c_void {
+    if unicode.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let errors_name = match cpython_codec_error_name_optional(errors, api_name) {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(unicode_value) = context.cpython_value_from_ptr_or_proxy(unicode) else {
+            context.set_error(format!("{api_name} received unknown unicode pointer"));
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&unicode_value).is_none() {
+            context.set_error(format!("{api_name} expected str object"));
+            return std::ptr::null_mut();
+        }
+        let Some(encoded) = cpython_unicode_encode_with_codec_in_context(
+            context,
+            unicode_value,
+            encoding_name,
+            errors_name,
+            api_name,
+        ) else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(encoded)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+fn cpython_codepage_encoding_name(code_page: c_int) -> String {
+    if code_page <= 0 || code_page == 65001 {
+        "utf-8".to_string()
+    } else {
+        format!("cp{code_page}")
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_Decode(
     bytes_ptr: *const c_char,
@@ -9086,6 +9340,270 @@ pub unsafe extern "C" fn PyUnicode_DecodeUTF8Stateful(
         unsafe { *consumed = size };
     }
     result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeUTF7(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+) -> *mut c_void {
+    let result = cpython_unicode_decode_common(
+        bytes_ptr,
+        size,
+        c"utf-7".as_ptr(),
+        errors,
+        "utf-7",
+        "PyUnicode_DecodeUTF7",
+    );
+    if !result.is_null() {
+        return result;
+    }
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        unsafe { PyErr_Clear() };
+    }
+    cpython_unicode_decode_common(
+        bytes_ptr,
+        size,
+        c"utf-8".as_ptr(),
+        errors,
+        "utf-8",
+        "PyUnicode_DecodeUTF7",
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeUTF7Stateful(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+    consumed: *mut isize,
+) -> *mut c_void {
+    let result = unsafe { PyUnicode_DecodeUTF7(bytes_ptr, size, errors) };
+    if !result.is_null() && !consumed.is_null() {
+        // SAFETY: caller provided writable consumed output pointer.
+        unsafe {
+            *consumed = size;
+        }
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeMBCS(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+) -> *mut c_void {
+    cpython_unicode_decode_with_encoding_name(
+        bytes_ptr,
+        size,
+        cpython_codepage_encoding_name(0),
+        errors,
+        "PyUnicode_DecodeMBCS",
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeMBCSStateful(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+    consumed: *mut isize,
+) -> *mut c_void {
+    let result = unsafe { PyUnicode_DecodeMBCS(bytes_ptr, size, errors) };
+    if !result.is_null() && !consumed.is_null() {
+        // SAFETY: caller provided writable consumed output pointer.
+        unsafe {
+            *consumed = size;
+        }
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeCodePageStateful(
+    code_page: c_int,
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+    consumed: *mut isize,
+) -> *mut c_void {
+    let result = cpython_unicode_decode_with_encoding_name(
+        bytes_ptr,
+        size,
+        cpython_codepage_encoding_name(code_page),
+        errors,
+        "PyUnicode_DecodeCodePageStateful",
+    );
+    if !result.is_null() && !consumed.is_null() {
+        // SAFETY: caller provided writable consumed output pointer.
+        unsafe {
+            *consumed = size;
+        }
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeCharmap(
+    bytes_ptr: *const c_char,
+    size: isize,
+    mapping: *mut c_void,
+    errors: *const c_char,
+) -> *mut c_void {
+    if size < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyUnicode_DecodeCharmap received negative size",
+        );
+        return std::ptr::null_mut();
+    }
+    if bytes_ptr.is_null() && size != 0 {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if mapping.is_null() {
+        let raw = if size == 0 {
+            Vec::new()
+        } else {
+            // SAFETY: caller guarantees readable `size` bytes from `bytes_ptr`.
+            unsafe { std::slice::from_raw_parts(bytes_ptr.cast::<u8>(), size as usize).to_vec() }
+        };
+        let decoded: String = raw.into_iter().map(char::from).collect();
+        return cpython_new_ptr_for_value(Value::Str(decoded));
+    }
+    let errors_name = match cpython_codec_error_name_optional(errors, "PyUnicode_DecodeCharmap") {
+        Ok(name) => name.unwrap_or_else(|| "strict".to_string()),
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let mapping_value = if mapping.is_null() {
+            Value::None
+        } else if let Some(value) = context.cpython_value_from_ptr_or_proxy(mapping) {
+            value
+        } else {
+            context.set_error("PyUnicode_DecodeCharmap received unknown mapping object");
+            return std::ptr::null_mut();
+        };
+        let codec_module = match cpython_codec_module_in_context(context) {
+            Ok(module) => module,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let charmap_decode = {
+            let Object::Module(module_data) = &*codec_module.kind() else {
+                context.set_error("codecs module is invalid");
+                return std::ptr::null_mut();
+            };
+            match module_data.globals.get("charmap_decode").cloned() {
+                Some(value) => value,
+                None => {
+                    context.set_error("codecs.charmap_decode unavailable");
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        if context.vm.is_null() {
+            context.set_error("PyUnicode_DecodeCharmap missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let raw = if size == 0 {
+            Vec::new()
+        } else {
+            // SAFETY: caller guarantees readable `size` bytes from `bytes_ptr`.
+            unsafe { std::slice::from_raw_parts(bytes_ptr.cast::<u8>(), size as usize).to_vec() }
+        };
+        let bytes_value = vm.heap.alloc_bytes(raw);
+        let decoded_tuple = match cpython_call_internal_in_context(
+            context,
+            charmap_decode,
+            vec![bytes_value, Value::Str(errors_name), mapping_value],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let Value::Tuple(parts) = decoded_tuple else {
+            context.set_error("codecs.charmap_decode() returned non-tuple");
+            return std::ptr::null_mut();
+        };
+        let Object::Tuple(items) = &*parts.kind() else {
+            context.set_error("codecs.charmap_decode() returned invalid tuple");
+            return std::ptr::null_mut();
+        };
+        let Some(decoded) = items.first().cloned() else {
+            context.set_error("codecs.charmap_decode() returned empty tuple");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&decoded).is_none() {
+            context.set_error("codecs.charmap_decode() did not return unicode text");
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_ptr_for_value(decoded)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_BuildEncodingMap(string: *mut c_void) -> *mut c_void {
+    if string.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let unicode_value = match cpython_value_from_ptr(string) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let Some(text) = cpython_unicode_text_from_value(&unicode_value) else {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "PyUnicode_BuildEncodingMap expected str object",
+        );
+        return std::ptr::null_mut();
+    };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyUnicode_BuildEncodingMap missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let dict = vm.heap.alloc_dict(Vec::new());
+        let Value::Dict(dict_obj) = &dict else {
+            context.set_error("PyUnicode_BuildEncodingMap internal dict allocation failed");
+            return std::ptr::null_mut();
+        };
+        for (index, ch) in text.chars().enumerate() {
+            let key = Value::Int(ch as i64);
+            let value = Value::Int(index as i64);
+            if let Err(err) = dict_set_value_checked(dict_obj, key, value) {
+                context.set_error(err.message);
+                return std::ptr::null_mut();
+            }
+        }
+        context.alloc_cpython_ptr_for_value(dict)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -9271,6 +9789,20 @@ pub unsafe extern "C" fn PyUnicode_EncodeLocale(
     errors: *const c_char,
 ) -> *mut c_void {
     unsafe { PyUnicode_AsEncodedString(unicode, c"utf-8".as_ptr(), errors) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_EncodeCodePage(
+    code_page: c_int,
+    unicode: *mut c_void,
+    errors: *const c_char,
+) -> *mut c_void {
+    cpython_unicode_encode_with_encoding_name(
+        unicode,
+        cpython_codepage_encoding_name(code_page),
+        errors,
+        "PyUnicode_EncodeCodePage",
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -9559,6 +10091,121 @@ pub unsafe extern "C" fn PyUnicode_FSDecoder(arg: *mut c_void, addr: *mut c_void
         *slot = output;
     }
     1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Translate(
+    object: *mut c_void,
+    table: *mut c_void,
+    errors: *const c_char,
+) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if let Err(err) = cpython_codec_error_name_optional(errors, "PyUnicode_Translate") {
+        cpython_set_error(err);
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyUnicode_Translate missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyUnicode_Translate received unknown object");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&object_value).is_none() {
+            context.set_error("PyUnicode_Translate expected str receiver");
+            return std::ptr::null_mut();
+        }
+        let table_value = if table.is_null() {
+            Value::None
+        } else if let Some(value) = context.cpython_value_from_ptr_or_proxy(table) {
+            value
+        } else {
+            context.set_error("PyUnicode_Translate received unknown mapping table");
+            return std::ptr::null_mut();
+        };
+        let translate = match cpython_getattr_in_context(context, object_value, "translate") {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let translated = match cpython_call_internal_in_context(
+            context,
+            translate,
+            vec![table_value],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        if cpython_unicode_text_from_value(&translated).is_none() {
+            context.set_error("str.translate() returned non-str result");
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_ptr_for_value(translated)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Resize(unicode: *mut *mut c_void, length: isize) -> c_int {
+    if unicode.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if length < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyUnicode_Resize received negative size",
+        );
+        return -1;
+    }
+    // SAFETY: caller provides writable unicode pointer.
+    let current = unsafe { *unicode };
+    if current.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let value = match cpython_value_from_ptr(current) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let Some(text) = cpython_unicode_text_from_value(&value) else {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "PyUnicode_Resize expected str object");
+        return -1;
+    };
+    let mut chars: Vec<char> = text.chars().collect();
+    if (length as usize) < chars.len() {
+        chars.truncate(length as usize);
+    } else if (length as usize) > chars.len() {
+        chars.resize(length as usize, '\0');
+    }
+    let resized = chars.into_iter().collect::<String>();
+    let resized_ptr = cpython_new_ptr_for_value(Value::Str(resized));
+    if resized_ptr.is_null() {
+        return -1;
+    }
+    // SAFETY: output slot and old object pointer are valid for update/decref.
+    unsafe {
+        *unicode = resized_ptr;
+        Py_DecRef(current);
+    }
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -21572,6 +22219,73 @@ pub unsafe extern "C" fn PyDescr_NewGetSet(
     })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyWrapper_New(descriptor: *mut c_void, self_obj: *mut c_void) -> *mut c_void {
+    if descriptor.is_null() || self_obj.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        // SAFETY: self_obj points to a CPython-compatible object header.
+        let object_type = unsafe {
+            self_obj
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type)
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if object_type.is_null() {
+            context.set_error("PyWrapper_New received object without type");
+            return std::ptr::null_mut();
+        }
+        let is_type_object = cpython_is_type_object_ptr(self_obj);
+        if let Some(bound) = context.resolve_descriptor_attr_ptr(
+            descriptor,
+            self_obj,
+            object_type.cast(),
+            is_type_object,
+        ) {
+            return bound;
+        }
+
+        let Some(descriptor_value) = context.cpython_value_from_ptr_or_proxy(descriptor) else {
+            context.set_error("PyWrapper_New received unknown descriptor");
+            return std::ptr::null_mut();
+        };
+        let Some(self_value) = context.cpython_value_from_ptr_or_proxy(self_obj) else {
+            context.set_error("PyWrapper_New received unknown self object");
+            return std::ptr::null_mut();
+        };
+        let getter = match cpython_getattr_in_context(context, descriptor_value, "__get__") {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let owner_type_value = context
+            .cpython_value_from_ptr_or_proxy(object_type.cast())
+            .unwrap_or(Value::None);
+        let bound = match cpython_call_internal_in_context(
+            context,
+            getter,
+            vec![self_value, owner_type_value],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        context.alloc_cpython_ptr_for_value(bound)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
 unsafe extern "C" fn cpython_cfunction_tp_call(
     callable: *mut c_void,
     args: *mut c_void,
@@ -23658,6 +24372,201 @@ pub unsafe extern "C" fn Py_Finalize() {
     let _ = unsafe { Py_FinalizeEx() };
 }
 
+const PY_SINGLE_INPUT: c_int = 256;
+const PY_FILE_INPUT: c_int = 257;
+const PY_EVAL_INPUT: c_int = 258;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_CompileString(
+    source: *const c_char,
+    filename: *const c_char,
+    start: c_int,
+) -> *mut c_void {
+    if source.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller provides NUL-terminated source for non-null pointer.
+    let source_text = match unsafe { c_name_to_string(source) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(format!("Py_CompileString {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let filename_text = if filename.is_null() {
+        "<string>".to_string()
+    } else {
+        // SAFETY: caller provides NUL-terminated filename for non-null pointer.
+        match unsafe { c_name_to_string(filename) } {
+            Ok(text) => text,
+            Err(err) => {
+                cpython_set_error(format!("Py_CompileString {err}"));
+                return std::ptr::null_mut();
+            }
+        }
+    };
+
+    let compiled = match start {
+        PY_FILE_INPUT | PY_SINGLE_INPUT => {
+            let module = match parser::parse_module(&source_text) {
+                Ok(module) => module,
+                Err(err) => {
+                    cpython_set_typed_error(
+                        unsafe { PyExc_SyntaxError },
+                        format!(
+                            "parse error at {} (line {}, column {}): {}",
+                            err.offset, err.line, err.column, err.message
+                        ),
+                    );
+                    return std::ptr::null_mut();
+                }
+            };
+            match compiler::compile_module_with_filename(&module, &filename_text) {
+                Ok(code) => code,
+                Err(err) => {
+                    cpython_set_typed_error(
+                        unsafe { PyExc_SyntaxError },
+                        format!("compile error: {}", err.message),
+                    );
+                    return std::ptr::null_mut();
+                }
+            }
+        }
+        PY_EVAL_INPUT => {
+            let expr = match parser::parse_expression(&source_text) {
+                Ok(expr) => expr,
+                Err(err) => {
+                    cpython_set_typed_error(
+                        unsafe { PyExc_SyntaxError },
+                        format!(
+                            "parse error at {} (line {}, column {}): {}",
+                            err.offset, err.line, err.column, err.message
+                        ),
+                    );
+                    return std::ptr::null_mut();
+                }
+            };
+            match compiler::compile_expression_with_filename(&expr, &filename_text) {
+                Ok(code) => code,
+                Err(err) => {
+                    cpython_set_typed_error(
+                        unsafe { PyExc_SyntaxError },
+                        format!("compile error: {}", err.message),
+                    );
+                    return std::ptr::null_mut();
+                }
+            }
+        }
+        _ => {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                format!("Py_CompileString received invalid start mode: {start}"),
+            );
+            return std::ptr::null_mut();
+        }
+    };
+
+    with_active_cpython_context_mut(|context| context.alloc_cpython_ptr_for_value(Value::Code(Rc::new(compiled))))
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_Main(argc: c_int, argv: *mut *mut Cwchar) -> c_int {
+    if argc < 0 {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "Py_Main received negative argc");
+        return 2;
+    }
+    let argc_usize = argc as usize;
+    let mut all_args = Vec::with_capacity(argc_usize);
+    for idx in 0..argc_usize {
+        let arg_ptr = if argv.is_null() {
+            std::ptr::null()
+        } else {
+            // SAFETY: caller guarantees `argv` has `argc` entries when non-null.
+            unsafe { *argv.add(idx) }
+        };
+        if arg_ptr.is_null() {
+            all_args.push(String::new());
+            continue;
+        }
+        // SAFETY: each argv entry is expected to be NUL-terminated.
+        let arg = match unsafe { cpython_wide_ptr_to_string(arg_ptr, -1, "Py_Main") } {
+            Ok(value) => value,
+            Err(err) => {
+                cpython_set_error(err);
+                return 2;
+            }
+        };
+        all_args.push(arg);
+    }
+    if let Some(program) = all_args.first() {
+        cpython_set_wide_storage(&CPYTHON_PROGRAM_NAME_WIDE, program);
+        cpython_set_wide_storage(&CPYTHON_PROGRAM_FULL_PATH_WIDE, program);
+    }
+    cpython_store_argv_wide(&all_args);
+    let cli_args = all_args.into_iter().skip(1).collect();
+    cli::run_with_args_vec(cli_args)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_BytesMain(argc: c_int, argv: *mut *mut c_char) -> c_int {
+    if argc < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_BytesMain received negative argc",
+        );
+        return 2;
+    }
+    let argc_usize = argc as usize;
+    let mut all_args = Vec::with_capacity(argc_usize);
+    for idx in 0..argc_usize {
+        let arg_ptr = if argv.is_null() {
+            std::ptr::null()
+        } else {
+            // SAFETY: caller guarantees `argv` has `argc` entries when non-null.
+            unsafe { *argv.add(idx) }
+        };
+        if arg_ptr.is_null() {
+            all_args.push(String::new());
+            continue;
+        }
+        // SAFETY: argv entries are NUL-terminated C strings.
+        let arg = unsafe { CStr::from_ptr(arg_ptr) }.to_string_lossy().to_string();
+        all_args.push(arg);
+    }
+    if let Some(program) = all_args.first() {
+        cpython_set_wide_storage(&CPYTHON_PROGRAM_NAME_WIDE, program);
+        cpython_set_wide_storage(&CPYTHON_PROGRAM_FULL_PATH_WIDE, program);
+    }
+    cpython_store_argv_wide(&all_args);
+    let cli_args = all_args.into_iter().skip(1).collect();
+    cli::run_with_args_vec(cli_args)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_Exit(status: c_int) {
+    let _ = unsafe { Py_FinalizeEx() };
+    std::process::exit(status);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_FatalError(message: *const c_char) {
+    let rendered = if message.is_null() {
+        "Fatal Python error".to_string()
+    } else {
+        // SAFETY: caller provides NUL-terminated message.
+        unsafe { CStr::from_ptr(message) }
+            .to_string_lossy()
+            .to_string()
+    };
+    eprintln!("{rendered}");
+    std::process::abort();
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_NewInterpreter() -> *mut c_void {
     unsafe { PyThreadState_Get() }
@@ -24981,6 +25890,19 @@ pub unsafe extern "C" fn PyThreadState_New(interp: *mut c_void) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyThreadState_Prealloc(interp: *mut c_void) -> *mut c_void {
+    unsafe { PyThreadState_New(interp) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyThreadState_Init(_thread_state: *mut c_void) {
+    cpython_set_typed_error(
+        unsafe { PyExc_SystemError },
+        "_PyThreadState_Init() is for internal use only",
+    );
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThreadState_Swap(new_thread_state: *mut c_void) -> *mut c_void {
     let previous = cpython_current_thread_state_ptr() as *mut c_void;
     if !new_thread_state.is_null() {
@@ -25261,6 +26183,15 @@ pub unsafe extern "C" fn PyState_AddModule(module: *mut c_void, module_def: *mut
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyState_AddModule(
+    _thread_state: *mut c_void,
+    module: *mut c_void,
+    module_def: *mut c_void,
+) -> i32 {
+    unsafe { PyState_AddModule(module, module_def) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyState_FindModule(module_def: *mut c_void) -> *mut c_void {
     if module_def.is_null() {
         return std::ptr::null_mut();
@@ -25392,7 +26323,59 @@ pub unsafe extern "C" fn Py_LeaveRecursiveCall() {}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_IsInitialized() -> i32 {
-    1
+    i32::from(CPYTHON_IS_INITIALIZED.load(Ordering::Relaxed) != 0)
+}
+
+const PY_CONSTANT_NONE: u32 = 0;
+const PY_CONSTANT_FALSE: u32 = 1;
+const PY_CONSTANT_TRUE: u32 = 2;
+const PY_CONSTANT_ELLIPSIS: u32 = 3;
+const PY_CONSTANT_NOT_IMPLEMENTED: u32 = 4;
+const PY_CONSTANT_ZERO: u32 = 5;
+const PY_CONSTANT_ONE: u32 = 6;
+const PY_CONSTANT_EMPTY_STR: u32 = 7;
+const PY_CONSTANT_EMPTY_BYTES: u32 = 8;
+const PY_CONSTANT_EMPTY_TUPLE: u32 = 9;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetConstant(constant_id: c_uint) -> *mut c_void {
+    match constant_id {
+        PY_CONSTANT_NONE => std::ptr::addr_of_mut!(_Py_NoneStruct).cast(),
+        PY_CONSTANT_FALSE => std::ptr::addr_of_mut!(_Py_FalseStruct).cast(),
+        PY_CONSTANT_TRUE => std::ptr::addr_of_mut!(_Py_TrueStruct).cast(),
+        PY_CONSTANT_ELLIPSIS => std::ptr::addr_of_mut!(_Py_EllipsisObject).cast(),
+        PY_CONSTANT_NOT_IMPLEMENTED => std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast(),
+        PY_CONSTANT_ZERO => cpython_get_or_init_constant_ptr(&CPYTHON_CONSTANT_ZERO_PTR, || unsafe {
+            PyLong_FromLong(0)
+        }),
+        PY_CONSTANT_ONE => cpython_get_or_init_constant_ptr(&CPYTHON_CONSTANT_ONE_PTR, || unsafe {
+            PyLong_FromLong(1)
+        }),
+        PY_CONSTANT_EMPTY_STR => {
+            cpython_get_or_init_constant_ptr(&CPYTHON_CONSTANT_EMPTY_STR_PTR, || unsafe {
+                PyUnicode_FromStringAndSize(std::ptr::null(), 0)
+            })
+        }
+        PY_CONSTANT_EMPTY_BYTES => {
+            cpython_get_or_init_constant_ptr(&CPYTHON_CONSTANT_EMPTY_BYTES_PTR, || unsafe {
+                PyBytes_FromStringAndSize(std::ptr::null(), 0)
+            })
+        }
+        PY_CONSTANT_EMPTY_TUPLE => {
+            cpython_get_or_init_constant_ptr(&CPYTHON_CONSTANT_EMPTY_TUPLE_PTR, || unsafe {
+                PyTuple_New(0)
+            })
+        }
+        _ => {
+            unsafe { PyErr_BadInternalCall() };
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetConstantBorrowed(constant_id: c_uint) -> *mut c_void {
+    unsafe { Py_GetConstant(constant_id) }
 }
 
 #[unsafe(no_mangle)]
@@ -28801,13 +29784,23 @@ pub static mut PyZip_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_ZIP.as_pt
 unsafe extern "C" {
     fn PyTuple_Pack(size: isize, ...) -> *mut c_void;
     fn Py_BuildValue(format: *const c_char, ...) -> *mut c_void;
+    fn _Py_BuildValue_SizeT(format: *const c_char, ...) -> *mut c_void;
+    fn Py_VaBuildValue(format: *const c_char, vargs: *mut c_void) -> *mut c_void;
+    fn _Py_VaBuildValue_SizeT(format: *const c_char, vargs: *mut c_void) -> *mut c_void;
     fn PyUnicode_FromFormat(format: *const c_char, ...) -> *mut c_void;
     fn PyUnicode_FromFormatV(format: *const c_char, vargs: *mut c_void) -> *mut c_void;
     fn PyBytes_FromFormat(format: *const c_char, ...) -> *mut c_void;
     fn PyBytes_FromFormatV(format: *const c_char, vargs: *mut c_void) -> *mut c_void;
     fn PyObject_CallFunction(callable: *mut c_void, format: *const c_char, ...) -> *mut c_void;
+    fn _PyObject_CallFunction_SizeT(callable: *mut c_void, format: *const c_char, ...) -> *mut c_void;
     fn PyObject_CallFunctionObjArgs(callable: *mut c_void, ...) -> *mut c_void;
     fn PyObject_CallMethod(
+        object: *mut c_void,
+        method: *const c_char,
+        format: *const c_char,
+        ...
+    ) -> *mut c_void;
+    fn _PyObject_CallMethod_SizeT(
         object: *mut c_void,
         method: *const c_char,
         format: *const c_char,
@@ -28822,15 +29815,32 @@ unsafe extern "C" {
     ) -> *mut c_void;
     fn PyObject_CallMethodObjArgs(object: *mut c_void, method: *mut c_void, ...) -> *mut c_void;
     fn PyArg_Parse(args: *mut c_void, format: *const c_char, ...) -> i32;
+    fn _PyArg_Parse_SizeT(args: *mut c_void, format: *const c_char, ...) -> i32;
     fn PyArg_VaParse(args: *mut c_void, format: *const c_char, vargs: *mut c_void) -> i32;
+    fn _PyArg_VaParse_SizeT(args: *mut c_void, format: *const c_char, vargs: *mut c_void) -> i32;
     fn PyArg_ValidateKeywordArguments(kwargs: *mut c_void) -> i32;
     fn PyArg_ParseTuple(args: *mut c_void, format: *const c_char, ...) -> i32;
+    fn _PyArg_ParseTuple_SizeT(args: *mut c_void, format: *const c_char, ...) -> i32;
     fn PyArg_ParseTupleAndKeywords(
         args: *mut c_void,
         kwargs: *mut c_void,
         format: *const c_char,
         keywords: *mut *const c_char,
         ...
+    ) -> i32;
+    fn _PyArg_ParseTupleAndKeywords_SizeT(
+        args: *mut c_void,
+        kwargs: *mut c_void,
+        format: *const c_char,
+        keywords: *mut *const c_char,
+        ...
+    ) -> i32;
+    fn _PyArg_VaParseTupleAndKeywords_SizeT(
+        args: *mut c_void,
+        kwargs: *mut c_void,
+        format: *const c_char,
+        keywords: *mut *const c_char,
+        vargs: *mut c_void,
     ) -> i32;
     fn PyErr_Format(exception: *mut c_void, format: *const c_char, ...) -> *mut c_void;
     fn PyErr_FormatV(
@@ -29410,9 +30420,20 @@ static KEEP2_PY_INITIALIZE: unsafe extern "C" fn() = Py_Initialize;
 #[used]
 static KEEP2_PY_INITIALIZEEX: unsafe extern "C" fn(c_int) = Py_InitializeEx;
 #[used]
+static KEEP2_PY_MAIN: unsafe extern "C" fn(c_int, *mut *mut Cwchar) -> c_int = Py_Main;
+#[used]
+static KEEP2_PY_BYTESMAIN: unsafe extern "C" fn(c_int, *mut *mut c_char) -> c_int = Py_BytesMain;
+#[used]
+static KEEP2_PY_COMPILESTRING: unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> *mut c_void =
+    Py_CompileString;
+#[used]
 static KEEP2_PY_FINALIZE: unsafe extern "C" fn() = Py_Finalize;
 #[used]
 static KEEP2_PY_FINALIZEEX: unsafe extern "C" fn() -> c_int = Py_FinalizeEx;
+#[used]
+static KEEP2_PY_EXIT: unsafe extern "C" fn(c_int) = Py_Exit;
+#[used]
+static KEEP2_PY_FATALERROR: unsafe extern "C" fn(*const c_char) = Py_FatalError;
 #[used]
 static KEEP2_PY_NEWINTERPRETER: unsafe extern "C" fn() -> *mut c_void = Py_NewInterpreter;
 #[used]
@@ -29565,6 +30586,11 @@ static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThread
 static KEEP2_PYTHREADSTATE_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyThreadState_New;
 #[used]
+static KEEP2__PYTHREADSTATE_PREALLOC: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    _PyThreadState_Prealloc;
+#[used]
+static KEEP2__PYTHREADSTATE_INIT: unsafe extern "C" fn(*mut c_void) = _PyThreadState_Init;
+#[used]
 static KEEP2_PYTHREADSTATE_SWAP: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyThreadState_Swap;
 #[used]
@@ -29610,6 +30636,9 @@ static KEEP2_PYINTERPRETERSTATE_GETDICT: unsafe extern "C" fn(*mut c_void) -> *m
 static KEEP2_PYSTATE_ADDMODULE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyState_AddModule;
 #[used]
+static KEEP2__PYSTATE_ADDMODULE: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
+    _PyState_AddModule;
+#[used]
 static KEEP2_PYSTATE_FINDMODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyState_FindModule;
 #[used]
@@ -29627,6 +30656,11 @@ static KEEP2_PY_ENTERRECURSIVECALL: unsafe extern "C" fn(*const c_char) -> i32 =
 static KEEP2_PY_LEAVERECURSIVECALL: unsafe extern "C" fn() = Py_LeaveRecursiveCall;
 #[used]
 static KEEP2_PY_ISINITIALIZED: unsafe extern "C" fn() -> i32 = Py_IsInitialized;
+#[used]
+static KEEP2_PY_GETCONSTANT: unsafe extern "C" fn(c_uint) -> *mut c_void = Py_GetConstant;
+#[used]
+static KEEP2_PY_GETCONSTANTBORROWED: unsafe extern "C" fn(c_uint) -> *mut c_void =
+    Py_GetConstantBorrowed;
 #[used]
 static KEEP2_PY_IS: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int = Py_Is;
 #[used]
@@ -29698,14 +30732,23 @@ static KEEP3_PYEVAL_EVALFRAMEEX: unsafe extern "C" fn(*mut c_void, i32) -> *mut 
 static KEEP3_PYARG_PARSE: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
     PyArg_Parse;
 #[used]
+static KEEP3__PYARG_PARSE_SIZET: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
+    _PyArg_Parse_SizeT;
+#[used]
 static KEEP3_PYARG_VAPARSE: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> i32 =
     PyArg_VaParse;
+#[used]
+static KEEP3__PYARG_VAPARSE_SIZET: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> i32 =
+    _PyArg_VaParse_SizeT;
 #[used]
 static KEEP3_PYARG_VALIDATEKEYWORDARGUMENTS: unsafe extern "C" fn(*mut c_void) -> i32 =
     PyArg_ValidateKeywordArguments;
 #[used]
 static KEEP3_PYARG_PARSETUPLE: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
     PyArg_ParseTuple;
+#[used]
+static KEEP3__PYARG_PARSETUPLE_SIZET: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
+    _PyArg_ParseTuple_SizeT;
 #[used]
 static KEEP3_PYARG_PARSETUPLEANDKEYWORDS: unsafe extern "C" fn(
     *mut c_void,
@@ -29715,6 +30758,14 @@ static KEEP3_PYARG_PARSETUPLEANDKEYWORDS: unsafe extern "C" fn(
     ...
 ) -> i32 = PyArg_ParseTupleAndKeywords;
 #[used]
+static KEEP3__PYARG_PARSETUPLEANDKEYWORDS_SIZET: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *const c_char,
+    *mut *const c_char,
+    ...
+) -> i32 = _PyArg_ParseTupleAndKeywords_SizeT;
+#[used]
 static KEEP3_PYARG_VAPARSETUPLEANDKEYWORDS: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
@@ -29722,6 +30773,14 @@ static KEEP3_PYARG_VAPARSETUPLEANDKEYWORDS: unsafe extern "C" fn(
     *mut *const c_char,
     *mut c_void,
 ) -> i32 = PyArg_VaParseTupleAndKeywords;
+#[used]
+static KEEP3__PYARG_VAPARSETUPLEANDKEYWORDS_SIZET: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *const c_char,
+    *mut *const c_char,
+    *mut c_void,
+) -> i32 = _PyArg_VaParseTupleAndKeywords_SizeT;
 #[used]
 static KEEP3_PYARG_UNPACKTUPLE: unsafe extern "C" fn(
     *mut c_void,
@@ -29731,6 +30790,28 @@ static KEEP3_PYARG_UNPACKTUPLE: unsafe extern "C" fn(
 ) -> i32 = PyArg_UnpackTuple;
 #[used]
 static KEEP3_PY_BUILDVALUE: unsafe extern "C" fn(*const c_char, ...) -> *mut c_void = Py_BuildValue;
+#[used]
+static KEEP3__PY_BUILDVALUE_SIZET: unsafe extern "C" fn(*const c_char, ...) -> *mut c_void =
+    _Py_BuildValue_SizeT;
+#[used]
+static KEEP3_PY_VABUILDVALUE: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
+    Py_VaBuildValue;
+#[used]
+static KEEP3__PY_VABUILDVALUE_SIZET: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
+    _Py_VaBuildValue_SizeT;
+#[used]
+static KEEP3__PYOBJECT_CALLFUNCTION_SIZET: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    ...
+) -> *mut c_void = _PyObject_CallFunction_SizeT;
+#[used]
+static KEEP3__PYOBJECT_CALLMETHOD_SIZET: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *const c_char,
+    ...
+) -> *mut c_void = _PyObject_CallMethod_SizeT;
 #[used]
 static KEEP3_PYVECTORCALL_CALL: unsafe extern "C" fn(
     *mut c_void,
@@ -30011,6 +31092,12 @@ static KEEP3_PYUNICODE_ASASCIISTRING: unsafe extern "C" fn(*mut c_void) -> *mut 
 static KEEP3_PYUNICODE_ASLATIN1STRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyUnicode_AsLatin1String;
 #[used]
+static KEEP3_PYUNICODE_ASMBCSSTRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicode_AsMBCSString;
+#[used]
+static KEEP3_PYUNICODE_ASCHARMAPSTRING: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyUnicode_AsCharmapString;
+#[used]
 static KEEP3_PYUNICODE_ASRAWUNICODEESCAPESTRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyUnicode_AsRawUnicodeEscapeString;
 #[used]
@@ -30161,6 +31248,15 @@ static KEEP3_PYUNICODE_RICHCOMPARE: unsafe extern "C" fn(
 static KEEP3_PYUNICODE_WRITECHAR: unsafe extern "C" fn(*mut c_void, isize, c_uint) -> c_int =
     PyUnicode_WriteChar;
 #[used]
+static KEEP3_PYUNICODE_TRANSLATE: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = PyUnicode_Translate;
+#[used]
+static KEEP3_PYUNICODE_RESIZE: unsafe extern "C" fn(*mut *mut c_void, isize) -> c_int =
+    PyUnicode_Resize;
+#[used]
 static KEEP3_PYUNICODE_REPLACE: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
@@ -30216,6 +31312,50 @@ static KEEP3_PYUNICODE_DECODEUTF8STATEFUL: unsafe extern "C" fn(
     *const c_char,
     *mut isize,
 ) -> *mut c_void = PyUnicode_DecodeUTF8Stateful;
+#[used]
+static KEEP3_PYUNICODE_DECODEUTF7: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+) -> *mut c_void = PyUnicode_DecodeUTF7;
+#[used]
+static KEEP3_PYUNICODE_DECODEUTF7STATEFUL: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+    *mut isize,
+) -> *mut c_void = PyUnicode_DecodeUTF7Stateful;
+#[used]
+static KEEP3_PYUNICODE_DECODEMBCS: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+) -> *mut c_void = PyUnicode_DecodeMBCS;
+#[used]
+static KEEP3_PYUNICODE_DECODEMBCSSTATEFUL: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+    *mut isize,
+) -> *mut c_void = PyUnicode_DecodeMBCSStateful;
+#[used]
+static KEEP3_PYUNICODE_DECODECODEPAGESTATEFUL: unsafe extern "C" fn(
+    c_int,
+    *const c_char,
+    isize,
+    *const c_char,
+    *mut isize,
+) -> *mut c_void = PyUnicode_DecodeCodePageStateful;
+#[used]
+static KEEP3_PYUNICODE_DECODECHARMAP: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = PyUnicode_DecodeCharmap;
+#[used]
+static KEEP3_PYUNICODE_BUILDENCODINGMAP: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicode_BuildEncodingMap;
 #[used]
 static KEEP3_PYUNICODE_DECODERAWUNICODEESCAPE: unsafe extern "C" fn(
     *const c_char,
@@ -30285,6 +31425,12 @@ static KEEP3_PYUNICODE_ENCODELOCALE: unsafe extern "C" fn(
     *mut c_void,
     *const c_char,
 ) -> *mut c_void = PyUnicode_EncodeLocale;
+#[used]
+static KEEP3_PYUNICODE_ENCODECODEPAGE: unsafe extern "C" fn(
+    c_int,
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = PyUnicode_EncodeCodePage;
 #[used]
 static KEEP3_PYUNICODE_ASDECODEDOBJECT: unsafe extern "C" fn(
     *mut c_void,
@@ -31244,6 +32390,9 @@ static KEEP_PYDESCR_NEW_CLASS_METHOD: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
 ) -> *mut c_void = PyDescr_NewClassMethod;
+#[used]
+static KEEP_PYWRAPPER_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyWrapper_New;
 #[used]
 static KEEP_PYDESCR_NEW_MEMBER: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyDescr_NewMember;

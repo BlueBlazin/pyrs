@@ -424,6 +424,8 @@ const char *PyUnicode_AsUTF8AndSize(PyObject *object, long long *size);
 PyObject *PyUnicode_AsUTF8String(PyObject *object);
 PyObject *PyUnicode_AsASCIIString(PyObject *object);
 PyObject *PyUnicode_AsLatin1String(PyObject *object);
+PyObject *PyUnicode_AsMBCSString(PyObject *object);
+PyObject *PyUnicode_AsCharmapString(PyObject *object, PyObject *mapping);
 PyObject *PyUnicode_AsRawUnicodeEscapeString(PyObject *object);
 PyObject *PyUnicode_AsUnicodeEscapeString(PyObject *object);
 PyObject *PyUnicode_AsUTF16String(PyObject *object);
@@ -481,6 +483,8 @@ void PyUnicode_Append(PyObject **left, PyObject *right);
 void PyUnicode_AppendAndDel(PyObject **left, PyObject *right);
 PyObject *PyUnicode_RichCompare(PyObject *left, PyObject *right, int op);
 int PyUnicode_WriteChar(PyObject *unicode, long long index, uint32_t character);
+PyObject *PyUnicode_Translate(PyObject *str, PyObject *table, const char *errors);
+int PyUnicode_Resize(PyObject **str, long long length);
 PyObject *PyUnicode_Replace(
     PyObject *str,
     PyObject *substr,
@@ -512,6 +516,34 @@ PyObject *PyUnicode_DecodeUTF8Stateful(
     const char *errors,
     long long *consumed
 );
+PyObject *PyUnicode_DecodeUTF7(const char *str, long long size, const char *errors);
+PyObject *PyUnicode_DecodeUTF7Stateful(
+    const char *str,
+    long long size,
+    const char *errors,
+    long long *consumed
+);
+PyObject *PyUnicode_DecodeMBCS(const char *str, long long size, const char *errors);
+PyObject *PyUnicode_DecodeMBCSStateful(
+    const char *str,
+    long long size,
+    const char *errors,
+    long long *consumed
+);
+PyObject *PyUnicode_DecodeCodePageStateful(
+    int code_page,
+    const char *str,
+    long long size,
+    const char *errors,
+    long long *consumed
+);
+PyObject *PyUnicode_DecodeCharmap(
+    const char *str,
+    long long size,
+    PyObject *mapping,
+    const char *errors
+);
+PyObject *PyUnicode_BuildEncodingMap(PyObject *str);
 PyObject *PyUnicode_DecodeRawUnicodeEscape(
     const char *str,
     long long size,
@@ -550,6 +582,7 @@ PyObject *PyUnicode_DecodeLocale(const char *str, const char *errors);
 PyObject *PyUnicode_DecodeLocaleAndSize(const char *str, long long size, const char *errors);
 PyObject *PyUnicode_EncodeFSDefault(PyObject *unicode);
 PyObject *PyUnicode_EncodeLocale(PyObject *unicode, const char *errors);
+PyObject *PyUnicode_EncodeCodePage(int code_page, PyObject *unicode, const char *errors);
 PyObject *PyUnicode_AsDecodedObject(
     PyObject *unicode,
     const char *encoding,
@@ -678,16 +711,36 @@ int PySet_Discard(PyObject *set, PyObject *key);
 int PySet_Clear(PyObject *set);
 PyObject *PySet_Pop(PyObject *set);
 PyObject *Py_BuildValue(const char *format, ...);
+PyObject *_Py_BuildValue_SizeT(const char *format, ...);
+PyObject *Py_VaBuildValue(const char *format, va_list va);
+PyObject *_Py_VaBuildValue_SizeT(const char *format, va_list va);
 int PyArg_Parse(PyObject *args, const char *format, ...);
+int _PyArg_Parse_SizeT(PyObject *args, const char *format, ...);
 int PyArg_VaParse(PyObject *args, const char *format, va_list va);
+int _PyArg_VaParse_SizeT(PyObject *args, const char *format, va_list va);
 int PyArg_ValidateKeywordArguments(PyObject *kwargs);
 int PyArg_ParseTuple(PyObject *args, const char *format, ...);
+int _PyArg_ParseTuple_SizeT(PyObject *args, const char *format, ...);
 int PyArg_ParseTupleAndKeywords(
     PyObject *args,
     PyObject *kwargs,
     const char *format,
     const char *const *keywords,
     ...
+);
+int _PyArg_ParseTupleAndKeywords_SizeT(
+    PyObject *args,
+    PyObject *kwargs,
+    const char *format,
+    const char *const *keywords,
+    ...
+);
+int _PyArg_VaParseTupleAndKeywords_SizeT(
+    PyObject *args,
+    PyObject *kwargs,
+    const char *format,
+    const char *const *keywords,
+    va_list va
 );
 int PyNumber_Check(PyObject *object);
 PyObject *PyNumber_Absolute(PyObject *object);
@@ -730,7 +783,9 @@ PyObject *PyObject_GetAttrString(PyObject *object, const char *name);
 PyObject *PyObject_GetAttr(PyObject *object, PyObject *name);
 PyObject *PyObject_Type(PyObject *object);
 PyObject *PyObject_CallFunction(PyObject *callable, const char *format, ...);
+PyObject *_PyObject_CallFunction_SizeT(PyObject *callable, const char *format, ...);
 PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *format, ...);
+PyObject *_PyObject_CallMethod_SizeT(PyObject *object, const char *name, const char *format, ...);
 PyObject *PyObject_CallObject(PyObject *callable, PyObject *args);
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 PyObject *PyObject_CallMethodObjArgs(PyObject *object, PyObject *name, ...);
@@ -795,6 +850,8 @@ int PyThread_tss_set(void *key, void *value);
 void *PyThread_tss_get(void *key);
 void *PyThreadState_Get(void);
 void *PyThreadState_New(void *interp);
+void *_PyThreadState_Prealloc(void *interp);
+void _PyThreadState_Init(void *state);
 void *PyThreadState_Swap(void *state);
 void PyThreadState_Clear(void *state);
 void PyThreadState_Delete(void *state);
@@ -811,6 +868,7 @@ void PyInterpreterState_Delete(void *interp);
 long long PyInterpreterState_GetID(void *interp);
 PyObject *PyInterpreterState_GetDict(void *interp);
 int PyState_AddModule(PyObject *module, PyModuleDef *def);
+int _PyState_AddModule(void *state, PyObject *module, PyModuleDef *def);
 int PyState_RemoveModule(PyModuleDef *def);
 PyObject *PyState_FindModule(PyModuleDef *def);
 void PyEval_AcquireLock(void);
@@ -831,6 +889,11 @@ int Py_FinalizeEx(void);
 void *Py_NewInterpreter(void);
 void Py_EndInterpreter(void *state);
 int Py_IsFinalizing(void);
+int Py_Main(int argc, wchar_t **argv);
+int Py_BytesMain(int argc, char **argv);
+PyObject *Py_CompileString(const char *str, const char *filename, int start);
+void Py_Exit(int status);
+void Py_FatalError(const char *message);
 uint32_t Py_PACK_FULL_VERSION(int major, int minor, int micro, int level, int serial);
 uint32_t Py_PACK_VERSION(int major, int minor);
 void Py_GetArgcArgv(int *argc, wchar_t ***argv);
@@ -1108,6 +1171,7 @@ PyObject *PyCMethod_New(PyMethodDef *ml, PyObject *self, PyObject *module, void 
 PyObject *PyDescr_NewMethod(PyTypeObject *type, PyMethodDef *method);
 PyObject *PyDescr_NewClassMethod(PyTypeObject *type, PyMethodDef *method);
 PyObject *PyDescr_NewMember(PyTypeObject *type, PyMemberDef *member);
+PyObject *PyWrapper_New(PyObject *descriptor, PyObject *self);
 PyObject *PyMember_GetOne(const char *obj_addr, PyMemberDef *member);
 int PyMember_SetOne(char *obj_addr, PyMemberDef *member, PyObject *value);
 PyObject *PyDescr_NewGetSet(PyTypeObject *type, PyGetSetDef *getset);
@@ -1120,6 +1184,8 @@ PyObject *PyCFunction_GetSelf(PyObject *op);
 int PyCFunction_GetFlags(PyObject *op);
 
 int Py_IsInitialized(void);
+PyObject *Py_GetConstant(unsigned int constant_id);
+PyObject *Py_GetConstantBorrowed(unsigned int constant_id);
 int Py_Is(PyObject *left, PyObject *right);
 int Py_IsNone(PyObject *object);
 int Py_IsTrue(PyObject *object);

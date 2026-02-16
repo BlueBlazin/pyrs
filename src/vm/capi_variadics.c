@@ -1631,7 +1631,75 @@ int PyArg_Parse(void *args, const char *format, ...)
     return 0;
 }
 
+int _PyArg_Parse_SizeT(void *args, const char *format, ...)
+{
+    if (format == NULL) {
+        pyrs_capi_set_error_message("_PyArg_Parse_SizeT received null format");
+        return 0;
+    }
+
+    int min_count = 0;
+    int max_count = 0;
+    count_old_style_format_args(format, &min_count, &max_count);
+
+    va_list ap;
+    va_start(ap, format);
+    int result = 0;
+
+    if (max_count == 0) {
+        if (args == NULL) {
+            result = 1;
+        } else {
+            pyrs_capi_set_error_message("function takes no arguments");
+            result = 0;
+        }
+        va_end(ap);
+        return result;
+    }
+
+    if (min_count == 1 && max_count == 1) {
+        if (args == NULL) {
+            pyrs_capi_set_error_message("function takes at least one argument");
+            va_end(ap);
+            return 0;
+        }
+        void *single = PyTuple_New(1);
+        if (single == NULL) {
+            va_end(ap);
+            return 0;
+        }
+        Py_IncRef(args);
+        if (PyTuple_SetItem(single, 0, args) != 0) {
+            Py_DecRef(args);
+            Py_DecRef(single);
+            va_end(ap);
+            return 0;
+        }
+        result = parse_args_and_keywords_va(single, NULL, format, NULL, &ap);
+        Py_DecRef(single);
+        va_end(ap);
+        return result;
+    }
+
+    pyrs_capi_set_error_message("old style getargs format uses new features");
+    va_end(ap);
+    return 0;
+}
+
 int PyArg_VaParse(void *args, const char *format, va_list va)
+{
+    if (!is_tuple_object(args)) {
+        pyrs_capi_set_error_message("new style getargs format but argument is not a tuple");
+        return 0;
+    }
+    va_list lva;
+    va_copy(lva, va);
+    int result = parse_args_and_keywords_va(args, NULL, format, NULL, &lva);
+    va_end(lva);
+    return result;
+}
+
+int _PyArg_VaParse_SizeT(void *args, const char *format, va_list va)
 {
     if (!is_tuple_object(args)) {
         pyrs_capi_set_error_message("new style getargs format but argument is not a tuple");
@@ -1680,6 +1748,15 @@ int PyArg_ParseTuple(void *args, const char *format, ...)
     return result;
 }
 
+int _PyArg_ParseTuple_SizeT(void *args, const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    int result = parse_args_and_keywords_va(args, NULL, format, NULL, &ap);
+    va_end(ap);
+    return result;
+}
+
 int PyArg_ParseTupleAndKeywords(
     void *args,
     void *kwargs,
@@ -1692,5 +1769,35 @@ int PyArg_ParseTupleAndKeywords(
     va_start(ap, keywords);
     int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &ap);
     va_end(ap);
+    return result;
+}
+
+int _PyArg_ParseTupleAndKeywords_SizeT(
+    void *args,
+    void *kwargs,
+    const char *format,
+    const char *const *keywords,
+    ...
+)
+{
+    va_list ap;
+    va_start(ap, keywords);
+    int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &ap);
+    va_end(ap);
+    return result;
+}
+
+int _PyArg_VaParseTupleAndKeywords_SizeT(
+    void *args,
+    void *kwargs,
+    const char *format,
+    const char *const *keywords,
+    va_list va
+)
+{
+    va_list lva;
+    va_copy(lva, va);
+    int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &lva);
+    va_end(lva);
     return result;
 }

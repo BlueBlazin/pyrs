@@ -16,7 +16,11 @@ use crate::vm::Vm;
 const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs                    Start interactive REPL (or read from stdin when piped)\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
 
 pub fn run() -> i32 {
-    let mut args = env::args().skip(1).peekable();
+    run_with_args_vec(env::args().skip(1).collect())
+}
+
+pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
+    let mut args = arguments.into_iter().peekable();
     let mut import_site = true;
 
     // Parse a small subset of CPython-style startup flags used by stdlib tests.
