@@ -12092,6 +12092,20 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyAIter_Check(object: *mut c_void) -> i32 {
+    if object.is_null() {
+        return 0;
+    }
+    let status = unsafe { PyObject_HasAttrStringWithError(object, c"__anext__".as_ptr()) };
+    if status < 0 {
+        unsafe { PyErr_Clear() };
+        0
+    } else {
+        status
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAIter(object: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
@@ -12890,9 +12904,8 @@ pub unsafe extern "C" fn PyObject_Hash(object: *mut c_void) -> isize {
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyObject_HashNotImplemented(object: *mut c_void) -> isize {
-    let type_name = with_active_cpython_context_mut(|context| {
+fn cpython_value_type_name_from_ptr(object: *mut c_void) -> String {
+    with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
             return "object".to_string();
         }
@@ -12903,7 +12916,12 @@ pub unsafe extern "C" fn PyObject_HashNotImplemented(object: *mut c_void) -> isi
         let vm = unsafe { &mut *context.vm };
         vm.value_type_name_for_error(&value)
     })
-    .unwrap_or_else(|_| "object".to_string());
+    .unwrap_or_else(|_| "object".to_string())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HashNotImplemented(object: *mut c_void) -> isize {
+    let type_name = cpython_value_type_name_from_ptr(object);
     cpython_set_typed_error(
         unsafe { PyExc_TypeError },
         format!("unhashable type: '{type_name}'"),
@@ -13859,6 +13877,10 @@ pub unsafe extern "C" fn PyMapping_GetItemString(
     mapping: *mut c_void,
     key: *const c_char,
 ) -> *mut c_void {
+    if mapping.is_null() || key.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
     let key = unsafe { PyUnicode_FromString(key) };
     if key.is_null() {
         return std::ptr::null_mut();
@@ -13866,6 +13888,274 @@ pub unsafe extern "C" fn PyMapping_GetItemString(
     let result = unsafe { PyObject_GetItem(mapping, key) };
     unsafe { Py_DecRef(key) };
     result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_Check(object: *mut c_void) -> i32 {
+    if object.is_null() {
+        return 0;
+    }
+    match cpython_value_from_ptr(object) {
+        Ok(
+            Value::Dict(_)
+            | Value::List(_)
+            | Value::Tuple(_)
+            | Value::Str(_)
+            | Value::Bytes(_)
+            | Value::ByteArray(_),
+        ) => 1,
+        Ok(_) => {
+            let status = unsafe { PyObject_HasAttrStringWithError(object, c"__getitem__".as_ptr()) };
+            if status < 0 {
+                unsafe { PyErr_Clear() };
+                0
+            } else {
+                status
+            }
+        }
+        Err(_) => 0,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_Size(object: *mut c_void) -> isize {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if unsafe { PyMapping_Check(object) } == 0 {
+        let type_name = cpython_value_type_name_from_ptr(object);
+        let has_len = unsafe { PyObject_HasAttrStringWithError(object, c"__len__".as_ptr()) };
+        if has_len < 0 {
+            return -1;
+        }
+        if has_len == 1 {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, format!("{type_name} is not a mapping"));
+        } else {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                format!("object of type '{type_name}' has no len()"),
+            );
+        }
+        return -1;
+    }
+    unsafe { PyObject_Size(object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_Length(object: *mut c_void) -> isize {
+    unsafe { PyMapping_Size(object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_GetOptionalItem(
+    object: *mut c_void,
+    key: *mut c_void,
+    result: *mut *mut c_void,
+) -> i32 {
+    if result.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    if object.is_null() || key.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyMapping_GetOptionalItem missing VM context");
+            return -1;
+        }
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyMapping_GetOptionalItem received unknown object pointer");
+            return -1;
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("PyMapping_GetOptionalItem received unknown key pointer");
+            return -1;
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.getitem_value(object_value, key_value) {
+            Ok(value) => {
+                let ptr = context.alloc_cpython_ptr_for_value(value);
+                if ptr.is_null() {
+                    -1
+                } else {
+                    unsafe { *result = ptr };
+                    1
+                }
+            }
+            Err(err) => {
+                if cpython_active_exception_is(vm, "KeyError")
+                    || err.message.contains("key not found")
+                    || err.message.contains("KeyError")
+                {
+                    cpython_clear_active_exception(vm);
+                    0
+                } else {
+                    context.set_error(err.message);
+                    -1
+                }
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_GetOptionalItemString(
+    object: *mut c_void,
+    key: *const c_char,
+    result: *mut *mut c_void,
+) -> i32 {
+    if key.is_null() || result.is_null() {
+        if !result.is_null() {
+            unsafe { *result = std::ptr::null_mut() };
+        }
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let key_obj = unsafe { PyUnicode_FromString(key) };
+    if key_obj.is_null() {
+        unsafe { *result = std::ptr::null_mut() };
+        return -1;
+    }
+    let status = unsafe { PyMapping_GetOptionalItem(object, key_obj, result) };
+    unsafe { Py_DecRef(key_obj) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_SetItemString(
+    object: *mut c_void,
+    key: *const c_char,
+    value: *mut c_void,
+) -> i32 {
+    if key.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let key_obj = unsafe { PyUnicode_FromString(key) };
+    if key_obj.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_SetItem(object, key_obj, value) };
+    unsafe { Py_DecRef(key_obj) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_HasKeyWithError(object: *mut c_void, key: *mut c_void) -> i32 {
+    let mut value: *mut c_void = std::ptr::null_mut();
+    let status = unsafe { PyMapping_GetOptionalItem(object, key, &mut value) };
+    unsafe { Py_XDecRef(value) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_HasKeyStringWithError(
+    object: *mut c_void,
+    key: *const c_char,
+) -> i32 {
+    let mut value: *mut c_void = std::ptr::null_mut();
+    let status = unsafe { PyMapping_GetOptionalItemString(object, key, &mut value) };
+    unsafe { Py_XDecRef(value) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_HasKey(object: *mut c_void, key: *mut c_void) -> i32 {
+    let status = unsafe { PyMapping_HasKeyWithError(object, key) };
+    if status < 0 {
+        unsafe { PyErr_Clear() };
+        0
+    } else {
+        status
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_HasKeyString(object: *mut c_void, key: *const c_char) -> i32 {
+    let status = unsafe { PyMapping_HasKeyStringWithError(object, key) };
+    if status < 0 {
+        unsafe { PyErr_Clear() };
+        0
+    } else {
+        status
+    }
+}
+
+fn cpython_mapping_method_output_as_list(object: *mut c_void, method_name: &str) -> *mut c_void {
+    let method = match CString::new(method_name) {
+        Ok(name) => unsafe { PyObject_GetAttrString(object, name.as_ptr()) },
+        Err(err) => {
+            cpython_set_error(err.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    if method.is_null() {
+        return std::ptr::null_mut();
+    }
+    let output = unsafe { PyObject_CallNoArgs(method) };
+    unsafe { Py_DecRef(method) };
+    if output.is_null() {
+        return std::ptr::null_mut();
+    }
+    let list = match cpython_value_from_ptr(output) {
+        Ok(Value::List(_)) => output,
+        Ok(_) => {
+            let list = unsafe { PySequence_List(output) };
+            unsafe { Py_DecRef(output) };
+            list
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            unsafe { Py_DecRef(output) };
+            std::ptr::null_mut()
+        }
+    };
+    list
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_Keys(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if let Ok(Value::Dict(_)) = cpython_value_from_ptr(object) {
+        return unsafe { PyDict_Keys(object) };
+    }
+    cpython_mapping_method_output_as_list(object, "keys")
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_Items(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if let Ok(Value::Dict(_)) = cpython_value_from_ptr(object) {
+        return unsafe { PyDict_Items(object) };
+    }
+    cpython_mapping_method_output_as_list(object, "items")
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMapping_Values(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if let Ok(Value::Dict(_)) = cpython_value_from_ptr(object) {
+        return unsafe { PyDict_Values(object) };
+    }
+    cpython_mapping_method_output_as_list(object, "values")
 }
 
 #[unsafe(no_mangle)]
@@ -18374,6 +18664,48 @@ static KEEP2_PYMAPPING_GETITEMSTRING: unsafe extern "C" fn(
     *const c_char,
 ) -> *mut c_void = PyMapping_GetItemString;
 #[used]
+static KEEP2_PYMAPPING_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PyMapping_Check;
+#[used]
+static KEEP2_PYMAPPING_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PyMapping_Size;
+#[used]
+static KEEP2_PYMAPPING_LENGTH: unsafe extern "C" fn(*mut c_void) -> isize = PyMapping_Length;
+#[used]
+static KEEP2_PYMAPPING_KEYS: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyMapping_Keys;
+#[used]
+static KEEP2_PYMAPPING_ITEMS: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyMapping_Items;
+#[used]
+static KEEP2_PYMAPPING_VALUES: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyMapping_Values;
+#[used]
+static KEEP2_PYMAPPING_GETOPTIONALITEM: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut *mut c_void,
+) -> i32 = PyMapping_GetOptionalItem;
+#[used]
+static KEEP2_PYMAPPING_GETOPTIONALITEMSTRING: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *mut *mut c_void,
+) -> i32 = PyMapping_GetOptionalItemString;
+#[used]
+static KEEP2_PYMAPPING_SETITEMSTRING: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *mut c_void,
+) -> i32 = PyMapping_SetItemString;
+#[used]
+static KEEP2_PYMAPPING_HASKEYWITHERROR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyMapping_HasKeyWithError;
+#[used]
+static KEEP2_PYMAPPING_HASKEYSTRINGWITHERROR: unsafe extern "C" fn(*mut c_void, *const c_char) -> i32 =
+    PyMapping_HasKeyStringWithError;
+#[used]
+static KEEP2_PYMAPPING_HASKEY: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyMapping_HasKey;
+#[used]
+static KEEP2_PYMAPPING_HASKEYSTRING: unsafe extern "C" fn(*mut c_void, *const c_char) -> i32 =
+    PyMapping_HasKeyString;
+#[used]
 static KEEP2_PYSEQITER_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PySeqIter_New;
 #[used]
 static KEEP2_PYOBJECT_ASFILEDESCRIPTOR: unsafe extern "C" fn(*mut c_void) -> i32 =
@@ -19418,6 +19750,8 @@ static KEEP_PYOBJECT_FORMAT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *
     PyObject_Format;
 #[used]
 static KEEP_PYOBJECT_GETITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_GetIter;
+#[used]
+static KEEP_PYAITER_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PyAIter_Check;
 #[used]
 static KEEP_PYOBJECT_GETAITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyObject_GetAIter;

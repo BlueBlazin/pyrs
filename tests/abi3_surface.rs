@@ -447,6 +447,37 @@ fn exports_abi3_batch15_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch16_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyAIter_Check",
+        "PyMapping_Check",
+        "PyMapping_Size",
+        "PyMapping_Length",
+        "PyMapping_GetItemString",
+        "PyMapping_Keys",
+        "PyMapping_Items",
+        "PyMapping_Values",
+        "PyMapping_GetOptionalItem",
+        "PyMapping_GetOptionalItemString",
+        "PyMapping_SetItemString",
+        "PyMapping_HasKeyWithError",
+        "PyMapping_HasKeyStringWithError",
+        "PyMapping_HasKey",
+        "PyMapping_HasKeyString",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch16 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

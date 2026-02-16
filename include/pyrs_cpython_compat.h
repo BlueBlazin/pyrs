@@ -229,6 +229,20 @@ long long PySequence_Count(PyObject *object, PyObject *value);
 long long PySequence_Index(PyObject *object, PyObject *value);
 int PySequence_Contains(PyObject *object, PyObject *value);
 int PySequence_In(PyObject *object, PyObject *value);
+int PyMapping_Check(PyObject *object);
+long long PyMapping_Size(PyObject *object);
+long long PyMapping_Length(PyObject *object);
+PyObject *PyMapping_GetItemString(PyObject *mapping, const char *key);
+PyObject *PyMapping_Keys(PyObject *object);
+PyObject *PyMapping_Items(PyObject *object);
+PyObject *PyMapping_Values(PyObject *object);
+int PyMapping_GetOptionalItem(PyObject *object, PyObject *key, PyObject **result);
+int PyMapping_GetOptionalItemString(PyObject *object, const char *key, PyObject **result);
+int PyMapping_SetItemString(PyObject *object, const char *key, PyObject *value);
+int PyMapping_HasKeyWithError(PyObject *object, PyObject *key);
+int PyMapping_HasKeyStringWithError(PyObject *object, const char *key);
+int PyMapping_HasKey(PyObject *object, PyObject *key);
+int PyMapping_HasKeyString(PyObject *object, const char *key);
 PyObject *PySlice_New(PyObject *start, PyObject *stop, PyObject *step);
 int PySlice_Unpack(
     PyObject *slice,
@@ -276,6 +290,7 @@ PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *fo
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 PyObject *PyObject_CallMethodObjArgs(PyObject *object, PyObject *name, ...);
 PyObject *PyObject_CallNoArgs(PyObject *callable);
+int PyAIter_Check(PyObject *object);
 PyObject *PyObject_GetAIter(PyObject *object);
 PyObject *PySeqIter_New(PyObject *object);
 PyObject *PyObject_GetItem(PyObject *object, PyObject *key);

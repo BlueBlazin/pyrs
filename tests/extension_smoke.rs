@@ -3004,6 +3004,191 @@ PyInit_cpython_api_batch15_probe(void) {
 }
 
 #[test]
+fn cpython_compat_mapping_abi_batch16_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch16 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch16 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch16");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch16_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch16_probe",
+    "cpython api batch16 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch16_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *dict_obj = Py_BuildValue("{s:i,s:i}", "a", 1, "b", 2);
+    PyObject *list_obj = PyList_New(0);
+    PyObject *set_obj = PySet_New(0);
+
+    int mapping_check_dict_ok = dict_obj ? (PyMapping_Check(dict_obj) == 1) : 0;
+    int mapping_check_list_ok = list_obj ? (PyMapping_Check(list_obj) == 1) : 0;
+    int mapping_check_set_ok = set_obj ? (PyMapping_Check(set_obj) == 0) : 0;
+    int aiter_check_list_ok = list_obj ? (PyAIter_Check(list_obj) == 0) : 0;
+
+    int mapping_size_ok = dict_obj ? (PyMapping_Size(dict_obj) == 2 && PyMapping_Length(dict_obj) == 2) : 0;
+
+    PyObject *key_a = PyUnicode_FromString("a");
+    PyObject *key_missing = PyUnicode_FromString("missing");
+    PyObject *value = 0;
+    int optional_item_present_ok = 0;
+    if (dict_obj && key_a && PyMapping_GetOptionalItem(dict_obj, key_a, &value) == 1 && value) {
+        optional_item_present_ok = (PyLong_AsInt(value) == 1) ? 1 : 0;
+    }
+    Py_XDECREF(value);
+    value = 0;
+
+    int optional_item_missing_ok = 0;
+    if (dict_obj && key_missing) {
+        int rc = PyMapping_GetOptionalItem(dict_obj, key_missing, &value);
+        optional_item_missing_ok = (rc == 0 && value == 0 && PyErr_Occurred() == 0) ? 1 : 0;
+    }
+    Py_XDECREF(value);
+    value = 0;
+
+    int optional_item_string_present_ok = 0;
+    if (dict_obj && PyMapping_GetOptionalItemString(dict_obj, "b", &value) == 1 && value) {
+        optional_item_string_present_ok = (PyLong_AsInt(value) == 2) ? 1 : 0;
+    }
+    Py_XDECREF(value);
+    value = 0;
+
+    int optional_item_error_ok = 0;
+    if (dict_obj && list_obj) {
+        int rc = PyMapping_GetOptionalItem(dict_obj, list_obj, &value);
+        optional_item_error_ok = (rc == -1 && PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+    }
+    Py_XDECREF(value);
+    value = 0;
+
+    int has_key_with_error_ok = (dict_obj && key_a && key_missing &&
+                                 PyMapping_HasKeyWithError(dict_obj, key_a) == 1 &&
+                                 PyMapping_HasKeyWithError(dict_obj, key_missing) == 0) ? 1 : 0;
+    int has_key_string_with_error_ok = (dict_obj &&
+                                        PyMapping_HasKeyStringWithError(dict_obj, "a") == 1 &&
+                                        PyMapping_HasKeyStringWithError(dict_obj, "missing") == 0) ? 1 : 0;
+
+    int has_key_suppresses_error_ok = 0;
+    if (dict_obj && list_obj) {
+        has_key_suppresses_error_ok = (PyMapping_HasKey(dict_obj, list_obj) == 0 && PyErr_Occurred() == 0) ? 1 : 0;
+    }
+
+    int has_key_string_suppresses_error_ok = 0;
+    if (dict_obj) {
+        has_key_string_suppresses_error_ok =
+            (PyMapping_HasKeyString(dict_obj, ((const char*)0)) == 0 && PyErr_Occurred() == 0) ? 1 : 0;
+    }
+
+    PyObject *value_c = PyLong_FromLong(3);
+    int set_item_string_ok = 0;
+    PyObject *item_c = 0;
+    if (dict_obj && value_c && PyMapping_SetItemString(dict_obj, "c", value_c) == 0) {
+        item_c = PyMapping_GetItemString(dict_obj, "c");
+        set_item_string_ok = (item_c && PyLong_AsInt(item_c) == 3) ? 1 : 0;
+    }
+    Py_XDECREF(item_c);
+    Py_XDECREF(value_c);
+
+    int mapping_views_ok = 0;
+    PyObject *keys = 0;
+    PyObject *items = 0;
+    PyObject *values = 0;
+    if (dict_obj) {
+        keys = PyMapping_Keys(dict_obj);
+        items = PyMapping_Items(dict_obj);
+        values = PyMapping_Values(dict_obj);
+        mapping_views_ok = (keys && items && values &&
+                            PyObject_Length(keys) == 3 &&
+                            PyObject_Length(items) == 3 &&
+                            PyObject_Length(values) == 3) ? 1 : 0;
+    }
+    Py_XDECREF(values);
+    Py_XDECREF(items);
+    Py_XDECREF(keys);
+
+    int mapping_view_error_ok = 0;
+    if (list_obj) {
+        PyObject *list_keys = PyMapping_Keys(list_obj);
+        mapping_view_error_ok = (list_keys == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+        Py_XDECREF(list_keys);
+    }
+
+    Py_XDECREF(key_missing);
+    Py_XDECREF(key_a);
+    Py_XDECREF(set_obj);
+    Py_XDECREF(list_obj);
+    Py_XDECREF(dict_obj);
+
+    if (PyModule_AddIntConstant(module, "MAPPING_CHECK_DICT_OK", mapping_check_dict_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MAPPING_CHECK_LIST_OK", mapping_check_list_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MAPPING_CHECK_SET_OK", mapping_check_set_ok) != 0 ||
+        PyModule_AddIntConstant(module, "AITER_CHECK_LIST_OK", aiter_check_list_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MAPPING_SIZE_OK", mapping_size_ok) != 0 ||
+        PyModule_AddIntConstant(module, "OPTIONAL_ITEM_PRESENT_OK", optional_item_present_ok) != 0 ||
+        PyModule_AddIntConstant(module, "OPTIONAL_ITEM_MISSING_OK", optional_item_missing_ok) != 0 ||
+        PyModule_AddIntConstant(module, "OPTIONAL_ITEM_STRING_PRESENT_OK", optional_item_string_present_ok) != 0 ||
+        PyModule_AddIntConstant(module, "OPTIONAL_ITEM_ERROR_OK", optional_item_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "HAS_KEY_WITH_ERROR_OK", has_key_with_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "HAS_KEY_STRING_WITH_ERROR_OK", has_key_string_with_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "HAS_KEY_SUPPRESSES_ERROR_OK", has_key_suppresses_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "HAS_KEY_STRING_SUPPRESSES_ERROR_OK", has_key_string_suppresses_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SET_ITEM_STRING_OK", set_item_string_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MAPPING_VIEWS_OK", mapping_views_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MAPPING_VIEW_ERROR_OK", mapping_view_error_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch16_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch16 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch16_probe as m\nassert m.MAPPING_CHECK_DICT_OK == 1\nassert m.MAPPING_CHECK_LIST_OK == 1\nassert m.MAPPING_CHECK_SET_OK == 1\nassert m.AITER_CHECK_LIST_OK == 1\nassert m.MAPPING_SIZE_OK == 1\nassert m.OPTIONAL_ITEM_PRESENT_OK == 1\nassert m.OPTIONAL_ITEM_MISSING_OK == 1\nassert m.OPTIONAL_ITEM_STRING_PRESENT_OK == 1\nassert m.OPTIONAL_ITEM_ERROR_OK == 1\nassert m.HAS_KEY_WITH_ERROR_OK == 1\nassert m.HAS_KEY_STRING_WITH_ERROR_OK == 1\nassert m.HAS_KEY_SUPPRESSES_ERROR_OK == 1\nassert m.HAS_KEY_STRING_SUPPRESSES_ERROR_OK == 1\nassert m.SET_ITEM_STRING_OK == 1\nassert m.MAPPING_VIEWS_OK == 1\nassert m.MAPPING_VIEW_ERROR_OK == 1",
+    )
+    .expect("cpython api batch16 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
