@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 typedef intptr_t Py_ssize_t;
 
@@ -103,6 +104,99 @@ static int object_is_instance_of_type(void *value, void *type_obj)
         return 0;
     }
     return PyType_IsSubtype(head->ob_type, type_obj);
+}
+
+typedef struct {
+    char *buf;
+    Py_ssize_t len;
+    Py_ssize_t cap;
+} bytes_builder;
+
+static int bytes_builder_init(bytes_builder *builder, Py_ssize_t initial_cap)
+{
+    if (initial_cap < 64) {
+        initial_cap = 64;
+    }
+    builder->buf = (char *)malloc((size_t)initial_cap);
+    if (builder->buf == NULL) {
+        pyrs_capi_set_error_message("PyBytes_FromFormatV failed allocating output buffer");
+        builder->len = 0;
+        builder->cap = 0;
+        return 0;
+    }
+    builder->len = 0;
+    builder->cap = initial_cap;
+    builder->buf[0] = '\0';
+    return 1;
+}
+
+static int bytes_builder_reserve(bytes_builder *builder, Py_ssize_t extra)
+{
+    if (extra < 0) {
+        return 0;
+    }
+    Py_ssize_t needed = builder->len + extra + 1;
+    if (needed <= builder->cap) {
+        return 1;
+    }
+    Py_ssize_t next_cap = builder->cap;
+    while (next_cap < needed) {
+        if (next_cap > (Py_ssize_t)(SIZE_MAX / 2)) {
+            next_cap = needed;
+            break;
+        }
+        next_cap *= 2;
+    }
+    char *grown = (char *)realloc(builder->buf, (size_t)next_cap);
+    if (grown == NULL) {
+        pyrs_capi_set_error_message("PyBytes_FromFormatV failed growing output buffer");
+        return 0;
+    }
+    builder->buf = grown;
+    builder->cap = next_cap;
+    return 1;
+}
+
+static int bytes_builder_append_bytes(bytes_builder *builder, const char *data, Py_ssize_t len)
+{
+    if (len <= 0) {
+        return 1;
+    }
+    if (!bytes_builder_reserve(builder, len)) {
+        return 0;
+    }
+    memcpy(builder->buf + builder->len, data, (size_t)len);
+    builder->len += len;
+    builder->buf[builder->len] = '\0';
+    return 1;
+}
+
+static int bytes_builder_append_cstr(bytes_builder *builder, const char *data)
+{
+    if (data == NULL) {
+        return bytes_builder_append_bytes(builder, "(null)", 6);
+    }
+    return bytes_builder_append_bytes(builder, data, (Py_ssize_t)strlen(data));
+}
+
+static int bytes_builder_append_char(bytes_builder *builder, unsigned char ch)
+{
+    if (!bytes_builder_reserve(builder, 1)) {
+        return 0;
+    }
+    builder->buf[builder->len++] = (char)ch;
+    builder->buf[builder->len] = '\0';
+    return 1;
+}
+
+static void bytes_builder_dealloc(bytes_builder *builder)
+{
+    if (builder->buf != NULL) {
+        free(builder->buf);
+    }
+    builder->buf = NULL;
+    builder->len = 0;
+    builder->cap = 0;
 }
 
 static Py_ssize_t countformat(const char *format, char endchar)
@@ -582,6 +676,185 @@ void *_Py_VaBuildValue_SizeT(const char *format, va_list ap)
     va_copy(copy, ap);
     void *result = va_build_value(format, &copy);
     va_end(copy);
+    return result;
+}
+
+void *PyBytes_FromFormatV(const char *format, va_list vargs)
+{
+    if (format == NULL) {
+        pyrs_capi_set_error_message("PyBytes_FromFormatV received null format");
+        return NULL;
+    }
+
+    bytes_builder out;
+    if (!bytes_builder_init(&out, (Py_ssize_t)strlen(format) + 1)) {
+        return NULL;
+    }
+
+    for (const char *f = format; *f != '\0'; f++) {
+        if (*f != '%') {
+            if (!bytes_builder_append_char(&out, (unsigned char)*f)) {
+                goto error;
+            }
+            continue;
+        }
+
+        const char *p = f++;
+        while (isdigit((unsigned char)*f)) {
+            f++;
+        }
+
+        Py_ssize_t prec = 0;
+        if (*f == '.') {
+            f++;
+            while (isdigit((unsigned char)*f)) {
+                prec = (prec * 10) + (*f - '0');
+                f++;
+            }
+        }
+
+        while (*f != '\0' && *f != '%' && !isalpha((unsigned char)*f)) {
+            f++;
+        }
+
+        int longflag = 0;
+        if (*f == 'l' && (f[1] == 'd' || f[1] == 'u')) {
+            longflag = 1;
+            f++;
+        }
+
+        int size_tflag = 0;
+        if (*f == 'z' && (f[1] == 'd' || f[1] == 'u')) {
+            size_tflag = 1;
+            f++;
+        }
+
+        switch (*f) {
+            case 'c': {
+                int c = va_arg(vargs, int);
+                if (c < 0 || c > 255) {
+                    pyrs_capi_set_error_message(
+                        "PyBytes_FromFormatV(): %c format expects an integer in range [0; 255]"
+                    );
+                    goto error;
+                }
+                if (!bytes_builder_append_char(&out, (unsigned char)c)) {
+                    goto error;
+                }
+                break;
+            }
+            case 'd': {
+                char buffer[64];
+                if (longflag) {
+                    snprintf(buffer, sizeof(buffer), "%ld", va_arg(vargs, long));
+                } else if (size_tflag) {
+                    snprintf(buffer, sizeof(buffer), "%zd", va_arg(vargs, Py_ssize_t));
+                } else {
+                    snprintf(buffer, sizeof(buffer), "%d", va_arg(vargs, int));
+                }
+                if (!bytes_builder_append_cstr(&out, buffer)) {
+                    goto error;
+                }
+                break;
+            }
+            case 'u': {
+                char buffer[64];
+                if (longflag) {
+                    snprintf(buffer, sizeof(buffer), "%lu", va_arg(vargs, unsigned long));
+                } else if (size_tflag) {
+                    snprintf(buffer, sizeof(buffer), "%zu", va_arg(vargs, size_t));
+                } else {
+                    snprintf(buffer, sizeof(buffer), "%u", va_arg(vargs, unsigned int));
+                }
+                if (!bytes_builder_append_cstr(&out, buffer)) {
+                    goto error;
+                }
+                break;
+            }
+            case 'i': {
+                char buffer[64];
+                snprintf(buffer, sizeof(buffer), "%i", va_arg(vargs, int));
+                if (!bytes_builder_append_cstr(&out, buffer)) {
+                    goto error;
+                }
+                break;
+            }
+            case 'x': {
+                char buffer[64];
+                snprintf(buffer, sizeof(buffer), "%x", va_arg(vargs, int));
+                if (!bytes_builder_append_cstr(&out, buffer)) {
+                    goto error;
+                }
+                break;
+            }
+            case 's': {
+                const char *text = va_arg(vargs, const char *);
+                if (text == NULL) {
+                    text = "(null)";
+                }
+                Py_ssize_t text_len = 0;
+                if (prec <= 0) {
+                    text_len = (Py_ssize_t)strlen(text);
+                } else {
+                    while (text_len < prec && text[text_len] != '\0') {
+                        text_len++;
+                    }
+                }
+                if (!bytes_builder_append_bytes(&out, text, text_len)) {
+                    goto error;
+                }
+                break;
+            }
+            case 'p': {
+                char buffer[64];
+                snprintf(buffer, sizeof(buffer), "%p", va_arg(vargs, void *));
+                if (buffer[0] == '0' && (buffer[1] == 'x' || buffer[1] == 'X')) {
+                    buffer[1] = 'x';
+                } else {
+                    size_t len = strlen(buffer);
+                    memmove(buffer + 2, buffer, len + 1);
+                    buffer[0] = '0';
+                    buffer[1] = 'x';
+                }
+                if (!bytes_builder_append_cstr(&out, buffer)) {
+                    goto error;
+                }
+                break;
+            }
+            case '%':
+                if (!bytes_builder_append_char(&out, '%')) {
+                    goto error;
+                }
+                break;
+            default:
+                if (!bytes_builder_append_cstr(&out, p)) {
+                    goto error;
+                }
+                {
+                    void *result = PyBytes_FromStringAndSize(out.buf, out.len);
+                    bytes_builder_dealloc(&out);
+                    return result;
+                }
+        }
+    }
+
+    {
+        void *result = PyBytes_FromStringAndSize(out.buf, out.len);
+        bytes_builder_dealloc(&out);
+        return result;
+    }
+
+error:
+    bytes_builder_dealloc(&out);
+    return NULL;
+}
+
+void *PyBytes_FromFormat(const char *format, ...)
+{
+    va_list vargs;
+    va_start(vargs, format);
+    void *result = PyBytes_FromFormatV(format, vargs);
+    va_end(vargs);
     return result;
 }
 

@@ -4463,6 +4463,178 @@ PyInit_cpython_api_batch27_probe(void) {
 }
 
 #[test]
+fn cpython_compat_bytes_abi_batch28_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch28 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch28 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch28");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch28_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static PyObject *
+call_from_format_v(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    PyObject *result = PyBytes_FromFormatV(fmt, ap);
+    va_end(ap);
+    return result;
+}
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch28_probe",
+    "cpython api batch28 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch28_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *formatted = PyBytes_FromFormat(
+        "x=%d y=%u z=%ld q=%lu a=%zd b=%zu i=%i h=%x c=%c p=%p %% s=%s",
+        -3,
+        (unsigned int)5,
+        (long)-7,
+        (unsigned long)9,
+        (long long)-11,
+        (size_t)13,
+        17,
+        31,
+        (int)'A',
+        (void *)module,
+        "ok"
+    );
+    const char *formatted_text = formatted ? PyBytes_AsString(formatted) : 0;
+    int formatted_ok = 0;
+    if (formatted_text) {
+        formatted_ok =
+            strstr(formatted_text, "x=-3") &&
+            strstr(formatted_text, "y=5") &&
+            strstr(formatted_text, "z=-7") &&
+            strstr(formatted_text, "q=9") &&
+            strstr(formatted_text, "a=-11") &&
+            strstr(formatted_text, "b=13") &&
+            strstr(formatted_text, "i=17") &&
+            strstr(formatted_text, "h=1f") &&
+            strstr(formatted_text, "c=A") &&
+            strstr(formatted_text, "0x") &&
+            strstr(formatted_text, "% s=ok");
+    }
+
+    PyObject *formatted_v = call_from_format_v("%s:%d", "va", 42);
+    const char *formatted_v_text = formatted_v ? PyBytes_AsString(formatted_v) : 0;
+    int formatted_v_ok = (formatted_v_text && strcmp(formatted_v_text, "va:42") == 0) ? 1 : 0;
+
+    PyObject *unknown_spec = PyBytes_FromFormat("bad%Qtail", 1234);
+    const char *unknown_text = unknown_spec ? PyBytes_AsString(unknown_spec) : 0;
+    int unknown_spec_ok = (unknown_text && strcmp(unknown_text, "bad%Qtail") == 0) ? 1 : 0;
+
+    PyObject *bytes_for_repr = PyBytes_FromString("a'b");
+    PyObject *repr_single = bytes_for_repr ? PyBytes_Repr(bytes_for_repr, 0) : 0;
+    PyObject *repr_smart = bytes_for_repr ? PyBytes_Repr(bytes_for_repr, 1) : 0;
+    const char *repr_single_text = repr_single ? PyUnicode_AsUTF8(repr_single) : 0;
+    const char *repr_smart_text = repr_smart ? PyUnicode_AsUTF8(repr_smart) : 0;
+    int repr_ok =
+        repr_single_text && repr_smart_text &&
+        strcmp(repr_single_text, "b'a\\'b'") == 0 &&
+        strcmp(repr_smart_text, "b\"a'b\"") == 0;
+
+    const char *esc = "\\n\\x41\\101\\q";
+    PyObject *decoded = PyBytes_DecodeEscape(esc, (long long)strlen(esc), 0, 0, 0);
+    const char *decoded_text = decoded ? PyBytes_AsString(decoded) : 0;
+    long long decoded_len = decoded ? PyBytes_Size(decoded) : -1;
+    int decode_ok =
+        decoded_text && decoded_len == 4 &&
+        decoded_text[0] == '\n' &&
+        decoded_text[1] == 'A' &&
+        decoded_text[2] == 'A' &&
+        decoded_text[3] == 'q';
+
+    const char *bad_escape = "\\xZ";
+    PyObject *decode_strict = PyBytes_DecodeEscape(
+        bad_escape,
+        (long long)strlen(bad_escape),
+        "strict",
+        0,
+        0
+    );
+    int decode_strict_ok = (decode_strict == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    PyObject *decode_replace = PyBytes_DecodeEscape(
+        bad_escape,
+        (long long)strlen(bad_escape),
+        "replace",
+        0,
+        0
+    );
+    const char *decode_replace_text = decode_replace ? PyBytes_AsString(decode_replace) : 0;
+    int decode_replace_ok = decode_replace_text && strcmp(decode_replace_text, "?Z") == 0;
+
+    Py_XDECREF(decode_replace);
+    Py_XDECREF(decode_strict);
+    Py_XDECREF(decoded);
+    Py_XDECREF(repr_smart);
+    Py_XDECREF(repr_single);
+    Py_XDECREF(bytes_for_repr);
+    Py_XDECREF(unknown_spec);
+    Py_XDECREF(formatted_v);
+    Py_XDECREF(formatted);
+
+    if (PyModule_AddIntConstant(module, "FORMATTED_OK", formatted_ok ? 1 : 0) != 0 ||
+        PyModule_AddIntConstant(module, "FORMATTED_V_OK", formatted_v_ok) != 0 ||
+        PyModule_AddIntConstant(module, "UNKNOWN_SPEC_OK", unknown_spec_ok) != 0 ||
+        PyModule_AddIntConstant(module, "REPR_OK", repr_ok ? 1 : 0) != 0 ||
+        PyModule_AddIntConstant(module, "DECODE_OK", decode_ok ? 1 : 0) != 0 ||
+        PyModule_AddIntConstant(module, "DECODE_STRICT_OK", decode_strict_ok) != 0 ||
+        PyModule_AddIntConstant(module, "DECODE_REPLACE_OK", decode_replace_ok ? 1 : 0) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch28_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch28 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch28_probe as m\nassert m.FORMATTED_OK == 1\nassert m.FORMATTED_V_OK == 1\nassert m.UNKNOWN_SPEC_OK == 1\nassert m.REPR_OK == 1\nassert m.DECODE_OK == 1\nassert m.DECODE_STRICT_OK == 1\nassert m.DECODE_REPLACE_OK == 1",
+    )
+    .expect("cpython api batch28 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

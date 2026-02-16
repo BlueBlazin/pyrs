@@ -706,6 +706,26 @@ fn exports_abi3_batch27_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch28_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyBytes_FromFormat",
+        "PyBytes_FromFormatV",
+        "PyBytes_Repr",
+        "PyBytes_DecodeEscape",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch28 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

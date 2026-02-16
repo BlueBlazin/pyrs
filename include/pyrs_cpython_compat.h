@@ -217,10 +217,20 @@ PyObject *PyUnicode_FromString(const char *value);
 const char *PyUnicode_AsUTF8(PyObject *object);
 PyObject *PyBytes_FromString(const char *value);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
+PyObject *PyBytes_FromFormat(const char *format, ...);
+PyObject *PyBytes_FromFormatV(const char *format, va_list vargs);
 PyObject *PyBytes_FromObject(PyObject *object);
 long long PyBytes_Size(PyObject *object);
 char *PyBytes_AsString(PyObject *object);
 int PyBytes_AsStringAndSize(PyObject *object, char **buffer, long long *len);
+PyObject *PyBytes_Repr(PyObject *object, int smartquotes);
+PyObject *PyBytes_DecodeEscape(
+    const char *s,
+    long long len,
+    const char *errors,
+    long long unicode,
+    const char *recode_encoding
+);
 void PyBytes_Concat(PyObject **bytes, PyObject *newpart);
 void PyBytes_ConcatAndDel(PyObject **bytes, PyObject *newpart);
 PyObject *PyByteArray_FromObject(PyObject *object);

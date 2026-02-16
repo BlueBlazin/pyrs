@@ -7261,6 +7261,120 @@ pub unsafe extern "C" fn PyBytes_AsStringAndSize(
     0
 }
 
+fn cpython_bytes_repr_text(values: &[u8], smartquotes: bool) -> String {
+    let use_double_quotes = smartquotes && values.contains(&b'\'') && !values.contains(&b'"');
+    let quote = if use_double_quotes { '"' } else { '\'' };
+    let mut out = String::with_capacity(values.len() + 8);
+    out.push('b');
+    out.push(quote);
+    for byte in values {
+        match *byte {
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            b'\\' => out.push_str("\\\\"),
+            b'\'' if quote == '\'' => out.push_str("\\'"),
+            b'"' if quote == '"' => out.push_str("\\\""),
+            32..=126 => out.push(*byte as char),
+            _ => out.push_str(&format!("\\x{:02x}", byte)),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_Repr(object: *mut c_void, smartquotes: i32) -> *mut c_void {
+    let values = match cpython_value_from_ptr(object) {
+        Ok(Value::Bytes(obj)) => match &*obj.kind() {
+            Object::Bytes(values) => values.clone(),
+            _ => {
+                cpython_set_error("PyBytes_Repr encountered invalid bytes storage");
+                return std::ptr::null_mut();
+            }
+        },
+        Ok(_) => {
+            cpython_set_error("PyBytes_Repr expected bytes object");
+            return std::ptr::null_mut();
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    cpython_new_ptr_for_value(Value::Str(cpython_bytes_repr_text(
+        &values,
+        smartquotes != 0,
+    )))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_DecodeEscape(
+    s: *const c_char,
+    len: isize,
+    errors: *const c_char,
+    _unicode: isize,
+    _recode_encoding: *const c_char,
+) -> *mut c_void {
+    if s.is_null() {
+        cpython_set_error("PyBytes_DecodeEscape received null input buffer");
+        return std::ptr::null_mut();
+    }
+    if len < 0 {
+        cpython_set_error("PyBytes_DecodeEscape received negative length");
+        return std::ptr::null_mut();
+    }
+    let error_mode = if errors.is_null() {
+        "strict".to_string()
+    } else {
+        match unsafe { c_name_to_string(errors) } {
+            Ok(name) => name,
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        }
+    };
+    let input_bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), len as usize).to_vec() };
+    let source_ptr = cpython_new_bytes_ptr(input_bytes);
+    if source_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let source_value = match cpython_value_from_ptr(source_ptr) {
+        Ok(value) => value,
+        Err(err) => {
+            unsafe { Py_DecRef(source_ptr) };
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    unsafe { Py_DecRef(source_ptr) };
+
+    let decoded = match cpython_call_builtin(
+        BuiltinFunction::CodecsEscapeDecode,
+        vec![source_value, Value::Str(error_mode)],
+    ) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match decoded {
+        Value::Tuple(items) => match &*items.kind() {
+            Object::Tuple(values) if !values.is_empty() => cpython_new_ptr_for_value(values[0].clone()),
+            _ => {
+                cpython_set_error("PyBytes_DecodeEscape expected tuple(bytes, consumed)");
+                std::ptr::null_mut()
+            }
+        },
+        _ => {
+            cpython_set_error("PyBytes_DecodeEscape expected tuple result");
+            std::ptr::null_mut()
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyByteArray_FromStringAndSize(
     bytes: *const c_char,
@@ -19935,6 +20049,8 @@ pub static mut PyUnicode_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_UNICO
 unsafe extern "C" {
     fn PyTuple_Pack(size: isize, ...) -> *mut c_void;
     fn Py_BuildValue(format: *const c_char, ...) -> *mut c_void;
+    fn PyBytes_FromFormat(format: *const c_char, ...) -> *mut c_void;
+    fn PyBytes_FromFormatV(format: *const c_char, vargs: *mut c_void) -> *mut c_void;
     fn PyObject_CallFunction(callable: *mut c_void, format: *const c_char, ...) -> *mut c_void;
     fn PyObject_CallFunctionObjArgs(callable: *mut c_void, ...) -> *mut c_void;
     fn PyObject_CallMethod(
@@ -20792,6 +20908,12 @@ static KEEP_PYBYTES_FROM_STRING_AND_SIZE: unsafe extern "C" fn(
 static KEEP_PYBYTES_FROM_OBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyBytes_FromObject;
 #[used]
+static KEEP_PYBYTES_FROM_FORMAT: unsafe extern "C" fn(*const c_char, ...) -> *mut c_void =
+    PyBytes_FromFormat;
+#[used]
+static KEEP_PYBYTES_FROM_FORMATV: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
+    PyBytes_FromFormatV;
+#[used]
 static KEEP_PYBYTES_CONCAT: unsafe extern "C" fn(*mut *mut c_void, *mut c_void) = PyBytes_Concat;
 #[used]
 static KEEP_PYBYTES_CONCAT_AND_DEL: unsafe extern "C" fn(*mut *mut c_void, *mut c_void) =
@@ -20953,6 +21075,16 @@ static KEEP_PYBYTES_AS_STRING_AND_SIZE: unsafe extern "C" fn(
     *mut *mut c_char,
     *mut isize,
 ) -> i32 = PyBytes_AsStringAndSize;
+#[used]
+static KEEP_PYBYTES_REPR: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void = PyBytes_Repr;
+#[used]
+static KEEP_PYBYTES_DECODE_ESCAPE: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+    isize,
+    *const c_char,
+) -> *mut c_void = PyBytes_DecodeEscape;
 #[used]
 static KEEP_PYBYTEARRAY_FROM_STRING_AND_SIZE: unsafe extern "C" fn(
     *const c_char,
