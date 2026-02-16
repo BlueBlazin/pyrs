@@ -1104,6 +1104,186 @@ PyInit_cpython_api_batch2_probe(void) {
 }
 
 #[test]
+fn cpython_compat_bytes_error_and_cfunction_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch3 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch3 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch3");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch3_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *probe_echo(PyObject *self, PyObject *args) {
+    (void)self;
+    Py_INCREF(args);
+    return args;
+}
+
+static PyMethodDef module_methods[] = {
+    {"echo", probe_echo, 1, "echo tuple args"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch3_probe",
+    "cpython api batch3 probe module",
+    -1,
+    module_methods,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch3_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *bytearray_obj = PyByteArray_FromStringAndSize("xy", 2);
+    PyObject *from_obj = PyBytes_FromObject(bytearray_obj);
+    if (!from_obj) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "FROM_OBJ_LEN", (int)PyBytes_Size(from_obj)) != 0) {
+        return 0;
+    }
+
+    PyObject *list_obj = PyList_New(3);
+    if (!list_obj) {
+        return 0;
+    }
+    if (PyList_SetItem(list_obj, 0, PyLong_FromLong(65)) != 0 ||
+        PyList_SetItem(list_obj, 1, PyLong_FromLong(66)) != 0 ||
+        PyList_SetItem(list_obj, 2, PyLong_FromLong(67)) != 0) {
+        return 0;
+    }
+    PyObject *from_list = PyBytes_FromObject(list_obj);
+    if (!from_list) {
+        return 0;
+    }
+    char *from_list_data = PyBytes_AsString(from_list);
+    if (!from_list_data) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "FROM_LIST_FIRST", (int)(unsigned char)from_list_data[0]) != 0) {
+        return 0;
+    }
+
+    int int_fail = 0;
+    if (!PyBytes_FromObject(PyLong_FromLong(3)) && PyErr_Occurred()) {
+        int_fail = 1;
+        PyErr_Clear();
+    }
+    if (PyModule_AddIntConstant(module, "INT_FAIL", int_fail) != 0) {
+        return 0;
+    }
+
+    PyObject *left = PyBytes_FromStringAndSize("ab", 2);
+    PyObject *right = PyBytes_FromStringAndSize("cd", 2);
+    if (!left || !right) {
+        return 0;
+    }
+    PyBytes_Concat(&left, right);
+    if (!left) {
+        return 0;
+    }
+    int concat_len = (int)PyBytes_Size(left);
+    PyObject *right2 = PyBytes_FromStringAndSize("ef", 2);
+    if (!right2) {
+        return 0;
+    }
+    PyBytes_ConcatAndDel(&left, right2);
+    if (!left) {
+        return 0;
+    }
+    int concat_and_del_len = (int)PyBytes_Size(left);
+    PyObject *clear_target = PyBytes_FromStringAndSize("zz", 2);
+    PyBytes_Concat(&clear_target, 0);
+    int concat_null_clears = clear_target == 0 ? 1 : 0;
+    if (PyModule_AddIntConstant(module, "CONCAT_LEN", concat_len) != 0 ||
+        PyModule_AddIntConstant(module, "CONCAT_AND_DEL_LEN", concat_and_del_len) != 0 ||
+        PyModule_AddIntConstant(module, "CONCAT_NULL_CLEARS", concat_null_clears) != 0) {
+        return 0;
+    }
+
+    int bad_argument_result = PyErr_BadArgument();
+    int bad_argument_set = PyErr_Occurred() ? 1 : 0;
+    PyErr_Clear();
+    PyErr_BadInternalCall();
+    int bad_internal_set = PyErr_Occurred() ? 1 : 0;
+    PyErr_Clear();
+    PyErr_PrintEx(0);
+    int print_noop_ok = PyErr_Occurred() == 0 ? 1 : 0;
+    PyErr_Display(0, 0, 0);
+    int display_noop_ok = PyErr_Occurred() == 0 ? 1 : 0;
+    PyErr_DisplayException(0);
+    int display_exception_noop_ok = PyErr_Occurred() == 0 ? 1 : 0;
+    if (PyModule_AddIntConstant(module, "BAD_ARGUMENT_RESULT", bad_argument_result) != 0 ||
+        PyModule_AddIntConstant(module, "BAD_ARGUMENT_SET", bad_argument_set) != 0 ||
+        PyModule_AddIntConstant(module, "BAD_INTERNAL_SET", bad_internal_set) != 0 ||
+        PyModule_AddIntConstant(module, "PRINT_NOOP_OK", print_noop_ok) != 0 ||
+        PyModule_AddIntConstant(module, "DISPLAY_NOOP_OK", display_noop_ok) != 0 ||
+        PyModule_AddIntConstant(module, "DISPLAY_EXCEPTION_NOOP_OK", display_exception_noop_ok) != 0) {
+        return 0;
+    }
+
+    int cfunc_flags = PyCFunction_GetFlags(0);
+    int cfunc_flags_fail = (cfunc_flags == -1 && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+    PyObject *cfunc_self = PyCFunction_GetSelf(0);
+    int cfunc_self_fail = (!cfunc_self && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+    void *cfunc_fn = (void *)PyCFunction_GetFunction(0);
+    int cfunc_fn_fail = (!cfunc_fn && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+    PyObject *cfunc_call = PyCFunction_Call(0, 0, 0);
+    int cfunc_call_fail = (!cfunc_call && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+    if (PyModule_AddIntConstant(module, "CFUNC_FLAGS_FAIL", cfunc_flags_fail) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_SELF_FAIL", cfunc_self_fail) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_FN_FAIL", cfunc_fn_fail) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_CALL_FAIL", cfunc_call_fail) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch3_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch3 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch3_probe as m\nassert m.FROM_OBJ_LEN == 2\nassert m.FROM_LIST_FIRST == 65\nassert m.INT_FAIL == 1\nassert m.CONCAT_LEN == 4\nassert m.CONCAT_AND_DEL_LEN == 6\nassert m.CONCAT_NULL_CLEARS == 1\nassert m.BAD_ARGUMENT_RESULT == 0\nassert m.BAD_ARGUMENT_SET == 1\nassert m.BAD_INTERNAL_SET == 1\nassert m.PRINT_NOOP_OK == 1\nassert m.DISPLAY_NOOP_OK == 1\nassert m.DISPLAY_EXCEPTION_NOOP_OK == 1\nassert m.CFUNC_FLAGS_FAIL == 1\nassert m.CFUNC_SELF_FAIL == 1\nassert m.CFUNC_FN_FAIL == 1\nassert m.CFUNC_CALL_FAIL == 1",
+    )
+    .expect("cpython api batch3 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

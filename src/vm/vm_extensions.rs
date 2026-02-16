@@ -5893,6 +5893,177 @@ pub unsafe extern "C" fn PyBytes_FromString(value: *const c_char) -> *mut c_void
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_FromObject(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        unsafe { _PyErr_BadInternalCall(std::ptr::null(), 0) };
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyBytes_FromObject received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        if matches!(value, Value::Bytes(_)) {
+            unsafe { Py_XIncRef(object) };
+            return object;
+        }
+        if matches!(
+            value,
+            Value::Int(_) | Value::BigInt(_) | Value::Bool(_) | Value::Str(_)
+        ) {
+            context.set_error(format!(
+                "TypeError: cannot convert '{}' object to bytes",
+                cpython_type_name_for_object_ptr(object)
+            ));
+            return std::ptr::null_mut();
+        }
+        if context.vm.is_null() {
+            context.set_error("PyBytes_FromObject missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_builtin(BuiltinFunction::Bytes, vec![value], HashMap::new()) {
+            Ok(bytes_value @ Value::Bytes(_)) => context.alloc_cpython_ptr_for_value(bytes_value),
+            Ok(_) => {
+                context.set_error("PyBytes_FromObject expected bytes result");
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+unsafe fn cpython_clear_pyobject_ref(slot: *mut *mut c_void) {
+    if slot.is_null() {
+        return;
+    }
+    // SAFETY: caller guarantees `slot` is a valid writable pointer location.
+    let current = unsafe { *slot };
+    if !current.is_null() {
+        unsafe { Py_XDecRef(current) };
+    }
+    // SAFETY: caller guarantees `slot` is writable.
+    unsafe {
+        *slot = std::ptr::null_mut();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_Concat(pv: *mut *mut c_void, w: *mut c_void) {
+    if pv.is_null() {
+        cpython_set_error("PyBytes_Concat requires non-null output pointer");
+        return;
+    }
+    // SAFETY: `pv` is checked non-null.
+    let left_ptr = unsafe { *pv };
+    if left_ptr.is_null() {
+        return;
+    }
+    if w.is_null() {
+        unsafe { cpython_clear_pyobject_ref(pv) };
+        return;
+    }
+    let result = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyBytes_Concat missing VM context");
+            return std::ptr::null_mut();
+        }
+        let left_value = match context.cpython_value_from_ptr(left_ptr) {
+            Some(value) => value,
+            None => {
+                context.set_error("PyBytes_Concat received unknown left pointer");
+                return std::ptr::null_mut();
+            }
+        };
+        let right_value = match context.cpython_value_from_ptr_or_proxy(w) {
+            Some(value) => value,
+            None => {
+                context.set_error("PyBytes_Concat received unknown right pointer");
+                return std::ptr::null_mut();
+            }
+        };
+        let left_bytes = match left_value {
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(values) => values.clone(),
+                _ => {
+                    context.set_error("PyBytes_Concat encountered invalid left bytes storage");
+                    return std::ptr::null_mut();
+                }
+            },
+            _ => {
+                context.set_error(format!(
+                    "TypeError: can't concat {} to {}",
+                    cpython_type_name_for_object_ptr(w),
+                    cpython_type_name_for_object_ptr(left_ptr)
+                ));
+                return std::ptr::null_mut();
+            }
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let right_bytes =
+            match vm.call_builtin(BuiltinFunction::Bytes, vec![right_value], HashMap::new()) {
+                Ok(Value::Bytes(bytes_obj)) => match &*bytes_obj.kind() {
+                    Object::Bytes(values) => values.clone(),
+                    _ => {
+                        context.set_error("PyBytes_Concat encountered invalid right bytes storage");
+                        return std::ptr::null_mut();
+                    }
+                },
+                Ok(_) => {
+                    context.set_error(format!(
+                        "TypeError: can't concat {} to {}",
+                        cpython_type_name_for_object_ptr(w),
+                        cpython_type_name_for_object_ptr(left_ptr)
+                    ));
+                    return std::ptr::null_mut();
+                }
+                Err(_) => {
+                    context.set_error(format!(
+                        "TypeError: can't concat {} to {}",
+                        cpython_type_name_for_object_ptr(w),
+                        cpython_type_name_for_object_ptr(left_ptr)
+                    ));
+                    return std::ptr::null_mut();
+                }
+            };
+        let mut merged = left_bytes;
+        merged.extend(right_bytes);
+        let merged_obj = vm.heap.alloc(Object::Bytes(merged));
+        context.alloc_cpython_ptr_for_value(Value::Bytes(merged_obj))
+    });
+    let new_ptr = match result {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    };
+    if new_ptr.is_null() {
+        unsafe { cpython_clear_pyobject_ref(pv) };
+        return;
+    }
+    unsafe {
+        Py_XDecRef(left_ptr);
+        *pv = new_ptr;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_ConcatAndDel(pv: *mut *mut c_void, w: *mut c_void) {
+    unsafe { PyBytes_Concat(pv, w) };
+    unsafe { Py_XDecRef(w) };
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyBytes_Size(object: *mut c_void) -> isize {
     let foreign_bytes_len = |object: *mut c_void| -> Option<isize> {
         if object.is_null() {
@@ -11608,6 +11779,106 @@ unsafe extern "C" fn cpython_cfunction_tp_call(
     })
 }
 
+fn cpython_cfunction_raw_object(
+    context: &mut ModuleCapiContext,
+    object: *mut c_void,
+    api_name: &str,
+) -> Option<*mut CpythonCFunctionCompatObject> {
+    if object.is_null() {
+        context.set_error(format!("{api_name} received null callable"));
+        return None;
+    }
+    // SAFETY: `object` is a potential PyObject pointer; we only inspect head fields.
+    let type_ptr = unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<c_void>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null()
+        || unsafe {
+            PyType_IsSubtype(
+                type_ptr,
+                std::ptr::addr_of_mut!(PyCFunction_Type).cast::<c_void>(),
+            )
+        } == 0
+    {
+        context.set_error("bad internal call");
+        return None;
+    }
+    Some(object.cast::<CpythonCFunctionCompatObject>())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCFunction_GetFunction(object: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(raw) = cpython_cfunction_raw_object(context, object, "PyCFunction_GetFunction")
+        else {
+            return std::ptr::null_mut();
+        };
+        // SAFETY: raw object + method definition were validated above.
+        unsafe {
+            (*raw)
+                .m_ml
+                .as_ref()
+                .and_then(|method| method.ml_meth)
+                .map(|function| function as *mut c_void)
+                .unwrap_or(std::ptr::null_mut())
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCFunction_GetSelf(object: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(raw) = cpython_cfunction_raw_object(context, object, "PyCFunction_GetSelf") else {
+            return std::ptr::null_mut();
+        };
+        // SAFETY: raw object was validated above.
+        unsafe { (*raw).m_self }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCFunction_GetFlags(object: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        let Some(raw) = cpython_cfunction_raw_object(context, object, "PyCFunction_GetFlags")
+        else {
+            return -1;
+        };
+        // SAFETY: raw object + method definition were validated above.
+        unsafe {
+            (*raw)
+                .m_ml
+                .as_ref()
+                .map(|method| method.ml_flags)
+                .unwrap_or(-1)
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCFunction_Call(
+    callable: *mut c_void,
+    args: *mut c_void,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyObject_Call(callable, args, kwargs) }
+}
+
 unsafe extern "C" fn cpython_cfunction_tp_getattro(
     object: *mut c_void,
     name: *mut c_void,
@@ -12253,6 +12524,23 @@ pub unsafe extern "C" fn _PyErr_BadInternalCall(_filename: *const c_char, _linen
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_BadInternalCall() {
+    unsafe { _PyErr_BadInternalCall(std::ptr::null(), 0) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_BadArgument() -> i32 {
+    // SAFETY: exception singletons are process-lifetime globals.
+    unsafe {
+        PyErr_SetString(
+            PyExc_TypeError,
+            c"bad argument type for built-in operation".as_ptr(),
+        )
+    };
+    0
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn _Py_HashDouble(_inst: *mut c_void, value: f64) -> isize {
     if value.is_nan() {
         return 0;
@@ -12812,6 +13100,34 @@ pub unsafe extern "C" fn PyErr_Print() {
         eprintln!("error: {message}");
     }
     unsafe { PyErr_Clear() };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_PrintEx(_set_sys_last_vars: i32) {
+    unsafe { PyErr_Print() };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_Display(
+    _exception: *mut c_void,
+    value: *mut c_void,
+    _traceback: *mut c_void,
+) {
+    let _ = with_active_cpython_context_mut(|context| {
+        let message = if value.is_null() {
+            "unhandled exception".to_string()
+        } else {
+            context.error_message_from_ptr(value)
+        };
+        eprintln!("error: {message}");
+        context.clear_error();
+    })
+    .map_err(|err| cpython_set_error(err));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_DisplayException(exc: *mut c_void) {
+    unsafe { PyErr_Display(std::ptr::null_mut(), exc, std::ptr::null_mut()) };
 }
 
 fn cpython_is_exception_instance(context: &ModuleCapiContext, instance: &ObjRef) -> bool {
@@ -14380,11 +14696,30 @@ static KEEP_PYBYTES_FROM_STRING_AND_SIZE: unsafe extern "C" fn(
     isize,
 ) -> *mut c_void = PyBytes_FromStringAndSize;
 #[used]
+static KEEP_PYBYTES_FROM_OBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyBytes_FromObject;
+#[used]
+static KEEP_PYBYTES_CONCAT: unsafe extern "C" fn(*mut *mut c_void, *mut c_void) = PyBytes_Concat;
+#[used]
+static KEEP_PYBYTES_CONCAT_AND_DEL: unsafe extern "C" fn(*mut *mut c_void, *mut c_void) =
+    PyBytes_ConcatAndDel;
+#[used]
 static KEEP_PYERR_SET_STRING: unsafe extern "C" fn(*mut c_void, *const c_char) = PyErr_SetString;
 #[used]
 static KEEP_PYERR_OCCURRED: unsafe extern "C" fn() -> *mut c_void = PyErr_Occurred;
 #[used]
 static KEEP_PYERR_CLEAR: unsafe extern "C" fn() = PyErr_Clear;
+#[used]
+static KEEP_PYERR_BAD_ARGUMENT: unsafe extern "C" fn() -> i32 = PyErr_BadArgument;
+#[used]
+static KEEP_PYERR_BAD_INTERNAL_CALL: unsafe extern "C" fn() = PyErr_BadInternalCall;
+#[used]
+static KEEP_PYERR_PRINT_EX: unsafe extern "C" fn(i32) = PyErr_PrintEx;
+#[used]
+static KEEP_PYERR_DISPLAY: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
+    PyErr_Display;
+#[used]
+static KEEP_PYERR_DISPLAY_EXCEPTION: unsafe extern "C" fn(*mut c_void) = PyErr_DisplayException;
 #[used]
 static KEEP_PY_INCREF: unsafe extern "C" fn(*mut c_void) = Py_IncRef;
 #[used]
@@ -14720,6 +15055,20 @@ static KEEP_PYOBJECT_CALL: unsafe extern "C" fn(
 #[used]
 static KEEP_PYOBJECT_CALL_ONEARG: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyObject_CallOneArg;
+#[used]
+static KEEP_PYCFUNCTION_CALL: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyCFunction_Call;
+#[used]
+static KEEP_PYCFUNCTION_GET_FUNCTION: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCFunction_GetFunction;
+#[used]
+static KEEP_PYCFUNCTION_GET_SELF: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCFunction_GetSelf;
+#[used]
+static KEEP_PYCFUNCTION_GET_FLAGS: unsafe extern "C" fn(*mut c_void) -> i32 = PyCFunction_GetFlags;
 #[used]
 static KEEP_PYERR_SET_OBJECT: unsafe extern "C" fn(*mut c_void, *mut c_void) = PyErr_SetObject;
 #[used]

@@ -19,6 +19,8 @@ typedef struct PyMethodDef {
     const char *ml_doc;
 } PyMethodDef;
 
+typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
+
 typedef struct PyModuleDef_Base {
     unsigned long _ob_refcnt;
     void *_ob_type;
@@ -81,8 +83,14 @@ double PyFloat_GetMin(void);
 PyObject *PyFloat_GetInfo(void);
 PyObject *PyUnicode_FromString(const char *value);
 const char *PyUnicode_AsUTF8(PyObject *object);
+PyObject *PyBytes_FromString(const char *value);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
+PyObject *PyBytes_FromObject(PyObject *object);
+long long PyBytes_Size(PyObject *object);
+char *PyBytes_AsString(PyObject *object);
 int PyBytes_AsStringAndSize(PyObject *object, char **buffer, long long *len);
+void PyBytes_Concat(PyObject **bytes, PyObject *newpart);
+void PyBytes_ConcatAndDel(PyObject **bytes, PyObject *newpart);
 PyObject *PyByteArray_FromObject(PyObject *object);
 PyObject *PyByteArray_FromStringAndSize(const char *value, long long len);
 long long PyByteArray_Size(PyObject *object);
@@ -151,6 +159,11 @@ void *PyCapsule_Import(const char *name, int no_block);
 
 void PyErr_SetString(PyObject *exception, const char *message);
 PyObject *PyErr_Occurred(void);
+int PyErr_BadArgument(void);
+void PyErr_BadInternalCall(void);
+void PyErr_PrintEx(int set_sys_last_vars);
+void PyErr_Display(PyObject *unused, PyObject *value, PyObject *tb);
+void PyErr_DisplayException(PyObject *exc);
 void PyErr_Clear(void);
 PyObject *PyException_GetTraceback(PyObject *exception);
 PyObject *PyException_GetCause(PyObject *exception);
@@ -165,6 +178,11 @@ long long PyGC_Collect(void);
 int PyGC_Enable(void);
 int PyGC_Disable(void);
 int PyGC_IsEnabled(void);
+
+PyObject *PyCFunction_Call(PyObject *callable, PyObject *args, PyObject *kwargs);
+PyCFunction PyCFunction_GetFunction(PyObject *op);
+PyObject *PyCFunction_GetSelf(PyObject *op);
+int PyCFunction_GetFlags(PyObject *op);
 
 void Py_IncRef(PyObject *object);
 void Py_DecRef(PyObject *object);
