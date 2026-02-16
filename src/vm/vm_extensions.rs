@@ -23,18 +23,19 @@ use crate::extensions::{
     path_is_shared_library,
 };
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, IteratorKind,
-    IteratorObject, ModuleObject, NativeMethodKind, NativeMethodObject, Object, RuntimeError,
-    SliceValue, Value,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, InstanceObject,
+    IteratorKind, IteratorObject, ModuleObject, NativeMethodKind, NativeMethodObject, Object,
+    RuntimeError, SliceValue, Value,
 };
 
 use super::{
-    ExtensionCallableKind, GeneratorResumeKind, GeneratorResumeOutcome, InternalCallOutcome,
-    NativeCallResult, ObjRef, Vm, add_values, and_values, dict_contains_key_checked,
-    dict_get_value, dict_remove_value, dict_set_value_checked, div_values, floor_div_values,
-    invert_value, is_truthy, lshift_values, matmul_values, memoryview_bounds, mod_values,
-    mul_values, neg_value, or_values, pos_value, pow_values, rshift_values, sub_values,
-    value_to_int, vm_current_thread_ident, vm_os_thread_ident, xor_values,
+    BYTES_BACKING_STORAGE_ATTR, ExtensionCallableKind, GeneratorResumeKind, GeneratorResumeOutcome,
+    InternalCallOutcome, NativeCallResult, ObjRef, STR_BACKING_STORAGE_ATTR, Vm, add_values,
+    and_values, dict_contains_key_checked, dict_get_value, dict_remove_value,
+    dict_set_value_checked, div_values, exception_type_is_subclass, floor_div_values, invert_value,
+    is_truthy, lshift_values, matmul_values, memoryview_bounds, mod_values, mul_values, neg_value,
+    or_values, pos_value, pow_values, rshift_values, sub_values, value_to_int,
+    vm_current_thread_ident, vm_os_thread_ident, xor_values,
 };
 
 #[cfg(windows)]
@@ -11469,6 +11470,540 @@ fn cpython_exception_value_attr(value: &Value) -> Option<Value> {
         Value::Exception(exception) => exception.attrs.borrow().get("value").cloned(),
         _ => None,
     }
+}
+
+#[derive(Clone, Copy)]
+enum CpythonUnicodeErrorFlavor {
+    Encode,
+    Decode,
+    Translate,
+}
+
+impl CpythonUnicodeErrorFlavor {
+    fn expected_name(self) -> &'static str {
+        match self {
+            Self::Encode => "UnicodeEncodeError",
+            Self::Decode => "UnicodeDecodeError",
+            Self::Translate => "UnicodeTranslateError",
+        }
+    }
+
+    fn object_attr_is_bytes(self) -> bool {
+        matches!(self, Self::Decode)
+    }
+}
+
+fn cpython_unicode_error_class_name_for_value(vm: &Vm, value: &Value) -> Option<String> {
+    match value {
+        Value::Exception(exception) => Some(exception.name.clone()),
+        Value::ExceptionType(name) => Some(name.clone()),
+        Value::Instance(instance) => vm.exception_class_name_for_instance(instance),
+        _ => None,
+    }
+}
+
+fn cpython_unicode_error_check_type(
+    context: &mut ModuleCapiContext,
+    value: &Value,
+    expected: CpythonUnicodeErrorFlavor,
+) -> bool {
+    if context.vm.is_null() {
+        context.set_error("missing VM context for unicode error API");
+        return false;
+    }
+    // SAFETY: VM pointer is valid for active C-API context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    let Some(class_name) = cpython_unicode_error_class_name_for_value(vm, value) else {
+        let got = vm.value_type_name_for_error(value);
+        context.set_error(format!(
+            "expecting a {} object, got {}",
+            expected.expected_name(),
+            got
+        ));
+        return false;
+    };
+    if exception_type_is_subclass(&class_name, "UnicodeError") {
+        return true;
+    }
+    context.set_error(format!(
+        "expecting a {} object, got {}",
+        expected.expected_name(),
+        class_name
+    ));
+    false
+}
+
+fn cpython_unicode_error_attr_value(value: &Value, attr: &str) -> Option<Value> {
+    match value {
+        Value::Exception(exception) => exception.attrs.borrow().get(attr).cloned(),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.attrs.get(attr).cloned(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn cpython_unicode_error_check_string_like_attr(
+    context: &mut ModuleCapiContext,
+    attr_name: &str,
+    value: Value,
+) -> Option<Value> {
+    match value {
+        Value::Str(_) => Some(value),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                if matches!(
+                    instance_data.attrs.get(STR_BACKING_STORAGE_ATTR),
+                    Some(Value::Str(_))
+                ) {
+                    Some(Value::Instance(instance.clone()))
+                } else {
+                    context.set_error(format!(
+                        "UnicodeError '{}' attribute must be a string",
+                        attr_name
+                    ));
+                    None
+                }
+            }
+            _ => {
+                context.set_error(format!(
+                    "UnicodeError '{}' attribute must be a string",
+                    attr_name
+                ));
+                None
+            }
+        },
+        _ => {
+            context.set_error(format!(
+                "UnicodeError '{}' attribute must be a string",
+                attr_name
+            ));
+            None
+        }
+    }
+}
+
+fn cpython_unicode_error_check_bytes_like_attr(
+    context: &mut ModuleCapiContext,
+    attr_name: &str,
+    value: Value,
+) -> Option<Value> {
+    match value {
+        Value::Bytes(_) => Some(value),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                if matches!(
+                    instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR),
+                    Some(Value::Bytes(_))
+                ) {
+                    Some(Value::Instance(instance.clone()))
+                } else {
+                    context.set_error(format!(
+                        "UnicodeError '{}' attribute must be a bytes",
+                        attr_name
+                    ));
+                    None
+                }
+            }
+            _ => {
+                context.set_error(format!(
+                    "UnicodeError '{}' attribute must be a bytes",
+                    attr_name
+                ));
+                None
+            }
+        },
+        _ => {
+            context.set_error(format!(
+                "UnicodeError '{}' attribute must be a bytes",
+                attr_name
+            ));
+            None
+        }
+    }
+}
+
+fn cpython_unicode_error_required_attr(
+    context: &mut ModuleCapiContext,
+    value: &Value,
+    attr_name: &str,
+    as_bytes: bool,
+) -> Option<Value> {
+    let Some(attr_value) = cpython_unicode_error_attr_value(value, attr_name) else {
+        context.set_error(format!("UnicodeError '{}' attribute is not set", attr_name));
+        return None;
+    };
+    if as_bytes {
+        cpython_unicode_error_check_bytes_like_attr(context, attr_name, attr_value)
+    } else {
+        cpython_unicode_error_check_string_like_attr(context, attr_name, attr_value)
+    }
+}
+
+fn cpython_unicode_error_index_attr(
+    context: &mut ModuleCapiContext,
+    value: &Value,
+    attr_name: &str,
+) -> Option<isize> {
+    let Some(raw) = cpython_unicode_error_attr_value(value, attr_name) else {
+        context.set_error(format!("UnicodeError '{}' attribute is not set", attr_name));
+        return None;
+    };
+    let number = match value_to_int(raw) {
+        Ok(number) => number,
+        Err(_) => {
+            context.set_error(format!(
+                "UnicodeError '{}' attribute must be an integer",
+                attr_name
+            ));
+            return None;
+        }
+    };
+    Some(number as isize)
+}
+
+fn cpython_unicode_error_string_length(value: &Value) -> Option<usize> {
+    match value {
+        Value::Str(text) => Some(text.chars().count()),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(STR_BACKING_STORAGE_ATTR) {
+                    Some(Value::Str(text)) => Some(text.chars().count()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn cpython_unicode_error_bytes_length(value: &Value) -> Option<usize> {
+    match value {
+        Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+            Object::Bytes(values) => Some(values.len()),
+            _ => None,
+        },
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+                    Some(Value::Bytes(bytes_obj)) => match &*bytes_obj.kind() {
+                        Object::Bytes(values) => Some(values.len()),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn cpython_unicode_error_adjust_start(start: isize, objlen: isize) -> isize {
+    if objlen <= 0 {
+        return 0;
+    }
+    if start < 0 {
+        return 0;
+    }
+    if start >= objlen {
+        return objlen - 1;
+    }
+    start
+}
+
+fn cpython_unicode_error_adjust_end(end: isize, objlen: isize) -> isize {
+    if objlen <= 0 {
+        return 0;
+    }
+    if end < 1 {
+        return 1;
+    }
+    if end > objlen {
+        return objlen;
+    }
+    end
+}
+
+fn cpython_unicode_error_set_attr(
+    target: &mut Value,
+    key: &str,
+    value: Value,
+) -> Result<(), String> {
+    match target {
+        Value::Exception(exception_obj) => {
+            exception_obj
+                .attrs
+                .borrow_mut()
+                .insert(key.to_string(), value);
+            Ok(())
+        }
+        Value::Instance(instance) => match &mut *instance.kind_mut() {
+            Object::Instance(instance_data) => {
+                instance_data.attrs.insert(key.to_string(), value);
+                Ok(())
+            }
+            _ => Err("encountered invalid unicode error instance".to_string()),
+        },
+        _ => Err("expected unicode error object".to_string()),
+    }
+}
+
+fn cpython_unicode_error_get_encoding_common(
+    self_obj: *mut c_void,
+    expected: CpythonUnicodeErrorFlavor,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(self_obj) else {
+            context.set_error("received unknown unicode error pointer");
+            return std::ptr::null_mut();
+        };
+        if !cpython_unicode_error_check_type(context, &value, expected) {
+            return std::ptr::null_mut();
+        }
+        let Some(encoding) =
+            cpython_unicode_error_required_attr(context, &value, "encoding", false)
+        else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(encoding)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+fn cpython_unicode_error_get_object_common(
+    self_obj: *mut c_void,
+    expected: CpythonUnicodeErrorFlavor,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(self_obj) else {
+            context.set_error("received unknown unicode error pointer");
+            return std::ptr::null_mut();
+        };
+        if !cpython_unicode_error_check_type(context, &value, expected) {
+            return std::ptr::null_mut();
+        }
+        let as_bytes = expected.object_attr_is_bytes();
+        let Some(object_value) =
+            cpython_unicode_error_required_attr(context, &value, "object", as_bytes)
+        else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(object_value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+fn cpython_unicode_error_get_reason_common(
+    self_obj: *mut c_void,
+    expected: CpythonUnicodeErrorFlavor,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(self_obj) else {
+            context.set_error("received unknown unicode error pointer");
+            return std::ptr::null_mut();
+        };
+        if !cpython_unicode_error_check_type(context, &value, expected) {
+            return std::ptr::null_mut();
+        }
+        let Some(reason) = cpython_unicode_error_required_attr(context, &value, "reason", false)
+        else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(reason)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+fn cpython_unicode_error_get_start_common(
+    self_obj: *mut c_void,
+    out_start: *mut isize,
+    expected: CpythonUnicodeErrorFlavor,
+) -> c_int {
+    with_active_cpython_context_mut(|context| {
+        if out_start.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        }
+        let Some(value) = context.cpython_value_from_ptr(self_obj) else {
+            context.set_error("received unknown unicode error pointer");
+            return -1;
+        };
+        if !cpython_unicode_error_check_type(context, &value, expected) {
+            return -1;
+        }
+        let as_bytes = expected.object_attr_is_bytes();
+        let Some(object_value) =
+            cpython_unicode_error_required_attr(context, &value, "object", as_bytes)
+        else {
+            return -1;
+        };
+        let objlen = if as_bytes {
+            cpython_unicode_error_bytes_length(&object_value)
+        } else {
+            cpython_unicode_error_string_length(&object_value)
+        };
+        let Some(objlen) = objlen else {
+            context.set_error(format!(
+                "UnicodeError '{}' attribute must be a {}",
+                "object",
+                if as_bytes { "bytes" } else { "string" }
+            ));
+            return -1;
+        };
+        let Some(raw_start) = cpython_unicode_error_index_attr(context, &value, "start") else {
+            return -1;
+        };
+        let adjusted = cpython_unicode_error_adjust_start(raw_start, objlen as isize);
+        // SAFETY: caller provided writable output pointer.
+        unsafe { *out_start = adjusted };
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+fn cpython_unicode_error_get_end_common(
+    self_obj: *mut c_void,
+    out_end: *mut isize,
+    expected: CpythonUnicodeErrorFlavor,
+) -> c_int {
+    with_active_cpython_context_mut(|context| {
+        if out_end.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        }
+        let Some(value) = context.cpython_value_from_ptr(self_obj) else {
+            context.set_error("received unknown unicode error pointer");
+            return -1;
+        };
+        if !cpython_unicode_error_check_type(context, &value, expected) {
+            return -1;
+        }
+        let as_bytes = expected.object_attr_is_bytes();
+        let Some(object_value) =
+            cpython_unicode_error_required_attr(context, &value, "object", as_bytes)
+        else {
+            return -1;
+        };
+        let objlen = if as_bytes {
+            cpython_unicode_error_bytes_length(&object_value)
+        } else {
+            cpython_unicode_error_string_length(&object_value)
+        };
+        let Some(objlen) = objlen else {
+            context.set_error(format!(
+                "UnicodeError '{}' attribute must be a {}",
+                "object",
+                if as_bytes { "bytes" } else { "string" }
+            ));
+            return -1;
+        };
+        let Some(raw_end) = cpython_unicode_error_index_attr(context, &value, "end") else {
+            return -1;
+        };
+        let adjusted = cpython_unicode_error_adjust_end(raw_end, objlen as isize);
+        // SAFETY: caller provided writable output pointer.
+        unsafe { *out_end = adjusted };
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+fn cpython_unicode_error_set_index_common(
+    self_obj: *mut c_void,
+    field_name: &str,
+    index: isize,
+    expected: CpythonUnicodeErrorFlavor,
+) -> c_int {
+    with_active_cpython_context_mut(|context| {
+        let Some(handle) = context.cpython_handle_from_ptr(self_obj) else {
+            context.set_error("received unknown unicode error pointer");
+            return -1;
+        };
+        let Some(slot_value) = context.objects.get(&handle).map(|slot| slot.value.clone()) else {
+            context.set_error("unicode error handle is not available");
+            return -1;
+        };
+        if !cpython_unicode_error_check_type(context, &slot_value, expected) {
+            return -1;
+        }
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("unicode error handle is not available");
+            return -1;
+        };
+        if let Err(message) =
+            cpython_unicode_error_set_attr(&mut slot.value, field_name, Value::Int(index as i64))
+        {
+            context.set_error(message);
+            return -1;
+        }
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+fn cpython_unicode_error_set_reason_common(
+    self_obj: *mut c_void,
+    reason: *const c_char,
+    expected: CpythonUnicodeErrorFlavor,
+) -> c_int {
+    let reason_text = match unsafe { c_name_to_string(reason) } {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("invalid reason: {err}"));
+            return -1;
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(handle) = context.cpython_handle_from_ptr(self_obj) else {
+            context.set_error("received unknown unicode error pointer");
+            return -1;
+        };
+        let Some(slot_value) = context.objects.get(&handle).map(|slot| slot.value.clone()) else {
+            context.set_error("unicode error handle is not available");
+            return -1;
+        };
+        if !cpython_unicode_error_check_type(context, &slot_value, expected) {
+            return -1;
+        }
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("unicode error handle is not available");
+            return -1;
+        };
+        if let Err(message) = cpython_unicode_error_set_attr(
+            &mut slot.value,
+            "reason",
+            Value::Str(reason_text.clone()),
+        ) {
+            context.set_error(message);
+            return -1;
+        }
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 fn cpython_value_is_exception_name(vm: &Vm, value: &Value, expected: &str) -> bool {
@@ -23757,6 +24292,269 @@ pub unsafe extern "C" fn PyFile_WriteString(text: *const c_char, file: *mut c_vo
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_Create(
+    encoding: *const c_char,
+    object: *const c_char,
+    length: isize,
+    start: isize,
+    end: isize,
+    reason: *const c_char,
+) -> *mut c_void {
+    if length < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyUnicodeDecodeError_Create received negative length",
+        );
+        return std::ptr::null_mut();
+    }
+    if encoding.is_null() || reason.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyUnicodeDecodeError_Create received null encoding or reason",
+        );
+        return std::ptr::null_mut();
+    }
+    if object.is_null() && length > 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyUnicodeDecodeError_Create received null object with non-zero length",
+        );
+        return std::ptr::null_mut();
+    }
+    let encoding_text = match unsafe { c_name_to_string(encoding) } {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!(
+                "PyUnicodeDecodeError_Create invalid encoding: {err}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
+    let reason_text = match unsafe { c_name_to_string(reason) } {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("PyUnicodeDecodeError_Create invalid reason: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let payload = if length == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: `object` is validated non-null above for non-zero `length`.
+        unsafe { std::slice::from_raw_parts(object.cast::<u8>(), length as usize).to_vec() }
+    };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyUnicodeDecodeError_Create missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid while C-API context is active.
+        let vm = unsafe { &mut *context.vm };
+        let object_value = vm.heap.alloc_bytes(payload);
+        let start_value = Value::Int(start as i64);
+        let end_value = Value::Int(end as i64);
+        let exception = ExceptionObject::new("UnicodeDecodeError".to_string(), None);
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            attrs.insert("encoding".to_string(), Value::Str(encoding_text.clone()));
+            attrs.insert("object".to_string(), object_value.clone());
+            attrs.insert("start".to_string(), start_value.clone());
+            attrs.insert("end".to_string(), end_value.clone());
+            attrs.insert("reason".to_string(), Value::Str(reason_text.clone()));
+            attrs.insert(
+                "args".to_string(),
+                vm.heap.alloc_tuple(vec![
+                    Value::Str(encoding_text),
+                    object_value,
+                    start_value,
+                    end_value,
+                    Value::Str(reason_text),
+                ]),
+            );
+        }
+        context.alloc_cpython_ptr_for_value(Value::Exception(Box::new(exception)))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_GetEncoding(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_encoding_common(self_obj, CpythonUnicodeErrorFlavor::Encode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_GetEncoding(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_encoding_common(self_obj, CpythonUnicodeErrorFlavor::Decode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_GetObject(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_object_common(self_obj, CpythonUnicodeErrorFlavor::Encode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_GetObject(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_object_common(self_obj, CpythonUnicodeErrorFlavor::Decode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeTranslateError_GetObject(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_object_common(self_obj, CpythonUnicodeErrorFlavor::Translate)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_GetStart(
+    self_obj: *mut c_void,
+    start: *mut isize,
+) -> c_int {
+    cpython_unicode_error_get_start_common(self_obj, start, CpythonUnicodeErrorFlavor::Encode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_GetStart(
+    self_obj: *mut c_void,
+    start: *mut isize,
+) -> c_int {
+    cpython_unicode_error_get_start_common(self_obj, start, CpythonUnicodeErrorFlavor::Decode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeTranslateError_GetStart(
+    self_obj: *mut c_void,
+    start: *mut isize,
+) -> c_int {
+    cpython_unicode_error_get_start_common(self_obj, start, CpythonUnicodeErrorFlavor::Translate)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_SetStart(
+    self_obj: *mut c_void,
+    start: isize,
+) -> c_int {
+    cpython_unicode_error_set_index_common(
+        self_obj,
+        "start",
+        start,
+        CpythonUnicodeErrorFlavor::Encode,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_SetStart(
+    self_obj: *mut c_void,
+    start: isize,
+) -> c_int {
+    cpython_unicode_error_set_index_common(
+        self_obj,
+        "start",
+        start,
+        CpythonUnicodeErrorFlavor::Decode,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeTranslateError_SetStart(
+    self_obj: *mut c_void,
+    start: isize,
+) -> c_int {
+    cpython_unicode_error_set_index_common(
+        self_obj,
+        "start",
+        start,
+        CpythonUnicodeErrorFlavor::Translate,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_GetEnd(
+    self_obj: *mut c_void,
+    end: *mut isize,
+) -> c_int {
+    cpython_unicode_error_get_end_common(self_obj, end, CpythonUnicodeErrorFlavor::Encode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_GetEnd(
+    self_obj: *mut c_void,
+    end: *mut isize,
+) -> c_int {
+    cpython_unicode_error_get_end_common(self_obj, end, CpythonUnicodeErrorFlavor::Decode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeTranslateError_GetEnd(
+    self_obj: *mut c_void,
+    end: *mut isize,
+) -> c_int {
+    cpython_unicode_error_get_end_common(self_obj, end, CpythonUnicodeErrorFlavor::Translate)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_SetEnd(self_obj: *mut c_void, end: isize) -> c_int {
+    cpython_unicode_error_set_index_common(self_obj, "end", end, CpythonUnicodeErrorFlavor::Encode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_SetEnd(self_obj: *mut c_void, end: isize) -> c_int {
+    cpython_unicode_error_set_index_common(self_obj, "end", end, CpythonUnicodeErrorFlavor::Decode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeTranslateError_SetEnd(
+    self_obj: *mut c_void,
+    end: isize,
+) -> c_int {
+    cpython_unicode_error_set_index_common(
+        self_obj,
+        "end",
+        end,
+        CpythonUnicodeErrorFlavor::Translate,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_GetReason(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_reason_common(self_obj, CpythonUnicodeErrorFlavor::Encode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_GetReason(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_reason_common(self_obj, CpythonUnicodeErrorFlavor::Decode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeTranslateError_GetReason(self_obj: *mut c_void) -> *mut c_void {
+    cpython_unicode_error_get_reason_common(self_obj, CpythonUnicodeErrorFlavor::Translate)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeEncodeError_SetReason(
+    self_obj: *mut c_void,
+    reason: *const c_char,
+) -> c_int {
+    cpython_unicode_error_set_reason_common(self_obj, reason, CpythonUnicodeErrorFlavor::Encode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeDecodeError_SetReason(
+    self_obj: *mut c_void,
+    reason: *const c_char,
+) -> c_int {
+    cpython_unicode_error_set_reason_common(self_obj, reason, CpythonUnicodeErrorFlavor::Decode)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicodeTranslateError_SetReason(
+    self_obj: *mut c_void,
+    reason: *const c_char,
+) -> c_int {
+    cpython_unicode_error_set_reason_common(self_obj, reason, CpythonUnicodeErrorFlavor::Translate)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyTraceBack_Here(frame: *mut c_void) -> c_int {
     if frame.is_null() {
         unsafe { PyErr_BadInternalCall() };
@@ -26355,6 +27153,94 @@ static KEEP3_PYUNICODE_ASUCS4: unsafe extern "C" fn(*mut c_void, *mut u32, isize
 #[used]
 static KEEP3_PYUNICODE_ASUCS4COPY: unsafe extern "C" fn(*mut c_void) -> *mut u32 =
     PyUnicode_AsUCS4Copy;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_CREATE: unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    isize,
+    isize,
+    isize,
+    *const c_char,
+) -> *mut c_void = PyUnicodeDecodeError_Create;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_GETENCODING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeEncodeError_GetEncoding;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_GETENCODING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeDecodeError_GetEncoding;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_GETOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeEncodeError_GetObject;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_GETOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeDecodeError_GetObject;
+#[used]
+static KEEP3_PYUNICODETRANSLATEERROR_GETOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeTranslateError_GetObject;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_GETSTART: unsafe extern "C" fn(*mut c_void, *mut isize) -> c_int =
+    PyUnicodeEncodeError_GetStart;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_GETSTART: unsafe extern "C" fn(*mut c_void, *mut isize) -> c_int =
+    PyUnicodeDecodeError_GetStart;
+#[used]
+static KEEP3_PYUNICODETRANSLATEERROR_GETSTART: unsafe extern "C" fn(
+    *mut c_void,
+    *mut isize,
+) -> c_int = PyUnicodeTranslateError_GetStart;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_SETSTART: unsafe extern "C" fn(*mut c_void, isize) -> c_int =
+    PyUnicodeEncodeError_SetStart;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_SETSTART: unsafe extern "C" fn(*mut c_void, isize) -> c_int =
+    PyUnicodeDecodeError_SetStart;
+#[used]
+static KEEP3_PYUNICODETRANSLATEERROR_SETSTART: unsafe extern "C" fn(*mut c_void, isize) -> c_int =
+    PyUnicodeTranslateError_SetStart;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_GETEND: unsafe extern "C" fn(*mut c_void, *mut isize) -> c_int =
+    PyUnicodeEncodeError_GetEnd;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_GETEND: unsafe extern "C" fn(*mut c_void, *mut isize) -> c_int =
+    PyUnicodeDecodeError_GetEnd;
+#[used]
+static KEEP3_PYUNICODETRANSLATEERROR_GETEND: unsafe extern "C" fn(
+    *mut c_void,
+    *mut isize,
+) -> c_int = PyUnicodeTranslateError_GetEnd;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_SETEND: unsafe extern "C" fn(*mut c_void, isize) -> c_int =
+    PyUnicodeEncodeError_SetEnd;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_SETEND: unsafe extern "C" fn(*mut c_void, isize) -> c_int =
+    PyUnicodeDecodeError_SetEnd;
+#[used]
+static KEEP3_PYUNICODETRANSLATEERROR_SETEND: unsafe extern "C" fn(*mut c_void, isize) -> c_int =
+    PyUnicodeTranslateError_SetEnd;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_GETREASON: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeEncodeError_GetReason;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_GETREASON: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeDecodeError_GetReason;
+#[used]
+static KEEP3_PYUNICODETRANSLATEERROR_GETREASON: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicodeTranslateError_GetReason;
+#[used]
+static KEEP3_PYUNICODEENCODEERROR_SETREASON: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+) -> c_int = PyUnicodeEncodeError_SetReason;
+#[used]
+static KEEP3_PYUNICODEDECODEERROR_SETREASON: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+) -> c_int = PyUnicodeDecodeError_SetReason;
+#[used]
+static KEEP3_PYUNICODETRANSLATEERROR_SETREASON: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+) -> c_int = PyUnicodeTranslateError_SetReason;
 #[used]
 static KEEP3_PYUNSTABLE_OBJECT_ISUNIQUELYREFERENCED: unsafe extern "C" fn(*mut c_void) -> i32 =
     PyUnstable_Object_IsUniquelyReferenced;

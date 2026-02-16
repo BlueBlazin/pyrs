@@ -827,6 +827,37 @@ void PyException_SetArgs(PyObject *exception, PyObject *args);
 void PyException_SetCause(PyObject *exception, PyObject *cause);
 void PyException_SetContext(PyObject *exception, PyObject *context);
 void PyException_SetTraceback(PyObject *exception, PyObject *traceback);
+PyObject *PyUnicodeDecodeError_Create(
+    const char *encoding,
+    const char *object,
+    long long length,
+    long long start,
+    long long end,
+    const char *reason
+);
+PyObject *PyUnicodeEncodeError_GetEncoding(PyObject *exception);
+PyObject *PyUnicodeDecodeError_GetEncoding(PyObject *exception);
+PyObject *PyUnicodeEncodeError_GetObject(PyObject *exception);
+PyObject *PyUnicodeDecodeError_GetObject(PyObject *exception);
+PyObject *PyUnicodeTranslateError_GetObject(PyObject *exception);
+int PyUnicodeEncodeError_GetStart(PyObject *exception, long long *start);
+int PyUnicodeDecodeError_GetStart(PyObject *exception, long long *start);
+int PyUnicodeTranslateError_GetStart(PyObject *exception, long long *start);
+int PyUnicodeEncodeError_SetStart(PyObject *exception, long long start);
+int PyUnicodeDecodeError_SetStart(PyObject *exception, long long start);
+int PyUnicodeTranslateError_SetStart(PyObject *exception, long long start);
+int PyUnicodeEncodeError_GetEnd(PyObject *exception, long long *end);
+int PyUnicodeDecodeError_GetEnd(PyObject *exception, long long *end);
+int PyUnicodeTranslateError_GetEnd(PyObject *exception, long long *end);
+int PyUnicodeEncodeError_SetEnd(PyObject *exception, long long end);
+int PyUnicodeDecodeError_SetEnd(PyObject *exception, long long end);
+int PyUnicodeTranslateError_SetEnd(PyObject *exception, long long end);
+PyObject *PyUnicodeEncodeError_GetReason(PyObject *exception);
+PyObject *PyUnicodeDecodeError_GetReason(PyObject *exception);
+PyObject *PyUnicodeTranslateError_GetReason(PyObject *exception);
+int PyUnicodeEncodeError_SetReason(PyObject *exception, const char *reason);
+int PyUnicodeDecodeError_SetReason(PyObject *exception, const char *reason);
+int PyUnicodeTranslateError_SetReason(PyObject *exception, const char *reason);
 
 long long PyGC_Collect(void);
 int PyGC_Enable(void);

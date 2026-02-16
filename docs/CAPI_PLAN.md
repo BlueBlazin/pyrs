@@ -163,6 +163,12 @@ Recent Lane A slice:
 - Added Stable-ABI exports and baseline semantics for traceback APIs (`batch55`):
   - `PyTraceBack_{Here,Print}`.
   - traceback API behavior is smoke-covered for non-null frame acceptance (`Here`), null-frame guard error path, and file-write rendering path (`Print`).
+- Added Stable-ABI exports and baseline semantics for Unicode error helper APIs (`batch56`):
+  - `PyUnicodeDecodeError_Create`
+  - `PyUnicodeEncodeError_{GetEncoding,GetObject,GetStart,SetStart,GetEnd,SetEnd,GetReason,SetReason}`
+  - `PyUnicodeDecodeError_{GetEncoding,GetObject,GetStart,SetStart,GetEnd,SetEnd,GetReason,SetReason}`
+  - `PyUnicodeTranslateError_{GetObject,GetStart,SetStart,GetEnd,SetEnd,GetReason,SetReason}`
+  - unicode-error API behavior is smoke-covered for decode-error creation, encode/decode/translate getter+setter semantics, clipping behavior for start/end, and non-`UnicodeError` type guard paths.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`
@@ -240,6 +246,7 @@ Recent Lane A slice:
     - `tests/abi3_surface.rs::exports_abi3_batch53_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch54_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch55_symbols`
+    - `tests/abi3_surface.rs::exports_abi3_batch56_symbols`
   - behavior gates:
     - `tests/extension_smoke.rs::cpython_compat_list_set_exception_gc_and_float_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_bytes_error_and_cfunction_apis_work`
@@ -295,6 +302,7 @@ Recent Lane A slice:
     - `tests/extension_smoke.rs::cpython_compat_thread_abi_batch53_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_type_abi_batch54_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_traceback_abi_batch55_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_unicode_error_abi_batch56_apis_work`
 - Added Stable-ABI exports and semantics for error/file APIs:
   - `PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`
   - `PyFile_{GetLine,WriteObject,WriteString}`

@@ -7976,6 +7976,264 @@ PyInit_cpython_api_batch55_probe(void) {
 }
 
 #[test]
+fn cpython_compat_unicode_error_abi_batch56_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch56 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch56 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch56");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch56_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static int
+utf8_equals(PyObject *value, const char *expected) {
+    const char *text = value ? PyUnicode_AsUTF8(value) : 0;
+    return (text && strcmp(text, expected) == 0) ? 1 : 0;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *decode = PyUnicodeDecodeError_Create("utf-8", "a\xff", 2, 5, 7, "decode bad");
+    if (!decode) {
+        return 0;
+    }
+    PyObject *decode_encoding = PyUnicodeDecodeError_GetEncoding(decode);
+    PyObject *decode_object = PyUnicodeDecodeError_GetObject(decode);
+    long long decode_start = -1;
+    long long decode_end = -1;
+    int decode_get_start_ok = (PyUnicodeDecodeError_GetStart(decode, &decode_start) == 0);
+    int decode_get_end_ok = (PyUnicodeDecodeError_GetEnd(decode, &decode_end) == 0);
+    int decode_set_start_ok = (PyUnicodeDecodeError_SetStart(decode, -3) == 0);
+    int decode_set_end_ok = (PyUnicodeDecodeError_SetEnd(decode, 0) == 0);
+    int decode_set_reason_ok = (PyUnicodeDecodeError_SetReason(decode, "decode changed") == 0);
+    long long decode_start_after = -1;
+    long long decode_end_after = -1;
+    int decode_get_start_after_ok = (PyUnicodeDecodeError_GetStart(decode, &decode_start_after) == 0);
+    int decode_get_end_after_ok = (PyUnicodeDecodeError_GetEnd(decode, &decode_end_after) == 0);
+    PyObject *decode_reason = PyUnicodeDecodeError_GetReason(decode);
+    int decode_ok = utf8_equals(decode_encoding, "utf-8") &&
+                    decode_object && PyBytes_Size(decode_object) == 2 &&
+                    decode_get_start_ok && decode_start == 1 &&
+                    decode_get_end_ok && decode_end == 2 &&
+                    decode_set_start_ok && decode_set_end_ok && decode_set_reason_ok &&
+                    decode_get_start_after_ok && decode_start_after == 0 &&
+                    decode_get_end_after_ok && decode_end_after == 1 &&
+                    utf8_equals(decode_reason, "decode changed");
+    Py_XDECREF(decode_reason);
+    Py_XDECREF(decode_object);
+    Py_XDECREF(decode_encoding);
+    Py_DECREF(decode);
+
+    PyObject *encode = PyUnicodeDecodeError_Create("utf-8", "ab", 2, 0, 1, "bootstrap");
+    if (!encode) {
+        return 0;
+    }
+    PyObject *attr_name = PyUnicode_FromString("encoding");
+    PyObject *attr_value = PyUnicode_FromString("ascii");
+    if (!attr_name || !attr_value || PyObject_SetAttr(encode, attr_name, attr_value) != 0) {
+        Py_XDECREF(attr_value);
+        Py_XDECREF(attr_name);
+        Py_DECREF(encode);
+        return 0;
+    }
+    Py_DECREF(attr_value);
+    Py_DECREF(attr_name);
+    attr_name = PyUnicode_FromString("object");
+    attr_value = PyUnicode_FromString("abcd");
+    if (!attr_name || !attr_value || PyObject_SetAttr(encode, attr_name, attr_value) != 0) {
+        Py_XDECREF(attr_value);
+        Py_XDECREF(attr_name);
+        Py_DECREF(encode);
+        return 0;
+    }
+    Py_DECREF(attr_value);
+    Py_DECREF(attr_name);
+    attr_name = PyUnicode_FromString("start");
+    attr_value = PyLong_FromLong(9);
+    if (!attr_name || !attr_value || PyObject_SetAttr(encode, attr_name, attr_value) != 0) {
+        Py_XDECREF(attr_value);
+        Py_XDECREF(attr_name);
+        Py_DECREF(encode);
+        return 0;
+    }
+    Py_DECREF(attr_value);
+    Py_DECREF(attr_name);
+    attr_name = PyUnicode_FromString("end");
+    attr_value = PyLong_FromLong(12);
+    if (!attr_name || !attr_value || PyObject_SetAttr(encode, attr_name, attr_value) != 0) {
+        Py_XDECREF(attr_value);
+        Py_XDECREF(attr_name);
+        Py_DECREF(encode);
+        return 0;
+    }
+    Py_DECREF(attr_value);
+    Py_DECREF(attr_name);
+
+    PyObject *encode_encoding = PyUnicodeEncodeError_GetEncoding(encode);
+    PyObject *encode_object = PyUnicodeEncodeError_GetObject(encode);
+    PyObject *encode_reason = 0;
+    long long encode_start = -1;
+    long long encode_end = -1;
+    int encode_start_ok = (PyUnicodeEncodeError_GetStart(encode, &encode_start) == 0);
+    int encode_end_ok = (PyUnicodeEncodeError_GetEnd(encode, &encode_end) == 0);
+    int encode_set_reason_ok = (PyUnicodeEncodeError_SetReason(encode, "encode changed") == 0);
+    encode_reason = PyUnicodeEncodeError_GetReason(encode);
+    int encode_ok = encode_start_ok &&
+                    encode_end_ok &&
+                    encode_set_reason_ok &&
+                    utf8_equals(encode_encoding, "ascii") &&
+                    utf8_equals(encode_object, "abcd") &&
+                    encode_start == 3 &&
+                    encode_end == 4 &&
+                    utf8_equals(encode_reason, "encode changed");
+    Py_XDECREF(encode_reason);
+    Py_XDECREF(encode_object);
+    Py_XDECREF(encode_encoding);
+    Py_DECREF(encode);
+
+    PyObject *translate = PyUnicodeDecodeError_Create("utf-8", "ab", 2, 0, 1, "bootstrap");
+    if (!translate) {
+        return 0;
+    }
+    attr_name = PyUnicode_FromString("object");
+    attr_value = PyUnicode_FromString("xy");
+    if (!attr_name || !attr_value || PyObject_SetAttr(translate, attr_name, attr_value) != 0) {
+        Py_XDECREF(attr_value);
+        Py_XDECREF(attr_name);
+        Py_DECREF(translate);
+        return 0;
+    }
+    Py_DECREF(attr_value);
+    Py_DECREF(attr_name);
+    attr_name = PyUnicode_FromString("start");
+    attr_value = PyLong_FromLong(4);
+    if (!attr_name || !attr_value || PyObject_SetAttr(translate, attr_name, attr_value) != 0) {
+        Py_XDECREF(attr_value);
+        Py_XDECREF(attr_name);
+        Py_DECREF(translate);
+        return 0;
+    }
+    Py_DECREF(attr_value);
+    Py_DECREF(attr_name);
+    attr_name = PyUnicode_FromString("end");
+    attr_value = PyLong_FromLong(9);
+    if (!attr_name || !attr_value || PyObject_SetAttr(translate, attr_name, attr_value) != 0) {
+        Py_XDECREF(attr_value);
+        Py_XDECREF(attr_name);
+        Py_DECREF(translate);
+        return 0;
+    }
+    Py_DECREF(attr_value);
+    Py_DECREF(attr_name);
+
+    PyObject *translate_object = PyUnicodeTranslateError_GetObject(translate);
+    PyObject *translate_reason = 0;
+    long long translate_start = -1;
+    long long translate_end = -1;
+    long long translate_start_after = -1;
+    long long translate_end_after = -1;
+    int translate_start_ok = (PyUnicodeTranslateError_GetStart(translate, &translate_start) == 0);
+    int translate_end_ok = (PyUnicodeTranslateError_GetEnd(translate, &translate_end) == 0);
+    int translate_set_start_ok = (PyUnicodeTranslateError_SetStart(translate, -4) == 0);
+    int translate_set_end_ok = (PyUnicodeTranslateError_SetEnd(translate, 0) == 0);
+    int translate_set_reason_ok = (PyUnicodeTranslateError_SetReason(translate, "translate changed") == 0);
+    int translate_start_after_ok = (PyUnicodeTranslateError_GetStart(translate, &translate_start_after) == 0);
+    int translate_end_after_ok = (PyUnicodeTranslateError_GetEnd(translate, &translate_end_after) == 0);
+    translate_reason = PyUnicodeTranslateError_GetReason(translate);
+    int translate_ok = utf8_equals(translate_object, "xy") &&
+                       translate_start_ok &&
+                       translate_end_ok &&
+                       translate_set_start_ok &&
+                       translate_set_end_ok &&
+                       translate_set_reason_ok &&
+                       translate_start_after_ok &&
+                       translate_end_after_ok &&
+                       translate_start == 1 &&
+                       translate_end == 2 &&
+                       translate_start_after == 0 &&
+                       translate_end_after == 1 &&
+                       utf8_equals(translate_reason, "translate changed");
+    Py_XDECREF(translate_reason);
+    Py_XDECREF(translate_object);
+    Py_DECREF(translate);
+
+    PyObject *not_error = PyLong_FromLong(7);
+    int type_guard_ok = 0;
+    if (not_error) {
+        PyObject *wrong = PyUnicodeDecodeError_GetReason(not_error);
+        type_guard_ok = (wrong == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+        Py_XDECREF(wrong);
+        PyErr_Clear();
+        Py_DECREF(not_error);
+    }
+
+    return Py_BuildValue("(iiii)", decode_ok ? 1 : 0, encode_ok ? 1 : 0, translate_ok ? 1 : 0, type_guard_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe unicode error ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch56_probe",
+    "cpython api batch56 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch56_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch56_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch56 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch56_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch56 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

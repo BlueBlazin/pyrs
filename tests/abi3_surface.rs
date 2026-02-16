@@ -1376,6 +1376,46 @@ fn exports_abi3_batch55_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch56_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyUnicodeDecodeError_Create",
+        "PyUnicodeDecodeError_GetEncoding",
+        "PyUnicodeDecodeError_GetEnd",
+        "PyUnicodeDecodeError_GetObject",
+        "PyUnicodeDecodeError_GetReason",
+        "PyUnicodeDecodeError_GetStart",
+        "PyUnicodeDecodeError_SetEnd",
+        "PyUnicodeDecodeError_SetReason",
+        "PyUnicodeDecodeError_SetStart",
+        "PyUnicodeEncodeError_GetEncoding",
+        "PyUnicodeEncodeError_GetEnd",
+        "PyUnicodeEncodeError_GetObject",
+        "PyUnicodeEncodeError_GetReason",
+        "PyUnicodeEncodeError_GetStart",
+        "PyUnicodeEncodeError_SetEnd",
+        "PyUnicodeEncodeError_SetReason",
+        "PyUnicodeEncodeError_SetStart",
+        "PyUnicodeTranslateError_GetEnd",
+        "PyUnicodeTranslateError_GetObject",
+        "PyUnicodeTranslateError_GetReason",
+        "PyUnicodeTranslateError_GetStart",
+        "PyUnicodeTranslateError_SetEnd",
+        "PyUnicodeTranslateError_SetReason",
+        "PyUnicodeTranslateError_SetStart",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch56 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
