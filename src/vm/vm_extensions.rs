@@ -375,17 +375,27 @@ pub struct CpythonComplexValue {
 }
 
 const PYRS_DATETIME_CAPSULE_NAME: &str = "datetime.datetime_CAPI";
+const PY_MEMBER_T_SHORT: c_int = 0;
 const PY_MEMBER_T_INT: c_int = 1;
 const PY_MEMBER_T_LONG: c_int = 2;
+const PY_MEMBER_T_FLOAT: c_int = 3;
+const PY_MEMBER_T_DOUBLE: c_int = 4;
+const PY_MEMBER_T_STRING: c_int = 5;
 const PY_MEMBER_T_OBJECT: c_int = 6;
 const PY_MEMBER_T_CHAR: c_int = 7;
+const PY_MEMBER_T_BYTE: c_int = 8;
+const PY_MEMBER_T_UBYTE: c_int = 9;
+const PY_MEMBER_T_USHORT: c_int = 10;
 const PY_MEMBER_T_UINT: c_int = 11;
 const PY_MEMBER_T_ULONG: c_int = 12;
+const PY_MEMBER_T_STRING_INPLACE: c_int = 13;
 const PY_MEMBER_T_BOOL: c_int = 14;
 const PY_MEMBER_T_OBJECT_EX: c_int = 16;
 const PY_MEMBER_T_LONGLONG: c_int = 17;
 const PY_MEMBER_T_ULONGLONG: c_int = 18;
 const PY_MEMBER_T_PYSSIZET: c_int = 19;
+const PY_MEMBER_T_NONE: c_int = 20;
+const PY_MEMBER_READONLY: c_int = 1;
 const PY_MEMBER_RELATIVE_OFFSET: c_int = 8;
 
 unsafe extern "C" fn datetime_capi_unimplemented() -> *mut c_void {
@@ -2566,6 +2576,25 @@ impl ModuleCapiContext {
             }
             _ => None,
         }
+    }
+
+    fn member_attr_name(member: &CpythonMemberDef) -> String {
+        if member.name.is_null() {
+            return "<unnamed>".to_string();
+        }
+        // SAFETY: descriptor metadata provides a stable C string for member name.
+        unsafe { c_name_to_string(member.name).unwrap_or_else(|_| "<unnamed>".to_string()) }
+    }
+
+    fn member_field_ptr(object: *mut c_void, member: &CpythonMemberDef) -> Result<*mut u8, String> {
+        if object.is_null() {
+            return Err("member object pointer is null".to_string());
+        }
+        if member.offset < 0 {
+            return Err("member offset must be non-negative".to_string());
+        }
+        // SAFETY: offset validated non-negative and pointer arithmetic is byte-based.
+        Ok(unsafe { object.cast::<u8>().add(member.offset as usize) })
     }
 
     fn lookup_type_attr_via_tp_dict(
@@ -18382,6 +18411,381 @@ pub unsafe extern "C" fn PyDescr_NewMember(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMember_GetOne(
+    obj_addr: *const c_char,
+    member: *mut c_void,
+) -> *mut c_void {
+    if obj_addr.is_null() || member.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "bad internal call");
+        return std::ptr::null_mut();
+    }
+    let member_def = unsafe { &*member.cast::<CpythonMemberDef>() };
+    if (member_def.flags & PY_MEMBER_RELATIVE_OFFSET) != 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyMember_GetOne used with Py_RELATIVE_OFFSET",
+        );
+        return std::ptr::null_mut();
+    }
+    let field_ptr =
+        match ModuleCapiContext::member_field_ptr(obj_addr.cast_mut().cast(), member_def) {
+            Ok(ptr) => ptr,
+            Err(err) => {
+                cpython_set_typed_error(unsafe { PyExc_SystemError }, err);
+                return std::ptr::null_mut();
+            }
+        };
+    let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+    match member_def.member_type {
+        PY_MEMBER_T_BOOL => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<c_char>()) };
+            unsafe { PyBool_FromLong((raw != 0) as c_long) }
+        }
+        PY_MEMBER_T_BYTE => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i8>()) };
+            unsafe { PyLong_FromLong(raw as i64) }
+        }
+        PY_MEMBER_T_UBYTE => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u8>()) };
+            unsafe { PyLong_FromUnsignedLong(raw as u64) }
+        }
+        PY_MEMBER_T_SHORT => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i16>()) };
+            unsafe { PyLong_FromLong(raw as i64) }
+        }
+        PY_MEMBER_T_USHORT => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u16>()) };
+            unsafe { PyLong_FromUnsignedLong(raw as u64) }
+        }
+        PY_MEMBER_T_INT => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<c_int>()) };
+            unsafe { PyLong_FromLong(raw as i64) }
+        }
+        PY_MEMBER_T_UINT => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u32>()) };
+            unsafe { PyLong_FromUnsignedLong(raw as u64) }
+        }
+        PY_MEMBER_T_LONG => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<c_long>()) };
+            unsafe { PyLong_FromLong(raw as i64) }
+        }
+        PY_MEMBER_T_ULONG => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<c_ulong>()) };
+            unsafe { PyLong_FromUnsignedLong(raw as u64) }
+        }
+        PY_MEMBER_T_PYSSIZET => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<isize>()) };
+            unsafe { PyLong_FromSsize_t(raw) }
+        }
+        PY_MEMBER_T_FLOAT => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<f32>()) };
+            unsafe { PyFloat_FromDouble(raw as f64) }
+        }
+        PY_MEMBER_T_DOUBLE => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<f64>()) };
+            unsafe { PyFloat_FromDouble(raw) }
+        }
+        PY_MEMBER_T_STRING => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<*const c_char>()) };
+            if raw.is_null() {
+                none_ptr
+            } else {
+                unsafe { PyUnicode_FromString(raw) }
+            }
+        }
+        PY_MEMBER_T_STRING_INPLACE => unsafe { PyUnicode_FromString(field_ptr.cast()) },
+        PY_MEMBER_T_CHAR => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u8>()) };
+            let text = [raw];
+            unsafe { PyUnicode_FromStringAndSize(text.as_ptr().cast(), 1) }
+        }
+        PY_MEMBER_T_OBJECT => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<*mut c_void>()) };
+            if raw.is_null() {
+                none_ptr
+            } else {
+                unsafe { Py_XIncRef(raw) };
+                raw
+            }
+        }
+        PY_MEMBER_T_OBJECT_EX => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<*mut c_void>()) };
+            if raw.is_null() {
+                let member_name = ModuleCapiContext::member_attr_name(member_def);
+                cpython_set_typed_error(
+                    unsafe { PyExc_AttributeError },
+                    format!("attribute '{member_name}' is not set"),
+                );
+                std::ptr::null_mut()
+            } else {
+                unsafe { Py_XIncRef(raw) };
+                raw
+            }
+        }
+        PY_MEMBER_T_LONGLONG => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<i64>()) };
+            unsafe { PyLong_FromLongLong(raw) }
+        }
+        PY_MEMBER_T_ULONGLONG => {
+            let raw = unsafe { std::ptr::read_unaligned(field_ptr.cast::<u64>()) };
+            unsafe { PyLong_FromUnsignedLongLong(raw) }
+        }
+        PY_MEMBER_T_NONE => none_ptr,
+        _ => {
+            cpython_set_typed_error(unsafe { PyExc_SystemError }, "bad memberdescr type");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMember_SetOne(
+    obj_addr: *mut c_char,
+    member: *mut c_void,
+    value: *mut c_void,
+) -> c_int {
+    if obj_addr.is_null() || member.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "bad internal call");
+        return -1;
+    }
+    let member_def = unsafe { &*member.cast::<CpythonMemberDef>() };
+    if (member_def.flags & PY_MEMBER_RELATIVE_OFFSET) != 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyMember_SetOne used with Py_RELATIVE_OFFSET",
+        );
+        return -1;
+    }
+    if (member_def.flags & PY_MEMBER_READONLY) != 0 {
+        cpython_set_typed_error(unsafe { PyExc_AttributeError }, "readonly attribute");
+        return -1;
+    }
+    let field_ptr = match ModuleCapiContext::member_field_ptr(obj_addr.cast(), member_def) {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_typed_error(unsafe { PyExc_SystemError }, err);
+            return -1;
+        }
+    };
+    let member_name = ModuleCapiContext::member_attr_name(member_def);
+    if value.is_null() {
+        if member_def.member_type == PY_MEMBER_T_OBJECT_EX {
+            let current = unsafe { std::ptr::read_unaligned(field_ptr.cast::<*mut c_void>()) };
+            if current.is_null() {
+                cpython_set_typed_error(unsafe { PyExc_AttributeError }, member_name);
+                return -1;
+            }
+        } else if member_def.member_type != PY_MEMBER_T_OBJECT {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "can't delete numeric/char attribute",
+            );
+            return -1;
+        }
+    }
+    match member_def.member_type {
+        PY_MEMBER_T_BOOL => {
+            let Ok(py_value) = cpython_value_from_ptr(value) else {
+                cpython_set_typed_error(
+                    unsafe { PyExc_TypeError },
+                    "attribute value type must be bool",
+                );
+                return -1;
+            };
+            let Value::Bool(flag) = py_value else {
+                cpython_set_typed_error(
+                    unsafe { PyExc_TypeError },
+                    "attribute value type must be bool",
+                );
+                return -1;
+            };
+            unsafe {
+                std::ptr::write_unaligned(field_ptr.cast::<c_char>(), if flag { 1 } else { 0 })
+            };
+            0
+        }
+        PY_MEMBER_T_BYTE => {
+            let raw = unsafe { PyLong_AsLong(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<i8>(), raw as i8) };
+            0
+        }
+        PY_MEMBER_T_UBYTE => {
+            let raw = unsafe { PyLong_AsLong(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<u8>(), raw as u8) };
+            0
+        }
+        PY_MEMBER_T_SHORT => {
+            let raw = unsafe { PyLong_AsLong(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<i16>(), raw as i16) };
+            0
+        }
+        PY_MEMBER_T_USHORT => {
+            let raw = unsafe { PyLong_AsLong(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<u16>(), raw as u16) };
+            0
+        }
+        PY_MEMBER_T_INT => {
+            let raw = unsafe { PyLong_AsLong(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_int>(), raw as c_int) };
+            0
+        }
+        PY_MEMBER_T_UINT => {
+            let numeric_value = match cpython_value_from_ptr(value) {
+                Ok(v) => v,
+                Err(err) => {
+                    cpython_set_error(err);
+                    return -1;
+                }
+            };
+            let raw = if let Ok(signed) = value_to_int(numeric_value.clone()) {
+                signed as u32
+            } else {
+                let unsigned = unsafe { PyLong_AsUnsignedLong(value) };
+                if !unsafe { PyErr_Occurred() }.is_null() {
+                    return -1;
+                }
+                unsigned as u32
+            };
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<u32>(), raw) };
+            0
+        }
+        PY_MEMBER_T_LONG => {
+            let raw = unsafe { PyLong_AsLong(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_long>(), raw as c_long) };
+            0
+        }
+        PY_MEMBER_T_ULONG => {
+            let numeric_value = match cpython_value_from_ptr(value) {
+                Ok(v) => v,
+                Err(err) => {
+                    cpython_set_error(err);
+                    return -1;
+                }
+            };
+            let raw = if let Ok(signed) = value_to_int(numeric_value.clone()) {
+                signed as c_ulong
+            } else {
+                let unsigned = unsafe { PyLong_AsUnsignedLong(value) };
+                if !unsafe { PyErr_Occurred() }.is_null() {
+                    return -1;
+                }
+                unsigned as c_ulong
+            };
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<c_ulong>(), raw) };
+            0
+        }
+        PY_MEMBER_T_PYSSIZET => {
+            let raw = unsafe { PyLong_AsSsize_t(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<isize>(), raw) };
+            0
+        }
+        PY_MEMBER_T_FLOAT => {
+            let raw = unsafe { PyFloat_AsDouble(value) };
+            if raw == -1.0 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<f32>(), raw as f32) };
+            0
+        }
+        PY_MEMBER_T_DOUBLE => {
+            let raw = unsafe { PyFloat_AsDouble(value) };
+            if raw == -1.0 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<f64>(), raw) };
+            0
+        }
+        PY_MEMBER_T_OBJECT | PY_MEMBER_T_OBJECT_EX => {
+            let previous = unsafe { std::ptr::read_unaligned(field_ptr.cast::<*mut c_void>()) };
+            if !value.is_null() {
+                unsafe { Py_XIncRef(value) };
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<*mut c_void>(), value) };
+            if !previous.is_null() {
+                unsafe { Py_XDecRef(previous) };
+            }
+            0
+        }
+        PY_MEMBER_T_CHAR => {
+            let Ok(py_value) = cpython_value_from_ptr(value) else {
+                unsafe { PyErr_BadArgument() };
+                return -1;
+            };
+            let Value::Str(text) = py_value else {
+                unsafe { PyErr_BadArgument() };
+                return -1;
+            };
+            if text.as_bytes().len() != 1 {
+                unsafe { PyErr_BadArgument() };
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<u8>(), text.as_bytes()[0]) };
+            0
+        }
+        PY_MEMBER_T_STRING | PY_MEMBER_T_STRING_INPLACE => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, "readonly attribute");
+            -1
+        }
+        PY_MEMBER_T_LONGLONG => {
+            let raw = unsafe { PyLong_AsLongLong(value) };
+            if raw == -1 && !unsafe { PyErr_Occurred() }.is_null() {
+                return -1;
+            }
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<i64>(), raw) };
+            0
+        }
+        PY_MEMBER_T_ULONGLONG => {
+            let numeric_value = match cpython_value_from_ptr(value) {
+                Ok(v) => v,
+                Err(err) => {
+                    cpython_set_error(err);
+                    return -1;
+                }
+            };
+            let raw = if let Ok(signed) = value_to_int(numeric_value.clone()) {
+                signed as u64
+            } else {
+                let unsigned = unsafe { PyLong_AsUnsignedLongLong(value) };
+                if !unsafe { PyErr_Occurred() }.is_null() {
+                    return -1;
+                }
+                unsigned
+            };
+            unsafe { std::ptr::write_unaligned(field_ptr.cast::<u64>(), raw) };
+            0
+        }
+        _ => {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                format!("bad memberdescr type for {member_name}"),
+            );
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyDescr_NewGetSet(
     type_obj: *mut c_void,
     getset: *mut c_void,
@@ -24960,6 +25364,12 @@ static KEEP_PYDESCR_NEW_CLASS_METHOD: unsafe extern "C" fn(
 #[used]
 static KEEP_PYDESCR_NEW_MEMBER: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyDescr_NewMember;
+#[used]
+static KEEP_PYMEMBER_GET_ONE: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
+    PyMember_GetOne;
+#[used]
+static KEEP_PYMEMBER_SET_ONE: unsafe extern "C" fn(*mut c_char, *mut c_void, *mut c_void) -> c_int =
+    PyMember_SetOne;
 #[used]
 static KEEP_PYDESCR_NEW_GETSET: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyDescr_NewGetSet;

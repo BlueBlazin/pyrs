@@ -1100,6 +1100,21 @@ fn exports_abi3_batch47_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch48_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyMember_GetOne", "PyMember_SetOne"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch48 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

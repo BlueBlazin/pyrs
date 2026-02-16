@@ -66,6 +66,34 @@ typedef enum {
 #define Py_RELATIVE_OFFSET 8
 #endif
 
+#ifndef Py_READONLY
+#define Py_READONLY 1
+#endif
+
+#ifndef Py_T_SHORT
+#define Py_T_SHORT 0
+#define Py_T_INT 1
+#define Py_T_LONG 2
+#define Py_T_FLOAT 3
+#define Py_T_DOUBLE 4
+#define Py_T_STRING 5
+#define Py_T_OBJECT 6
+#define _Py_T_OBJECT 6
+#define Py_T_CHAR 7
+#define Py_T_BYTE 8
+#define Py_T_UBYTE 9
+#define Py_T_USHORT 10
+#define Py_T_UINT 11
+#define Py_T_ULONG 12
+#define Py_T_STRING_INPLACE 13
+#define Py_T_BOOL 14
+#define Py_T_OBJECT_EX 16
+#define Py_T_LONGLONG 17
+#define Py_T_ULONGLONG 18
+#define Py_T_PYSSIZET 19
+#define _Py_T_NONE 20
+#endif
+
 #ifndef Py_ASNATIVEBYTES_DEFAULTS
 #define Py_ASNATIVEBYTES_DEFAULTS -1
 #define Py_ASNATIVEBYTES_BIG_ENDIAN 0
@@ -694,6 +722,8 @@ PyObject *PyCMethod_New(PyMethodDef *ml, PyObject *self, PyObject *module, void 
 PyObject *PyDescr_NewMethod(PyTypeObject *type, PyMethodDef *method);
 PyObject *PyDescr_NewClassMethod(PyTypeObject *type, PyMethodDef *method);
 PyObject *PyDescr_NewMember(PyTypeObject *type, PyMemberDef *member);
+PyObject *PyMember_GetOne(const char *obj_addr, PyMemberDef *member);
+int PyMember_SetOne(char *obj_addr, PyMemberDef *member, PyObject *value);
 PyObject *PyDescr_NewGetSet(PyTypeObject *type, PyGetSetDef *getset);
 PyCFunction PyCFunction_GetFunction(PyObject *op);
 PyObject *PyCFunction_GetSelf(PyObject *op);

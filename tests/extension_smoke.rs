@@ -6884,6 +6884,208 @@ PyInit_cpython_api_batch47_probe(void) {
 }
 
 #[test]
+fn cpython_compat_member_abi_batch48_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch48 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch48 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch48");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch48_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <stddef.h>
+#include <string.h>
+
+typedef struct {
+    int number;
+    unsigned int u_number;
+    double ratio;
+    char truthy;
+    char letter;
+    PyObject *obj;
+    PyObject *obj_ex;
+    const char *name;
+    char inplace[8];
+} Probe;
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    Probe probe;
+    memset(&probe, 0, sizeof(probe));
+    probe.number = 11;
+    probe.u_number = 9;
+    probe.ratio = 2.5;
+    probe.truthy = 1;
+    probe.letter = 'Q';
+    probe.name = "hello";
+    memcpy(probe.inplace, "xy", 3);
+
+    PyMemberDef number_m = {"number", Py_T_INT, offsetof(Probe, number), 0, 0};
+    PyMemberDef u_number_m = {"u_number", Py_T_UINT, offsetof(Probe, u_number), 0, 0};
+    PyMemberDef ratio_m = {"ratio", Py_T_DOUBLE, offsetof(Probe, ratio), 0, 0};
+    PyMemberDef truthy_m = {"truthy", Py_T_BOOL, offsetof(Probe, truthy), 0, 0};
+    PyMemberDef letter_m = {"letter", Py_T_CHAR, offsetof(Probe, letter), 0, 0};
+    PyMemberDef obj_m = {"obj", Py_T_OBJECT, offsetof(Probe, obj), 0, 0};
+    PyMemberDef obj_ex_m = {"obj_ex", Py_T_OBJECT_EX, offsetof(Probe, obj_ex), 0, 0};
+    PyMemberDef name_m = {"name", Py_T_STRING, offsetof(Probe, name), 0, 0};
+    PyMemberDef inplace_m = {"inplace", Py_T_STRING_INPLACE, offsetof(Probe, inplace), 0, 0};
+
+    PyObject *number_obj = PyMember_GetOne((const char *)&probe, &number_m);
+    PyObject *u_number_obj = PyMember_GetOne((const char *)&probe, &u_number_m);
+    PyObject *ratio_obj = PyMember_GetOne((const char *)&probe, &ratio_m);
+    PyObject *truthy_obj = PyMember_GetOne((const char *)&probe, &truthy_m);
+    PyObject *letter_obj = PyMember_GetOne((const char *)&probe, &letter_m);
+    PyObject *name_obj = PyMember_GetOne((const char *)&probe, &name_m);
+    PyObject *inplace_obj = PyMember_GetOne((const char *)&probe, &inplace_m);
+
+    int get_ok = (number_obj && PyLong_AsLong(number_obj) == 11 &&
+                  u_number_obj && PyLong_AsLong(u_number_obj) == 9 &&
+                  ratio_obj && PyFloat_AsDouble(ratio_obj) == 2.5 &&
+                  truthy_obj && PyLong_AsLong(truthy_obj) == 1 &&
+                  letter_obj && strcmp(PyUnicode_AsUTF8(letter_obj), "Q") == 0 &&
+                  name_obj && strcmp(PyUnicode_AsUTF8(name_obj), "hello") == 0 &&
+                  inplace_obj && strcmp(PyUnicode_AsUTF8(inplace_obj), "xy") == 0) ? 1 : 0;
+
+    PyObject *set_number = PyLong_FromLong(29);
+    int set_number_ok = (set_number && PyMember_SetOne((char *)&probe, &number_m, set_number) == 0 &&
+                         probe.number == 29) ? 1 : 0;
+
+    PyObject *set_unsigned = PyLong_FromLong(-3);
+    int set_unsigned_ok = (set_unsigned &&
+                           PyMember_SetOne((char *)&probe, &u_number_m, set_unsigned) == 0 &&
+                           probe.u_number == (unsigned int)-3) ? 1 : 0;
+
+    PyObject *set_ratio = PyFloat_FromDouble(9.75);
+    int set_ratio_ok = (set_ratio && PyMember_SetOne((char *)&probe, &ratio_m, set_ratio) == 0 &&
+                        probe.ratio == 9.75) ? 1 : 0;
+
+    PyObject *set_bool = PyBool_FromLong(0);
+    int set_bool_ok = (set_bool && PyMember_SetOne((char *)&probe, &truthy_m, set_bool) == 0 &&
+                       probe.truthy == 0) ? 1 : 0;
+
+    PyObject *set_letter = PyUnicode_FromString("Z");
+    int set_letter_ok = (set_letter && PyMember_SetOne((char *)&probe, &letter_m, set_letter) == 0 &&
+                         probe.letter == 'Z') ? 1 : 0;
+
+    PyObject *payload = PyLong_FromLong(7);
+    int obj_set_ok = (payload && PyMember_SetOne((char *)&probe, &obj_m, payload) == 0 &&
+                      probe.obj != 0) ? 1 : 0;
+    int obj_del_ok = (PyMember_SetOne((char *)&probe, &obj_m, 0) == 0 &&
+                      probe.obj == 0) ? 1 : 0;
+
+    int obj_ex_delete_missing_ok = (PyMember_SetOne((char *)&probe, &obj_ex_m, 0) == -1 &&
+                                    PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    PyMemberDef readonly_m = {"number_ro", Py_T_INT, offsetof(Probe, number), Py_READONLY, 0};
+    PyObject *readonly_value = PyLong_FromLong(1);
+    int readonly_ok = (readonly_value &&
+                       PyMember_SetOne((char *)&probe, &readonly_m, readonly_value) == -1 &&
+                       PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    PyMemberDef relative_m = {"relative", Py_T_INT, offsetof(Probe, number), Py_RELATIVE_OFFSET, 0};
+    int relative_get_ok = (PyMember_GetOne((const char *)&probe, &relative_m) == 0 &&
+                           PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+    int relative_set_ok = (PyMember_SetOne((char *)&probe, &relative_m, set_number) == -1 &&
+                           PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(readonly_value);
+    Py_XDECREF(payload);
+    Py_XDECREF(set_letter);
+    Py_XDECREF(set_bool);
+    Py_XDECREF(set_ratio);
+    Py_XDECREF(set_unsigned);
+    Py_XDECREF(set_number);
+    Py_XDECREF(inplace_obj);
+    Py_XDECREF(name_obj);
+    Py_XDECREF(letter_obj);
+    Py_XDECREF(truthy_obj);
+    Py_XDECREF(ratio_obj);
+    Py_XDECREF(u_number_obj);
+    Py_XDECREF(number_obj);
+
+    return Py_BuildValue(
+        "(iiiiiiiiiiii)",
+        get_ok,
+        set_number_ok,
+        set_unsigned_ok,
+        set_ratio_ok,
+        set_bool_ok,
+        set_letter_ok,
+        obj_set_ok,
+        obj_del_ok,
+        obj_ex_delete_missing_ok,
+        readonly_ok,
+        relative_get_ok,
+        relative_set_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe member ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch48_probe",
+    "cpython api batch48 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch48_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch48_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch48 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch48_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch48 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
