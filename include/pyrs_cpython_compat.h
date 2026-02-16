@@ -276,6 +276,7 @@ PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *fo
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 PyObject *PyObject_CallMethodObjArgs(PyObject *object, PyObject *name, ...);
 PyObject *PyObject_CallNoArgs(PyObject *callable);
+PyObject *PyObject_GetAIter(PyObject *object);
 PyObject *PySeqIter_New(PyObject *object);
 PyObject *PyObject_GetItem(PyObject *object, PyObject *key);
 int PyObject_SetItem(PyObject *object, PyObject *key, PyObject *value);
@@ -293,6 +294,8 @@ PyObject *PyObject_ASCII(PyObject *object);
 PyObject *PyObject_Dir(PyObject *object);
 int PyObject_IsTrue(PyObject *object);
 int PyObject_IsInstance(PyObject *object, PyObject *class_obj);
+void *PyObject_GetTypeData(PyObject *object, PyObject *cls);
+long long PyObject_HashNotImplemented(PyObject *object);
 long long PyObject_Size(PyObject *object);
 long long PyObject_Length(PyObject *object);
 long long PyObject_LengthHint(PyObject *object, long long default_value);
@@ -384,6 +387,8 @@ long long PyGC_Collect(void);
 int PyGC_Enable(void);
 int PyGC_Disable(void);
 int PyGC_IsEnabled(void);
+int PyObject_GC_IsTracked(PyObject *object);
+int PyObject_GC_IsFinalized(PyObject *object);
 
 PyObject *PyFile_GetLine(PyObject *f, int n);
 int PyFile_WriteObject(PyObject *v, PyObject *f, int flags);

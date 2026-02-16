@@ -426,6 +426,27 @@ fn exports_abi3_batch14_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch15_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyObject_GetAIter",
+        "PyObject_GetTypeData",
+        "PyObject_HashNotImplemented",
+        "PyObject_GC_IsTracked",
+        "PyObject_GC_IsFinalized",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch15 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

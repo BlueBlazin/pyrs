@@ -11723,6 +11723,29 @@ pub unsafe extern "C" fn _PyObject_Type(object: *mut c_void) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GetTypeData(
+    object: *mut c_void,
+    cls: *mut c_void,
+) -> *mut c_void {
+    if object.is_null() || cls.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let is_instance = unsafe { PyObject_IsInstance(object, cls) };
+    if is_instance < 0 {
+        return std::ptr::null_mut();
+    }
+    if is_instance == 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "PyObject_GetTypeData called for unrelated type",
+        );
+        return std::ptr::null_mut();
+    }
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_HasAttrString(object: *mut c_void, name: *const c_char) -> i32 {
     let status = unsafe { PyObject_HasAttrStringWithError(object, name) };
     if status < 0 {
@@ -12066,6 +12089,44 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
             std::ptr::null_mut()
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GetAIter(object: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyObject_GetAIter missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_GetAIter received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let aiter = match vm.builtin_getattr(vec![value, Value::Str("__aiter__".to_string())], HashMap::new()) {
+            Ok(callable) => callable,
+            Err(err) => {
+                context.set_error(err.message);
+                return std::ptr::null_mut();
+            }
+        };
+        match vm.call_internal(aiter, Vec::new(), HashMap::new()) {
+            Ok(InternalCallOutcome::Value(result)) => context.alloc_cpython_ptr_for_value(result),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(vm.runtime_error_from_active_exception("PyObject_GetAIter failed").message);
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -12827,6 +12888,27 @@ pub unsafe extern "C" fn PyObject_Hash(object: *mut c_void) -> isize {
             -1
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HashNotImplemented(object: *mut c_void) -> isize {
+    let type_name = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return "object".to_string();
+        }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            return "object".to_string();
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        vm.value_type_name_for_error(&value)
+    })
+    .unwrap_or_else(|_| "object".to_string());
+    cpython_set_typed_error(
+        unsafe { PyExc_TypeError },
+        format!("unhashable type: '{type_name}'"),
+    );
+    -1
 }
 
 fn cpython_rich_compare_slot_name(op: i32) -> Option<&'static std::ffi::CStr> {
@@ -15635,6 +15717,32 @@ pub unsafe extern "C" fn PyObject_GC_Track(_object: *mut c_void) {}
 pub unsafe extern "C" fn PyObject_GC_UnTrack(_object: *mut c_void) {}
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GC_IsTracked(object: *mut c_void) -> i32 {
+    let value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    let tracked = matches!(
+        value,
+        Value::List(_)
+            | Value::Tuple(_)
+            | Value::Dict(_)
+            | Value::Set(_)
+            | Value::FrozenSet(_)
+            | Value::Instance(_)
+            | Value::Class(_)
+            | Value::Module(_)
+            | Value::MemoryView(_)
+    );
+    i32::from(tracked)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GC_IsFinalized(_object: *mut c_void) -> i32 {
+    0
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GC_Del(object: *mut c_void) {
     unsafe { PyObject_Free(object) }
 }
@@ -18172,7 +18280,13 @@ static KEEP2_PYOBJECT_TYPE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = P
 #[used]
 static KEEP2__PYOBJECT_TYPE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = _PyObject_Type;
 #[used]
+static KEEP2_PYOBJECT_GETTYPEDATA: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyObject_GetTypeData;
+#[used]
 static KEEP2_PYOBJECT_HASH: unsafe extern "C" fn(*mut c_void) -> isize = PyObject_Hash;
+#[used]
+static KEEP2_PYOBJECT_HASHNOTIMPLEMENTED: unsafe extern "C" fn(*mut c_void) -> isize =
+    PyObject_HashNotImplemented;
 #[used]
 static KEEP2_PYOBJECT_RICHCOMPARE: unsafe extern "C" fn(
     *mut c_void,
@@ -18388,6 +18502,12 @@ static KEEP2_PYOBJECT_FREE: unsafe extern "C" fn(*mut c_void) = PyObject_Free;
 static KEEP2_PYOBJECT_GC_TRACK: unsafe extern "C" fn(*mut c_void) = PyObject_GC_Track;
 #[used]
 static KEEP2_PYOBJECT_GC_UNTRACK: unsafe extern "C" fn(*mut c_void) = PyObject_GC_UnTrack;
+#[used]
+static KEEP2_PYOBJECT_GC_ISTRACKED: unsafe extern "C" fn(*mut c_void) -> i32 =
+    PyObject_GC_IsTracked;
+#[used]
+static KEEP2_PYOBJECT_GC_ISFINALIZED: unsafe extern "C" fn(*mut c_void) -> i32 =
+    PyObject_GC_IsFinalized;
 #[used]
 static KEEP2_PYOBJECT_GC_DEL: unsafe extern "C" fn(*mut c_void) = PyObject_GC_Del;
 #[used]
@@ -19298,6 +19418,9 @@ static KEEP_PYOBJECT_FORMAT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *
     PyObject_Format;
 #[used]
 static KEEP_PYOBJECT_GETITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_GetIter;
+#[used]
+static KEEP_PYOBJECT_GETAITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyObject_GetAIter;
 #[used]
 static KEEP_PYOBJECT_SELFITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_SelfIter;
 #[used]

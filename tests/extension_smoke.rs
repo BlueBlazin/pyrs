@@ -2893,6 +2893,117 @@ PyInit_cpython_api_batch14_probe(void) {
 }
 
 #[test]
+fn cpython_compat_object_gc_and_async_abi_batch15_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch15 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch15 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch15");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch15_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch15_probe",
+    "cpython api batch15 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch15_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *list_obj = PyList_New(0);
+    PyObject *dict_obj = Py_BuildValue("{}");
+    PyObject *number_obj = PyLong_FromLong(7);
+    PyObject *builtins_mod = PyImport_ImportModule("builtins");
+    PyObject *list_type = builtins_mod ? PyObject_GetAttrString(builtins_mod, "list") : 0;
+
+    int gc_tracked_list_ok = list_obj ? (PyObject_GC_IsTracked(list_obj) == 1) : 0;
+    int gc_tracked_int_ok = number_obj ? (PyObject_GC_IsTracked(number_obj) == 0) : 0;
+    int gc_finalized_ok = list_obj ? (PyObject_GC_IsFinalized(list_obj) == 0) : 0;
+
+    int hash_not_implemented_ok = 0;
+    if (list_obj) {
+        PyErr_Clear();
+        hash_not_implemented_ok = (PyObject_HashNotImplemented(list_obj) == -1 && PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+    }
+
+    int getaiter_error_ok = 0;
+    if (list_obj) {
+        PyErr_Clear();
+        PyObject *aiter = PyObject_GetAIter(list_obj);
+        getaiter_error_ok = (aiter == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+        Py_XDECREF(aiter);
+    }
+
+    int gettypedata_error_ok = 0;
+    if (dict_obj && list_type) {
+        PyErr_Clear();
+        void *type_data = PyObject_GetTypeData(dict_obj, list_type);
+        gettypedata_error_ok = (type_data == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+    }
+
+    Py_XDECREF(list_type);
+    Py_XDECREF(builtins_mod);
+    Py_XDECREF(number_obj);
+    Py_XDECREF(dict_obj);
+    Py_XDECREF(list_obj);
+
+    if (PyModule_AddIntConstant(module, "GC_TRACKED_LIST_OK", gc_tracked_list_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GC_TRACKED_INT_OK", gc_tracked_int_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GC_FINALIZED_OK", gc_finalized_ok) != 0 ||
+        PyModule_AddIntConstant(module, "HASH_NOT_IMPLEMENTED_OK", hash_not_implemented_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GET_AITER_ERROR_OK", getaiter_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GET_TYPEDATA_ERROR_OK", gettypedata_error_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch15_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch15 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch15_probe as m\nassert m.GC_TRACKED_LIST_OK == 1\nassert m.GC_TRACKED_INT_OK == 1\nassert m.GC_FINALIZED_OK == 1\nassert m.HASH_NOT_IMPLEMENTED_OK == 1\nassert m.GET_AITER_ERROR_OK == 1\nassert m.GET_TYPEDATA_ERROR_OK == 1",
+    )
+    .expect("cpython api batch15 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
