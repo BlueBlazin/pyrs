@@ -900,6 +900,26 @@ fn exports_abi3_batch38_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch39_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyModule_ExecDef",
+        "PyModule_FromDefAndSpec2",
+        "PyModule_GetDef",
+        "PyModule_GetState",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch39 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

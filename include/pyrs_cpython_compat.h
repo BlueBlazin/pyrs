@@ -142,6 +142,10 @@ typedef void (*PyCapsule_Destructor)(PyObject *);
 PyObject *PyModuleDef_Init(PyModuleDef *module);
 PyObject *PyModule_Create2(PyModuleDef *module, int apiver);
 #define PyModule_Create(module) PyModule_Create2((module), PYTHON_API_VERSION)
+PyObject *PyModule_FromDefAndSpec2(PyModuleDef *module, PyObject *spec, int module_api_version);
+int PyModule_ExecDef(PyObject *module, PyModuleDef *def);
+PyModuleDef *PyModule_GetDef(PyObject *module);
+void *PyModule_GetState(PyObject *module);
 
 PyObject *PyModule_NewObject(PyObject *name);
 PyObject *PyModule_New(const char *name);

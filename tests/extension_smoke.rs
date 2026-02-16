@@ -5835,6 +5835,162 @@ PyInit_cpython_api_batch38_probe(void) {
 }
 
 #[test]
+fn cpython_compat_module_def_state_abi_batch39_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch39 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch39 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch39");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch39_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+typedef struct {
+    int slot;
+    void *value;
+} PyModuleDef_Slot;
+
+#define Py_mod_exec 2
+
+static int
+exec_slot(PyObject *module) {
+    if (!module) {
+        return -1;
+    }
+    if (PyModule_AddIntConstant(module, "exec_value", 123) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static PyModuleDef_Slot probe_slots[] = {
+    {Py_mod_exec, (void *)exec_slot},
+    {0, 0}
+};
+
+static struct PyModuleDef probe_runtime_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_batch39_runtime_mod",
+    "batch39 runtime module",
+    32,
+    0,
+    probe_slots,
+    0,
+    0,
+    0
+};
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *module = PyModule_FromDefAndSpec2(&probe_runtime_def, 0, PYTHON_API_VERSION);
+    if (!module) {
+        return 0;
+    }
+
+    int getdef_ok = (PyModule_GetDef(module) == &probe_runtime_def) ? 1 : 0;
+    void *state_pre = PyModule_GetState(module);
+    int state_pre_ok = state_pre != 0 ? 1 : 0;
+    int state_zeroed = 1;
+    if (state_pre_ok) {
+        unsigned char *bytes = (unsigned char *)state_pre;
+        for (int i = 0; i < 8; i++) {
+            if (bytes[i] != 0) {
+                state_zeroed = 0;
+                break;
+            }
+        }
+    }
+
+    int exec_rc = PyModule_ExecDef(module, &probe_runtime_def);
+    PyObject *exec_value = PyObject_GetAttrString(module, "exec_value");
+    long exec_long = exec_value ? PyLong_AsLong(exec_value) : -1;
+    int exec_ok = (exec_rc == 0 && exec_long == 123) ? 1 : 0;
+
+    void *state_post = PyModule_GetState(module);
+    int state_post_same = (state_pre != 0 && state_pre == state_post) ? 1 : 0;
+
+    PyObject *not_module = PyLong_FromLong(1);
+    PyObject *state_invalid = PyModule_GetState(not_module);
+    int invalid_rejected = (state_invalid == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(exec_value);
+    Py_XDECREF(not_module);
+    Py_DECREF(module);
+
+    return Py_BuildValue(
+        "(iiiiii)",
+        getdef_ok,
+        state_pre_ok,
+        state_zeroed,
+        exec_ok,
+        state_post_same,
+        invalid_rejected
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe module-def/state APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch39_probe",
+    "cpython api batch39 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch39_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch39_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch39 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch39_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch39 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

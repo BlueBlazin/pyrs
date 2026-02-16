@@ -5563,6 +5563,77 @@ pub unsafe extern "C" fn PyModuleDef_Init(module: *mut c_void) -> *mut c_void {
     module
 }
 
+unsafe extern "C" fn cpython_module_state_free(state: *mut c_void) {
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: module state pointers are allocated with `calloc` in this module.
+    unsafe {
+        free(state);
+    }
+}
+
+fn cpython_bind_module_def(
+    context: &mut ModuleCapiContext,
+    module_obj: &ObjRef,
+    module_def: *mut CpythonModuleDef,
+) -> Result<(), String> {
+    if module_def.is_null() {
+        return Err("null module definition".to_string());
+    }
+    if context.vm.is_null() {
+        return Err("missing VM context".to_string());
+    }
+    // SAFETY: VM pointer is valid while C-API context is active.
+    let vm = unsafe { &mut *context.vm };
+    vm.extension_module_def_registry
+        .insert(module_obj.id(), module_def as usize);
+    // SAFETY: module_def points to extension-provided PyModuleDef storage.
+    let module_state_size = unsafe { (*module_def).m_size };
+    if module_state_size <= 0 {
+        return Ok(());
+    }
+    if let Some(existing) = vm.extension_module_state_registry.get(&module_obj.id())
+        && existing.state != 0
+    {
+        return Ok(());
+    }
+    let finalize_func = vm
+        .extension_module_state_registry
+        .get(&module_obj.id())
+        .and_then(|entry| entry.finalize_func);
+    let state_ptr = unsafe { calloc(1, module_state_size as usize) };
+    if state_ptr.is_null() {
+        return Err(format!(
+            "failed to allocate module state ({} bytes)",
+            module_state_size
+        ));
+    }
+    let previous = vm.extension_module_state_registry.insert(
+        module_obj.id(),
+        super::ExtensionModuleStateEntry {
+            state: state_ptr as usize,
+            free_func: Some(cpython_module_state_free),
+            finalize_func,
+        },
+    );
+    if let Some(previous) = previous && previous.state != state_ptr as usize && previous.state != 0 {
+        if let Some(finalize) = previous.finalize_func {
+            // SAFETY: callback pointer was provided by extension code.
+            unsafe {
+                finalize(previous.state as *mut c_void);
+            }
+        }
+        if let Some(free_func) = previous.free_func {
+            // SAFETY: callback pointer was provided by extension code.
+            unsafe {
+                free_func(previous.state as *mut c_void);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> *mut c_void {
     if module.is_null() {
@@ -5578,7 +5649,23 @@ pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> 
                 return std::ptr::null_mut();
             }
         }
-        context.alloc_cpython_ptr_for_value(Value::Module(context.module.clone()))
+        let module_obj = context.module.clone();
+        if let Err(err) = cpython_bind_module_def(context, &module_obj, module) {
+            context.set_error(format!("PyModule_Create2 failed to bind module definition: {err}"));
+            return std::ptr::null_mut();
+        }
+        if !unsafe { (*module).m_doc.is_null() } {
+            // SAFETY: m_doc is either null or points to a valid NUL-terminated C string.
+            let doc = unsafe { c_name_to_string((*module).m_doc) };
+            if let Ok(doc) = doc
+                && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+            {
+                module_data
+                    .globals
+                    .insert("__doc__".to_string(), Value::Str(doc));
+            }
+        }
+        context.alloc_cpython_ptr_for_value(Value::Module(module_obj))
     });
     match result {
         Ok(ptr) => ptr,
@@ -5600,6 +5687,200 @@ fn cpython_new_module_data(name: String) -> ModuleObject {
     module.globals.insert("__spec__".to_string(), Value::None);
     module.touch_globals_version();
     module
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_FromDefAndSpec2(
+    module_def: *mut c_void,
+    spec: *mut c_void,
+    _module_api_version: i32,
+) -> *mut c_void {
+    if module_def.is_null() {
+        cpython_set_error("PyModule_FromDefAndSpec2 received null module definition");
+        return std::ptr::null_mut();
+    }
+    let module_def = module_def.cast::<CpythonModuleDef>();
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyModule_FromDefAndSpec2 missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: module_def points to extension-provided PyModuleDef layout.
+        let module_name = if unsafe { (*module_def).m_name.is_null() } {
+            "module".to_string()
+        } else {
+            match unsafe { c_name_to_string((*module_def).m_name) } {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(format!(
+                        "PyModule_FromDefAndSpec2 invalid module definition name: {err}"
+                    ));
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let mut module_data = cpython_new_module_data(module_name);
+        if let Some(spec_value) = context.cpython_value_from_ptr_or_proxy(spec) {
+            module_data
+                .globals
+                .insert("__spec__".to_string(), spec_value);
+        }
+        if !unsafe { (*module_def).m_doc.is_null() }
+            && let Ok(doc) = unsafe { c_name_to_string((*module_def).m_doc) }
+        {
+            module_data
+                .globals
+                .insert("__doc__".to_string(), Value::Str(doc));
+        }
+        let module_obj = vm.heap.alloc_module(module_data);
+        let Value::Module(module_obj_ref) = module_obj else {
+            context.set_error("PyModule_FromDefAndSpec2 failed to allocate module object");
+            return std::ptr::null_mut();
+        };
+        if let Err(err) = vm.register_cpython_module_methods_from_def(&module_obj_ref, module_def) {
+            context.set_error(format!(
+                "PyModule_FromDefAndSpec2 failed to register methods: {}",
+                err.message
+            ));
+            return std::ptr::null_mut();
+        }
+        if let Err(err) = cpython_bind_module_def(context, &module_obj_ref, module_def) {
+            context.set_error(format!(
+                "PyModule_FromDefAndSpec2 failed to bind module definition: {err}"
+            ));
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_ptr_for_value(Value::Module(module_obj_ref))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_ExecDef(module: *mut c_void, module_def: *mut c_void) -> i32 {
+    if module_def.is_null() {
+        cpython_set_error("PyModule_ExecDef received null module definition");
+        return -1;
+    }
+    let module_def = module_def.cast::<CpythonModuleDef>();
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyModule_ExecDef missing VM context");
+            return -1;
+        }
+        let module_obj = match context.cpython_module_obj_from_ptr(module) {
+            Ok(module_obj) => module_obj,
+            Err(err) => {
+                context.set_error(format!("PyModule_ExecDef invalid module object: {err}"));
+                return -1;
+            }
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        if let Err(err) = vm.register_cpython_module_methods_from_def(&module_obj, module_def) {
+            context.set_error(format!(
+                "PyModule_ExecDef failed to register methods: {}",
+                err.message
+            ));
+            return -1;
+        }
+        if let Err(err) = cpython_bind_module_def(context, &module_obj, module_def) {
+            context.set_error(format!("PyModule_ExecDef failed to bind module definition: {err}"));
+            return -1;
+        }
+        // SAFETY: module_def points to extension-provided PyModuleDef layout.
+        let slots_ptr = unsafe { (*module_def).m_slots };
+        if slots_ptr.is_null() {
+            return 0;
+        }
+        let module_ptr = context.alloc_cpython_ptr_for_value(Value::Module(module_obj));
+        let mut cursor = slots_ptr.cast::<CpythonModuleDefSlot>();
+        loop {
+            // SAFETY: slot table is terminated by {0, NULL}.
+            let slot = unsafe { (*cursor).slot };
+            // SAFETY: slot table is terminated by {0, NULL}.
+            let value = unsafe { (*cursor).value };
+            if slot == 0 {
+                break;
+            }
+            if slot == 2 && !value.is_null() {
+                // Py_mod_exec(module) -> int
+                let exec: unsafe extern "C" fn(*mut c_void) -> i32 =
+                    unsafe { std::mem::transmute(value) };
+                let status = unsafe { exec(module_ptr) };
+                if status != 0 {
+                    if context.last_error.is_none() {
+                        context.set_error("Py_mod_exec failed");
+                    }
+                    return -1;
+                }
+            }
+            // SAFETY: slot array entries are contiguous.
+            cursor = unsafe { cursor.add(1) };
+        }
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_GetDef(module: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyModule_GetDef missing VM context");
+            return std::ptr::null_mut();
+        }
+        let module_obj = match context.cpython_module_obj_from_ptr(module) {
+            Ok(module_obj) => module_obj,
+            Err(_) => {
+                cpython_set_typed_error(unsafe { PyExc_SystemError }, "module object expected");
+                return std::ptr::null_mut();
+            }
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        vm.extension_module_def_registry
+            .get(&module_obj.id())
+            .copied()
+            .map_or(std::ptr::null_mut(), |ptr| ptr as *mut c_void)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_GetState(module: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyModule_GetState missing VM context");
+            return std::ptr::null_mut();
+        }
+        let module_obj = match context.cpython_module_obj_from_ptr(module) {
+            Ok(module_obj) => module_obj,
+            Err(_) => {
+                cpython_set_typed_error(unsafe { PyExc_SystemError }, "module object expected");
+                return std::ptr::null_mut();
+            }
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        vm.extension_module_state_registry
+            .get(&module_obj.id())
+            .map_or(std::ptr::null_mut(), |entry| entry.state as *mut c_void)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -21134,6 +21415,17 @@ static KEEP2_PYMODULE_ADDFUNCTIONS: unsafe extern "C" fn(*mut c_void, *mut c_voi
 static KEEP2_PYMODULE_ADDTYPE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyModule_AddType;
 #[used]
+static KEEP2_PYMODULE_FROMDEFANDSPEC2: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> *mut c_void =
+    PyModule_FromDefAndSpec2;
+#[used]
+static KEEP2_PYMODULE_EXECDEF: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyModule_ExecDef;
+#[used]
+static KEEP2_PYMODULE_GETDEF: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyModule_GetDef;
+#[used]
+static KEEP2_PYMODULE_GETSTATE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyModule_GetState;
+#[used]
 static KEEP2_PYTUPLE_NEW: unsafe extern "C" fn(isize) -> *mut c_void = PyTuple_New;
 #[used]
 static KEEP2_PYTUPLE_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PyTuple_Size;
@@ -21875,6 +22167,20 @@ static KEEP_PYMODULEDEF_INIT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
 #[used]
 static KEEP_PYMODULE_CREATE2: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
     PyModule_Create2;
+#[used]
+static KEEP_PYMODULE_FROM_DEF_AND_SPEC2: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    i32,
+) -> *mut c_void = PyModule_FromDefAndSpec2;
+#[used]
+static KEEP_PYMODULE_EXEC_DEF: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyModule_ExecDef;
+#[used]
+static KEEP_PYMODULE_GET_DEF: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyModule_GetDef;
+#[used]
+static KEEP_PYMODULE_GET_STATE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyModule_GetState;
 #[used]
 static KEEP_PYMODULE_ADD_OBJECT_REF: unsafe extern "C" fn(
     *mut c_void,
@@ -24789,6 +25095,8 @@ impl Vm {
     fn prune_extension_module_state_registry(&mut self) {
         let live_module_ids: std::collections::HashSet<u64> =
             self.modules.values().map(|module| module.id()).collect();
+        self.extension_module_def_registry
+            .retain(|module_id, _| live_module_ids.contains(module_id));
         let stale_ids: Vec<u64> = self
             .extension_module_state_registry
             .keys()

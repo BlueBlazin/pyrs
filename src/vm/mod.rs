@@ -764,6 +764,7 @@ pub struct Vm {
     extension_pinned_cpython_allocations: Vec<*mut c_void>,
     extension_pinned_cpython_allocation_set: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
+    extension_module_def_registry: HashMap<u64, usize>,
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     extension_init_in_progress: HashSet<String>,
     extension_initialized_names: HashSet<String>,
@@ -824,6 +825,7 @@ impl Drop for Vm {
             }
         }
         self.extension_capsule_registry.clear();
+        self.extension_module_def_registry.clear();
         self.extension_contextvar_registry.clear();
         for raw in self.extension_contextvar_allocations.drain(..) {
             if !raw.is_null() {
@@ -935,6 +937,7 @@ impl Vm {
             extension_pinned_cpython_allocations: Vec::new(),
             extension_pinned_cpython_allocation_set: HashSet::new(),
             extension_pinned_capsule_names: HashMap::new(),
+            extension_module_def_registry: HashMap::new(),
             extension_module_state_registry: HashMap::new(),
             extension_init_in_progress: HashSet::new(),
             extension_initialized_names: HashSet::new(),
