@@ -8365,6 +8365,18 @@ pub unsafe extern "C" fn PyNumber_ToBase(object: *mut c_void, base: i32) -> *mut
     }
 }
 
+const PYC_MAGIC_NUMBER_TOKEN: c_long = 0x0A0D0E2B;
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_GetMagicNumber() -> c_long {
+    PYC_MAGIC_NUMBER_TOKEN
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_GetMagicTag() -> *const c_char {
+    c"cpython-314".as_ptr()
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_void {
     match unsafe { c_name_to_string(name) } {
@@ -20609,6 +20621,10 @@ static KEEP_PYCOMPLEX_REAL_AS_DOUBLE: unsafe extern "C" fn(*mut c_void) -> f64 =
 #[used]
 static KEEP_PYCOMPLEX_IMAG_AS_DOUBLE: unsafe extern "C" fn(*mut c_void) -> f64 =
     PyComplex_ImagAsDouble;
+#[used]
+static KEEP_PYIMPORT_GET_MAGIC_NUMBER: unsafe extern "C" fn() -> c_long = PyImport_GetMagicNumber;
+#[used]
+static KEEP_PYIMPORT_GET_MAGIC_TAG: unsafe extern "C" fn() -> *const c_char = PyImport_GetMagicTag;
 #[used]
 static KEEP_PYIMPORT_IMPORT_MODULE: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyImport_ImportModule;

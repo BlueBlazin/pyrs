@@ -138,6 +138,8 @@ int PyModule_AddIntConstant(PyObject *module, const char *name, long long value)
 int PyModule_AddStringConstant(PyObject *module, const char *name, const char *value);
 
 PyObject *PyImport_ImportModule(const char *name);
+long PyImport_GetMagicNumber(void);
+const char *PyImport_GetMagicTag(void);
 PyObject *PyImport_Import(PyObject *name);
 PyObject *PyImport_GetModuleDict(void);
 PyObject *PyImport_AddModuleRef(const char *name);
