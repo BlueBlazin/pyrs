@@ -836,6 +836,55 @@ fn exports_abi3_batch34_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch35_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyEval_EvalCode", "PyEval_EvalCodeEx"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch35 symbols: {missing:?}"
+    );
+}
+
+#[test]
+fn exports_abi3_batch36_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyImport_AppendInittab",
+        "PyImport_ImportFrozenModule",
+        "PyImport_ImportFrozenModuleObject",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch36 symbols: {missing:?}"
+    );
+}
+
+#[test]
+fn exports_abi3_batch37_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyThreadState_GetFrame", "PyFrame_GetCode", "PyFrame_GetLineNumber"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch37 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -5364,6 +5364,365 @@ PyInit_cpython_api_batch34_probe(void) {
 }
 
 #[test]
+fn cpython_compat_eval_code_abi_batch35_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch35 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch35 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch35");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch35_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *code = 0;
+    if (!PyArg_ParseTuple(args, "O", &code)) {
+        return 0;
+    }
+
+    PyObject *globals = PyDict_New();
+    PyObject *key = PyUnicode_FromString("x");
+    PyObject *value = PyLong_FromLong(40);
+    if (!globals || !key || !value || PyDict_SetItem(globals, key, value) != 0) {
+        Py_XDECREF(value);
+        Py_XDECREF(key);
+        Py_XDECREF(globals);
+        return 0;
+    }
+    Py_DECREF(value);
+    Py_DECREF(key);
+
+    PyObject *locals = globals;
+    Py_INCREF(locals);
+    PyObject *res1 = PyEval_EvalCode(code, globals, locals);
+    int ok1 = 0;
+    if (res1) {
+        long v = PyLong_AsLong(res1);
+        ok1 = (!PyErr_Occurred() && v == 42) ? 1 : 0;
+    }
+    PyErr_Clear();
+
+    PyObject *res2 = PyEval_EvalCodeEx(
+        code,
+        globals,
+        locals,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+    );
+    int ok2 = 0;
+    if (res2) {
+        long v = PyLong_AsLong(res2);
+        ok2 = (!PyErr_Occurred() && v == 42) ? 1 : 0;
+    }
+    PyErr_Clear();
+
+    PyObject *bad = PyEval_EvalCode(code, 0, 0);
+    int bad_rejected = (bad == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(bad);
+    Py_XDECREF(res2);
+    Py_XDECREF(res1);
+    Py_XDECREF(locals);
+    Py_XDECREF(globals);
+
+    return Py_BuildValue("(iii)", ok1, ok2, bad_rejected);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_VARARGS, "probe eval code APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch35_probe",
+    "cpython api batch35 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch35_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch35_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch35 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch35_probe as m\ncode = compile('x + 2', '<batch35>', 'eval')\nres = m.run(code)\nassert res == (1, 1, 1)",
+    )
+    .expect("cpython api batch35 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_import_frozen_abi_batch36_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch36 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch36 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch36");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch36_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef inittab_module_def = {
+    PyModuleDef_HEAD_INIT,
+    "inittab_batch36_mod",
+    "inittab batch36 module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_inittab_batch36_mod(void) {
+    PyObject *module = PyModule_Create(&inittab_module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "VALUE", 99) != 0) {
+        return 0;
+    }
+    return module;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    int reg_ok = PyImport_AppendInittab("inittab_batch36_mod", PyInit_inittab_batch36_mod) == 0;
+    int import_rc = PyImport_ImportFrozenModule("inittab_batch36_mod");
+    PyObject *name = PyUnicode_FromString("inittab_batch36_mod");
+    int import_obj_rc = name ? PyImport_ImportFrozenModuleObject(name) : -1;
+    Py_XDECREF(name);
+
+    PyObject *mod = PyImport_ImportModule("inittab_batch36_mod");
+    int attr_ok = 0;
+    if (mod) {
+        PyObject *value = PyObject_GetAttrString(mod, "VALUE");
+        if (value) {
+            long v = PyLong_AsLong(value);
+            attr_ok = (!PyErr_Occurred() && v == 99) ? 1 : 0;
+        }
+        PyErr_Clear();
+        Py_XDECREF(value);
+    }
+    Py_XDECREF(mod);
+
+    int dup_reject_ok =
+        PyImport_AppendInittab("inittab_batch36_mod", PyInit_inittab_batch36_mod) == -1;
+    PyErr_Clear();
+    int missing_rc = PyImport_ImportFrozenModule("batch36_missing_mod");
+
+    return Py_BuildValue(
+        "(iiiiii)",
+        reg_ok ? 1 : 0,
+        import_rc,
+        import_obj_rc,
+        attr_ok,
+        dup_reject_ok ? 1 : 0,
+        missing_rc
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe frozen-module import APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch36_probe",
+    "cpython api batch36 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch36_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch36_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch36 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch36_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 0)",
+    )
+    .expect("cpython api batch36 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_frame_abi_batch37_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch37 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch37 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch37");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch37_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    void *tstate = PyThreadState_Get();
+    PyObject *frame = PyThreadState_GetFrame(tstate);
+    PyObject *code = PyFrame_GetCode(frame);
+    int line = PyFrame_GetLineNumber(frame);
+
+    int frame_ok = frame != 0 ? 1 : 0;
+    int code_ok = code != 0 ? 1 : 0;
+    int line_ok = line > 0 ? 1 : 0;
+
+    PyObject *name = code ? PyObject_GetAttrString(code, "co_name") : 0;
+    int name_ok = name != 0 ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(name);
+    Py_XDECREF(code);
+    Py_XDECREF(frame);
+
+    return Py_BuildValue("(iiii)", frame_ok, code_ok, line_ok, name_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe frame APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch37_probe",
+    "cpython api batch37 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch37_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch37_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch37 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch37_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1)",
+    )
+    .expect("cpython api batch37 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

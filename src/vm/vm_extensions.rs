@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_ulong, c_void};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Once;
+use std::sync::{Mutex, Once, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bytecode::CodeObject;
@@ -8756,11 +8756,23 @@ pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_vo
             if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
                 eprintln!("[cpy-api] PyImport_ImportModule name={module_name}");
             }
-            with_active_cpython_context_mut(|context| match context.module_import(&module_name) {
-                Ok(handle) => context.alloc_cpython_ptr_for_handle(handle),
-                Err(err) => {
-                    context.set_error(err);
-                    std::ptr::null_mut()
+            with_active_cpython_context_mut(|context| {
+                match cpython_import_from_inittab(context, &module_name) {
+                    Ok(Some(value)) => {
+                        return context.alloc_cpython_ptr_for_value(value);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        context.set_error(err);
+                        return std::ptr::null_mut();
+                    }
+                }
+                match context.module_import(&module_name) {
+                    Ok(handle) => context.alloc_cpython_ptr_for_handle(handle),
+                    Err(err) => {
+                        context.set_error(err);
+                        std::ptr::null_mut()
+                    }
                 }
             })
             .unwrap_or_else(|err| {
@@ -8826,6 +8838,67 @@ fn cpython_import_add_module_by_name(
         vm.refresh_sys_modules_dict();
     }
     Ok(module)
+}
+
+type CpythonInittabInitFunc = unsafe extern "C" fn() -> *mut c_void;
+
+fn cpython_inittab_registry() -> &'static Mutex<HashMap<String, CpythonInittabInitFunc>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, CpythonInittabInitFunc>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cpython_import_from_inittab(
+    context: &mut ModuleCapiContext,
+    module_name: &str,
+) -> Result<Option<Value>, String> {
+    let init_func = {
+        let guard = cpython_inittab_registry()
+            .lock()
+            .map_err(|_| "PyImport inittab registry lock poisoned".to_string())?;
+        guard.get(module_name).copied()
+    };
+    let Some(init_func) = init_func else {
+        return Ok(None);
+    };
+    let module_ptr = unsafe { init_func() };
+    if module_ptr.is_null() {
+        if let Some(message) = context.last_error.clone() {
+            return Err(message);
+        }
+        return Err(format!(
+            "PyImport inittab initializer for '{}' returned null",
+            module_name
+        ));
+    }
+    let Some(module_value) = context.cpython_value_from_ptr_or_proxy(module_ptr) else {
+        return Err(format!(
+            "PyImport inittab initializer for '{}' returned unknown module pointer",
+            module_name
+        ));
+    };
+    let Value::Module(module_obj) = module_value else {
+        return Err(format!(
+            "PyImport inittab initializer for '{}' did not return a module object",
+            module_name
+        ));
+    };
+    if context.vm.is_null() {
+        return Err("missing VM context for inittab import".to_string());
+    }
+    // SAFETY: VM pointer is valid for active context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    vm.modules.insert(module_name.to_string(), module_obj.clone());
+    if let Some(modules_dict) = vm.sys_dict_obj("modules") {
+        dict_set_value_checked(
+            &modules_dict,
+            Value::Str(module_name.to_string()),
+            Value::Module(module_obj.clone()),
+        )
+        .map_err(|err| err.message)?;
+    } else {
+        vm.refresh_sys_modules_dict();
+    }
+    Ok(Some(Value::Module(module_obj)))
 }
 
 fn cpython_import_exec_code_in_module(
@@ -8964,6 +9037,107 @@ pub unsafe extern "C" fn PyImport_AddModuleObject(name: *mut c_void) -> *mut c_v
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_AddModule(name: *const c_char) -> *mut c_void {
     unsafe { PyImport_AddModuleRef(name) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_AppendInittab(
+    name: *const c_char,
+    initfunc: Option<CpythonInittabInitFunc>,
+) -> i32 {
+    let Some(initfunc) = initfunc else {
+        cpython_set_error("PyImport_AppendInittab received null initfunc");
+        return -1;
+    };
+    let module_name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let mut guard = match cpython_inittab_registry().lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            cpython_set_error("PyImport_AppendInittab registry lock poisoned");
+            return -1;
+        }
+    };
+    if guard.contains_key(&module_name) {
+        cpython_set_error(format!(
+            "PyImport_AppendInittab duplicate module '{}'",
+            module_name
+        ));
+        return -1;
+    }
+    guard.insert(module_name, initfunc);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ImportFrozenModule(name: *const c_char) -> i32 {
+    let module_name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        match cpython_import_from_inittab(context, &module_name) {
+            Ok(Some(_)) => return 1,
+            Ok(None) => {}
+            Err(err) => {
+                context.set_error(err);
+                return -1;
+            }
+        }
+        if context.vm.is_null() {
+            context.set_error("PyImport_ImportFrozenModule missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_import_module(vec![Value::Str(module_name)], HashMap::new()) {
+            Ok(_) => 1,
+            Err(_) => {
+                vm.clear_active_exception();
+                0
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ImportFrozenModuleObject(name: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        let module_name =
+            match cpython_module_name_from_object(context, name, "PyImport_ImportFrozenModuleObject")
+            {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(err);
+                    return -1;
+                }
+            };
+        let c_name = match CString::new(module_name) {
+            Ok(name) => name,
+            Err(_) => {
+                context.set_error(
+                    "PyImport_ImportFrozenModuleObject module name contains interior NUL",
+                );
+                return -1;
+            }
+        };
+        unsafe { PyImport_ImportFrozenModule(c_name.as_ptr()) }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -18081,6 +18255,81 @@ pub unsafe extern "C" fn PyThreadState_Get() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_GetFrame(state: *mut c_void) -> *mut c_void {
+    if state.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { PyEval_GetFrame() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFrame_GetCode(frame: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if frame.is_null() {
+            return std::ptr::null_mut();
+        }
+        if context.vm.is_null() {
+            context.set_error("PyFrame_GetCode missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let current_frame_ptr = unsafe { PyThreadState_Get() };
+        if frame == current_frame_ptr {
+            let Some(active) = vm.frames.last() else {
+                return std::ptr::null_mut();
+            };
+            return context.alloc_cpython_ptr_for_value(Value::Code(active.code.clone()));
+        }
+        if let Some(Value::Code(code_obj)) = context.cpython_value_from_ptr_or_proxy(frame) {
+            return context.alloc_cpython_ptr_for_value(Value::Code(code_obj));
+        }
+        context.set_error("PyFrame_GetCode expected frame object");
+        std::ptr::null_mut()
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFrame_GetLineNumber(frame: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if frame.is_null() {
+            return 0;
+        }
+        if context.vm.is_null() {
+            return 0;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let current_frame_ptr = unsafe { PyThreadState_Get() };
+        if frame == current_frame_ptr {
+            let Some(active) = vm.frames.last() else {
+                return 0;
+            };
+            let ip = if active.last_ip < active.code.locations.len() {
+                active.last_ip
+            } else {
+                active.code.locations.len().saturating_sub(1)
+            };
+            return active
+                .code
+                .locations
+                .get(ip)
+                .map(|loc| loc.line as i32)
+                .unwrap_or(0);
+        }
+        if let Some(Value::Code(code_obj)) = context.cpython_value_from_ptr_or_proxy(frame) {
+            return code_obj.locations.first().map(|loc| loc.line as i32).unwrap_or(0);
+        }
+        0
+    })
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInterpreterState_Get() -> *mut c_void {
     2usize as *mut c_void
 }
@@ -20112,6 +20361,101 @@ pub unsafe extern "C" fn PyEval_CallObjectWithKeywords(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_EvalCode(
+    code: *mut c_void,
+    globals: *mut c_void,
+    locals: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyEval_EvalCode missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(code_value) = context.cpython_value_from_ptr_or_proxy(code) else {
+            context.set_error("PyEval_EvalCode received unknown code pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::Code(code_obj) = code_value else {
+            context.set_error("PyEval_EvalCode expected code object");
+            return std::ptr::null_mut();
+        };
+        if globals.is_null() {
+            context.set_error("PyEval_EvalCode globals must not be NULL");
+            return std::ptr::null_mut();
+        }
+        let Some(globals_value) = context.cpython_value_from_ptr_or_proxy(globals) else {
+            context.set_error("PyEval_EvalCode received unknown globals pointer");
+            return std::ptr::null_mut();
+        };
+        if !matches!(globals_value, Value::Dict(_) | Value::Module(_)) {
+            context.set_error("PyEval_EvalCode globals must be a dict or module");
+            return std::ptr::null_mut();
+        }
+        let locals_value = if locals.is_null() {
+            globals_value.clone()
+        } else {
+            let Some(value) = context.cpython_value_from_ptr_or_proxy(locals) else {
+                context.set_error("PyEval_EvalCode received unknown locals pointer");
+                return std::ptr::null_mut();
+            };
+            value
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_eval(
+            vec![Value::Code(code_obj), globals_value, locals_value],
+            HashMap::new(),
+        ) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_EvalCodeEx(
+    code: *mut c_void,
+    globals: *mut c_void,
+    locals: *mut c_void,
+    args: *const *mut c_void,
+    argcount: i32,
+    kws: *const *mut c_void,
+    kwcount: i32,
+    defs: *const *mut c_void,
+    defcount: i32,
+    kwdefs: *mut c_void,
+    closure: *mut c_void,
+) -> *mut c_void {
+    let is_simple_call = args.is_null()
+        && kws.is_null()
+        && defs.is_null()
+        && argcount == 0
+        && kwcount == 0
+        && defcount == 0
+        && kwdefs.is_null()
+        && closure.is_null();
+    if is_simple_call {
+        return unsafe { PyEval_EvalCode(code, globals, locals) };
+    }
+    with_active_cpython_context_mut(|context| {
+        context.set_error(
+            "PyEval_EvalCodeEx extended args/kws/defs/closure are not yet supported",
+        );
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+    });
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyEval_SaveThread() -> *mut c_void {
     std::ptr::null_mut()
 }
@@ -21060,6 +21404,14 @@ static KEEP2_PYSYS_GETOBJECT: unsafe extern "C" fn(*const c_char) -> *mut c_void
 #[used]
 static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThreadState_Get;
 #[used]
+static KEEP2_PYTHREADSTATE_GETFRAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyThreadState_GetFrame;
+#[used]
+static KEEP2_PYFRAME_GETCODE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyFrame_GetCode;
+#[used]
+static KEEP2_PYFRAME_GETLINENUMBER: unsafe extern "C" fn(*mut c_void) -> i32 =
+    PyFrame_GetLineNumber;
+#[used]
 static KEEP2_PYTHREADSTATE_GETINTERPRETER: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyThreadState_GetInterpreter;
 #[used]
@@ -21779,6 +22131,17 @@ static KEEP_PYIMPORT_ADD_MODULE_OBJECT: unsafe extern "C" fn(*mut c_void) -> *mu
 static KEEP_PYIMPORT_ADD_MODULE: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyImport_AddModule;
 #[used]
+static KEEP_PYIMPORT_APPEND_INITTAB: unsafe extern "C" fn(
+    *const c_char,
+    Option<CpythonInittabInitFunc>,
+) -> i32 = PyImport_AppendInittab;
+#[used]
+static KEEP_PYIMPORT_IMPORT_FROZEN_MODULE: unsafe extern "C" fn(*const c_char) -> i32 =
+    PyImport_ImportFrozenModule;
+#[used]
+static KEEP_PYIMPORT_IMPORT_FROZEN_MODULE_OBJECT: unsafe extern "C" fn(*mut c_void) -> i32 =
+    PyImport_ImportFrozenModuleObject;
+#[used]
 static KEEP_PYIMPORT_EXECCODEMODULE: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
     PyImport_ExecCodeModule;
 #[used]
@@ -22210,6 +22573,23 @@ static KEEP_PYEVAL_CALL_OBJECT_WITH_KEYWORDS: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
 ) -> *mut c_void = PyEval_CallObjectWithKeywords;
+#[used]
+static KEEP_PYEVAL_EVAL_CODE: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+    PyEval_EvalCode;
+#[used]
+static KEEP_PYEVAL_EVAL_CODE_EX: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *const *mut c_void,
+    i32,
+    *const *mut c_void,
+    i32,
+    *const *mut c_void,
+    i32,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyEval_EvalCodeEx;
 #[used]
 static KEEP_PYEVAL_SAVE_THREAD: unsafe extern "C" fn() -> *mut c_void = PyEval_SaveThread;
 #[used]

@@ -166,6 +166,9 @@ PyObject *PyImport_GetModuleDict(void);
 PyObject *PyImport_AddModuleRef(const char *name);
 PyObject *PyImport_AddModuleObject(PyObject *name);
 PyObject *PyImport_AddModule(const char *name);
+int PyImport_AppendInittab(const char *name, PyObject *(*initfunc)(void));
+int PyImport_ImportFrozenModule(const char *name);
+int PyImport_ImportFrozenModuleObject(PyObject *name);
 PyObject *PyImport_ExecCodeModule(const char *name, PyObject *co);
 PyObject *PyImport_ExecCodeModuleEx(const char *name, PyObject *co, const char *pathname);
 PyObject *PyImport_ExecCodeModuleObject(
@@ -393,6 +396,20 @@ PyObject *PyObject_CallNoArgs(PyObject *callable);
 PyObject *PyEval_CallObjectWithKeywords(PyObject *callable, PyObject *args, PyObject *kwargs);
 PyObject *PyEval_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *PyEval_CallMethod(PyObject *object, const char *name, const char *format, ...);
+PyObject *PyEval_EvalCode(PyObject *code, PyObject *globals, PyObject *locals);
+PyObject *PyEval_EvalCodeEx(
+    PyObject *code,
+    PyObject *globals,
+    PyObject *locals,
+    PyObject *const *args,
+    int argcount,
+    PyObject *const *kws,
+    int kwcount,
+    PyObject *const *defs,
+    int defcount,
+    PyObject *kwdefs,
+    PyObject *closure
+);
 void *PyEval_GetFrame(void);
 PyObject *PyEval_GetGlobals(void);
 PyObject *PyEval_GetLocals(void);
@@ -401,10 +418,13 @@ PyObject *PyEval_GetFrameGlobals(void);
 PyObject *PyEval_GetFrameLocals(void);
 const char *PyEval_GetFuncName(PyObject *func);
 const char *PyEval_GetFuncDesc(PyObject *func);
+PyObject *PyFrame_GetCode(PyObject *frame);
+int PyFrame_GetLineNumber(PyObject *frame);
 int PyGILState_Ensure(void);
 void *PyGILState_GetThisThreadState(void);
 void PyGILState_Release(int state);
 void *PyThreadState_Get(void);
+PyObject *PyThreadState_GetFrame(void *state);
 void *PyThreadState_GetInterpreter(void *state);
 unsigned long long PyThreadState_GetID(void *state);
 PyObject *PyThreadState_GetDict(void);
