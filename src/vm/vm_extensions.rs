@@ -1342,6 +1342,7 @@ struct ModuleCapiContext {
     thread_state_dict_handle: Option<PyrsObjectHandle>,
     interpreter_state_dict_handle: Option<PyrsObjectHandle>,
     codec_error_handlers: HashMap<String, usize>,
+    state_modules_by_def: HashMap<usize, usize>,
 }
 
 impl Drop for ModuleCapiContext {
@@ -1470,6 +1471,7 @@ impl ModuleCapiContext {
             thread_state_dict_handle: None,
             interpreter_state_dict_handle: None,
             codec_error_handlers: HashMap::new(),
+            state_modules_by_def: HashMap::new(),
         }
     }
 
@@ -20227,6 +20229,132 @@ pub unsafe extern "C" fn PyInterpreterState_GetDict(interp: *mut c_void) -> *mut
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyState_AddModule(module: *mut c_void, module_def: *mut c_void) -> i32 {
+    if module_def.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyState_AddModule requires module definition",
+        );
+        return -1;
+    }
+    with_active_cpython_context_mut(|context| {
+        let module_def = module_def.cast::<CpythonModuleDef>();
+        // SAFETY: `module_def` was validated non-null above.
+        if unsafe { !(*module_def).m_slots.is_null() } {
+            context.set_error("SystemError: PyState_AddModule called on module with slots");
+            return -1;
+        }
+        let Some(module_value) = context.cpython_value_from_ptr_or_proxy(module) else {
+            context.set_error("PyState_AddModule received unknown module pointer");
+            return -1;
+        };
+        let Value::Module(module_obj) = module_value else {
+            context.set_error("PyState_AddModule expected module object");
+            return -1;
+        };
+        if let Err(err) = cpython_bind_module_def(context, &module_obj, module_def) {
+            context.set_error(err);
+            return -1;
+        }
+        context
+            .state_modules_by_def
+            .insert(module_def as usize, module as usize);
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyState_FindModule(module_def: *mut c_void) -> *mut c_void {
+    if module_def.is_null() {
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        let module_def = module_def.cast::<CpythonModuleDef>();
+        // SAFETY: `module_def` is non-null and points to extension-provided def storage.
+        if unsafe { !(*module_def).m_slots.is_null() } {
+            return std::ptr::null_mut();
+        }
+        if let Some(module_ptr) = context
+            .state_modules_by_def
+            .get(&(module_def as usize))
+            .copied()
+        {
+            return module_ptr as *mut c_void;
+        }
+        if context.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some((module_id, _)) = vm
+            .extension_module_def_registry
+            .iter()
+            .find(|(_, def_ptr)| **def_ptr == module_def as usize)
+        else {
+            return std::ptr::null_mut();
+        };
+        let module_obj = vm
+            .modules
+            .values()
+            .find(|module| module.id() == *module_id)
+            .cloned();
+        let Some(module_obj) = module_obj else {
+            return std::ptr::null_mut();
+        };
+        let module_ptr = context.alloc_cpython_ptr_for_value(Value::Module(module_obj));
+        if !module_ptr.is_null() {
+            context
+                .state_modules_by_def
+                .insert(module_def as usize, module_ptr as usize);
+        }
+        module_ptr
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyState_RemoveModule(module_def: *mut c_void) -> i32 {
+    if module_def.is_null() {
+        return -1;
+    }
+    with_active_cpython_context_mut(|context| {
+        let module_def = module_def.cast::<CpythonModuleDef>();
+        // SAFETY: `module_def` is non-null and points to extension-provided def storage.
+        if unsafe { !(*module_def).m_slots.is_null() } {
+            context.set_error("SystemError: PyState_RemoveModule called on module with slots");
+            return -1;
+        }
+        context.state_modules_by_def.remove(&(module_def as usize));
+        if context.vm.is_null() {
+            return 0;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        if let Some((module_id, _)) = vm
+            .extension_module_def_registry
+            .iter()
+            .find(|(_, def_ptr)| **def_ptr == module_def as usize)
+            .map(|(module_id, def_ptr)| (*module_id, *def_ptr))
+        {
+            let _ = module_id;
+            vm.extension_module_def_registry.remove(&module_id);
+        }
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThreadState_GetInterpreter(state: *mut c_void) -> *mut c_void {
     if state.is_null() {
         return std::ptr::null_mut();
@@ -23614,6 +23742,14 @@ static KEEP2_PYINTERPRETERSTATE_GETID: unsafe extern "C" fn(*mut c_void) -> i64 
 #[used]
 static KEEP2_PYINTERPRETERSTATE_GETDICT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyInterpreterState_GetDict;
+#[used]
+static KEEP2_PYSTATE_ADDMODULE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyState_AddModule;
+#[used]
+static KEEP2_PYSTATE_FINDMODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyState_FindModule;
+#[used]
+static KEEP2_PYSTATE_REMOVEMODULE: unsafe extern "C" fn(*mut c_void) -> i32 = PyState_RemoveModule;
 #[used]
 static KEEP2_PYTRACEMALLOC_TRACK: unsafe extern "C" fn(usize, usize, usize) -> i32 =
     PyTraceMalloc_Track;
