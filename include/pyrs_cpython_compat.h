@@ -14,6 +14,7 @@ extern "C" {
  */
 
 typedef struct _object PyObject;
+typedef struct _typeobject PyTypeObject;
 
 typedef struct PyMethodDef {
     const char *ml_name;
@@ -129,6 +130,8 @@ PyObject *PyModule_GetFilenameObject(PyObject *module);
 const char *PyModule_GetFilename(PyObject *module);
 int PyModule_SetDocString(PyObject *module, const char *doc);
 int PyModule_Add(PyObject *module, const char *name, PyObject *value);
+int PyModule_AddFunctions(PyObject *module, PyMethodDef *functions);
+int PyModule_AddType(PyObject *module, PyTypeObject *type);
 int PyModule_AddObjectRef(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddObject(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddIntConstant(PyObject *module, const char *name, long long value);

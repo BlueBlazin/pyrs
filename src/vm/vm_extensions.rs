@@ -5452,6 +5452,123 @@ pub unsafe extern "C" fn PyModule_Add(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_AddFunctions(
+    module: *mut c_void,
+    functions: *mut c_void,
+) -> i32 {
+    if functions.is_null() {
+        return 0;
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyModule_AddFunctions missing VM context");
+            return -1;
+        }
+        let module_obj = match context.cpython_module_obj_from_ptr(module) {
+            Ok(module_obj) => module_obj,
+            Err(_) => {
+                let _ = unsafe { PyErr_BadArgument() };
+                return -1;
+            }
+        };
+        let mut method = functions.cast::<CpythonMethodDef>();
+        loop {
+            // SAFETY: method table is terminated by a null ml_name.
+            let method_name_ptr = unsafe { (*method).ml_name };
+            if method_name_ptr.is_null() {
+                break;
+            }
+            let method_name = match unsafe { c_name_to_string(method_name_ptr) } {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(format!("PyModule_AddFunctions invalid method name: {err}"));
+                    return -1;
+                }
+            };
+            // SAFETY: VM pointer is valid for context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let callable = match vm.register_extension_callable(
+                module_obj.clone(),
+                &method_name,
+                ExtensionCallableKind::CpythonMethod {
+                    method_def: method as usize,
+                },
+            ) {
+                Ok(callable) => callable,
+                Err(err) => {
+                    context.set_error(err.message);
+                    return -1;
+                }
+            };
+            let Object::Module(module_data) = &mut *module_obj.kind_mut() else {
+                context.set_error("PyModule_AddFunctions target is not a module");
+                return -1;
+            };
+            module_data
+                .globals
+                .insert(method_name.clone(), callable.clone());
+            if let Err(err) = context.sync_module_dict_set(&module_obj, &method_name, &callable) {
+                context.set_error(format!(
+                    "PyModule_AddFunctions failed syncing module dict entry '{}': {}",
+                    method_name, err
+                ));
+                return -1;
+            }
+            // SAFETY: method table entries are contiguous.
+            method = unsafe { method.add(1) };
+        }
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+fn cpython_module_add_type_name(tp_name: *const c_char) -> Result<String, String> {
+    let full_name = unsafe { c_name_to_string(tp_name) }?;
+    let short_name = full_name
+        .rsplit('.')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(full_name.as_str());
+    Ok(short_name.to_string())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_AddType(module: *mut c_void, type_ptr: *mut c_void) -> i32 {
+    if type_ptr.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if unsafe { PyType_Ready(type_ptr) } != 0 {
+        return -1;
+    }
+    // SAFETY: caller provides a valid type object pointer.
+    let name_ptr = unsafe { (type_ptr as *mut CpythonTypeObject).as_ref().map(|tp| tp.tp_name) }
+        .unwrap_or(std::ptr::null());
+    if name_ptr.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "type has no tp_name");
+        return -1;
+    }
+    let short_name = match cpython_module_add_type_name(name_ptr) {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(format!("PyModule_AddType invalid type name: {err}"));
+            return -1;
+        }
+    };
+    let c_name = match CString::new(short_name) {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(format!("PyModule_AddType invalid type name: {err}"));
+            return -1;
+        }
+    };
+    unsafe { PyModule_AddObjectRef(module, c_name.as_ptr(), type_ptr) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModule_AddIntConstant(
     module: *mut c_void,
     name: *const c_char,
@@ -18715,6 +18832,12 @@ static KEEP2_PYMODULE_SETDOCSTRING: unsafe extern "C" fn(*mut c_void, *const c_c
 #[used]
 static KEEP2_PYMODULE_ADD: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> i32 =
     PyModule_Add;
+#[used]
+static KEEP2_PYMODULE_ADDFUNCTIONS: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyModule_AddFunctions;
+#[used]
+static KEEP2_PYMODULE_ADDTYPE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyModule_AddType;
 #[used]
 static KEEP2_PYTUPLE_NEW: unsafe extern "C" fn(isize) -> *mut c_void = PyTuple_New;
 #[used]
