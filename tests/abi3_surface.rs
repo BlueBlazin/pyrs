@@ -310,6 +310,32 @@ fn exports_abi3_batch9_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch10_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PySequence_Length",
+        "PySequence_GetSlice",
+        "PySequence_SetItem",
+        "PySequence_DelItem",
+        "PySequence_SetSlice",
+        "PySequence_DelSlice",
+        "PySequence_List",
+        "PySequence_Count",
+        "PySequence_Index",
+        "PySequence_In",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch10 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

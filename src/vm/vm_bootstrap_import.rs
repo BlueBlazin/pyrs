@@ -3231,10 +3231,8 @@ impl Vm {
                 ),
                 (
                     "AsyncGeneratorType",
-                    self.heap.alloc_class(ClassObject::new(
-                        "async_generator".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("async_generator".to_string(), Vec::new())),
                 ),
                 (
                     "WrapperDescriptorType",
@@ -3245,10 +3243,8 @@ impl Vm {
                 ),
                 (
                     "MethodWrapperType",
-                    self.heap.alloc_class(ClassObject::new(
-                        "method-wrapper".to_string(),
-                        Vec::new(),
-                    )),
+                    self.heap
+                        .alloc_class(ClassObject::new("method-wrapper".to_string(), Vec::new())),
                 ),
                 (
                     "MethodDescriptorType",

@@ -14,6 +14,9 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Avoid bootstrap-only mock surfaces that diverge from CPython architecture (e.g. prefer native `_module` substrate + CPython `Lib/*.py` layer instead of replacement modules when CPython provides one).
 - For NumPy/scientific-stack bring-up, do not use trial-and-error patch churn: drive fixes from CPython source + Python 3.14 C-API docs, close root causes in the ABI substrate, and record each blocker/fix in `docs/NUMPY_BRINGUP_GATE.md`.
 
+## Reporting Discipline
+- End each progress update with the immediate next `3-6` concrete steps.
+
 ## Active Execution Lock (2026-02-16)
 - Primary focus is C-API closure for native scientific-stack support.
 - Use two-lane execution:
@@ -126,8 +129,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_direct_latest.json` and `perf/numpy_gate_source_build_latest.json`).
   - C-API execution strategy is now split into Lane A (CPython Stable ABI / abi3 closure) and Lane B (NumPy/scientific-stack non-abi3 closure), tracked in `docs/CAPI_PLAN.md`.
-  - ABI coverage baseline is generated from CPython 3.14 `Misc/stable_abi.toml` via `scripts/generate_abi3_manifest.py`; current snapshot is `functions 331/782`, `data 48/143` in `perf/abi3_manifest_latest.json`.
-  - latest abi3 closure slices landed: `PyDict_{Clear,Update,Keys,Values,Items,MergeFromSeq2}`, `PyCapsule_{GetName,SetPointer,GetDestructor,SetDestructor}`, `PyByteArray_*` constructor/access/resize/concat APIs, `PyBuffer_Release` pin/ref-state release semantics, C-function constructor/introspection APIs (`PyCFunction_New`, `PyCFunction_NewEx`, `PyCMethod_New`, `PyCFunction_{Call,GetFunction,GetSelf,GetFlags}`), import APIs (`PyImport_GetModuleDict`, `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`, `PyImport_ImportModuleNoBlock`, `PyImport_{ImportModuleLevelObject,ImportModuleLevel}`, `PyImport_ReloadModule`), error/file APIs (`PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`, `PyFile_{GetLine,WriteObject,WriteString}`, `PyExc_EOFError`), and full long-api slices (`PyLong_{FromSize_t,FromInt32,FromUInt32,FromInt64,FromUInt64,FromString,GetInfo,AsInt,AsInt32,AsUInt32,AsInt64,AsUInt64,AsSize_t,AsDouble,AsUnsignedLongMask,AsUnsignedLongLongMask,AsNativeBytes,FromNativeBytes,FromUnsignedNativeBytes}`).
+  - ABI coverage baseline is generated from CPython 3.14 `Misc/stable_abi.toml` via `scripts/generate_abi3_manifest.py`; current snapshot is `functions 349/782`, `data 48/143` in `perf/abi3_manifest_latest.json`.
+  - latest abi3 closure slices landed: `PyDict_{Clear,Update,Keys,Values,Items,MergeFromSeq2}`, `PyCapsule_{GetName,SetPointer,GetDestructor,SetDestructor}`, `PyByteArray_*` constructor/access/resize/concat APIs, `PyBuffer_Release` pin/ref-state release semantics, C-function constructor/introspection APIs (`PyCFunction_New`, `PyCFunction_NewEx`, `PyCMethod_New`, `PyCFunction_{Call,GetFunction,GetSelf,GetFlags}`), import APIs (`PyImport_GetModuleDict`, `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`, `PyImport_ImportModuleNoBlock`, `PyImport_{ImportModuleLevelObject,ImportModuleLevel}`, `PyImport_ReloadModule`), error/file APIs (`PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`, `PyFile_{GetLine,WriteObject,WriteString}`, `PyExc_EOFError`), full long-api slices (`PyLong_{FromSize_t,FromInt32,FromUInt32,FromInt64,FromUInt64,FromString,GetInfo,AsInt,AsInt32,AsUInt32,AsInt64,AsUInt64,AsSize_t,AsDouble,AsUnsignedLongMask,AsUnsignedLongLongMask,AsNativeBytes,FromNativeBytes,FromUnsignedNativeBytes}`), buffer helper APIs (`PyBuffer_{FillContiguousStrides,FillInfo,IsContiguous,GetPointer,SizeFromFormat,FromContiguous,ToContiguous}`), and sequence APIs (`PySequence_{Length,GetSlice,SetItem,DelItem,SetSlice,DelSlice,List,Count,Index,In}`) plus `PyObject_DelItem`.
   - extension smoke coverage includes CPython-compat API probes:
     - `tests/extension_smoke.rs::cpython_compat_dict_capsule_and_bytearray_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_list_set_exception_gc_and_float_apis_work`
@@ -137,6 +140,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/extension_smoke.rs::cpython_compat_long_abi_batch6_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_long_abi_batch7_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_long_abi_batch8_native_bytes_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_buffer_abi_batch9_helpers_work`
+    - `tests/extension_smoke.rs::cpython_compat_sequence_abi_batch10_apis_work`
   - probe script now supports optional scientific-stack cases (`--include-scientific-stack`) and module-aware local probe mode (`--probe-local-stack`), with direct-mode artifact updates in `perf/numpy_gate_direct_latest.json`.
   - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
   - direct shared-object imports now fall back from `pyrs_extension_init_v1` to `PyInit_<module>` when CPython-style symbols are present.

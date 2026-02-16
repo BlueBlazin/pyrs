@@ -654,7 +654,7 @@ PyInit_cpython_varargs_probe(void) {
     if (!mapped) {
         return 0;
     }
-    if (PyModule_AddIntConstant(module, "CALL_METHOD_VALUE", PyLong_AsLongLong(mapped)) != 0) {
+    if (PyModule_AddIntConstant(module, "CALL_METHOD_VALUE", PyLong_AsLong(mapped)) != 0) {
         return 0;
     }
 
@@ -766,7 +766,7 @@ PyInit_cpython_api_probe(void) {
         return 0;
     }
     PyObject *updated_x = PyDict_GetItemString(base, "x");
-    if (PyModule_AddIntConstant(module, "DICT_UPDATE_X", (int)PyLong_AsLongLong(updated_x)) != 0) {
+    if (PyModule_AddIntConstant(module, "DICT_UPDATE_X", (int)PyLong_AsLong(updated_x)) != 0) {
         return 0;
     }
     PyObject *base2 = Py_BuildValue("{s:i}", "x", 1);
@@ -779,10 +779,10 @@ PyInit_cpython_api_probe(void) {
     }
     PyObject *merged_x = PyDict_GetItemString(base2, "x");
     PyObject *merged_y = PyDict_GetItemString(base2, "y");
-    if (PyModule_AddIntConstant(module, "DICT_MERGE_X", (int)PyLong_AsLongLong(merged_x)) != 0) {
+    if (PyModule_AddIntConstant(module, "DICT_MERGE_X", (int)PyLong_AsLong(merged_x)) != 0) {
         return 0;
     }
-    if (PyModule_AddIntConstant(module, "DICT_MERGE_Y", (int)PyLong_AsLongLong(merged_y)) != 0) {
+    if (PyModule_AddIntConstant(module, "DICT_MERGE_Y", (int)PyLong_AsLong(merged_y)) != 0) {
         return 0;
     }
 
@@ -948,8 +948,8 @@ PyInit_cpython_api_batch2_probe(void) {
     if (PyList_SetSlice(list, 1, 3, replacement) != 0) {
         return 0;
     }
-    int list_first = (int)PyLong_AsLongLong(PyList_GetItem(list, 0));
-    int list_second = (int)PyLong_AsLongLong(PyList_GetItem(list, 1));
+    int list_first = (int)PyLong_AsLong(PyList_GetItem(list, 0));
+    int list_second = (int)PyLong_AsLong(PyList_GetItem(list, 1));
     int list_len = (int)PyList_Size(list);
     int slice_len = (int)PyList_Size(slice);
     int list_neg_index_fail = 0;
@@ -984,7 +984,7 @@ PyInit_cpython_api_batch2_probe(void) {
     if (!popped) {
         return 0;
     }
-    long long popped_value = PyLong_AsLongLong(popped);
+    long long popped_value = PyLong_AsLong(popped);
     int set_pop_member = (popped_value == 1 || popped_value == 2) ? 1 : 0;
     if (PySet_Clear(set) != 0) {
         return 0;
@@ -1267,7 +1267,7 @@ PyInit_cpython_api_batch3_probe(void) {
         return 0;
     }
     PyObject *noargs_result = PyCFunction_Call(generated_noargs, PyTuple_New(0), 0);
-    int noargs_ok = noargs_result && PyLong_AsLongLong(noargs_result) == 42 ? 1 : 0;
+    int noargs_ok = noargs_result && PyLong_AsLong(noargs_result) == 42 ? 1 : 0;
 
     PyObject *generated_varargs = PyCFunction_NewEx(&varargs_def, module, module_name);
     if (!generated_varargs) {
@@ -1295,7 +1295,7 @@ PyInit_cpython_api_batch3_probe(void) {
         PyTuple_Pack(3, PyLong_FromLong(1), PyLong_FromLong(2), PyLong_FromLong(3)),
         0
     );
-    int generated_method_nargs = generated_method_call ? (int)PyLong_AsLongLong(generated_method_call) : -1;
+    int generated_method_nargs = generated_method_call ? (int)PyLong_AsLong(generated_method_call) : -1;
     int generated_method_flags = PyCFunction_GetFlags(generated_method);
 
     PyObject *bad_missing_cls = PyCMethod_New(&method_def, module, module_name, 0);
@@ -1953,19 +1953,19 @@ PyInit_cpython_api_batch8_probe(void) {
         2,
         Py_ASNATIVEBYTES_LITTLE_ENDIAN | Py_ASNATIVEBYTES_UNSIGNED_BUFFER
     );
-    int from_unsigned_ok = from_unsigned && (PyLong_AsLongLong(from_unsigned) == 0x1234LL);
+    int from_unsigned_ok = from_unsigned && (PyLong_AsLong(from_unsigned) == 0x1234LL);
 
     unsigned char signed_src[1] = {0xFF};
     PyObject *from_signed = PyLong_FromNativeBytes(
         signed_src, 1, Py_ASNATIVEBYTES_LITTLE_ENDIAN
     );
-    int from_signed_ok = from_signed && (PyLong_AsLongLong(from_signed) == -1LL);
+    int from_signed_ok = from_signed && (PyLong_AsLong(from_signed) == -1LL);
 
     PyObject *from_unsigned_explicit = PyLong_FromUnsignedNativeBytes(
         signed_src, 1, Py_ASNATIVEBYTES_LITTLE_ENDIAN
     );
     int from_unsigned_explicit_ok = from_unsigned_explicit &&
-        (PyLong_AsLongLong(from_unsigned_explicit) == 255LL);
+        (PyLong_AsLong(from_unsigned_explicit) == 255LL);
 
     if (PyModule_AddIntConstant(module, "NEG_BYTES_OK", neg_bytes_ok) != 0 ||
         PyModule_AddIntConstant(module, "POS_SIGNED_REQ_OK", pos_signed_req_ok) != 0 ||
@@ -2132,6 +2132,149 @@ PyInit_cpython_api_batch9_probe(void) {
         "import cpython_api_batch9_probe as m\nassert m.FILL_STRIDES_OK == 1\nassert m.FILL_INFO_OK == 1\nassert m.IS_C_OK == 1\nassert m.IS_F_OK == 1\nassert m.IS_A_OK == 1\nassert m.GET_POINTER_OK == 1\nassert m.FROM_CONTIGUOUS_OK == 1\nassert m.STORAGE_LAYOUT_OK == 1\nassert m.TO_CONTIGUOUS_OK == 1\nassert m.ROUNDTRIP_OK == 1\nassert m.SIZE_FROM_FORMAT_OK == 1",
     )
     .expect("cpython api batch9 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_sequence_abi_batch10_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch10 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch10 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch10");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch10_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch10_probe",
+    "cpython api batch10 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch10_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *list = PyList_New(3);
+    if (!list) {
+        return 0;
+    }
+    PyList_SetItem(list, 0, PyLong_FromLong(1));
+    PyList_SetItem(list, 1, PyLong_FromLong(2));
+    PyList_SetItem(list, 2, PyLong_FromLong(3));
+
+    PyObject *two = PyLong_FromLong(2);
+    PyObject *three = PyLong_FromLong(3);
+    long long count_two = PySequence_Count(list, two);
+    long long index_three = PySequence_Index(list, three);
+    int in_ok = (PySequence_In(list, three) == 1) ? 1 : 0;
+    Py_DECREF(two);
+    Py_DECREF(three);
+
+    PyObject *slice = PySequence_GetSlice(list, 1, 3);
+    int get_slice_ok = (slice &&
+                        PyList_Size(slice) == 2 &&
+                        PyLong_AsInt(PyList_GetItem(slice, 0)) == 2 &&
+                        PyLong_AsInt(PyList_GetItem(slice, 1)) == 3) ? 1 : 0;
+    Py_XDECREF(slice);
+
+    PyObject *nine = PyLong_FromLong(9);
+    int set_item_ok = (PySequence_SetItem(list, 0, nine) == 0 &&
+                       PyLong_AsInt(PyList_GetItem(list, 0)) == 9) ? 1 : 0;
+    Py_DECREF(nine);
+
+    int del_item_ok = (PySequence_DelItem(list, 1) == 0 &&
+                       PyList_Size(list) == 2 &&
+                       PyLong_AsInt(PyList_GetItem(list, 0)) == 9 &&
+                       PyLong_AsInt(PyList_GetItem(list, 1)) == 3) ? 1 : 0;
+
+    PyObject *replacement = PyList_New(2);
+    if (!replacement) {
+        return 0;
+    }
+    PyList_SetItem(replacement, 0, PyLong_FromLong(7));
+    PyList_SetItem(replacement, 1, PyLong_FromLong(8));
+    int set_slice_ok = (PySequence_SetSlice(list, 0, 1, replacement) == 0 &&
+                        PyList_Size(list) == 3 &&
+                        PyLong_AsInt(PyList_GetItem(list, 0)) == 7 &&
+                        PyLong_AsInt(PyList_GetItem(list, 1)) == 8 &&
+                        PyLong_AsInt(PyList_GetItem(list, 2)) == 3) ? 1 : 0;
+    Py_DECREF(replacement);
+
+    int del_slice_ok = (PySequence_DelSlice(list, 1, 2) == 0 &&
+                        PyList_Size(list) == 2 &&
+                        PyLong_AsInt(PyList_GetItem(list, 0)) == 7 &&
+                        PyLong_AsInt(PyList_GetItem(list, 1)) == 3) ? 1 : 0;
+
+    long long length_final = PySequence_Length(list);
+
+    PyObject *tuple = PyTuple_New(2);
+    if (!tuple) {
+        return 0;
+    }
+    PyTuple_SetItem(tuple, 0, PyLong_FromLong(10));
+    PyTuple_SetItem(tuple, 1, PyLong_FromLong(11));
+    PyObject *list_from_tuple = PySequence_List(tuple);
+    int list_ok = (list_from_tuple &&
+                   PyList_Size(list_from_tuple) == 2 &&
+                   PyLong_AsInt(PyList_GetItem(list_from_tuple, 0)) == 10 &&
+                   PyLong_AsInt(PyList_GetItem(list_from_tuple, 1)) == 11) ? 1 : 0;
+    Py_DECREF(tuple);
+    Py_XDECREF(list_from_tuple);
+
+    if (PyModule_AddIntConstant(module, "COUNT_TWO", count_two) != 0 ||
+        PyModule_AddIntConstant(module, "INDEX_THREE", index_three) != 0 ||
+        PyModule_AddIntConstant(module, "IN_OK", in_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GET_SLICE_OK", get_slice_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SET_ITEM_OK", set_item_ok) != 0 ||
+        PyModule_AddIntConstant(module, "DEL_ITEM_OK", del_item_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SET_SLICE_OK", set_slice_ok) != 0 ||
+        PyModule_AddIntConstant(module, "DEL_SLICE_OK", del_slice_ok) != 0 ||
+        PyModule_AddIntConstant(module, "LENGTH_FINAL", length_final) != 0 ||
+        PyModule_AddIntConstant(module, "LIST_OK", list_ok) != 0) {
+        return 0;
+    }
+
+    Py_DECREF(list);
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch10_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch10 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch10_probe as m\nassert m.COUNT_TWO == 1\nassert m.INDEX_THREE == 2\nassert m.IN_OK == 1\nassert m.GET_SLICE_OK == 1\nassert m.SET_ITEM_OK == 1\nassert m.DEL_ITEM_OK == 1\nassert m.SET_SLICE_OK == 1\nassert m.DEL_SLICE_OK == 1\nassert m.LENGTH_FINAL == 2\nassert m.LIST_OK == 1",
+    )
+    .expect("cpython api batch10 extension import should succeed");
 
     let _ = fs::remove_file(library_path);
     let _ = fs::remove_file(source_path);

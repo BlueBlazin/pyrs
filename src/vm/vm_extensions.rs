@@ -18,8 +18,7 @@ use crate::extensions::{
 };
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, ModuleObject,
-    NativeMethodKind,
-    NativeMethodObject, Object, RuntimeError, Value,
+    NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
 };
 
 use super::{
@@ -3937,44 +3936,48 @@ impl ModuleCapiContext {
                 return dict_set_value_checked(dict_obj, key, value).map_err(|err| err.message);
             }
             Value::List(list_obj) => {
-                let mut list_kind = list_obj.kind_mut();
-                let Object::List(values) = &mut *list_kind else {
-                    return Err(format!(
-                        "object handle {} has invalid list storage",
-                        object_handle
-                    ));
-                };
-                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
-                if idx < 0 {
-                    idx += values.len() as isize;
+                if let Ok(raw_idx) = value_to_int(key.clone()) {
+                    let mut list_kind = list_obj.kind_mut();
+                    let Object::List(values) = &mut *list_kind else {
+                        return Err(format!(
+                            "object handle {} has invalid list storage",
+                            object_handle
+                        ));
+                    };
+                    let mut idx = raw_idx as isize;
+                    if idx < 0 {
+                        idx += values.len() as isize;
+                    }
+                    if idx < 0 || idx as usize >= values.len() {
+                        return Err("index out of range".to_string());
+                    }
+                    values[idx as usize] = value;
+                    return Ok(());
                 }
-                if idx < 0 || idx as usize >= values.len() {
-                    return Err("index out of range".to_string());
-                }
-                values[idx as usize] = value;
-                return Ok(());
             }
             Value::ByteArray(bytearray_obj) => {
-                let mut bytes_kind = bytearray_obj.kind_mut();
-                let Object::ByteArray(values) = &mut *bytes_kind else {
-                    return Err(format!(
-                        "object handle {} has invalid bytearray storage",
-                        object_handle
-                    ));
-                };
-                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
-                if idx < 0 {
-                    idx += values.len() as isize;
+                if let Ok(raw_idx) = value_to_int(key.clone()) {
+                    let mut bytes_kind = bytearray_obj.kind_mut();
+                    let Object::ByteArray(values) = &mut *bytes_kind else {
+                        return Err(format!(
+                            "object handle {} has invalid bytearray storage",
+                            object_handle
+                        ));
+                    };
+                    let mut idx = raw_idx as isize;
+                    if idx < 0 {
+                        idx += values.len() as isize;
+                    }
+                    if idx < 0 || idx as usize >= values.len() {
+                        return Err("index out of range".to_string());
+                    }
+                    let byte = value_to_int(value.clone()).map_err(|err| err.message)?;
+                    if !(0..=255).contains(&byte) {
+                        return Err("byte must be in range(0, 256)".to_string());
+                    }
+                    values[idx as usize] = byte as u8;
+                    return Ok(());
                 }
-                if idx < 0 || idx as usize >= values.len() {
-                    return Err("index out of range".to_string());
-                }
-                let byte = value_to_int(value).map_err(|err| err.message)?;
-                if !(0..=255).contains(&byte) {
-                    return Err("byte must be in range(0, 256)".to_string());
-                }
-                values[idx as usize] = byte as u8;
-                return Ok(());
             }
             _ => {}
         }
@@ -4019,40 +4022,44 @@ impl ModuleCapiContext {
                 return Ok(());
             }
             Value::List(list_obj) => {
-                let mut list_kind = list_obj.kind_mut();
-                let Object::List(values) = &mut *list_kind else {
-                    return Err(format!(
-                        "object handle {} has invalid list storage",
-                        object_handle
-                    ));
-                };
-                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
-                if idx < 0 {
-                    idx += values.len() as isize;
+                if let Ok(raw_idx) = value_to_int(key.clone()) {
+                    let mut list_kind = list_obj.kind_mut();
+                    let Object::List(values) = &mut *list_kind else {
+                        return Err(format!(
+                            "object handle {} has invalid list storage",
+                            object_handle
+                        ));
+                    };
+                    let mut idx = raw_idx as isize;
+                    if idx < 0 {
+                        idx += values.len() as isize;
+                    }
+                    if idx < 0 || idx as usize >= values.len() {
+                        return Err("index out of range".to_string());
+                    }
+                    values.remove(idx as usize);
+                    return Ok(());
                 }
-                if idx < 0 || idx as usize >= values.len() {
-                    return Err("index out of range".to_string());
-                }
-                values.remove(idx as usize);
-                return Ok(());
             }
             Value::ByteArray(bytearray_obj) => {
-                let mut bytes_kind = bytearray_obj.kind_mut();
-                let Object::ByteArray(values) = &mut *bytes_kind else {
-                    return Err(format!(
-                        "object handle {} has invalid bytearray storage",
-                        object_handle
-                    ));
-                };
-                let mut idx = value_to_int(key).map_err(|err| err.message)? as isize;
-                if idx < 0 {
-                    idx += values.len() as isize;
+                if let Ok(raw_idx) = value_to_int(key.clone()) {
+                    let mut bytes_kind = bytearray_obj.kind_mut();
+                    let Object::ByteArray(values) = &mut *bytes_kind else {
+                        return Err(format!(
+                            "object handle {} has invalid bytearray storage",
+                            object_handle
+                        ));
+                    };
+                    let mut idx = raw_idx as isize;
+                    if idx < 0 {
+                        idx += values.len() as isize;
+                    }
+                    if idx < 0 || idx as usize >= values.len() {
+                        return Err("index out of range".to_string());
+                    }
+                    values.remove(idx as usize);
+                    return Ok(());
                 }
-                if idx < 0 || idx as usize >= values.len() {
-                    return Err("index out of range".to_string());
-                }
-                values.remove(idx as usize);
-                return Ok(());
             }
             _ => {}
         }
@@ -5707,10 +5714,7 @@ pub unsafe extern "C" fn PyLong_AsNativeBytes(
                 return -1;
             }
         };
-        if flags != -1
-            && (flags & PY_ASNATIVEBYTES_REJECT_NEGATIVE) != 0
-            && bigint.is_negative()
-        {
+        if flags != -1 && (flags & PY_ASNATIVEBYTES_REJECT_NEGATIVE) != 0 && bigint.is_negative() {
             cpython_set_typed_error(unsafe { PyExc_ValueError }, "Cannot convert negative int");
             return -1;
         }
@@ -8050,14 +8054,14 @@ pub unsafe extern "C" fn PyImport_AddModuleRef(name: *const c_char) -> *mut c_vo
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_AddModuleObject(name: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
-        let module_name = match cpython_module_name_from_object(context, name, "PyImport_AddModuleObject")
-        {
-            Ok(name) => name,
-            Err(err) => {
-                context.set_error(err);
-                return std::ptr::null_mut();
-            }
-        };
+        let module_name =
+            match cpython_module_name_from_object(context, name, "PyImport_AddModuleObject") {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
         match cpython_import_add_module_by_name(context, &module_name) {
             Ok(module) => context.alloc_cpython_ptr_for_value(Value::Module(module)),
             Err(err) => {
@@ -8080,7 +8084,8 @@ pub unsafe extern "C" fn PyImport_AddModule(name: *const c_char) -> *mut c_void 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_GetModule(name: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
-        let module_name = match cpython_module_name_from_object(context, name, "PyImport_GetModule") {
+        let module_name = match cpython_module_name_from_object(context, name, "PyImport_GetModule")
+        {
             Ok(name) => name,
             Err(err) => {
                 context.set_error(err);
@@ -8175,7 +8180,11 @@ pub unsafe extern "C" fn PyImport_ImportModuleLevelObject(
             fromlist_value,
             Value::Int(level as i64),
         ];
-        match vm.call_internal(Value::Builtin(BuiltinFunction::Import), args, HashMap::new()) {
+        match vm.call_internal(
+            Value::Builtin(BuiltinFunction::Import),
+            args,
+            HashMap::new(),
+        ) {
             Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
                 context.set_error(
@@ -11877,23 +11886,33 @@ pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void)
             object, key, key_desc
         );
     }
-    let callable = unsafe { PyObject_GetAttrString(object, c"__getitem__".as_ptr()) };
-    if callable.is_null() {
-        if trace_getitem {
-            eprintln!("[cpy-getitem] callable lookup failed");
-        }
-        return std::ptr::null_mut();
-    }
-    let key = match cpython_value_from_ptr(key) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            unsafe { Py_DecRef(callable) };
+    let result = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyObject_GetItem missing VM context");
             return std::ptr::null_mut();
         }
-    };
-    let result = cpython_call_object(callable, vec![key], HashMap::new());
-    unsafe { Py_DecRef(callable) };
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_GetItem received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("PyObject_GetItem received unknown key pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.getitem_value(object_value, key_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    });
     if trace_getitem {
         if result.is_null() {
             eprintln!("[cpy-getitem] result=<null>");
@@ -11917,34 +11936,339 @@ pub unsafe extern "C" fn PyObject_SetItem(
     key: *mut c_void,
     value: *mut c_void,
 ) -> i32 {
-    let callable = unsafe { PyObject_GetAttrString(object, c"__setitem__".as_ptr()) };
-    if callable.is_null() {
-        return -1;
-    }
-    let key = match cpython_value_from_ptr(key) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            unsafe { Py_DecRef(callable) };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyObject_SetItem missing VM context");
             return -1;
         }
-    };
-    let value = match cpython_value_from_ptr(value) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            unsafe { Py_DecRef(callable) };
+        let object_handle = context.cpython_handle_from_ptr(object);
+        let Some(target) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_SetItem received unknown object pointer");
             return -1;
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("PyObject_SetItem received unknown key pointer");
+            return -1;
+        };
+        let Some(item_value) = context.cpython_value_from_ptr_or_proxy(value) else {
+            context.set_error("PyObject_SetItem received unknown value pointer");
+            return -1;
+        };
+        match &target {
+            Value::Dict(dict_obj) => {
+                return match dict_set_value_checked(dict_obj, key_value, item_value) {
+                    Ok(()) => 0,
+                    Err(err) => {
+                        context.set_error(err.message);
+                        -1
+                    }
+                };
+            }
+            Value::List(list_obj) => {
+                if let Ok(raw_idx) = value_to_int(key_value.clone()) {
+                    {
+                        let mut list_kind = list_obj.kind_mut();
+                        let Object::List(values) = &mut *list_kind else {
+                            context.set_error("PyObject_SetItem encountered invalid list storage");
+                            return -1;
+                        };
+                        let mut idx = raw_idx as isize;
+                        if idx < 0 {
+                            idx += values.len() as isize;
+                        }
+                        if idx < 0 || idx as usize >= values.len() {
+                            context.set_error("index out of range");
+                            return -1;
+                        }
+                        values[idx as usize] = item_value;
+                    }
+                    if let Some(handle) = object_handle {
+                        context.sync_cpython_storage_from_value(handle);
+                    }
+                    return 0;
+                }
+                if let Value::Slice(slice_value) = &key_value {
+                    let replacement_values = {
+                        // SAFETY: VM pointer is valid for context lifetime.
+                        let vm = unsafe { &mut *context.vm };
+                        match vm.collect_iterable_values(item_value.clone()) {
+                            Ok(values) => values,
+                            Err(err) => {
+                                context.set_error(err.message);
+                                return -1;
+                            }
+                        }
+                    };
+                    {
+                        let mut list_kind = list_obj.kind_mut();
+                        let Object::List(values) = &mut *list_kind else {
+                            context.set_error("PyObject_SetItem encountered invalid list storage");
+                            return -1;
+                        };
+                        let step = slice_value.step.unwrap_or(1);
+                        if step == 1 {
+                            let (start, stop) = cpython_slice_bounds_step_one(
+                                values.len(),
+                                slice_value.lower,
+                                slice_value.upper,
+                            );
+                            values.splice(start..stop, replacement_values);
+                        } else {
+                            let indices = match cpython_slice_indices_for_len(
+                                values.len(),
+                                slice_value.lower,
+                                slice_value.upper,
+                                slice_value.step,
+                            ) {
+                                Ok(indices) => indices,
+                                Err(err) => {
+                                    context.set_error(err);
+                                    return -1;
+                                }
+                            };
+                            if indices.len() != replacement_values.len() {
+                                context.set_error(
+                                    "attempt to assign sequence of size to extended slice of different size",
+                                );
+                                return -1;
+                            }
+                            for (idx, item) in indices.into_iter().zip(replacement_values.into_iter()) {
+                                values[idx] = item;
+                            }
+                        }
+                    }
+                    if let Some(handle) = object_handle {
+                        context.sync_cpython_storage_from_value(handle);
+                    }
+                    return 0;
+                }
+            }
+            Value::ByteArray(bytearray_obj) => {
+                if let Ok(raw_idx) = value_to_int(key_value.clone()) {
+                    {
+                        let mut bytes_kind = bytearray_obj.kind_mut();
+                        let Object::ByteArray(values) = &mut *bytes_kind else {
+                            context.set_error(
+                                "PyObject_SetItem encountered invalid bytearray storage",
+                            );
+                            return -1;
+                        };
+                        let mut idx = raw_idx as isize;
+                        if idx < 0 {
+                            idx += values.len() as isize;
+                        }
+                        if idx < 0 || idx as usize >= values.len() {
+                            context.set_error("index out of range");
+                            return -1;
+                        }
+                        let byte = match value_to_int(item_value.clone()) {
+                            Ok(value) => value,
+                            Err(err) => {
+                                context.set_error(err.message);
+                                return -1;
+                            }
+                        };
+                        if !(0..=255).contains(&byte) {
+                            context.set_error("byte must be in range(0, 256)");
+                            return -1;
+                        }
+                        values[idx as usize] = byte as u8;
+                    }
+                    if let Some(handle) = object_handle {
+                        context.sync_cpython_storage_from_value(handle);
+                    }
+                    return 0;
+                }
+            }
+            _ => {}
         }
-    };
-    let result = cpython_call_object(callable, vec![key, value], HashMap::new());
-    unsafe { Py_DecRef(callable) };
-    if result.is_null() {
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some(setitem) = (match vm.lookup_bound_special_method(&target, "__setitem__") {
+            Ok(method) => method,
+            Err(err) => {
+                context.set_error(err.message);
+                return -1;
+            }
+        }) else {
+            context.set_error("object does not support item assignment");
+            return -1;
+        };
+        match vm.call_internal(setitem, vec![key_value, item_value], HashMap::new()) {
+            Ok(InternalCallOutcome::Value(_)) => {
+                if let Some(handle) = object_handle {
+                    context.sync_cpython_storage_from_value(handle);
+                }
+                0
+            }
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(vm.runtime_error_from_active_exception("object_set_item() failed").message);
+                -1
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
         -1
-    } else {
-        unsafe { Py_DecRef(result) };
-        0
-    }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_DelItem(object: *mut c_void, key: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyObject_DelItem missing VM context");
+            return -1;
+        }
+        let object_handle = context.cpython_handle_from_ptr(object);
+        let Some(target) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_DelItem received unknown object pointer");
+            return -1;
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("PyObject_DelItem received unknown key pointer");
+            return -1;
+        };
+        match &target {
+            Value::Dict(dict_obj) => {
+                if dict_remove_value(dict_obj, &key_value).is_some() {
+                    return 0;
+                }
+                context.set_error("dict key not found");
+                return -1;
+            }
+            Value::List(list_obj) => {
+                if let Ok(raw_idx) = value_to_int(key_value.clone()) {
+                    {
+                        let mut list_kind = list_obj.kind_mut();
+                        let Object::List(values) = &mut *list_kind else {
+                            context.set_error("PyObject_DelItem encountered invalid list storage");
+                            return -1;
+                        };
+                        let mut idx = raw_idx as isize;
+                        if idx < 0 {
+                            idx += values.len() as isize;
+                        }
+                        if idx < 0 || idx as usize >= values.len() {
+                            context.set_error("index out of range");
+                            return -1;
+                        }
+                        values.remove(idx as usize);
+                    }
+                    if let Some(handle) = object_handle {
+                        context.sync_cpython_storage_from_value(handle);
+                    }
+                    return 0;
+                }
+                if let Value::Slice(slice_value) = &key_value {
+                    {
+                        let mut list_kind = list_obj.kind_mut();
+                        let Object::List(values) = &mut *list_kind else {
+                            context.set_error("PyObject_DelItem encountered invalid list storage");
+                            return -1;
+                        };
+                        let step = slice_value.step.unwrap_or(1);
+                        if step == 1 {
+                            let (start, stop) = cpython_slice_bounds_step_one(
+                                values.len(),
+                                slice_value.lower,
+                                slice_value.upper,
+                            );
+                            values.drain(start..stop);
+                        } else {
+                            let mut indices = match cpython_slice_indices_for_len(
+                                values.len(),
+                                slice_value.lower,
+                                slice_value.upper,
+                                slice_value.step,
+                            ) {
+                                Ok(indices) => indices,
+                                Err(err) => {
+                                    context.set_error(err);
+                                    return -1;
+                                }
+                            };
+                            indices.sort_unstable();
+                            indices.dedup();
+                            for idx in indices.into_iter().rev() {
+                                values.remove(idx);
+                            }
+                        }
+                    }
+                    if let Some(handle) = object_handle {
+                        context.sync_cpython_storage_from_value(handle);
+                    }
+                    return 0;
+                }
+            }
+            Value::ByteArray(bytearray_obj) => {
+                if let Ok(raw_idx) = value_to_int(key_value.clone()) {
+                    {
+                        let mut bytes_kind = bytearray_obj.kind_mut();
+                        let Object::ByteArray(values) = &mut *bytes_kind else {
+                            context.set_error(
+                                "PyObject_DelItem encountered invalid bytearray storage",
+                            );
+                            return -1;
+                        };
+                        let mut idx = raw_idx as isize;
+                        if idx < 0 {
+                            idx += values.len() as isize;
+                        }
+                        if idx < 0 || idx as usize >= values.len() {
+                            context.set_error("index out of range");
+                            return -1;
+                        }
+                        values.remove(idx as usize);
+                    }
+                    if let Some(handle) = object_handle {
+                        context.sync_cpython_storage_from_value(handle);
+                    }
+                    return 0;
+                }
+            }
+            _ => {}
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some(delitem) = (match vm.lookup_bound_special_method(&target, "__delitem__") {
+            Ok(method) => method,
+            Err(err) => {
+                context.set_error(err.message);
+                return -1;
+            }
+        }) else {
+            context.set_error("object does not support item deletion");
+            return -1;
+        };
+        match vm.call_internal(delitem, vec![key_value], HashMap::new()) {
+            Ok(InternalCallOutcome::Value(_)) => {
+                if let Some(handle) = object_handle {
+                    context.sync_cpython_storage_from_value(handle);
+                }
+                0
+            }
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(
+                    vm.runtime_error_from_active_exception("object_del_item() failed")
+                        .message,
+                );
+                -1
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -12409,6 +12733,11 @@ pub unsafe extern "C" fn PySequence_Size(object: *mut c_void) -> isize {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_Length(object: *mut c_void) -> isize {
+    unsafe { PySequence_Size(object) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySequence_GetItem(object: *mut c_void, index: isize) -> *mut c_void {
     let index = unsafe { PyLong_FromSsize_t(index) };
     if index.is_null() {
@@ -12417,6 +12746,231 @@ pub unsafe extern "C" fn PySequence_GetItem(object: *mut c_void, index: isize) -
     let value = unsafe { PyObject_GetItem(object, index) };
     unsafe { Py_DecRef(index) };
     value
+}
+
+unsafe fn cpython_sequence_build_slice(low: isize, high: isize) -> *mut c_void {
+    let start = unsafe { PyLong_FromSsize_t(low) };
+    if start.is_null() {
+        return std::ptr::null_mut();
+    }
+    let stop = unsafe { PyLong_FromSsize_t(high) };
+    if stop.is_null() {
+        unsafe { Py_DecRef(start) };
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { PySlice_New(start, stop, std::ptr::null_mut()) };
+    unsafe {
+        Py_DecRef(start);
+        Py_DecRef(stop);
+    }
+    slice
+}
+
+fn cpython_slice_bounds_step_one(
+    len: usize,
+    lower: Option<i64>,
+    upper: Option<i64>,
+) -> (usize, usize) {
+    let len_isize = len as isize;
+    let mut start = lower.unwrap_or(0) as isize;
+    if start < 0 {
+        start += len_isize;
+    }
+    if start < 0 {
+        start = 0;
+    } else if start > len_isize {
+        start = len_isize;
+    }
+
+    let mut stop = upper.unwrap_or(len as i64) as isize;
+    if stop < 0 {
+        stop += len_isize;
+    }
+    if stop < 0 {
+        stop = 0;
+    } else if stop > len_isize {
+        stop = len_isize;
+    }
+
+    let start = start as usize;
+    let stop = (if stop < start as isize {
+        start as isize
+    } else {
+        stop
+    }) as usize;
+    (start, stop)
+}
+
+fn cpython_slice_indices_for_len(
+    len: usize,
+    lower: Option<i64>,
+    upper: Option<i64>,
+    step: Option<i64>,
+) -> Result<Vec<usize>, String> {
+    let len_isize = len as isize;
+    let step = step.unwrap_or(1);
+    if step == 0 {
+        return Err("slice step cannot be zero".to_string());
+    }
+    let step = step as isize;
+
+    let (start, stop) = if step > 0 {
+        let mut start = lower.unwrap_or(0) as isize;
+        if start < 0 {
+            start += len_isize;
+        }
+        if start < 0 {
+            start = 0;
+        } else if start > len_isize {
+            start = len_isize;
+        }
+
+        let mut stop = upper.unwrap_or(len as i64) as isize;
+        if stop < 0 {
+            stop += len_isize;
+        }
+        if stop < 0 {
+            stop = 0;
+        } else if stop > len_isize {
+            stop = len_isize;
+        }
+        (start, stop)
+    } else {
+        let mut start = lower.unwrap_or(len as i64 - 1) as isize;
+        if start < 0 {
+            start += len_isize;
+        }
+        if start < -1 {
+            start = -1;
+        } else if start >= len_isize {
+            start = len_isize - 1;
+        }
+
+        let mut stop = upper.unwrap_or(-1) as isize;
+        if upper.is_some() && stop < 0 {
+            stop += len_isize;
+        }
+        if stop < -1 {
+            stop = -1;
+        } else if stop >= len_isize {
+            stop = len_isize - 1;
+        }
+        (start, stop)
+    };
+
+    let mut out = Vec::new();
+    if step > 0 {
+        let mut idx = start;
+        while idx < stop {
+            out.push(idx as usize);
+            idx += step;
+        }
+    } else {
+        let mut idx = start;
+        while idx > stop {
+            out.push(idx as usize);
+            idx += step;
+        }
+    }
+    Ok(out)
+}
+
+unsafe fn cpython_sequence_del_item_with_key(object: *mut c_void, key: *mut c_void) -> i32 {
+    unsafe { PyObject_DelItem(object, key) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_GetSlice(
+    object: *mut c_void,
+    low: isize,
+    high: isize,
+) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let slice = unsafe { cpython_sequence_build_slice(low, high) };
+    if slice.is_null() {
+        return std::ptr::null_mut();
+    }
+    let result = unsafe { PyObject_GetItem(object, slice) };
+    unsafe { Py_DecRef(slice) };
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_SetItem(
+    object: *mut c_void,
+    index: isize,
+    value: *mut c_void,
+) -> i32 {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if value.is_null() {
+        return unsafe { PySequence_DelItem(object, index) };
+    }
+    let key = unsafe { PyLong_FromSsize_t(index) };
+    if key.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_SetItem(object, key, value) };
+    unsafe { Py_DecRef(key) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_DelItem(object: *mut c_void, index: isize) -> i32 {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let key = unsafe { PyLong_FromSsize_t(index) };
+    if key.is_null() {
+        return -1;
+    }
+    let status = unsafe { cpython_sequence_del_item_with_key(object, key) };
+    unsafe { Py_DecRef(key) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_SetSlice(
+    object: *mut c_void,
+    low: isize,
+    high: isize,
+    value: *mut c_void,
+) -> i32 {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if value.is_null() {
+        return unsafe { PySequence_DelSlice(object, low, high) };
+    }
+    let slice = unsafe { cpython_sequence_build_slice(low, high) };
+    if slice.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_SetItem(object, slice, value) };
+    unsafe { Py_DecRef(slice) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_DelSlice(object: *mut c_void, low: isize, high: isize) -> i32 {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let slice = unsafe { cpython_sequence_build_slice(low, high) };
+    if slice.is_null() {
+        return -1;
+    }
+    let status = unsafe { cpython_sequence_del_item_with_key(object, slice) };
+    unsafe { Py_DecRef(slice) };
+    status
 }
 
 #[unsafe(no_mangle)]
@@ -12463,6 +13017,11 @@ pub unsafe extern "C" fn PySequence_Contains(container: *mut c_void, value: *mut
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_In(container: *mut c_void, value: *mut c_void) -> i32 {
+    unsafe { PySequence_Contains(container, value) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySequence_Tuple(object: *mut c_void) -> *mut c_void {
     let value = match cpython_value_from_ptr(object) {
         Ok(value) => value,
@@ -12472,6 +13031,24 @@ pub unsafe extern "C" fn PySequence_Tuple(object: *mut c_void) -> *mut c_void {
         }
     };
     match cpython_call_builtin(BuiltinFunction::Tuple, vec![value]) {
+        Ok(value) => cpython_new_ptr_for_value(value),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_List(object: *mut c_void) -> *mut c_void {
+    let value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::List, vec![value]) {
         Ok(value) => cpython_new_ptr_for_value(value),
         Err(err) => {
             cpython_set_error(err);
@@ -12537,6 +13114,161 @@ pub unsafe extern "C" fn PySequence_InPlaceRepeat(
     count: isize,
 ) -> *mut c_void {
     unsafe { PySequence_Repeat(object, count) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_Count(object: *mut c_void, value: *mut c_void) -> isize {
+    with_active_cpython_context_mut(|context| {
+        let Some(sequence_handle) = context.cpython_handle_from_ptr(object) else {
+            context.set_error("PySequence_Count received unknown sequence pointer");
+            return -1;
+        };
+        let Some(value_handle) = context.cpython_handle_from_ptr(value) else {
+            context.set_error("PySequence_Count received unknown value pointer");
+            return -1;
+        };
+        let Some(needle) = context.object_value(value_handle) else {
+            context.set_error("PySequence_Count value handle is not available");
+            return -1;
+        };
+        let iterator_handle = match context.object_get_iter(sequence_handle) {
+            Ok(handle) => handle,
+            Err(err) => {
+                context.set_error(err);
+                return -1;
+            }
+        };
+        let mut count: isize = 0;
+        loop {
+            let next_handle = match context.object_iter_next(iterator_handle) {
+                Ok(next) => next,
+                Err(err) => {
+                    context.set_error(err);
+                    let _ = context.decref(iterator_handle);
+                    return -1;
+                }
+            };
+            let Some(item_handle) = next_handle else {
+                break;
+            };
+            let Some(item_value) = context.object_value(item_handle) else {
+                context.set_error("PySequence_Count iterator item handle is not available");
+                let _ = context.decref(item_handle);
+                let _ = context.decref(iterator_handle);
+                return -1;
+            };
+            let is_match = {
+                // SAFETY: VM pointer is valid for context lifetime.
+                let vm = unsafe { &mut *context.vm };
+                match vm.compare_eq_runtime(item_value, needle.clone()) {
+                    Ok(Value::Bool(flag)) => flag,
+                    Ok(other) => is_truthy(&other),
+                    Err(err) => {
+                        context.set_error(err.message);
+                        let _ = context.decref(item_handle);
+                        let _ = context.decref(iterator_handle);
+                        return -1;
+                    }
+                }
+            };
+            let _ = context.decref(item_handle);
+            if is_match {
+                count = match count.checked_add(1) {
+                    Some(next) => next,
+                    None => {
+                        context.set_error("count exceeds C integer size");
+                        let _ = context.decref(iterator_handle);
+                        return -1;
+                    }
+                };
+            }
+        }
+        let _ = context.decref(iterator_handle);
+        count
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySequence_Index(object: *mut c_void, value: *mut c_void) -> isize {
+    with_active_cpython_context_mut(|context| {
+        let Some(sequence_handle) = context.cpython_handle_from_ptr(object) else {
+            context.set_error("PySequence_Index received unknown sequence pointer");
+            return -1;
+        };
+        let Some(value_handle) = context.cpython_handle_from_ptr(value) else {
+            context.set_error("PySequence_Index received unknown value pointer");
+            return -1;
+        };
+        let Some(needle) = context.object_value(value_handle) else {
+            context.set_error("PySequence_Index value handle is not available");
+            return -1;
+        };
+        let iterator_handle = match context.object_get_iter(sequence_handle) {
+            Ok(handle) => handle,
+            Err(err) => {
+                context.set_error(err);
+                return -1;
+            }
+        };
+        let mut index: isize = 0;
+        loop {
+            let next_handle = match context.object_iter_next(iterator_handle) {
+                Ok(next) => next,
+                Err(err) => {
+                    context.set_error(err);
+                    let _ = context.decref(iterator_handle);
+                    return -1;
+                }
+            };
+            let Some(item_handle) = next_handle else {
+                break;
+            };
+            let Some(item_value) = context.object_value(item_handle) else {
+                context.set_error("PySequence_Index iterator item handle is not available");
+                let _ = context.decref(item_handle);
+                let _ = context.decref(iterator_handle);
+                return -1;
+            };
+            let is_match = {
+                // SAFETY: VM pointer is valid for context lifetime.
+                let vm = unsafe { &mut *context.vm };
+                match vm.compare_eq_runtime(item_value, needle.clone()) {
+                    Ok(Value::Bool(flag)) => flag,
+                    Ok(other) => is_truthy(&other),
+                    Err(err) => {
+                        context.set_error(err.message);
+                        let _ = context.decref(item_handle);
+                        let _ = context.decref(iterator_handle);
+                        return -1;
+                    }
+                }
+            };
+            let _ = context.decref(item_handle);
+            if is_match {
+                let _ = context.decref(iterator_handle);
+                return index;
+            }
+            index = match index.checked_add(1) {
+                Some(next) => next,
+                None => {
+                    context.set_error("index exceeds C integer size");
+                    let _ = context.decref(iterator_handle);
+                    return -1;
+                }
+            };
+        }
+        let _ = context.decref(iterator_handle);
+        context.set_error("sequence.index(x): x not in sequence");
+        -1
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -12989,7 +13721,10 @@ pub unsafe extern "C" fn PyBuffer_ToContiguous(
     // SAFETY: caller provided valid pointers.
     let src = unsafe { &*src };
     if len != src.len {
-        cpython_set_typed_error(unsafe { PyExc_ValueError }, "PyBuffer_ToContiguous: len != view->len");
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "PyBuffer_ToContiguous: len != view->len",
+        );
         return -1;
     }
     if len <= 0 {
@@ -14711,7 +15446,9 @@ fn cpython_exception_type_ptr_for_value(
             let class = vm.alloc_synthetic_exception_class(name);
             Some(context.alloc_cpython_ptr_for_value(Value::Class(class)))
         }
-        Value::Class(class) => Some(context.alloc_cpython_ptr_for_value(Value::Class(class.clone()))),
+        Value::Class(class) => {
+            Some(context.alloc_cpython_ptr_for_value(Value::Class(class.clone())))
+        }
         _ => None,
     }
 }
@@ -14758,7 +15495,9 @@ fn cpython_make_exception_instance_from_type_and_value(
     }
     // SAFETY: VM pointer is valid for active C-API context lifetime.
     let vm = unsafe { &mut *context.vm };
-    let callable = if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(ptype as usize) {
+    let callable = if let Some(Value::ExceptionType(name)) =
+        cpython_exception_value_from_ptr(ptype as usize)
+    {
         Value::Class(vm.alloc_synthetic_exception_class(&name))
     } else {
         match context.cpython_value_from_ptr_or_proxy(ptype)? {
@@ -15118,10 +15857,7 @@ pub unsafe extern "C" fn PyFile_GetLine(file: *mut c_void, n: i32) -> *mut c_voi
             if n < 0 {
                 if payload.is_empty() {
                     unsafe { Py_DecRef(result) };
-                    cpython_set_typed_error(
-                        unsafe { PyExc_EOFError },
-                        "EOF when reading a line",
-                    );
+                    cpython_set_typed_error(unsafe { PyExc_EOFError }, "EOF when reading a line");
                     return std::ptr::null_mut();
                 }
                 if payload.last().copied() == Some(b'\n') {
@@ -15137,10 +15873,7 @@ pub unsafe extern "C" fn PyFile_GetLine(file: *mut c_void, n: i32) -> *mut c_voi
             if n < 0 {
                 if text.is_empty() {
                     unsafe { Py_DecRef(result) };
-                    cpython_set_typed_error(
-                        unsafe { PyExc_EOFError },
-                        "EOF when reading a line",
-                    );
+                    cpython_set_typed_error(unsafe { PyExc_EOFError }, "EOF when reading a line");
                     return std::ptr::null_mut();
                 }
                 if text.ends_with('\n') {
@@ -16354,6 +17087,9 @@ static KEEP2_PYOBJECT_GETITEM: unsafe extern "C" fn(*mut c_void, *mut c_void) ->
 static KEEP2_PYOBJECT_SETITEM: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
     PyObject_SetItem;
 #[used]
+static KEEP2_PYOBJECT_DELITEM: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyObject_DelItem;
+#[used]
 static KEEP2_PYOBJECT_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PyObject_Size;
 #[used]
 static KEEP2_PYOBJECT_LENGTHHINT: unsafe extern "C" fn(*mut c_void, isize) -> isize =
@@ -16390,13 +17126,38 @@ static KEEP2_PYSEQUENCE_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PySequ
 #[used]
 static KEEP2_PYSEQUENCE_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PySequence_Size;
 #[used]
+static KEEP2_PYSEQUENCE_LENGTH: unsafe extern "C" fn(*mut c_void) -> isize = PySequence_Length;
+#[used]
 static KEEP2_PYSEQUENCE_GETITEM: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
     PySequence_GetItem;
+#[used]
+static KEEP2_PYSEQUENCE_GETSLICE: unsafe extern "C" fn(*mut c_void, isize, isize) -> *mut c_void =
+    PySequence_GetSlice;
+#[used]
+static KEEP2_PYSEQUENCE_SETITEM: unsafe extern "C" fn(*mut c_void, isize, *mut c_void) -> i32 =
+    PySequence_SetItem;
+#[used]
+static KEEP2_PYSEQUENCE_DELITEM: unsafe extern "C" fn(*mut c_void, isize) -> i32 =
+    PySequence_DelItem;
+#[used]
+static KEEP2_PYSEQUENCE_SETSLICE: unsafe extern "C" fn(
+    *mut c_void,
+    isize,
+    isize,
+    *mut c_void,
+) -> i32 = PySequence_SetSlice;
+#[used]
+static KEEP2_PYSEQUENCE_DELSLICE: unsafe extern "C" fn(*mut c_void, isize, isize) -> i32 =
+    PySequence_DelSlice;
 #[used]
 static KEEP2_PYSEQUENCE_CONTAINS: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PySequence_Contains;
 #[used]
+static KEEP2_PYSEQUENCE_IN: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 = PySequence_In;
+#[used]
 static KEEP2_PYSEQUENCE_TUPLE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PySequence_Tuple;
+#[used]
+static KEEP2_PYSEQUENCE_LIST: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PySequence_List;
 #[used]
 static KEEP2_PYSEQUENCE_FAST: unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void =
     PySequence_Fast;
@@ -16414,6 +17175,12 @@ static KEEP2_PYSEQUENCE_REPEAT: unsafe extern "C" fn(*mut c_void, isize) -> *mut
 #[used]
 static KEEP2_PYSEQUENCE_INPLACEREPEAT: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
     PySequence_InPlaceRepeat;
+#[used]
+static KEEP2_PYSEQUENCE_COUNT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> isize =
+    PySequence_Count;
+#[used]
+static KEEP2_PYSEQUENCE_INDEX: unsafe extern "C" fn(*mut c_void, *mut c_void) -> isize =
+    PySequence_Index;
 #[used]
 static KEEP2_PYMAPPING_GETITEMSTRING: unsafe extern "C" fn(
     *mut c_void,
@@ -16436,8 +17203,10 @@ static KEEP2_PYOBJECT_GETBUFFER: unsafe extern "C" fn(*mut c_void, *mut CpythonB
 static KEEP2_PYBUFFER_ISCONTIGUOUS: unsafe extern "C" fn(*const CpythonBuffer, c_char) -> i32 =
     PyBuffer_IsContiguous;
 #[used]
-static KEEP2_PYBUFFER_GETPOINTER: unsafe extern "C" fn(*const CpythonBuffer, *const isize) -> *mut c_void =
-    PyBuffer_GetPointer;
+static KEEP2_PYBUFFER_GETPOINTER: unsafe extern "C" fn(
+    *const CpythonBuffer,
+    *const isize,
+) -> *mut c_void = PyBuffer_GetPointer;
 #[used]
 static KEEP2_PYBUFFER_SIZEFROMFORMAT: unsafe extern "C" fn(*const c_char) -> isize =
     PyBuffer_SizeFromFormat;
@@ -16941,14 +17710,16 @@ static KEEP_PYERR_GET_HANDLED_EXCEPTION: unsafe extern "C" fn() -> *mut c_void =
 static KEEP_PYERR_SET_HANDLED_EXCEPTION: unsafe extern "C" fn(*mut c_void) =
     PyErr_SetHandledException;
 #[used]
-static KEEP_PYERR_GET_EXCINFO: unsafe extern "C" fn(*mut *mut c_void, *mut *mut c_void, *mut *mut c_void) =
-    PyErr_GetExcInfo;
+static KEEP_PYERR_GET_EXCINFO: unsafe extern "C" fn(
+    *mut *mut c_void,
+    *mut *mut c_void,
+    *mut *mut c_void,
+) = PyErr_GetExcInfo;
 #[used]
 static KEEP_PYERR_SET_EXCINFO: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
     PyErr_SetExcInfo;
 #[used]
-static KEEP_PYFILE_GET_LINE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
-    PyFile_GetLine;
+static KEEP_PYFILE_GET_LINE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void = PyFile_GetLine;
 #[used]
 static KEEP_PYFILE_WRITE_OBJECT: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32 =
     PyFile_WriteObject;
@@ -17025,11 +17796,9 @@ static KEEP_PYLONG_AS_INT32: unsafe extern "C" fn(*mut c_void, *mut i32) -> i32 
 #[used]
 static KEEP_PYLONG_AS_INT64: unsafe extern "C" fn(*mut c_void, *mut i64) -> i32 = PyLong_AsInt64;
 #[used]
-static KEEP_PYLONG_AS_UINT32: unsafe extern "C" fn(*mut c_void, *mut u32) -> i32 =
-    PyLong_AsUInt32;
+static KEEP_PYLONG_AS_UINT32: unsafe extern "C" fn(*mut c_void, *mut u32) -> i32 = PyLong_AsUInt32;
 #[used]
-static KEEP_PYLONG_AS_UINT64: unsafe extern "C" fn(*mut c_void, *mut u64) -> i32 =
-    PyLong_AsUInt64;
+static KEEP_PYLONG_AS_UINT64: unsafe extern "C" fn(*mut c_void, *mut u64) -> i32 = PyLong_AsUInt64;
 #[used]
 static KEEP_PYLONG_AS_SSIZE_T: unsafe extern "C" fn(*mut c_void) -> isize = PyLong_AsSsize_t;
 #[used]
@@ -17047,11 +17816,18 @@ static KEEP_PYLONG_AS_UNSIGNED_LONG_MASK: unsafe extern "C" fn(*mut c_void) -> u
 static KEEP_PYLONG_AS_UNSIGNED_LONGLONG_MASK: unsafe extern "C" fn(*mut c_void) -> u64 =
     PyLong_AsUnsignedLongLongMask;
 #[used]
-static KEEP_PYLONG_AS_NATIVE_BYTES: unsafe extern "C" fn(*mut c_void, *mut c_void, isize, i32) -> isize =
-    PyLong_AsNativeBytes;
+static KEEP_PYLONG_AS_NATIVE_BYTES: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    isize,
+    i32,
+) -> isize = PyLong_AsNativeBytes;
 #[used]
-static KEEP_PYLONG_FROM_NATIVE_BYTES: unsafe extern "C" fn(*const c_void, usize, i32) -> *mut c_void =
-    PyLong_FromNativeBytes;
+static KEEP_PYLONG_FROM_NATIVE_BYTES: unsafe extern "C" fn(
+    *const c_void,
+    usize,
+    i32,
+) -> *mut c_void = PyLong_FromNativeBytes;
 #[used]
 static KEEP_PYLONG_FROM_UNSIGNED_NATIVE_BYTES: unsafe extern "C" fn(
     *const c_void,
