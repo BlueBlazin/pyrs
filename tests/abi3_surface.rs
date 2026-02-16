@@ -96,6 +96,49 @@ fn exports_first_abi3_symbol_slice() {
 }
 
 #[test]
+fn exports_abi3_batch2_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyList_GetItem",
+        "PyList_SetItem",
+        "PyList_Insert",
+        "PyList_GetSlice",
+        "PyList_SetSlice",
+        "PyList_Sort",
+        "PyList_Reverse",
+        "PySet_New",
+        "PyFrozenSet_New",
+        "PySet_Size",
+        "PySet_Contains",
+        "PySet_Add",
+        "PySet_Discard",
+        "PySet_Clear",
+        "PySet_Pop",
+        "PyException_GetTraceback",
+        "PyException_GetCause",
+        "PyException_GetContext",
+        "PyException_GetArgs",
+        "PyException_SetArgs",
+        "PyGC_Collect",
+        "PyGC_Enable",
+        "PyGC_Disable",
+        "PyGC_IsEnabled",
+        "PyFloat_GetMax",
+        "PyFloat_GetMin",
+        "PyFloat_GetInfo",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch2 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

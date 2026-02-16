@@ -1603,7 +1603,7 @@ impl Vm {
         }
     }
 
-    fn alloc_synthetic_exception_class(&mut self, name: &str) -> ObjRef {
+    pub(super) fn alloc_synthetic_exception_class(&mut self, name: &str) -> ObjRef {
         if let Some(existing) = self.synthetic_exception_classes.get(name).cloned() {
             return existing;
         }

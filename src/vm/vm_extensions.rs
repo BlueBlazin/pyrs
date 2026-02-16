@@ -1686,6 +1686,15 @@ impl ModuleCapiContext {
             return Some(type_value);
         }
         if let Some(exception_value) = cpython_exception_value_from_ptr(raw) {
+            if let Value::ExceptionType(name) = &exception_value
+                && !self.vm.is_null()
+            {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &*self.vm };
+                if let Some(class_value) = vm.builtins.get(name).cloned() {
+                    return Some(class_value);
+                }
+            }
             return Some(exception_value);
         }
         let handle = self.cpython_handle_from_ptr(object)?;
@@ -2316,6 +2325,12 @@ impl ModuleCapiContext {
         if (callable as usize) < MIN_VALID_PTR
             || (callable as usize) % std::mem::align_of::<usize>() != 0
         {
+            return None;
+        }
+        // CPython exception globals (`PyExc_*`) are exported as process-stable symbol
+        // objects in this compatibility layer. They are callable via VM class/exctype
+        // dispatch and must not be interpreted as concrete PyTypeObject instances.
+        if cpython_exception_value_from_ptr(callable as usize).is_some() {
             return None;
         }
         if let Some(result) = self.try_native_vectorcall(callable, args, kwargs) {
@@ -4797,15 +4812,6 @@ fn cpython_value_from_ptr(object: *mut c_void) -> Result<Value, String> {
         .ok_or_else(|| "unknown PyObject pointer".to_string())
 }
 
-fn cpython_value_from_ptr_or_proxy(object: *mut c_void) -> Result<Value, String> {
-    if object.is_null() {
-        return Err("received null PyObject pointer".to_string());
-    }
-    with_active_cpython_context_mut(|context| context.cpython_value_from_ptr_or_proxy(object))
-        .map_err(|err| err.to_string())?
-        .ok_or_else(|| "unknown PyObject pointer".to_string())
-}
-
 fn cpython_new_ptr_for_value(value: Value) -> *mut c_void {
     with_active_cpython_context_mut(|context| context.alloc_cpython_ptr_for_value(value))
         .unwrap_or_else(|err| {
@@ -4944,10 +4950,17 @@ fn cpython_call_object(
         if let Some(result) = context.try_native_tp_call(callable_ptr, &args, &kwargs) {
             return result;
         }
-        let Some(callable) = context.cpython_value_from_ptr(callable_ptr) else {
+        let Some(mut callable) = context.cpython_value_from_ptr(callable_ptr) else {
             context.set_error("unknown callable object pointer");
             return std::ptr::null_mut();
         };
+        // C-API exception globals resolve to `Value::ExceptionType`; call dispatch
+        // expects concrete class objects for constructor invocation.
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        if let Value::ExceptionType(name) = callable {
+            callable = Value::Class(vm.alloc_synthetic_exception_class(&name));
+        }
         if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
             eprintln!(
                 "[cpy-api] cpython_call_object ptr={:p} callable={}",
@@ -4955,8 +4968,6 @@ fn cpython_call_object(
                 cpython_value_debug_tag(&callable)
             );
         }
-        // SAFETY: VM pointer is valid for active context lifetime.
-        let vm = unsafe { &mut *context.vm };
         match vm.call_internal(callable, args, kwargs) {
             Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
@@ -6469,6 +6480,45 @@ pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFloat_GetMax() -> f64 {
+    f64::MAX
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFloat_GetMin() -> f64 {
+    f64::MIN_POSITIVE
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFloat_GetInfo() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyFloat_GetInfo missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some(sys_module) = vm.modules.get("sys").cloned() else {
+            context.set_error("PyFloat_GetInfo missing sys module");
+            return std::ptr::null_mut();
+        };
+        let float_info = match &*sys_module.kind() {
+            Object::Module(module_data) => module_data.globals.get("float_info").cloned(),
+            _ => None,
+        };
+        let Some(float_info) = float_info else {
+            context.set_error("PyFloat_GetInfo missing sys.float_info");
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(float_info)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
     match cpython_value_from_ptr(object) {
         Ok(value) => match value_to_int(value) {
@@ -7826,6 +7876,414 @@ pub unsafe extern "C" fn PyList_Append(list: *mut c_void, item: *mut c_void) -> 
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyList_GetItem(list: *mut c_void, index: isize) -> *mut c_void {
+    let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
+    with_active_cpython_context_mut(|context| {
+        if index < 0 {
+            context.set_error("PyList_GetItem index out of range");
+            return std::ptr::null_mut();
+        }
+        if context.owns_cpython_allocation_ptr(list) {
+            // SAFETY: owned list pointers use `CpythonListCompatObject` layout.
+            let raw = unsafe { list.cast::<CpythonListCompatObject>().as_ref() };
+            let Some(raw) = raw else {
+                context.set_error("PyList_GetItem received invalid list pointer");
+                return std::ptr::null_mut();
+            };
+            let len = raw.ob_base.ob_size.max(0) as usize;
+            if (index as usize) >= len || raw.ob_item.is_null() {
+                context.set_error("PyList_GetItem index out of range");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: `ob_item` points to at least `len` entries.
+            let item = unsafe { *raw.ob_item.add(index as usize) };
+            if item.is_null() {
+                context.set_error("PyList_GetItem encountered null list slot");
+                return std::ptr::null_mut();
+            }
+            return item;
+        }
+        let Some(value) = context.cpython_value_from_ptr(list) else {
+            if trace_lists {
+                eprintln!(
+                    "[cpy-list-get-item] ptr={:p} index={} unknown list pointer",
+                    list, index
+                );
+            }
+            context.set_error("PyList_GetItem received unknown list pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::List(list_obj) = value else {
+            context.set_error("PyList_GetItem expected list object");
+            return std::ptr::null_mut();
+        };
+        let Object::List(values) = &*list_obj.kind() else {
+            context.set_error("PyList_GetItem encountered invalid list storage");
+            return std::ptr::null_mut();
+        };
+        let idx = index as usize;
+        if idx >= values.len() {
+            context.set_error("PyList_GetItem index out of range");
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_ptr_for_value(values[idx].clone())
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyList_SetItem(list: *mut c_void, index: isize, item: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        let item_handle = context.cpython_handle_from_ptr(item);
+        let Some(handle) = context.cpython_handle_from_ptr(list) else {
+            if let Some(item_handle) = item_handle {
+                let _ = context.decref(item_handle);
+            }
+            context.set_error("PyList_SetItem received unknown list pointer");
+            return -1;
+        };
+        if index < 0 {
+            if let Some(item_handle) = item_handle {
+                let _ = context.decref(item_handle);
+            }
+            context.set_error("PyList_SetItem index out of range");
+            return -1;
+        }
+        let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
+            Some(value) => value,
+            None => {
+                if let Some(item_handle) = item_handle {
+                    let _ = context.decref(item_handle);
+                }
+                context.set_error("PyList_SetItem received unknown item pointer");
+                return -1;
+            }
+        };
+        let mut ok = false;
+        {
+            let Some(slot) = context.objects.get_mut(&handle) else {
+                if let Some(item_handle) = item_handle {
+                    let _ = context.decref(item_handle);
+                }
+                context.set_error("PyList_SetItem list handle is not available");
+                return -1;
+            };
+            let Value::List(list_obj) = &mut slot.value else {
+                if let Some(item_handle) = item_handle {
+                    let _ = context.decref(item_handle);
+                }
+                context.set_error("PyList_SetItem expected list object");
+                return -1;
+            };
+            let Object::List(values) = &mut *list_obj.kind_mut() else {
+                if let Some(item_handle) = item_handle {
+                    let _ = context.decref(item_handle);
+                }
+                context.set_error("PyList_SetItem encountered invalid list storage");
+                return -1;
+            };
+            let idx = index as usize;
+            if idx < values.len() {
+                values[idx] = item_value;
+                ok = true;
+            }
+        }
+        if let Some(item_handle) = item_handle {
+            let _ = context.decref(item_handle);
+        }
+        if !ok {
+            context.set_error("PyList_SetItem index out of range");
+            return -1;
+        }
+        context.sync_cpython_storage_from_value(handle);
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyList_Insert(list: *mut c_void, index: isize, item: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        let Some(handle) = context.cpython_handle_from_ptr(list) else {
+            context.set_error("PyList_Insert received unknown list pointer");
+            return -1;
+        };
+        let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
+            Some(value) => value,
+            None => {
+                context.set_error("PyList_Insert received unknown item pointer");
+                return -1;
+            }
+        };
+        {
+            let Some(slot) = context.objects.get_mut(&handle) else {
+                context.set_error("PyList_Insert list handle is not available");
+                return -1;
+            };
+            let Value::List(list_obj) = &mut slot.value else {
+                context.set_error("PyList_Insert expected list object");
+                return -1;
+            };
+            let Object::List(values) = &mut *list_obj.kind_mut() else {
+                context.set_error("PyList_Insert encountered invalid list storage");
+                return -1;
+            };
+            let insert_at = if index <= 0 {
+                0
+            } else {
+                (index as usize).min(values.len())
+            };
+            values.insert(insert_at, item_value);
+        }
+        context.sync_cpython_storage_from_value(handle);
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyList_GetSlice(
+    list: *mut c_void,
+    low: isize,
+    high: isize,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyList_GetSlice missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(value) = context.cpython_value_from_ptr(list) else {
+            context.set_error("PyList_GetSlice received unknown list pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::List(list_obj) = value else {
+            context.set_error("PyList_GetSlice expected list object");
+            return std::ptr::null_mut();
+        };
+        let Object::List(values) = &*list_obj.kind() else {
+            context.set_error("PyList_GetSlice encountered invalid list storage");
+            return std::ptr::null_mut();
+        };
+        let len = values.len() as isize;
+        let mut start = if low < 0 { low + len } else { low };
+        let mut end = if high < 0 { high + len } else { high };
+        start = start.clamp(0, len);
+        end = end.clamp(0, len);
+        let slice = if end >= start {
+            values[start as usize..end as usize].to_vec()
+        } else {
+            Vec::new()
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let result = vm.heap.alloc(Object::List(slice));
+        context.alloc_cpython_ptr_for_value(Value::List(result))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyList_SetSlice(
+    list: *mut c_void,
+    low: isize,
+    high: isize,
+    itemlist: *mut c_void,
+) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyList_SetSlice missing VM context");
+            return -1;
+        }
+        let Some(handle) = context.cpython_handle_from_ptr(list) else {
+            context.set_error("PyList_SetSlice received unknown list pointer");
+            return -1;
+        };
+        let replacement = if itemlist.is_null() {
+            Vec::new()
+        } else {
+            let replacement_value = match context.cpython_value_from_ptr_or_proxy(itemlist) {
+                Some(value) => value,
+                None => {
+                    context.set_error("PyList_SetSlice received unknown itemlist pointer");
+                    return -1;
+                }
+            };
+            // SAFETY: VM pointer is valid for context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match replacement_value {
+                Value::List(list_obj) => match &*list_obj.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => {
+                        context.set_error("PyList_SetSlice encountered invalid replacement list");
+                        return -1;
+                    }
+                },
+                Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => {
+                        context.set_error("PyList_SetSlice encountered invalid replacement tuple");
+                        return -1;
+                    }
+                },
+                other => match vm.collect_iterable_values(other) {
+                    Ok(values) => values,
+                    Err(err) => {
+                        context.set_error(err.message);
+                        return -1;
+                    }
+                },
+            }
+        };
+        {
+            let Some(slot) = context.objects.get_mut(&handle) else {
+                context.set_error("PyList_SetSlice list handle is not available");
+                return -1;
+            };
+            let Value::List(list_obj) = &mut slot.value else {
+                context.set_error("PyList_SetSlice expected list object");
+                return -1;
+            };
+            let Object::List(values) = &mut *list_obj.kind_mut() else {
+                context.set_error("PyList_SetSlice encountered invalid list storage");
+                return -1;
+            };
+            let len = values.len() as isize;
+            let mut start = if low < 0 { low + len } else { low };
+            let mut end = if high < 0 { high + len } else { high };
+            start = start.clamp(0, len);
+            end = end.clamp(0, len);
+            let start = start as usize;
+            let end = end.max(start as isize) as usize;
+            values.splice(start..end, replacement);
+        }
+        context.sync_cpython_storage_from_value(handle);
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyList_Sort(list: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyList_Sort missing VM context");
+            return -1;
+        }
+        let Some(handle) = context.cpython_handle_from_ptr(list) else {
+            context.set_error("PyList_Sort received unknown list pointer");
+            return -1;
+        };
+        let list_obj = {
+            let Some(slot) = context.objects.get(&handle) else {
+                context.set_error("PyList_Sort list handle is not available");
+                return -1;
+            };
+            match &slot.value {
+                Value::List(list_obj) => list_obj.clone(),
+                _ => {
+                    context.set_error("PyList_Sort expected list object");
+                    return -1;
+                }
+            }
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_native_method(
+            NativeMethodKind::ListSort,
+            list_obj,
+            Vec::new(),
+            HashMap::new(),
+        ) {
+            Ok(NativeCallResult::Value(_)) => {
+                context.sync_cpython_storage_from_value(handle);
+                0
+            }
+            Ok(NativeCallResult::PropagatedException) => {
+                let err = vm.runtime_error_from_active_exception("list.sort() failed");
+                context.set_error(err.message);
+                -1
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyList_Reverse(list: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyList_Reverse missing VM context");
+            return -1;
+        }
+        let Some(handle) = context.cpython_handle_from_ptr(list) else {
+            context.set_error("PyList_Reverse received unknown list pointer");
+            return -1;
+        };
+        let list_obj = {
+            let Some(slot) = context.objects.get(&handle) else {
+                context.set_error("PyList_Reverse list handle is not available");
+                return -1;
+            };
+            match &slot.value {
+                Value::List(list_obj) => list_obj.clone(),
+                _ => {
+                    context.set_error("PyList_Reverse expected list object");
+                    return -1;
+                }
+            }
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_native_method(
+            NativeMethodKind::ListReverse,
+            list_obj,
+            Vec::new(),
+            HashMap::new(),
+        ) {
+            Ok(NativeCallResult::Value(_)) => {
+                context.sync_cpython_storage_from_value(handle);
+                0
+            }
+            Ok(NativeCallResult::PropagatedException) => {
+                let err = vm.runtime_error_from_active_exception("list.reverse() failed");
+                context.set_error(err.message);
+                -1
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyList_GetItemRef(list: *mut c_void, index: isize) -> *mut c_void {
     let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
     with_active_cpython_context_mut(|context| {
@@ -7907,6 +8365,318 @@ pub unsafe extern "C" fn PyList_AsTuple(list: *mut c_void) -> *mut c_void {
         let vm = unsafe { &mut *context.vm };
         let tuple = vm.heap.alloc(Object::Tuple(values.clone()));
         context.alloc_cpython_ptr_for_value(Value::Tuple(tuple))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySet_New(iterable: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySet_New missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let value = if iterable.is_null() {
+            vm.heap.alloc_set(Vec::new())
+        } else {
+            let source = match context.cpython_value_from_ptr_or_proxy(iterable) {
+                Some(value) => value,
+                None => {
+                    context.set_error("PySet_New received unknown iterable pointer");
+                    return std::ptr::null_mut();
+                }
+            };
+            match vm.builtin_set(vec![source], HashMap::new()) {
+                Ok(value) => value,
+                Err(err) => {
+                    context.set_error(err.message);
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        context.alloc_cpython_ptr_for_value(value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFrozenSet_New(iterable: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyFrozenSet_New missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let value = if iterable.is_null() {
+            vm.heap.alloc_frozenset(Vec::new())
+        } else {
+            let source = match context.cpython_value_from_ptr_or_proxy(iterable) {
+                Some(value) => value,
+                None => {
+                    context.set_error("PyFrozenSet_New received unknown iterable pointer");
+                    return std::ptr::null_mut();
+                }
+            };
+            match vm.builtin_frozenset(vec![source], HashMap::new()) {
+                Ok(value) => value,
+                Err(err) => {
+                    context.set_error(err.message);
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        context.alloc_cpython_ptr_for_value(value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySet_Size(anyset: *mut c_void) -> isize {
+    match cpython_value_from_ptr(anyset) {
+        Ok(Value::Set(set_obj)) => match &*set_obj.kind() {
+            Object::Set(values) => values.len() as isize,
+            _ => {
+                cpython_set_error("PySet_Size encountered invalid set storage");
+                -1
+            }
+        },
+        Ok(Value::FrozenSet(set_obj)) => match &*set_obj.kind() {
+            Object::FrozenSet(values) => values.len() as isize,
+            _ => {
+                cpython_set_error("PySet_Size encountered invalid frozenset storage");
+                -1
+            }
+        },
+        Ok(_) => {
+            cpython_set_error("PySet_Size expected set object");
+            -1
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySet_Contains(anyset: *mut c_void, key: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySet_Contains missing VM context");
+            return -1;
+        }
+        let receiver = match context.cpython_value_from_ptr(anyset) {
+            Some(Value::Set(set_obj)) | Some(Value::FrozenSet(set_obj)) => set_obj,
+            Some(_) => {
+                context.set_error("PySet_Contains expected set object");
+                return -1;
+            }
+            None => {
+                context.set_error("PySet_Contains received unknown set pointer");
+                return -1;
+            }
+        };
+        let key_value = match context.cpython_value_from_ptr_or_proxy(key) {
+            Some(value) => value,
+            None => {
+                context.set_error("PySet_Contains received unknown key pointer");
+                return -1;
+            }
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_native_method(
+            NativeMethodKind::SetContains,
+            receiver,
+            vec![key_value],
+            HashMap::new(),
+        ) {
+            Ok(NativeCallResult::Value(Value::Bool(true))) => 1,
+            Ok(NativeCallResult::Value(Value::Bool(false))) => 0,
+            Ok(_) => {
+                context.set_error("PySet_Contains returned non-boolean result");
+                -1
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySet_Add(set: *mut c_void, key: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySet_Add missing VM context");
+            return -1;
+        }
+        let receiver = match context.cpython_value_from_ptr(set) {
+            Some(Value::Set(set_obj)) => set_obj,
+            Some(_) => {
+                context.set_error("PySet_Add expected set object");
+                return -1;
+            }
+            None => {
+                context.set_error("PySet_Add received unknown set pointer");
+                return -1;
+            }
+        };
+        let key_value = match context.cpython_value_from_ptr_or_proxy(key) {
+            Some(value) => value,
+            None => {
+                context.set_error("PySet_Add received unknown key pointer");
+                return -1;
+            }
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_native_method(
+            NativeMethodKind::SetAdd,
+            receiver,
+            vec![key_value],
+            HashMap::new(),
+        ) {
+            Ok(_) => 0,
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySet_Discard(set: *mut c_void, key: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySet_Discard missing VM context");
+            return -1;
+        }
+        let receiver = match context.cpython_value_from_ptr(set) {
+            Some(Value::Set(set_obj)) => set_obj,
+            Some(_) => {
+                context.set_error("PySet_Discard expected set object");
+                return -1;
+            }
+            None => {
+                context.set_error("PySet_Discard received unknown set pointer");
+                return -1;
+            }
+        };
+        let key_value = match context.cpython_value_from_ptr_or_proxy(key) {
+            Some(value) => value,
+            None => {
+                context.set_error("PySet_Discard received unknown key pointer");
+                return -1;
+            }
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_native_method(
+            NativeMethodKind::SetDiscard,
+            receiver,
+            vec![key_value],
+            HashMap::new(),
+        ) {
+            Ok(_) => 0,
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySet_Clear(set: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        let Some(handle) = context.cpython_handle_from_ptr(set) else {
+            context.set_error("PySet_Clear received unknown set pointer");
+            return -1;
+        };
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("PySet_Clear set handle is not available");
+            return -1;
+        };
+        let Value::Set(set_obj) = &mut slot.value else {
+            context.set_error("PySet_Clear expected set object");
+            return -1;
+        };
+        let Object::Set(values) = &mut *set_obj.kind_mut() else {
+            context.set_error("PySet_Clear encountered invalid set storage");
+            return -1;
+        };
+        values.clear();
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySet_Pop(set: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySet_Pop missing VM context");
+            return std::ptr::null_mut();
+        }
+        let receiver = match context.cpython_value_from_ptr(set) {
+            Some(Value::Set(set_obj)) => set_obj,
+            Some(_) => {
+                context.set_error("PySet_Pop expected set object");
+                return std::ptr::null_mut();
+            }
+            None => {
+                context.set_error("PySet_Pop received unknown set pointer");
+                return std::ptr::null_mut();
+            }
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_native_method(
+            NativeMethodKind::SetPop,
+            receiver,
+            Vec::new(),
+            HashMap::new(),
+        ) {
+            Ok(NativeCallResult::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(_) => {
+                context.set_error("PySet_Pop returned invalid result");
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -11224,6 +11994,94 @@ pub unsafe extern "C" fn PyObject_GC_Del(object: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyGC_Collect() -> isize {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyGC_Collect missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_gc_collect(Vec::new(), HashMap::new()) {
+            Ok(Value::Int(value)) => value as isize,
+            Ok(Value::BigInt(value)) => {
+                if let Some(compact) = value.to_i64() {
+                    compact.clamp(isize::MIN as i64, isize::MAX as i64) as isize
+                } else if value.is_negative() {
+                    isize::MIN
+                } else {
+                    isize::MAX
+                }
+            }
+            Ok(_) => 0,
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyGC_Enable() -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyGC_Enable missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let was_enabled = vm.gc_enabled;
+        vm.gc_enabled = true;
+        i32::from(was_enabled)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyGC_Disable() -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyGC_Disable missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let was_enabled = vm.gc_enabled;
+        vm.gc_enabled = false;
+        i32::from(was_enabled)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyGC_IsEnabled() -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyGC_IsEnabled missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        i32::from(vm.gc_enabled)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_ClearWeakRefs(_object: *mut c_void) {}
 
 #[unsafe(no_mangle)]
@@ -11956,17 +12814,448 @@ pub unsafe extern "C" fn PyErr_Print() {
     unsafe { PyErr_Clear() };
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyException_SetCause(_exception: *mut c_void, _cause: *mut c_void) {}
+fn cpython_is_exception_instance(context: &ModuleCapiContext, instance: &ObjRef) -> bool {
+    if context.vm.is_null() {
+        return false;
+    }
+    // SAFETY: VM pointer is valid for active C-API context lifetime.
+    unsafe {
+        (&*context.vm)
+            .exception_class_name_for_instance(instance)
+            .is_some()
+    }
+}
+
+fn cpython_is_exception_instance_for_vm(vm: *mut Vm, instance: &ObjRef) -> bool {
+    if vm.is_null() {
+        return false;
+    }
+    // SAFETY: VM pointer is valid for active C-API context lifetime.
+    unsafe { (&*vm).exception_class_name_for_instance(instance).is_some() }
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyException_SetContext(_exception: *mut c_void, _context: *mut c_void) {}
+pub unsafe extern "C" fn PyException_GetTraceback(exception: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(exception) else {
+            context.set_error("PyException_GetTraceback received unknown exception pointer");
+            return std::ptr::null_mut();
+        };
+        let traceback = match value {
+            Value::Exception(exception_obj) => {
+                let attrs = exception_obj.attrs.borrow();
+                attrs
+                    .get("__traceback__")
+                    .cloned()
+                    .or_else(|| attrs.get("exc_traceback").cloned())
+            }
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance(context, &instance) {
+                    context.set_error("PyException_GetTraceback expected exception object");
+                    return std::ptr::null_mut();
+                }
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    context.set_error("PyException_GetTraceback encountered invalid instance");
+                    return std::ptr::null_mut();
+                };
+                instance_data
+                    .attrs
+                    .get("__traceback__")
+                    .cloned()
+                    .or_else(|| instance_data.attrs.get("exc_traceback").cloned())
+            }
+            _ => {
+                context.set_error("PyException_GetTraceback expected exception object");
+                return std::ptr::null_mut();
+            }
+        };
+        match traceback {
+            Some(Value::None) | None => std::ptr::null_mut(),
+            Some(value) => context.alloc_cpython_ptr_for_value(value),
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyException_SetTraceback(
-    _exception: *mut c_void,
-    _traceback: *mut c_void,
+pub unsafe extern "C" fn PyException_GetCause(exception: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(exception) else {
+            context.set_error("PyException_GetCause received unknown exception pointer");
+            return std::ptr::null_mut();
+        };
+        match value {
+            Value::Exception(exception_obj) => match exception_obj.cause {
+                Some(cause) => context.alloc_cpython_ptr_for_value(Value::Exception(cause)),
+                None => std::ptr::null_mut(),
+            },
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance(context, &instance) {
+                    context.set_error("PyException_GetCause expected exception object");
+                    return std::ptr::null_mut();
+                }
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    context.set_error("PyException_GetCause encountered invalid instance");
+                    return std::ptr::null_mut();
+                };
+                match instance_data.attrs.get("__cause__").cloned() {
+                    Some(Value::None) | None => std::ptr::null_mut(),
+                    Some(value) => context.alloc_cpython_ptr_for_value(value),
+                }
+            }
+            _ => {
+                context.set_error("PyException_GetCause expected exception object");
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyException_GetContext(exception: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(exception) else {
+            context.set_error("PyException_GetContext received unknown exception pointer");
+            return std::ptr::null_mut();
+        };
+        match value {
+            Value::Exception(exception_obj) => match exception_obj.context {
+                Some(context_obj) => {
+                    context.alloc_cpython_ptr_for_value(Value::Exception(context_obj))
+                }
+                None => std::ptr::null_mut(),
+            },
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance(context, &instance) {
+                    context.set_error("PyException_GetContext expected exception object");
+                    return std::ptr::null_mut();
+                }
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    context.set_error("PyException_GetContext encountered invalid instance");
+                    return std::ptr::null_mut();
+                };
+                match instance_data.attrs.get("__context__").cloned() {
+                    Some(Value::None) | None => std::ptr::null_mut(),
+                    Some(value) => context.alloc_cpython_ptr_for_value(value),
+                }
+            }
+            _ => {
+                context.set_error("PyException_GetContext expected exception object");
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyException_GetArgs(exception: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(exception) else {
+            context.set_error("PyException_GetArgs received unknown exception pointer");
+            return std::ptr::null_mut();
+        };
+        let args_value = match value {
+            Value::Exception(exception_obj) => {
+                if let Some(args) = exception_obj.attrs.borrow().get("args").cloned() {
+                    args
+                } else if context.vm.is_null() {
+                    Value::None
+                } else if let Some(message) = exception_obj.message {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *context.vm };
+                    vm.heap.alloc_tuple(vec![Value::Str(message)])
+                } else {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *context.vm };
+                    vm.heap.alloc_tuple(Vec::new())
+                }
+            }
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance(context, &instance) {
+                    context.set_error("PyException_GetArgs expected exception object");
+                    return std::ptr::null_mut();
+                }
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    context.set_error("PyException_GetArgs encountered invalid instance");
+                    return std::ptr::null_mut();
+                };
+                if let Some(args) = instance_data.attrs.get("args").cloned() {
+                    args
+                } else if context.vm.is_null() {
+                    Value::None
+                } else {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *context.vm };
+                    vm.heap.alloc_tuple(Vec::new())
+                }
+            }
+            _ => {
+                context.set_error("PyException_GetArgs expected exception object");
+                return std::ptr::null_mut();
+            }
+        };
+        context.alloc_cpython_ptr_for_value(args_value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyException_SetArgs(exception: *mut c_void, args: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        let vm_ptr = context.vm;
+        let Some(handle) = context.cpython_handle_from_ptr(exception) else {
+            context.set_error("PyException_SetArgs received unknown exception pointer");
+            return;
+        };
+        let Some(args_value) = context.cpython_value_from_ptr_or_proxy(args) else {
+            context.set_error("PyException_SetArgs received unknown args pointer");
+            return;
+        };
+        let Value::Tuple(_) = args_value else {
+            context.set_error("PyException_SetArgs expected tuple object");
+            return;
+        };
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("PyException_SetArgs exception handle is not available");
+            return;
+        };
+        match &mut slot.value {
+            Value::Exception(exception_obj) => {
+                exception_obj
+                    .attrs
+                    .borrow_mut()
+                    .insert("args".to_string(), args_value);
+            }
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance_for_vm(vm_ptr, instance) {
+                    context.set_error("PyException_SetArgs expected exception object");
+                    return;
+                }
+                let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+                    context.set_error("PyException_SetArgs encountered invalid instance");
+                    return;
+                };
+                instance_data.attrs.insert("args".to_string(), args_value);
+            }
+            _ => {
+                context.set_error("PyException_SetArgs expected exception object");
+                return;
+            }
+        }
+    })
+    .map_err(|err| cpython_set_error(err));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyException_SetCause(exception: *mut c_void, cause: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        let vm_ptr = context.vm;
+        let Some(handle) = context.cpython_handle_from_ptr(exception) else {
+            context.set_error("PyException_SetCause received unknown exception pointer");
+            return;
+        };
+        let cause_value = if cause.is_null() {
+            None
+        } else {
+            let Some(raw_value) = context.cpython_value_from_ptr_or_proxy(cause) else {
+                context.set_error("PyException_SetCause received unknown cause pointer");
+                return;
+            };
+            if vm_ptr.is_null() {
+                context.set_error("PyException_SetCause missing VM context");
+                return;
+            }
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *vm_ptr };
+            match vm.normalize_exception_value(raw_value) {
+                Ok(Value::Exception(exc)) => Some(Value::Exception(exc)),
+                Ok(_) => {
+                    context.set_error("PyException_SetCause expected exception cause");
+                    return;
+                }
+                Err(err) => {
+                    context.set_error(err.message);
+                    return;
+                }
+            }
+        };
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("PyException_SetCause exception handle is not available");
+            return;
+        };
+        match &mut slot.value {
+            Value::Exception(exception_obj) => {
+                exception_obj.cause = match cause_value.clone() {
+                    Some(Value::Exception(cause_obj)) => Some(cause_obj),
+                    Some(_) => {
+                        context.set_error("PyException_SetCause expected exception cause");
+                        return;
+                    }
+                    None => None,
+                };
+            }
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance_for_vm(vm_ptr, instance) {
+                    context.set_error("PyException_SetCause expected exception object");
+                    return;
+                }
+                let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+                    context.set_error("PyException_SetCause encountered invalid instance");
+                    return;
+                };
+                let stored = cause_value.unwrap_or(Value::None);
+                instance_data.attrs.insert("__cause__".to_string(), stored);
+            }
+            _ => {
+                context.set_error("PyException_SetCause expected exception object");
+                return;
+            }
+        }
+    })
+    .map_err(|err| cpython_set_error(err));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyException_SetContext(
+    exception: *mut c_void,
+    context_value: *mut c_void,
 ) {
+    let _ = with_active_cpython_context_mut(|context| {
+        let vm_ptr = context.vm;
+        let Some(handle) = context.cpython_handle_from_ptr(exception) else {
+            context.set_error("PyException_SetContext received unknown exception pointer");
+            return;
+        };
+        let context_obj = if context_value.is_null() {
+            None
+        } else {
+            let Some(raw_value) = context.cpython_value_from_ptr_or_proxy(context_value) else {
+                context.set_error("PyException_SetContext received unknown context pointer");
+                return;
+            };
+            if vm_ptr.is_null() {
+                context.set_error("PyException_SetContext missing VM context");
+                return;
+            }
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *vm_ptr };
+            match vm.normalize_exception_value(raw_value) {
+                Ok(Value::Exception(exc)) => Some(Value::Exception(exc)),
+                Ok(_) => {
+                    context.set_error("PyException_SetContext expected exception context");
+                    return;
+                }
+                Err(err) => {
+                    context.set_error(err.message);
+                    return;
+                }
+            }
+        };
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("PyException_SetContext exception handle is not available");
+            return;
+        };
+        match &mut slot.value {
+            Value::Exception(exception_obj) => {
+                exception_obj.context = match context_obj.clone() {
+                    Some(Value::Exception(context_exception)) => Some(context_exception),
+                    Some(_) => {
+                        context.set_error("PyException_SetContext expected exception context");
+                        return;
+                    }
+                    None => None,
+                };
+            }
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance_for_vm(vm_ptr, instance) {
+                    context.set_error("PyException_SetContext expected exception object");
+                    return;
+                }
+                let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+                    context.set_error("PyException_SetContext encountered invalid instance");
+                    return;
+                };
+                let stored = context_obj.unwrap_or(Value::None);
+                instance_data
+                    .attrs
+                    .insert("__context__".to_string(), stored);
+            }
+            _ => {
+                context.set_error("PyException_SetContext expected exception object");
+                return;
+            }
+        }
+    })
+    .map_err(|err| cpython_set_error(err));
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyException_SetTraceback(exception: *mut c_void, traceback: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        let vm_ptr = context.vm;
+        let Some(handle) = context.cpython_handle_from_ptr(exception) else {
+            context.set_error("PyException_SetTraceback received unknown exception pointer");
+            return;
+        };
+        let traceback_value = if traceback.is_null() {
+            Value::None
+        } else {
+            match context.cpython_value_from_ptr_or_proxy(traceback) {
+                Some(value) => value,
+                None => {
+                    context
+                        .set_error("PyException_SetTraceback received unknown traceback pointer");
+                    return;
+                }
+            }
+        };
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("PyException_SetTraceback exception handle is not available");
+            return;
+        };
+        match &mut slot.value {
+            Value::Exception(exception_obj) => {
+                let mut attrs = exception_obj.attrs.borrow_mut();
+                attrs.insert("__traceback__".to_string(), traceback_value.clone());
+                attrs.insert("exc_traceback".to_string(), traceback_value);
+            }
+            Value::Instance(instance) => {
+                if !cpython_is_exception_instance_for_vm(vm_ptr, instance) {
+                    context.set_error("PyException_SetTraceback expected exception object");
+                    return;
+                }
+                let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+                    context.set_error("PyException_SetTraceback encountered invalid instance");
+                    return;
+                };
+                instance_data
+                    .attrs
+                    .insert("__traceback__".to_string(), traceback_value.clone());
+                instance_data
+                    .attrs
+                    .insert("exc_traceback".to_string(), traceback_value);
+            }
+            _ => {
+                context.set_error("PyException_SetTraceback expected exception object");
+                return;
+            }
+        }
+    })
+    .map_err(|err| cpython_set_error(err));
 }
 
 #[unsafe(no_mangle)]
@@ -12692,6 +13981,14 @@ static KEEP2_PYOBJECT_GC_UNTRACK: unsafe extern "C" fn(*mut c_void) = PyObject_G
 #[used]
 static KEEP2_PYOBJECT_GC_DEL: unsafe extern "C" fn(*mut c_void) = PyObject_GC_Del;
 #[used]
+static KEEP2_PYGC_COLLECT: unsafe extern "C" fn() -> isize = PyGC_Collect;
+#[used]
+static KEEP2_PYGC_ENABLE: unsafe extern "C" fn() -> i32 = PyGC_Enable;
+#[used]
+static KEEP2_PYGC_DISABLE: unsafe extern "C" fn() -> i32 = PyGC_Disable;
+#[used]
+static KEEP2_PYGC_IS_ENABLED: unsafe extern "C" fn() -> i32 = PyGC_IsEnabled;
+#[used]
 static KEEP2_PYOBJECT_CLEAR_WEAKREFS: unsafe extern "C" fn(*mut c_void) = PyObject_ClearWeakRefs;
 #[used]
 static KEEP2_PYOBJECT_INIT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
@@ -12880,6 +14177,21 @@ static KEEP3_PYERR_WARNFORMAT: unsafe extern "C" fn(*mut c_void, isize, *const c
     PyErr_WarnFormat;
 #[used]
 static KEEP3_PYERR_WRITEUNRAISABLE: unsafe extern "C" fn(*mut c_void) = PyErr_WriteUnraisable;
+#[used]
+static KEEP3_PYEXCEPTION_GETTRACEBACK: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyException_GetTraceback;
+#[used]
+static KEEP3_PYEXCEPTION_GETCAUSE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyException_GetCause;
+#[used]
+static KEEP3_PYEXCEPTION_GETCONTEXT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyException_GetContext;
+#[used]
+static KEEP3_PYEXCEPTION_GETARGS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyException_GetArgs;
+#[used]
+static KEEP3_PYEXCEPTION_SETARGS: unsafe extern "C" fn(*mut c_void, *mut c_void) =
+    PyException_SetArgs;
 #[used]
 static KEEP3_PYEXCEPTION_SETCAUSE: unsafe extern "C" fn(*mut c_void, *mut c_void) =
     PyException_SetCause;
@@ -13122,6 +14434,12 @@ static KEEP_PYINDEX_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PyIndex_Ch
 #[used]
 static KEEP_PYFLOAT_AS_DOUBLE: unsafe extern "C" fn(*mut c_void) -> f64 = PyFloat_AsDouble;
 #[used]
+static KEEP_PYFLOAT_GET_MAX: unsafe extern "C" fn() -> f64 = PyFloat_GetMax;
+#[used]
+static KEEP_PYFLOAT_GET_MIN: unsafe extern "C" fn() -> f64 = PyFloat_GetMin;
+#[used]
+static KEEP_PYFLOAT_GET_INFO: unsafe extern "C" fn() -> *mut c_void = PyFloat_GetInfo;
+#[used]
 static KEEP_PYFLOAT_FROM_STRING: unsafe extern "C" fn(
     *mut c_void,
     *mut *mut c_char,
@@ -13222,10 +14540,45 @@ static KEEP_PYLIST_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PyList_Siz
 #[used]
 static KEEP_PYLIST_APPEND: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 = PyList_Append;
 #[used]
+static KEEP_PYLIST_GET_ITEM: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
+    PyList_GetItem;
+#[used]
 static KEEP_PYLIST_GET_ITEM_REF: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
     PyList_GetItemRef;
 #[used]
+static KEEP_PYLIST_SET_ITEM: unsafe extern "C" fn(*mut c_void, isize, *mut c_void) -> i32 =
+    PyList_SetItem;
+#[used]
+static KEEP_PYLIST_INSERT: unsafe extern "C" fn(*mut c_void, isize, *mut c_void) -> i32 =
+    PyList_Insert;
+#[used]
+static KEEP_PYLIST_GET_SLICE: unsafe extern "C" fn(*mut c_void, isize, isize) -> *mut c_void =
+    PyList_GetSlice;
+#[used]
+static KEEP_PYLIST_SET_SLICE: unsafe extern "C" fn(*mut c_void, isize, isize, *mut c_void) -> i32 =
+    PyList_SetSlice;
+#[used]
+static KEEP_PYLIST_SORT: unsafe extern "C" fn(*mut c_void) -> i32 = PyList_Sort;
+#[used]
+static KEEP_PYLIST_REVERSE: unsafe extern "C" fn(*mut c_void) -> i32 = PyList_Reverse;
+#[used]
 static KEEP_PYLIST_AS_TUPLE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyList_AsTuple;
+#[used]
+static KEEP_PYSET_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PySet_New;
+#[used]
+static KEEP_PYFROZENSET_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyFrozenSet_New;
+#[used]
+static KEEP_PYSET_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PySet_Size;
+#[used]
+static KEEP_PYSET_CONTAINS: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 = PySet_Contains;
+#[used]
+static KEEP_PYSET_ADD: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 = PySet_Add;
+#[used]
+static KEEP_PYSET_DISCARD: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 = PySet_Discard;
+#[used]
+static KEEP_PYSET_CLEAR: unsafe extern "C" fn(*mut c_void) -> i32 = PySet_Clear;
+#[used]
+static KEEP_PYSET_POP: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PySet_Pop;
 #[used]
 static KEEP_PYDICT_NEW: unsafe extern "C" fn() -> *mut c_void = PyDict_New;
 #[used]
