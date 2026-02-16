@@ -7454,6 +7454,120 @@ PyInit_cpython_api_batch51_probe(void) {
 }
 
 #[test]
+fn cpython_compat_data_symbols_abi_batch52_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch52 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch52 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch52");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch52_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    int type_symbols_ok = (PyByteArrayIter_Type &&
+                           PyRange_Type &&
+                           PyModule_Type &&
+                           PyZip_Type &&
+                           _PyWeakref_RefType &&
+                           Py_GenericAliasType) ? 1 : 0;
+
+    int hook_ok = (PyOS_InputHook == 0) ? 1 : 0;
+    int fs_ok = (Py_FileSystemDefaultEncoding &&
+                 Py_FileSystemDefaultEncodeErrors &&
+                 strcmp(Py_FileSystemDefaultEncoding, "utf-8") == 0 &&
+                 strcmp(Py_FileSystemDefaultEncodeErrors, "strict") == 0 &&
+                 Py_HasFileSystemDefaultEncoding == 1 &&
+                 Py_UTF8Mode == 1) ? 1 : 0;
+
+    unsigned long version = Py_Version;
+    int version_ok = (((version >> 24) & 0xFFul) == 3ul &&
+                      ((version >> 16) & 0xFFul) == 14ul) ? 1 : 0;
+
+    int swapped_ok = (_Py_SwappedOp[0] == 4 &&
+                      _Py_SwappedOp[1] == 5 &&
+                      _Py_SwappedOp[2] == 2 &&
+                      _Py_SwappedOp[3] == 3 &&
+                      _Py_SwappedOp[4] == 0 &&
+                      _Py_SwappedOp[5] == 1) ? 1 : 0;
+
+    int reftotal_ok = (_Py_RefTotal >= 0) ? 1 : 0;
+
+    return Py_BuildValue(
+        "(iiiiii)",
+        type_symbols_ok,
+        hook_ok,
+        fs_ok,
+        version_ok,
+        swapped_ok,
+        reftotal_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe data-symbol ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch52_probe",
+    "cpython api batch52 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch52_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch52_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch52 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch52_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch52 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

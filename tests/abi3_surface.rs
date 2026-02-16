@@ -38,7 +38,9 @@ fn exported_symbols(bin: &PathBuf) -> HashSet<String> {
             Some(name) => name,
             None => continue,
         };
-        let normalized = if symbol.starts_with('_')
+        let normalized = if symbol.starts_with("__Py") {
+            format!("_{}", &symbol[2..])
+        } else if symbol.starts_with('_')
             && symbol.len() > 1
             && symbol.as_bytes()[1].is_ascii_alphabetic()
         {
@@ -1219,6 +1221,67 @@ fn exports_abi3_batch51_symbols() {
     assert!(
         missing.is_empty(),
         "missing ABI batch51 symbols: {missing:?}"
+    );
+}
+
+#[test]
+fn exports_abi3_batch52_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyByteArrayIter_Type",
+        "PyBytesIter_Type",
+        "PyCallIter_Type",
+        "PyDictItems_Type",
+        "PyDictIterItem_Type",
+        "PyDictIterKey_Type",
+        "PyDictIterValue_Type",
+        "PyDictKeys_Type",
+        "PyDictRevIterItem_Type",
+        "PyDictRevIterKey_Type",
+        "PyDictRevIterValue_Type",
+        "PyDictValues_Type",
+        "PyEllipsis_Type",
+        "PyEnum_Type",
+        "PyFilter_Type",
+        "PyListIter_Type",
+        "PyListRevIter_Type",
+        "PyLongRangeIter_Type",
+        "PyMap_Type",
+        "PyModuleDef_Type",
+        "PyModule_Type",
+        "PyOS_InputHook",
+        "PyProperty_Type",
+        "PyRangeIter_Type",
+        "PyRange_Type",
+        "PyReversed_Type",
+        "PySeqIter_Type",
+        "PySetIter_Type",
+        "PySuper_Type",
+        "PyTraceBack_Type",
+        "PyTupleIter_Type",
+        "PyUnicodeIter_Type",
+        "PyWrapperDescr_Type",
+        "PyZip_Type",
+        "Py_FileSystemDefaultEncodeErrors",
+        "Py_FileSystemDefaultEncoding",
+        "Py_GenericAliasType",
+        "Py_HasFileSystemDefaultEncoding",
+        "Py_UTF8Mode",
+        "Py_Version",
+        "_PyWeakref_CallableProxyType",
+        "_PyWeakref_ProxyType",
+        "_PyWeakref_RefType",
+        "_Py_RefTotal",
+        "_Py_SwappedOp",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch52 symbols: {missing:?}"
     );
 }
 
