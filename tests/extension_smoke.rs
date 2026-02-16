@@ -4924,6 +4924,146 @@ PyInit_cpython_api_batch31_probe(void) {
 }
 
 #[test]
+fn cpython_compat_state_introspection_abi_batch32_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch32 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch32 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch32");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch32_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+probe(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    void *tstate = PyThreadState_Get();
+    void *interp = PyInterpreterState_Get();
+    void *interp_from_tstate = PyThreadState_GetInterpreter(tstate);
+    unsigned long long tid = PyThreadState_GetID(tstate);
+    long long interp_id = PyInterpreterState_GetID(interp);
+    PyObject *tstate_dict_1 = PyThreadState_GetDict();
+    PyObject *tstate_dict_2 = PyThreadState_GetDict();
+    PyObject *interp_dict_1 = PyInterpreterState_GetDict(interp);
+    PyObject *interp_dict_2 = PyInterpreterState_GetDict(interp);
+
+    int pointers_ok =
+        tstate != 0 &&
+        interp != 0 &&
+        interp_from_tstate != 0 &&
+        interp_from_tstate == interp;
+    int ids_ok = (tid != (unsigned long long)-1) && (interp_id >= 0);
+    int dict_ptrs_ok =
+        tstate_dict_1 != 0 &&
+        tstate_dict_2 != 0 &&
+        interp_dict_1 != 0 &&
+        interp_dict_2 != 0 &&
+        tstate_dict_1 == tstate_dict_2 &&
+        interp_dict_1 == interp_dict_2;
+
+    int dict_roundtrip_ok = 0;
+    PyObject *key = PyUnicode_FromString("marker");
+    PyObject *value = PyLong_FromLong(7);
+    if (key && value && tstate_dict_1) {
+        if (PyObject_SetItem(tstate_dict_1, key, value) == 0) {
+            PyObject *loaded = PyObject_GetItem(tstate_dict_2, key);
+            if (loaded != 0) {
+                dict_roundtrip_ok = 1;
+            }
+            Py_XDECREF(loaded);
+        }
+    }
+    PyErr_Clear();
+    Py_XDECREF(value);
+    Py_XDECREF(key);
+
+    PyObject *ikey = PyUnicode_FromString("imarker");
+    PyObject *ivalue = PyLong_FromLong(9);
+    int interp_roundtrip_ok = 0;
+    if (ikey && ivalue && interp_dict_1) {
+        if (PyObject_SetItem(interp_dict_1, ikey, ivalue) == 0) {
+            PyObject *loaded = PyObject_GetItem(interp_dict_2, ikey);
+            if (loaded != 0) {
+                interp_roundtrip_ok = 1;
+            }
+            Py_XDECREF(loaded);
+        }
+    }
+    PyErr_Clear();
+    Py_XDECREF(ivalue);
+    Py_XDECREF(ikey);
+
+    return Py_BuildValue(
+        "(iiiii)",
+        pointers_ok ? 1 : 0,
+        ids_ok ? 1 : 0,
+        dict_ptrs_ok ? 1 : 0,
+        dict_roundtrip_ok ? 1 : 0,
+        interp_roundtrip_ok ? 1 : 0
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"probe", probe, METH_NOARGS, "probe state introspection helpers"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch32_probe",
+    "cpython api batch32 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch32_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch32_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch32 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch32_probe as m\npointers_ok, ids_ok, dict_ptrs_ok, dict_roundtrip_ok, interp_roundtrip_ok = m.probe()\nassert pointers_ok == 1\nassert ids_ok == 1\nassert dict_ptrs_ok == 1\nassert dict_roundtrip_ok == 1\nassert interp_roundtrip_ok == 1",
+    )
+    .expect("cpython api batch32 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

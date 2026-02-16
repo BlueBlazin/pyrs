@@ -28,7 +28,7 @@ use super::{
     dict_get_value, dict_remove_value, dict_set_value_checked, div_values, floor_div_values,
     invert_value, is_truthy, lshift_values, matmul_values, memoryview_bounds, mod_values,
     mul_values, neg_value, or_values, pos_value, pow_values, rshift_values, sub_values,
-    value_to_int, xor_values,
+    value_to_int, vm_current_thread_ident, xor_values,
 };
 
 struct CapiObjectSlot {
@@ -1275,6 +1275,8 @@ struct ModuleCapiContext {
     cpython_sync_in_progress: HashSet<PyrsObjectHandle>,
     module_dict_handles: HashMap<PyrsObjectHandle, ObjRef>,
     module_dict_handle_by_module_id: HashMap<u64, PyrsObjectHandle>,
+    thread_state_dict_handle: Option<PyrsObjectHandle>,
+    interpreter_state_dict_handle: Option<PyrsObjectHandle>,
 }
 
 impl Drop for ModuleCapiContext {
@@ -1399,7 +1401,45 @@ impl ModuleCapiContext {
             cpython_sync_in_progress: HashSet::new(),
             module_dict_handles: HashMap::new(),
             module_dict_handle_by_module_id: HashMap::new(),
+            thread_state_dict_handle: None,
+            interpreter_state_dict_handle: None,
         }
+    }
+
+    fn ensure_thread_state_dict_pointer(&mut self) -> *mut c_void {
+        if let Some(handle) = self.thread_state_dict_handle
+            && let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied()
+        {
+            return ptr;
+        }
+        if self.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let ptr = self.alloc_cpython_ptr_for_value(vm.heap.alloc_dict(Vec::new()));
+        if let Some(handle) = self.cpython_objects_by_ptr.get(&(ptr as usize)).copied() {
+            self.thread_state_dict_handle = Some(handle);
+        }
+        ptr
+    }
+
+    fn ensure_interpreter_state_dict_pointer(&mut self) -> *mut c_void {
+        if let Some(handle) = self.interpreter_state_dict_handle
+            && let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied()
+        {
+            return ptr;
+        }
+        if self.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        let ptr = self.alloc_cpython_ptr_for_value(vm.heap.alloc_dict(Vec::new()));
+        if let Some(handle) = self.cpython_objects_by_ptr.get(&(ptr as usize)).copied() {
+            self.interpreter_state_dict_handle = Some(handle);
+        }
+        ptr
     }
 
     fn error_message_from_ptr(&mut self, value: *mut c_void) -> String {
@@ -17685,6 +17725,53 @@ pub unsafe extern "C" fn PyThreadState_Get() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyInterpreterState_Get() -> *mut c_void {
+    2usize as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyInterpreterState_GetID(interp: *mut c_void) -> i64 {
+    if interp.is_null() { -1 } else { 1 }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyInterpreterState_GetDict(interp: *mut c_void) -> *mut c_void {
+    if interp.is_null() {
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| context.ensure_interpreter_state_dict_pointer())
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_GetInterpreter(state: *mut c_void) -> *mut c_void {
+    if state.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { PyInterpreterState_Get() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_GetID(state: *mut c_void) -> u64 {
+    if state.is_null() {
+        return u64::MAX;
+    }
+    vm_current_thread_ident() as u64
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_GetDict() -> *mut c_void {
+    with_active_cpython_context_mut(|context| context.ensure_thread_state_dict_pointer())
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyTraceMalloc_Track(_domain: usize, _ptr: usize, _size: usize) -> i32 {
     0
 }
@@ -20616,6 +20703,22 @@ static KEEP2_PYSLICE_GETINDICESEX: unsafe extern "C" fn(
 static KEEP2_PYSYS_GETOBJECT: unsafe extern "C" fn(*const c_char) -> *mut c_void = PySys_GetObject;
 #[used]
 static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThreadState_Get;
+#[used]
+static KEEP2_PYTHREADSTATE_GETINTERPRETER: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyThreadState_GetInterpreter;
+#[used]
+static KEEP2_PYTHREADSTATE_GETID: unsafe extern "C" fn(*mut c_void) -> u64 = PyThreadState_GetID;
+#[used]
+static KEEP2_PYTHREADSTATE_GETDICT: unsafe extern "C" fn() -> *mut c_void = PyThreadState_GetDict;
+#[used]
+static KEEP2_PYINTERPRETERSTATE_GET: unsafe extern "C" fn() -> *mut c_void =
+    PyInterpreterState_Get;
+#[used]
+static KEEP2_PYINTERPRETERSTATE_GETID: unsafe extern "C" fn(*mut c_void) -> i64 =
+    PyInterpreterState_GetID;
+#[used]
+static KEEP2_PYINTERPRETERSTATE_GETDICT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyInterpreterState_GetDict;
 #[used]
 static KEEP2_PYTRACEMALLOC_TRACK: unsafe extern "C" fn(usize, usize, usize) -> i32 =
     PyTraceMalloc_Track;

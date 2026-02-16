@@ -771,6 +771,28 @@ fn exports_abi3_batch31_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch32_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyInterpreterState_Get",
+        "PyInterpreterState_GetID",
+        "PyInterpreterState_GetDict",
+        "PyThreadState_GetInterpreter",
+        "PyThreadState_GetID",
+        "PyThreadState_GetDict",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch32 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
