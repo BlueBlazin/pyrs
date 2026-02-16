@@ -52,6 +52,23 @@ struct CpythonErrorState {
     ptraceback: *mut c_void,
 }
 
+#[derive(Clone, Copy)]
+enum CpythonDescriptorKind {
+    Method {
+        owner_type: *mut CpythonTypeObject,
+        method_def: *mut CpythonMethodDef,
+        class_method: bool,
+    },
+    GetSet {
+        owner_type: *mut CpythonTypeObject,
+        getset: *mut CpythonGetSetDef,
+    },
+    Member {
+        owner_type: *mut CpythonTypeObject,
+        member: *mut CpythonMemberDef,
+    },
+}
+
 struct BufferInfoSnapshot {
     data: *const u8,
     len: usize,
@@ -358,6 +375,7 @@ const PY_MEMBER_T_OBJECT_EX: c_int = 16;
 const PY_MEMBER_T_LONGLONG: c_int = 17;
 const PY_MEMBER_T_ULONGLONG: c_int = 18;
 const PY_MEMBER_T_PYSSIZET: c_int = 19;
+const PY_MEMBER_RELATIVE_OFFSET: c_int = 8;
 
 unsafe extern "C" fn datetime_capi_unimplemented() -> *mut c_void {
     cpython_set_error("datetime C-API constructor is not implemented");
@@ -1139,6 +1157,7 @@ fn initialize_cpython_compat_type_objects() {
             std::ptr::addr_of_mut!(PyBytes_Type),
             std::ptr::addr_of_mut!(PyCFunction_Type),
             std::ptr::addr_of_mut!(PyCapsule_Type),
+            std::ptr::addr_of_mut!(PyClassMethodDescr_Type),
             std::ptr::addr_of_mut!(PyComplex_Type),
             std::ptr::addr_of_mut!(PyDictProxy_Type),
             std::ptr::addr_of_mut!(PyDict_Type),
@@ -1249,6 +1268,7 @@ struct ModuleCapiContext {
     cpython_object_handles_by_id: HashMap<u64, PyrsObjectHandle>,
     cpython_allocations: Vec<*mut CpythonCompatObject>,
     cpython_owned_ptrs: HashSet<usize>,
+    cpython_descriptors: HashMap<usize, CpythonDescriptorKind>,
     cpython_cfunction_ptr_cache: HashMap<(usize, usize, usize, usize), *mut c_void>,
     cpython_list_buffers: HashMap<PyrsObjectHandle, (*mut *mut c_void, usize)>,
     cpython_sync_in_progress: HashSet<PyrsObjectHandle>,
@@ -1372,6 +1392,7 @@ impl ModuleCapiContext {
             cpython_object_handles_by_id: HashMap::new(),
             cpython_allocations: Vec::new(),
             cpython_owned_ptrs: HashSet::new(),
+            cpython_descriptors: HashMap::new(),
             cpython_cfunction_ptr_cache: HashMap::new(),
             cpython_list_buffers: HashMap::new(),
             cpython_sync_in_progress: HashSet::new(),
@@ -2166,6 +2187,184 @@ impl ModuleCapiContext {
         ptr
     }
 
+    fn alloc_cpython_descriptor_ptr(
+        &mut self,
+        descriptor_type: *mut CpythonTypeObject,
+        descriptor_kind: CpythonDescriptorKind,
+    ) -> *mut c_void {
+        if descriptor_type.is_null() {
+            self.set_error("descriptor allocation missing descriptor type");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: allocates C-compatible storage for descriptor object payload.
+        let raw = unsafe { malloc(std::mem::size_of::<CpythonCompatObject>()) }
+            .cast::<CpythonCompatObject>();
+        if raw.is_null() {
+            self.set_error("out of memory allocating CPython descriptor object");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: raw points to writable CpythonCompatObject storage.
+        unsafe {
+            raw.write(CpythonCompatObject {
+                ob_base: CpythonVarObjectHead {
+                    ob_base: CpythonObjectHead {
+                        ob_refcnt: 1,
+                        ob_type: descriptor_type.cast(),
+                    },
+                    ob_size: 0,
+                },
+            });
+        }
+        let ptr = raw.cast::<c_void>();
+        self.cpython_allocations.push(raw);
+        self.cpython_owned_ptrs.insert(ptr as usize);
+        self.cpython_descriptors
+            .insert(ptr as usize, descriptor_kind);
+        ptr
+    }
+
+    fn resolve_descriptor_attr_ptr(
+        &mut self,
+        descriptor_ptr: *mut c_void,
+        object: *mut c_void,
+        object_type: *mut CpythonTypeObject,
+        is_type_object: bool,
+    ) -> Option<*mut c_void> {
+        let descriptor_kind = self
+            .cpython_descriptors
+            .get(&(descriptor_ptr as usize))
+            .copied()?;
+        match descriptor_kind {
+            CpythonDescriptorKind::Method {
+                owner_type,
+                method_def,
+                class_method,
+            } => {
+                if owner_type.is_null() || method_def.is_null() {
+                    self.set_error("descriptor method metadata is invalid");
+                    return Some(std::ptr::null_mut());
+                }
+                let matches_owner = if is_type_object {
+                    unsafe { PyType_IsSubtype(object, owner_type.cast()) != 0 }
+                } else if object_type.is_null() {
+                    false
+                } else {
+                    unsafe { PyType_IsSubtype(object_type.cast(), owner_type.cast()) != 0 }
+                };
+                if !matches_owner {
+                    // SAFETY: method name pointer is extension-owned and expected to be NUL-terminated.
+                    let method_name = unsafe { c_name_to_string((*method_def).ml_name) }
+                        .unwrap_or_else(|_| "<unnamed>".to_string());
+                    // SAFETY: owner type pointer is validated non-null above.
+                    let owner_name = unsafe { c_name_to_string((*owner_type).tp_name) }
+                        .unwrap_or_else(|_| "<unknown>".to_string());
+                    let got_name = if is_type_object {
+                        // SAFETY: object is expected to be a type pointer in this branch.
+                        unsafe {
+                            object
+                                .cast::<CpythonTypeObject>()
+                                .as_ref()
+                                .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                                .unwrap_or_else(|| "<unknown>".to_string())
+                        }
+                    } else {
+                        // SAFETY: object_type is read-only inspected when present.
+                        unsafe {
+                            object_type
+                                .as_ref()
+                                .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                                .unwrap_or_else(|| "<unknown>".to_string())
+                        }
+                    };
+                    self.set_error(format!(
+                        "TypeError: descriptor '{}' for '{}.{}' doesn't apply to '{}'",
+                        method_name, owner_name, method_name, got_name
+                    ));
+                    return Some(std::ptr::null_mut());
+                }
+
+                if !class_method && is_type_object {
+                    return Some(descriptor_ptr);
+                }
+                let flags = unsafe { (*method_def).ml_flags };
+                let has_meth_method = (flags & METH_METHOD) != 0;
+                let (self_ptr, class_ptr) = if class_method {
+                    let receiver = if is_type_object {
+                        object
+                    } else {
+                        object_type.cast()
+                    };
+                    (
+                        receiver,
+                        if has_meth_method {
+                            owner_type.cast()
+                        } else {
+                            std::ptr::null_mut()
+                        },
+                    )
+                } else {
+                    (
+                        object,
+                        if has_meth_method {
+                            owner_type.cast()
+                        } else {
+                            std::ptr::null_mut()
+                        },
+                    )
+                };
+                let callable =
+                    self.alloc_cpython_method_cfunction_ptr(method_def, self_ptr, std::ptr::null_mut(), class_ptr);
+                Some(callable)
+            }
+            CpythonDescriptorKind::GetSet { owner_type, getset } => {
+                if owner_type.is_null() || getset.is_null() {
+                    self.set_error("descriptor getset metadata is invalid");
+                    return Some(std::ptr::null_mut());
+                }
+                if is_type_object {
+                    return Some(descriptor_ptr);
+                }
+                if object_type.is_null()
+                    || unsafe { PyType_IsSubtype(object_type.cast(), owner_type.cast()) } == 0
+                {
+                    self.set_error("descriptor getset requires subtype instance");
+                    return Some(std::ptr::null_mut());
+                }
+                let getter = unsafe { (*getset).get };
+                if getter.is_null() {
+                    self.set_error("AttributeError: attribute is not readable");
+                    return Some(std::ptr::null_mut());
+                }
+                let get: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    unsafe { std::mem::transmute(getter) };
+                let closure = unsafe { (*getset).closure };
+                Some(unsafe { get(object, closure) })
+            }
+            CpythonDescriptorKind::Member { owner_type, member } => {
+                if owner_type.is_null() || member.is_null() {
+                    self.set_error("descriptor member metadata is invalid");
+                    return Some(std::ptr::null_mut());
+                }
+                if is_type_object {
+                    return Some(descriptor_ptr);
+                }
+                if object_type.is_null()
+                    || unsafe { PyType_IsSubtype(object_type.cast(), owner_type.cast()) } == 0
+                {
+                    self.set_error("descriptor member requires subtype instance");
+                    return Some(std::ptr::null_mut());
+                }
+                let basicsize = unsafe { (*owner_type).tp_basicsize };
+                // SAFETY: member pointer is stable for extension lifetime.
+                let member_ref = unsafe { &*member };
+                Some(
+                    self.load_member_attr_ptr(object, member_ref, basicsize)
+                        .unwrap_or(std::ptr::null_mut()),
+                )
+            }
+        }
+    }
+
     fn load_member_attr_ptr(
         &mut self,
         object: *mut c_void,
@@ -2328,6 +2527,22 @@ impl ModuleCapiContext {
                 && let Some(Value::Dict(dict_obj)) = self.cpython_value_from_ptr(dict_ptr)
                 && let Some(value) = dict_get_value(&dict_obj, &key)
             {
+                if let Some(raw_descriptor_ptr) = Self::cpython_proxy_raw_ptr_from_value(&value)
+                    && let Some(bound_ptr) = self.resolve_descriptor_attr_ptr(
+                        raw_descriptor_ptr,
+                        object,
+                        object_type.cast(),
+                        is_type_object,
+                    )
+                {
+                    if is_proxy_trace {
+                        eprintln!(
+                            "[cpy-proxy] tp_dict descriptor hit current={:p} dict={:p} descriptor_ptr={:p} bound_ptr={:p}",
+                            current, dict_ptr, raw_descriptor_ptr, bound_ptr
+                        );
+                    }
+                    return Some(bound_ptr);
+                }
                 if is_proxy_trace {
                     eprintln!(
                         "[cpy-proxy] tp_dict lookup hit current={:p} dict={:p} value_tag={}",
@@ -15936,6 +16151,174 @@ pub unsafe extern "C" fn PyCFunction_New(
     unsafe { PyCFunction_NewEx(method_def, self_obj, std::ptr::null_mut()) }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDescr_NewMethod(type_obj: *mut c_void, method: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if type_obj.is_null() || method.is_null() {
+            context.set_error("bad internal call");
+            return std::ptr::null_mut();
+        }
+        if !cpython_ptr_is_type_object(type_obj) {
+            context.set_error("PyDescr_NewMethod expected type object");
+            return std::ptr::null_mut();
+        }
+        let owner_type = type_obj.cast::<CpythonTypeObject>();
+        let method_def = method.cast::<CpythonMethodDef>();
+        // SAFETY: method pointer is caller-owned and expected to outlive descriptor.
+        let method_name_ptr = unsafe { (*method_def).ml_name };
+        if method_name_ptr.is_null() {
+            context.set_error("SystemError: <unnamed>() method: bad call flags");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: method definition pointer is non-null and points to extension-owned definition.
+        let flags = unsafe { (*method_def).ml_flags };
+        if !cpython_method_call_flags_are_valid(flags) {
+            // SAFETY: `ml_name` is expected NUL-terminated by PyMethodDef contract.
+            let method_name = unsafe { c_name_to_string(method_name_ptr) }
+                .unwrap_or_else(|_| "<unnamed>".to_string());
+            context.set_error(format!(
+                "SystemError: {}() method: bad call flags",
+                method_name
+            ));
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_descriptor_ptr(
+            std::ptr::addr_of_mut!(PyMethodDescr_Type),
+            CpythonDescriptorKind::Method {
+                owner_type,
+                method_def,
+                class_method: false,
+            },
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDescr_NewClassMethod(
+    type_obj: *mut c_void,
+    method: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if type_obj.is_null() || method.is_null() {
+            context.set_error("bad internal call");
+            return std::ptr::null_mut();
+        }
+        if !cpython_ptr_is_type_object(type_obj) {
+            context.set_error("PyDescr_NewClassMethod expected type object");
+            return std::ptr::null_mut();
+        }
+        let owner_type = type_obj.cast::<CpythonTypeObject>();
+        let method_def = method.cast::<CpythonMethodDef>();
+        // SAFETY: method pointer is caller-owned and expected to outlive descriptor.
+        let method_name_ptr = unsafe { (*method_def).ml_name };
+        if method_name_ptr.is_null() {
+            context.set_error("SystemError: <unnamed>() method: bad call flags");
+            return std::ptr::null_mut();
+        }
+        // CPython does not reject classmethod definitions here, but we retain
+        // method call-flag validation to prevent invalid call ABI dispatch later.
+        let flags = unsafe { (*method_def).ml_flags };
+        if !cpython_method_call_flags_are_valid(flags) {
+            // SAFETY: `ml_name` is expected NUL-terminated by PyMethodDef contract.
+            let method_name = unsafe { c_name_to_string(method_name_ptr) }
+                .unwrap_or_else(|_| "<unnamed>".to_string());
+            context.set_error(format!(
+                "SystemError: {}() method: bad call flags",
+                method_name
+            ));
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_descriptor_ptr(
+            std::ptr::addr_of_mut!(PyClassMethodDescr_Type),
+            CpythonDescriptorKind::Method {
+                owner_type,
+                method_def,
+                class_method: true,
+            },
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDescr_NewMember(type_obj: *mut c_void, member: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if type_obj.is_null() || member.is_null() {
+            context.set_error("bad internal call");
+            return std::ptr::null_mut();
+        }
+        if !cpython_ptr_is_type_object(type_obj) {
+            context.set_error("PyDescr_NewMember expected type object");
+            return std::ptr::null_mut();
+        }
+        let owner_type = type_obj.cast::<CpythonTypeObject>();
+        let member_def = member.cast::<CpythonMemberDef>();
+        // SAFETY: member definition pointer is non-null and extension-owned.
+        let member_name_ptr = unsafe { (*member_def).name };
+        if member_name_ptr.is_null() {
+            context.set_error("PyDescr_NewMember expected member name");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: member definition pointer is non-null and extension-owned.
+        let flags = unsafe { (*member_def).flags };
+        if (flags & PY_MEMBER_RELATIVE_OFFSET) != 0 {
+            context.set_error("PyDescr_NewMember used with Py_RELATIVE_OFFSET");
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_descriptor_ptr(
+            std::ptr::addr_of_mut!(PyMemberDescr_Type),
+            CpythonDescriptorKind::Member {
+                owner_type,
+                member: member_def,
+            },
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDescr_NewGetSet(type_obj: *mut c_void, getset: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if type_obj.is_null() || getset.is_null() {
+            context.set_error("bad internal call");
+            return std::ptr::null_mut();
+        }
+        if !cpython_ptr_is_type_object(type_obj) {
+            context.set_error("PyDescr_NewGetSet expected type object");
+            return std::ptr::null_mut();
+        }
+        let owner_type = type_obj.cast::<CpythonTypeObject>();
+        let getset_def = getset.cast::<CpythonGetSetDef>();
+        // SAFETY: getset definition pointer is non-null and extension-owned.
+        let getset_name_ptr = unsafe { (*getset_def).name };
+        if getset_name_ptr.is_null() {
+            context.set_error("PyDescr_NewGetSet expected getset name");
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_descriptor_ptr(
+            std::ptr::addr_of_mut!(PyGetSetDescr_Type),
+            CpythonDescriptorKind::GetSet {
+                owner_type,
+                getset: getset_def,
+            },
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
 unsafe extern "C" fn cpython_cfunction_tp_call(
     callable: *mut c_void,
     args: *mut c_void,
@@ -19419,6 +19802,7 @@ static PY_TYPE_NAME_BYTEARRAY: &[u8; 10] = b"bytearray\0";
 static PY_TYPE_NAME_BYTES: &[u8; 6] = b"bytes\0";
 static PY_TYPE_NAME_CFUNCTION: &[u8; 27] = b"builtin_function_or_method\0";
 static PY_TYPE_NAME_CAPSULE: &[u8; 8] = b"capsule\0";
+static PY_TYPE_NAME_CLASSMETHOD_DESCR: &[u8; 18] = b"classmethod_descr\0";
 static PY_TYPE_NAME_COMPLEX: &[u8; 8] = b"complex\0";
 static PY_TYPE_NAME_DICT_PROXY: &[u8; 10] = b"dictproxy\0";
 static PY_TYPE_NAME_DICT: &[u8; 5] = b"dict\0";
@@ -19460,6 +19844,10 @@ pub static mut PyCFunction_Type: CpythonTypeObject =
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyCapsule_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_CAPSULE.as_ptr().cast());
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyClassMethodDescr_Type: CpythonTypeObject =
+    empty_type(PY_TYPE_NAME_CLASSMETHOD_DESCR.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyComplex_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_COMPLEX.as_ptr().cast());
@@ -20972,6 +21360,20 @@ static KEEP_PYCMETHOD_NEW: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
 ) -> *mut c_void = PyCMethod_New;
+#[used]
+static KEEP_PYDESCR_NEW_METHOD: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyDescr_NewMethod;
+#[used]
+static KEEP_PYDESCR_NEW_CLASS_METHOD: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyDescr_NewClassMethod;
+#[used]
+static KEEP_PYDESCR_NEW_MEMBER: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyDescr_NewMember;
+#[used]
+static KEEP_PYDESCR_NEW_GETSET: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyDescr_NewGetSet;
 #[used]
 static KEEP_PYCFUNCTION_GET_FUNCTION: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyCFunction_GetFunction;

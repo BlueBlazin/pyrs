@@ -23,6 +23,22 @@ typedef struct PyMethodDef {
     const char *ml_doc;
 } PyMethodDef;
 
+typedef struct PyGetSetDef {
+    const char *name;
+    void *get;
+    void *set;
+    const char *doc;
+    void *closure;
+} PyGetSetDef;
+
+typedef struct PyMemberDef {
+    const char *name;
+    int type;
+    long long offset;
+    int flags;
+    const char *doc;
+} PyMemberDef;
+
 typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 
 typedef enum {
@@ -42,6 +58,10 @@ typedef enum {
 
 #ifndef Py_PRINT_RAW
 #define Py_PRINT_RAW 0x0001
+#endif
+
+#ifndef Py_RELATIVE_OFFSET
+#define Py_RELATIVE_OFFSET 8
 #endif
 
 #ifndef Py_ASNATIVEBYTES_DEFAULTS
@@ -335,6 +355,7 @@ long long PyNumber_AsSsize_t(PyObject *object, PyObject *exc);
 PyObject *PyNumber_ToBase(PyObject *object, int base);
 PyObject *PyObject_GetAttrString(PyObject *object, const char *name);
 PyObject *PyObject_GetAttr(PyObject *object, PyObject *name);
+PyObject *PyObject_Type(PyObject *object);
 PyObject *PyObject_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *format, ...);
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
@@ -521,6 +542,10 @@ PyObject *PyCFunction_Call(PyObject *callable, PyObject *args, PyObject *kwargs)
 PyObject *PyCFunction_New(PyMethodDef *ml, PyObject *self);
 PyObject *PyCFunction_NewEx(PyMethodDef *ml, PyObject *self, PyObject *module);
 PyObject *PyCMethod_New(PyMethodDef *ml, PyObject *self, PyObject *module, void *cls);
+PyObject *PyDescr_NewMethod(PyTypeObject *type, PyMethodDef *method);
+PyObject *PyDescr_NewClassMethod(PyTypeObject *type, PyMethodDef *method);
+PyObject *PyDescr_NewMember(PyTypeObject *type, PyMemberDef *member);
+PyObject *PyDescr_NewGetSet(PyTypeObject *type, PyGetSetDef *getset);
 PyCFunction PyCFunction_GetFunction(PyObject *op);
 PyObject *PyCFunction_GetSelf(PyObject *op);
 int PyCFunction_GetFlags(PyObject *op);
@@ -546,6 +571,10 @@ extern PyObject *PyExc_ResourceWarning;
 extern PyObject *PyExc_AttributeError;
 extern PyObject *PyExc_BufferError;
 extern void *PyByteArray_Type;
+extern void *PyClassMethodDescr_Type;
+extern void *PyGetSetDescr_Type;
+extern void *PyMemberDescr_Type;
+extern void *PyMethodDescr_Type;
 
 #define PyMODINIT_FUNC PyObject *
 

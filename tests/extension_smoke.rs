@@ -4053,6 +4053,139 @@ PyInit_cpython_api_batch24_probe(void) {
 }
 
 #[test]
+fn cpython_compat_descriptor_abi_batch25_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch25 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch25 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch25");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch25_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+#define T_INT 1
+
+static PyObject *
+method_noargs(PyObject *self, PyObject *ignored) {
+    (void)self;
+    (void)ignored;
+    return PyLong_FromLong(7);
+}
+
+static PyObject *
+getset_getter(PyObject *self, void *closure) {
+    (void)self;
+    (void)closure;
+    return PyBool_FromLong(1);
+}
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch25_probe",
+    "cpython api batch25 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch25_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *owner_type = PyObject_Type(module);
+    if (!owner_type) {
+        return 0;
+    }
+
+    static PyMethodDef good_method = {"good_method", method_noargs, METH_NOARGS, "good"};
+    static PyMethodDef good_class_method = {"good_class_method", method_noargs, METH_NOARGS, "good classmethod"};
+    static PyMethodDef bad_flags_method = {"bad_flags", method_noargs, METH_NOARGS | METH_O, "bad"};
+    static PyMemberDef good_member = {"member_value", T_INT, 0, 0, "member"};
+    static PyMemberDef relative_member = {"member_relative", T_INT, 0, Py_RELATIVE_OFFSET, "member"};
+    static PyGetSetDef good_getset = {"managed", (void *)getset_getter, 0, "getset", 0};
+
+    PyObject *method_descr = PyDescr_NewMethod((PyTypeObject *)owner_type, &good_method);
+    PyObject *class_method_descr = PyDescr_NewClassMethod((PyTypeObject *)owner_type, &good_class_method);
+    PyObject *member_descr = PyDescr_NewMember((PyTypeObject *)owner_type, &good_member);
+    PyObject *getset_descr = PyDescr_NewGetSet((PyTypeObject *)owner_type, &good_getset);
+
+    int create_ok = (method_descr != 0 && class_method_descr != 0 && member_descr != 0 && getset_descr != 0) ? 1 : 0;
+
+    int descriptor_types_ok = 1;
+    PyObject *method_type = method_descr ? PyObject_Type(method_descr) : 0;
+    PyObject *class_method_type = class_method_descr ? PyObject_Type(class_method_descr) : 0;
+    PyObject *member_type = member_descr ? PyObject_Type(member_descr) : 0;
+    PyObject *getset_type = getset_descr ? PyObject_Type(getset_descr) : 0;
+    descriptor_types_ok &= (method_type == (PyObject *)&PyMethodDescr_Type) ? 1 : 0;
+    descriptor_types_ok &= (class_method_type == (PyObject *)&PyClassMethodDescr_Type) ? 1 : 0;
+    descriptor_types_ok &= (member_type == (PyObject *)&PyMemberDescr_Type) ? 1 : 0;
+    descriptor_types_ok &= (getset_type == (PyObject *)&PyGetSetDescr_Type) ? 1 : 0;
+
+    PyObject *bad_flags = PyDescr_NewMethod((PyTypeObject *)owner_type, &bad_flags_method);
+    int bad_flags_ok = (bad_flags == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    PyObject *relative = PyDescr_NewMember((PyTypeObject *)owner_type, &relative_member);
+    int relative_offset_ok = (relative == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(relative);
+    Py_XDECREF(bad_flags);
+    Py_XDECREF(getset_type);
+    Py_XDECREF(member_type);
+    Py_XDECREF(class_method_type);
+    Py_XDECREF(method_type);
+    Py_XDECREF(getset_descr);
+    Py_XDECREF(member_descr);
+    Py_XDECREF(class_method_descr);
+    Py_XDECREF(method_descr);
+    Py_XDECREF(owner_type);
+
+    if (PyModule_AddIntConstant(module, "CREATE_OK", create_ok) != 0 ||
+        PyModule_AddIntConstant(module, "DESCRIPTOR_TYPES_OK", descriptor_types_ok) != 0 ||
+        PyModule_AddIntConstant(module, "BAD_FLAGS_OK", bad_flags_ok) != 0 ||
+        PyModule_AddIntConstant(module, "RELATIVE_OFFSET_OK", relative_offset_ok) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch25_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch25 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch25_probe as m\nassert m.CREATE_OK == 1\nassert m.DESCRIPTOR_TYPES_OK == 1\nassert m.BAD_FLAGS_OK == 1\nassert m.RELATIVE_OFFSET_OK == 1",
+    )
+    .expect("cpython api batch25 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
