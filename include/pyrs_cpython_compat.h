@@ -223,6 +223,29 @@ long long PySequence_Count(PyObject *object, PyObject *value);
 long long PySequence_Index(PyObject *object, PyObject *value);
 int PySequence_Contains(PyObject *object, PyObject *value);
 int PySequence_In(PyObject *object, PyObject *value);
+PyObject *PySlice_New(PyObject *start, PyObject *stop, PyObject *step);
+int PySlice_Unpack(
+    PyObject *slice,
+    long long *start,
+    long long *stop,
+    long long *step
+);
+long long PySlice_AdjustIndices(long long length, long long *start, long long *stop, long long step);
+int PySlice_GetIndices(
+    PyObject *slice,
+    long long length,
+    long long *start,
+    long long *stop,
+    long long *step
+);
+int PySlice_GetIndicesEx(
+    PyObject *slice,
+    long long length,
+    long long *start,
+    long long *stop,
+    long long *step,
+    long long *slice_length
+);
 PyObject *PySet_New(PyObject *iterable);
 PyObject *PyFrozenSet_New(PyObject *iterable);
 long long PySet_Size(PyObject *anyset);

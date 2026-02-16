@@ -15115,6 +15115,95 @@ pub unsafe extern "C" fn PySlice_AdjustIndices(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySlice_GetIndices(
+    slice: *mut c_void,
+    length: isize,
+    start: *mut isize,
+    stop: *mut isize,
+    step: *mut isize,
+) -> i32 {
+    if start.is_null() || stop.is_null() || step.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let Value::Slice(slice_value) = (match cpython_value_from_ptr(slice) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    }) else {
+        cpython_set_error("PySlice_GetIndices expected slice object");
+        return -1;
+    };
+    let raw_step = slice_value.step.unwrap_or(1) as isize;
+    if raw_step == 0 {
+        cpython_set_typed_error(unsafe { PyExc_ValueError }, "slice step cannot be zero");
+        return -1;
+    }
+    let mut raw_start = match slice_value.lower {
+        Some(value) => value as isize,
+        None => {
+            if raw_step < 0 {
+                length.saturating_sub(1)
+            } else {
+                0
+            }
+        }
+    };
+    if slice_value.lower.is_some() && raw_start < 0 {
+        raw_start += length;
+    }
+    let mut raw_stop = match slice_value.upper {
+        Some(value) => value as isize,
+        None => {
+            if raw_step < 0 {
+                -1
+            } else {
+                length
+            }
+        }
+    };
+    if slice_value.upper.is_some() && raw_stop < 0 {
+        raw_stop += length;
+    }
+    if raw_stop > length || raw_start >= length {
+        cpython_set_typed_error(unsafe { PyExc_ValueError }, "slice index out of range");
+        return -1;
+    }
+    unsafe {
+        *start = raw_start;
+        *stop = raw_stop;
+        *step = raw_step;
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySlice_GetIndicesEx(
+    slice: *mut c_void,
+    length: isize,
+    start: *mut isize,
+    stop: *mut isize,
+    step: *mut isize,
+    slice_length: *mut isize,
+) -> i32 {
+    if slice_length.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if unsafe { PySlice_Unpack(slice, start, stop, step) } < 0 {
+        return -1;
+    }
+    // SAFETY: pointers validated by PySlice_Unpack and checked above.
+    let adjusted = unsafe { PySlice_AdjustIndices(length, start, stop, *step) };
+    unsafe {
+        *slice_length = adjusted;
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySys_GetObject(name: *const c_char) -> *mut c_void {
     let name = match unsafe { c_name_to_string(name) } {
         Ok(name) => name,
@@ -17312,6 +17401,23 @@ static KEEP2_PYSLICE_ADJUSTINDICES: unsafe extern "C" fn(
     *mut isize,
     isize,
 ) -> isize = PySlice_AdjustIndices;
+#[used]
+static KEEP2_PYSLICE_GETINDICES: unsafe extern "C" fn(
+    *mut c_void,
+    isize,
+    *mut isize,
+    *mut isize,
+    *mut isize,
+) -> i32 = PySlice_GetIndices;
+#[used]
+static KEEP2_PYSLICE_GETINDICESEX: unsafe extern "C" fn(
+    *mut c_void,
+    isize,
+    *mut isize,
+    *mut isize,
+    *mut isize,
+    *mut isize,
+) -> i32 = PySlice_GetIndicesEx;
 #[used]
 static KEEP2_PYSYS_GETOBJECT: unsafe extern "C" fn(*const c_char) -> *mut c_void = PySys_GetObject;
 #[used]
