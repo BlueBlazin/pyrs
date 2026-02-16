@@ -5991,6 +5991,127 @@ PyInit_cpython_api_batch39_probe(void) {
 }
 
 #[test]
+fn cpython_compat_sys_abi_batch40_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch40 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch40 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch40");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch40_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *seven = PyLong_FromLong(7);
+    int set_ok = (PySys_SetObject("batch40_value", seven) == 0) ? 1 : 0;
+    Py_XDECREF(seven);
+
+    PyObject *got = PySys_GetObject("batch40_value");
+    long got_long = got ? PyLong_AsLong(got) : -1;
+    int get_ok = got_long == 7 ? 1 : 0;
+    PyErr_Clear();
+
+    int clear_ok = (PySys_SetObject("batch40_value", 0) == 0) ? 1 : 0;
+    int cleared = PySys_GetObject("batch40_value") == 0 ? 1 : 0;
+
+    PySys_ResetWarnOptions();
+    int warn_empty = PySys_HasWarnOptions() == 0 ? 1 : 0;
+    PySys_AddWarnOption(L"default");
+    PySys_AddWarnOptionUnicode(L"error");
+    int warn_added = PySys_HasWarnOptions() != 0 ? 1 : 0;
+
+    PySys_AddXOption(L"spam=eggs");
+    PySys_AddXOption(L"flag");
+    PyObject *xoptions = PySys_GetXOptions();
+    PyObject *spam = xoptions ? PyMapping_GetItemString(xoptions, "spam") : 0;
+    PyObject *flag = xoptions ? PyMapping_GetItemString(xoptions, "flag") : 0;
+    const char *spam_text = spam ? PyUnicode_AsUTF8(spam) : 0;
+    int xoption_spam_ok = (spam_text && strcmp(spam_text, "eggs") == 0) ? 1 : 0;
+    int xoption_flag_ok = (flag && PyObject_IsTrue(flag) == 1) ? 1 : 0;
+
+    PyErr_Clear();
+    Py_XDECREF(got);
+    Py_XDECREF(xoptions);
+    Py_XDECREF(spam);
+    Py_XDECREF(flag);
+
+    return Py_BuildValue(
+        "(iiiiiiii)",
+        set_ok,
+        get_ok,
+        clear_ok,
+        cleared,
+        warn_empty,
+        warn_added,
+        xoption_spam_ok,
+        xoption_flag_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe PySys ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch40_probe",
+    "cpython api batch40 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch40_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch40_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch40 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch40_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch40 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

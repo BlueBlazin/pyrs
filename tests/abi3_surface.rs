@@ -920,6 +920,29 @@ fn exports_abi3_batch39_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch40_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PySys_SetObject",
+        "PySys_GetXOptions",
+        "PySys_AddXOption",
+        "PySys_HasWarnOptions",
+        "PySys_ResetWarnOptions",
+        "PySys_AddWarnOption",
+        "PySys_AddWarnOptionUnicode",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch40 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

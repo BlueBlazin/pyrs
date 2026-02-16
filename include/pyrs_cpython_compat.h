@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <wchar.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -161,6 +162,15 @@ int PyModule_AddObjectRef(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddObject(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddIntConstant(PyObject *module, const char *name, long long value);
 int PyModule_AddStringConstant(PyObject *module, const char *name, const char *value);
+
+PyObject *PySys_GetObject(const char *name);
+int PySys_SetObject(const char *name, PyObject *value);
+PyObject *PySys_GetXOptions(void);
+void PySys_AddXOption(const wchar_t *option);
+int PySys_HasWarnOptions(void);
+void PySys_ResetWarnOptions(void);
+void PySys_AddWarnOption(const wchar_t *option);
+void PySys_AddWarnOptionUnicode(const wchar_t *option);
 
 PyObject *PyImport_ImportModule(const char *name);
 long PyImport_GetMagicNumber(void);

@@ -33,6 +33,11 @@ use super::{
     value_to_int, vm_current_thread_ident, xor_values,
 };
 
+#[cfg(windows)]
+type Cwchar = u16;
+#[cfg(not(windows))]
+type Cwchar = i32;
+
 struct CapiObjectSlot {
     value: Value,
     refcount: usize,
@@ -18530,6 +18535,230 @@ pub unsafe extern "C" fn PySys_GetObject(name: *const c_char) -> *mut c_void {
     })
 }
 
+fn cpython_sys_module_obj(context: &mut ModuleCapiContext) -> Result<ObjRef, String> {
+    if context.vm.is_null() {
+        return Err("missing VM context".to_string());
+    }
+    // SAFETY: VM pointer is valid for active C-API context.
+    let vm = unsafe { &mut *context.vm };
+    vm.modules
+        .get("sys")
+        .cloned()
+        .ok_or_else(|| "could not find sys module".to_string())
+}
+
+fn cpython_sys_warnoptions_list(context: &mut ModuleCapiContext) -> Result<ObjRef, String> {
+    let sys_module = cpython_sys_module_obj(context)?;
+    let Object::Module(sys_data) = &mut *sys_module.kind_mut() else {
+        return Err("sys module object is invalid".to_string());
+    };
+    if let Some(Value::List(existing)) = sys_data.globals.get("warnoptions") {
+        return Ok(existing.clone());
+    }
+    let list_obj = if context.vm.is_null() {
+        return Err("missing VM context".to_string());
+    } else {
+        // SAFETY: VM pointer is valid for active C-API context.
+        let vm = unsafe { &mut *context.vm };
+        match vm.heap.alloc_list(Vec::new()) {
+            Value::List(list_obj) => list_obj,
+            _ => return Err("failed to allocate warnoptions list".to_string()),
+        }
+    };
+    sys_data
+        .globals
+        .insert("warnoptions".to_string(), Value::List(list_obj.clone()));
+    Ok(list_obj)
+}
+
+fn cpython_sys_xoptions_dict(context: &mut ModuleCapiContext) -> Result<ObjRef, String> {
+    let sys_module = cpython_sys_module_obj(context)?;
+    let Object::Module(sys_data) = &mut *sys_module.kind_mut() else {
+        return Err("sys module object is invalid".to_string());
+    };
+    if let Some(Value::Dict(existing)) = sys_data.globals.get("_xoptions") {
+        return Ok(existing.clone());
+    }
+    let dict_obj = if context.vm.is_null() {
+        return Err("missing VM context".to_string());
+    } else {
+        // SAFETY: VM pointer is valid for active C-API context.
+        let vm = unsafe { &mut *context.vm };
+        match vm.heap.alloc_dict(Vec::new()) {
+            Value::Dict(dict_obj) => dict_obj,
+            _ => return Err("failed to allocate _xoptions dict".to_string()),
+        }
+    };
+    sys_data
+        .globals
+        .insert("_xoptions".to_string(), Value::Dict(dict_obj.clone()));
+    Ok(dict_obj)
+}
+
+fn cpython_sys_add_warn_option(context: &mut ModuleCapiContext, option: String) -> Result<(), String> {
+    let warnoptions = cpython_sys_warnoptions_list(context)?;
+    let Object::List(values) = &mut *warnoptions.kind_mut() else {
+        return Err("warnoptions is not a list".to_string());
+    };
+    values.push(Value::Str(option));
+    Ok(())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_SetObject(name: *const c_char, value: *mut c_void) -> i32 {
+    let name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let sys_module = match cpython_sys_module_obj(context) {
+            Ok(module) => module,
+            Err(err) => {
+                context.set_error(format!("PySys_SetObject {err}"));
+                return -1;
+            }
+        };
+        if value.is_null() {
+            let Object::Module(sys_data) = &mut *sys_module.kind_mut() else {
+                context.set_error("PySys_SetObject sys module invalid");
+                return -1;
+            };
+            sys_data.globals.remove(&name);
+            if let Some(dict_handle) = context.module_dict_handle_for_module(&sys_module)
+                && let Some(slot) = context.objects.get(&dict_handle)
+                && let Value::Dict(dict_obj) = &slot.value
+            {
+                let _ = dict_remove_value(dict_obj, &Value::Str(name.clone()));
+            }
+            return 0;
+        }
+        let Some(mapped) = context.cpython_value_from_ptr_or_proxy(value) else {
+            context.set_error("PySys_SetObject received unknown value pointer");
+            return -1;
+        };
+        let Object::Module(sys_data) = &mut *sys_module.kind_mut() else {
+            context.set_error("PySys_SetObject sys module invalid");
+            return -1;
+        };
+        sys_data.globals.insert(name.clone(), mapped.clone());
+        if let Err(err) = context.sync_module_dict_set(&sys_module, &name, &mapped) {
+            context.set_error(format!(
+                "PySys_SetObject failed syncing module dict entry '{}': {}",
+                name, err
+            ));
+            return -1;
+        }
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_GetXOptions() -> *mut c_void {
+    with_active_cpython_context_mut(|context| match cpython_sys_xoptions_dict(context) {
+        Ok(dict_obj) => context.alloc_cpython_ptr_for_value(Value::Dict(dict_obj)),
+        Err(err) => {
+            context.set_error(format!("PySys_GetXOptions {err}"));
+            std::ptr::null_mut()
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_AddXOption(option: *const Cwchar) {
+    let option = match unsafe { c_wide_name_to_string(option) } {
+        Ok(option) => option,
+        Err(err) => {
+            cpython_set_error(err);
+            return;
+        }
+    };
+    let _ = with_active_cpython_context_mut(|context| {
+        let xoptions = match cpython_sys_xoptions_dict(context) {
+            Ok(dict_obj) => dict_obj,
+            Err(err) => {
+                context.set_error(format!("PySys_AddXOption {err}"));
+                return;
+            }
+        };
+        let (key, value) = if let Some(eq) = option.find('=') {
+            (
+                option[..eq].to_string(),
+                Value::Str(option[eq + 1..].to_string()),
+            )
+        } else {
+            (option, Value::Bool(true))
+        };
+        let _ = dict_set_value_checked(&xoptions, Value::Str(key), value).map_err(|err| {
+            context.set_error(format!("PySys_AddXOption {}", err.message));
+        });
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_HasWarnOptions() -> i32 {
+    with_active_cpython_context_mut(|context| match cpython_sys_warnoptions_list(context) {
+        Ok(list_obj) => match &*list_obj.kind() {
+            Object::List(values) => i32::from(!values.is_empty()),
+            _ => 0,
+        },
+        Err(err) => {
+            context.set_error(format!("PySys_HasWarnOptions {err}"));
+            0
+        }
+    })
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_ResetWarnOptions() {
+    let _ = with_active_cpython_context_mut(|context| {
+        let warnoptions = match cpython_sys_warnoptions_list(context) {
+            Ok(warnoptions) => warnoptions,
+            Err(err) => {
+                context.set_error(format!("PySys_ResetWarnOptions {err}"));
+                return;
+            }
+        };
+        let Object::List(values) = &mut *warnoptions.kind_mut() else {
+            context.set_error("PySys_ResetWarnOptions warnoptions is not a list");
+            return;
+        };
+        values.clear();
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_AddWarnOption(option: *const Cwchar) {
+    let option = match unsafe { c_wide_name_to_string(option) } {
+        Ok(option) => option,
+        Err(err) => {
+            cpython_set_error(err);
+            return;
+        }
+    };
+    let _ = with_active_cpython_context_mut(|context| {
+        if let Err(err) = cpython_sys_add_warn_option(context, option) {
+            context.set_error(format!("PySys_AddWarnOption {err}"));
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_AddWarnOptionUnicode(option: *const Cwchar) {
+    unsafe { PySys_AddWarnOption(option) }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThreadState_Get() -> *mut c_void {
     1usize as *mut c_void
@@ -21795,6 +22024,22 @@ static KEEP2_PYSLICE_GETINDICESEX: unsafe extern "C" fn(
 #[used]
 static KEEP2_PYSYS_GETOBJECT: unsafe extern "C" fn(*const c_char) -> *mut c_void = PySys_GetObject;
 #[used]
+static KEEP2_PYSYS_SETOBJECT: unsafe extern "C" fn(*const c_char, *mut c_void) -> i32 =
+    PySys_SetObject;
+#[used]
+static KEEP2_PYSYS_GETXOPTIONS: unsafe extern "C" fn() -> *mut c_void = PySys_GetXOptions;
+#[used]
+static KEEP2_PYSYS_ADDXOPTION: unsafe extern "C" fn(*const Cwchar) = PySys_AddXOption;
+#[used]
+static KEEP2_PYSYS_HASWARNOPTIONS: unsafe extern "C" fn() -> i32 = PySys_HasWarnOptions;
+#[used]
+static KEEP2_PYSYS_RESETWARNOPTIONS: unsafe extern "C" fn() = PySys_ResetWarnOptions;
+#[used]
+static KEEP2_PYSYS_ADDWARNOPTION: unsafe extern "C" fn(*const Cwchar) = PySys_AddWarnOption;
+#[used]
+static KEEP2_PYSYS_ADDWARNOPTIONUNICODE: unsafe extern "C" fn(*const Cwchar) =
+    PySys_AddWarnOptionUnicode;
+#[used]
 static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThreadState_Get;
 #[used]
 static KEEP2_PYTHREADSTATE_GETFRAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
@@ -23159,6 +23404,35 @@ unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
         .to_str()
         .map(|text| text.to_string())
         .map_err(|_| "received non-utf8 C string".to_string())
+}
+
+unsafe fn c_wide_name_to_string(name: *const Cwchar) -> Result<String, String> {
+    if name.is_null() {
+        return Err("received null wide string pointer".to_string());
+    }
+    let mut code_units: Vec<u32> = Vec::new();
+    let mut cursor = name;
+    loop {
+        // SAFETY: caller guarantees a valid NUL-terminated wide string.
+        let unit = unsafe { *cursor };
+        if unit == 0 {
+            break;
+        }
+        if unit < 0 {
+            return Err("received invalid negative wide char value".to_string());
+        }
+        code_units.push(unit as u32);
+        // SAFETY: advancing over a valid NUL-terminated wide string.
+        cursor = unsafe { cursor.add(1) };
+    }
+    let mut text = String::new();
+    for unit in code_units {
+        let Some(ch) = char::from_u32(unit) else {
+            return Err("received invalid unicode scalar in wide string".to_string());
+        };
+        text.push(ch);
+    }
+    Ok(text)
 }
 
 unsafe fn capi_module_insert_value(
