@@ -14,6 +14,23 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Avoid bootstrap-only mock surfaces that diverge from CPython architecture (e.g. prefer native `_module` substrate + CPython `Lib/*.py` layer instead of replacement modules when CPython provides one).
 - For NumPy/scientific-stack bring-up, do not use trial-and-error patch churn: drive fixes from CPython source + Python 3.14 C-API docs, close root causes in the ABI substrate, and record each blocker/fix in `docs/NUMPY_BRINGUP_GATE.md`.
 
+## Active Execution Lock (2026-02-16)
+- Primary focus is C-API closure for native scientific-stack support.
+- Use two-lane execution:
+  - Lane A: CPython 3.14 Stable ABI (`abi3`) closure.
+  - Lane B: explicit non-abi3 surfaces required by NumPy/scientific stack.
+- Before starting a new coding round, re-check:
+  - `docs/CAPI_PLAN.md` (execution lock + abi3 status),
+  - `docs/NUMPY_BRINGUP_GATE.md` (current blocker + gate state),
+  - `perf/abi3_manifest_latest.json` (coverage baseline).
+- Required cadence for each ABI batch:
+  1. refresh manifest
+  2. add/extend conformance tests
+  3. implement ABI/runtime substrate deltas
+  4. refresh NumPy gate artifact
+  5. commit checkpoint
+- Do not drift into unrelated long-tail work while this lock is active.
+
 ## Scope and Constraints
 - Target version: CPython 3.14
 - Current goals:

@@ -191,14 +191,13 @@ impl Vm {
         let run_result = self.run();
         self.run_stop_depth = previous_stop;
         run_result?;
-        if caller_depth > 0
-            && self
-                .frames
-                .get(caller_depth.saturating_sub(1))
-                .map(|frame| frame.active_exception.clone())
-                != Some(caller_active_exception_before)
-        {
-            return Err(self.runtime_error_from_active_exception("import raised exception"));
+        if caller_depth > 0 {
+            let caller_frame = self.frames.get(caller_depth.saturating_sub(1));
+            let caller_active_exception_after =
+                caller_frame.and_then(|frame| frame.active_exception.clone());
+            if caller_active_exception_after != caller_active_exception_before {
+                return Err(self.runtime_error_from_active_exception("import raised exception"));
+            }
         }
         Ok(())
     }

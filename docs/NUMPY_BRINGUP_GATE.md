@@ -103,7 +103,10 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
 - Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
-- Current first direct-mode blocker for NumPy is no longer missing symbols or early CPU-init crashes; `_multiarray_umath` now reaches deeper `Py_mod_exec` semantic paths and currently fails in loop-registration/bootstrap with bytes/complex argument-shape mismatches (first failure: `PyBytes_AsString expected bytes object`).
+- Current first direct-mode blocker for NumPy is now pure-Python module completion/publication integrity in `numpy.lib` import chains:
+  - `ImportError: cannot import name 'pad' from 'numpy.lib._arraypad_impl'`
+  - observed partial module state also affects `numpy.lib._index_tricks_impl` (`ndindex` missing)
+  - closure target is root module-state/attr publication semantics (no per-attribute patching)
 - Extension-init failure reporting now preserves the first meaningful per-module `Py_mod_exec` failure across retry attempts, preventing fallback noise like `cannot load module more than once per process` from masking the root blocker.
 - Recent direct-mode bring-up deltas:
   - `datetime.datetime_CAPI` capsule baseline is now registered for `PyCapsule_Import`.

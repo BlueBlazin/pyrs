@@ -676,9 +676,18 @@ impl Vm {
         if !kwargs.is_empty() || !args.is_empty() {
             return Err(RuntimeError::new("globals() expects no arguments"));
         }
+        let frame_index = self
+            .frames
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| RuntimeError::new("no frame"))?;
+        if self.frames[frame_index].is_module {
+            let dict = self.ensure_frame_module_locals_dict(frame_index);
+            return Ok(Value::Dict(dict));
+        }
         let frame = self
             .frames
-            .last()
+            .get(frame_index)
             .ok_or_else(|| RuntimeError::new("no frame"))?;
         let globals_module = frame.function_globals.clone();
         if let Some(frame_index) = self

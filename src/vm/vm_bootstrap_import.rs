@@ -3,11 +3,11 @@ use super::{
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
     InstanceObject, LOCAL_SHIM_MODULES, ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef,
     Object, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
-    PURE_STDLIB_RE_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
-    SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
-    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
-    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
-    source_path_from_cache_path,
+    PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError,
+    SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER,
+    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler,
+    cpython, dict_get_value, dict_remove_value, dict_set_value, matches_finder_kind,
+    parse_uuid_like_string, parser, source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -3138,6 +3138,16 @@ impl Vm {
         let simple_namespace_class = self
             .heap
             .alloc_class(ClassObject::new("SimpleNamespace".to_string(), Vec::new()));
+        let function_type_class = self
+            .heap
+            .alloc_class(ClassObject::new("function".to_string(), Vec::new()));
+        let builtin_function_type_class = self.heap.alloc_class(ClassObject::new(
+            "builtin_function_or_method".to_string(),
+            Vec::new(),
+        ));
+        let code_type_class = self
+            .heap
+            .alloc_class(ClassObject::new("code".to_string(), Vec::new()));
         if let Value::Class(class_obj) = &simple_namespace_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
@@ -3164,23 +3174,11 @@ impl Vm {
                     "DynamicClassAttribute",
                     Value::Builtin(BuiltinFunction::Property),
                 ),
-                (
-                    "FunctionType",
-                    self.heap
-                        .alloc_class(ClassObject::new("function".to_string(), Vec::new())),
-                ),
-                (
-                    "BuiltinFunctionType",
-                    self.heap.alloc_class(ClassObject::new(
-                        "builtin_function_or_method".to_string(),
-                        Vec::new(),
-                    )),
-                ),
-                (
-                    "CodeType",
-                    self.heap
-                        .alloc_class(ClassObject::new("code".to_string(), Vec::new())),
-                ),
+                ("FunctionType", function_type_class.clone()),
+                ("LambdaType", function_type_class),
+                ("BuiltinFunctionType", builtin_function_type_class.clone()),
+                ("BuiltinMethodType", builtin_function_type_class),
+                ("CodeType", code_type_class),
                 (
                     "NoneType",
                     self.heap
@@ -3216,8 +3214,104 @@ impl Vm {
                         Vec::new(),
                     )),
                 ),
+                (
+                    "CellType",
+                    self.heap
+                        .alloc_class(ClassObject::new("cell".to_string(), Vec::new())),
+                ),
+                (
+                    "GeneratorType",
+                    self.heap
+                        .alloc_class(ClassObject::new("generator".to_string(), Vec::new())),
+                ),
+                (
+                    "CoroutineType",
+                    self.heap
+                        .alloc_class(ClassObject::new("coroutine".to_string(), Vec::new())),
+                ),
+                (
+                    "AsyncGeneratorType",
+                    self.heap.alloc_class(ClassObject::new(
+                        "async_generator".to_string(),
+                        Vec::new(),
+                    )),
+                ),
+                (
+                    "WrapperDescriptorType",
+                    self.heap.alloc_class(ClassObject::new(
+                        "wrapper_descriptor".to_string(),
+                        Vec::new(),
+                    )),
+                ),
+                (
+                    "MethodWrapperType",
+                    self.heap.alloc_class(ClassObject::new(
+                        "method-wrapper".to_string(),
+                        Vec::new(),
+                    )),
+                ),
+                (
+                    "MethodDescriptorType",
+                    self.heap.alloc_class(ClassObject::new(
+                        "method_descriptor".to_string(),
+                        Vec::new(),
+                    )),
+                ),
+                (
+                    "ClassMethodDescriptorType",
+                    self.heap.alloc_class(ClassObject::new(
+                        "classmethod_descriptor".to_string(),
+                        Vec::new(),
+                    )),
+                ),
+                (
+                    "TracebackType",
+                    self.heap
+                        .alloc_class(ClassObject::new("traceback".to_string(), Vec::new())),
+                ),
+                (
+                    "FrameType",
+                    self.heap
+                        .alloc_class(ClassObject::new("frame".to_string(), Vec::new())),
+                ),
+                (
+                    "GetSetDescriptorType",
+                    self.heap.alloc_class(ClassObject::new(
+                        "getset_descriptor".to_string(),
+                        Vec::new(),
+                    )),
+                ),
             ],
         );
+        if let Some(types_module) = self.modules.get("types").cloned() {
+            let types_alias = match self.heap.alloc_module(ModuleObject::new("_types")) {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            self.set_module_metadata(
+                &types_alias,
+                "_types",
+                None,
+                Some(BUILTIN_MODULE_LOADER),
+                false,
+                Vec::new(),
+                false,
+            );
+            let exported = if let Object::Module(types_data) = &*types_module.kind() {
+                Some(types_data.globals.clone())
+            } else {
+                None
+            };
+            if let Some(exported) = exported
+                && let Object::Module(alias_data) = &mut *types_alias.kind_mut()
+            {
+                alias_data.globals.extend(exported);
+                alias_data
+                    .globals
+                    .insert("__name__".to_string(), Value::Str("_types".to_string()));
+            }
+            self.register_module("_types", types_alias);
+        }
         self.install_builtin_module(
             "_thread",
             &[
@@ -5978,6 +6072,13 @@ impl Vm {
                 self.unregister_module(module_name);
             }
         }
+        for module_name in PURE_STDLIB_TYPES_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
     }
 
     pub(super) fn module_preference_requires_unload(&self, module_name: &str) -> bool {
@@ -6914,30 +7015,35 @@ impl Vm {
             Err(load_err) => {
                 if let Some((parent, _)) = name.rsplit_once('.') {
                     let _ = self.import_module_object(parent)?;
-                    if let Some(module) = self.modules.get(name).cloned() {
-                        if let Some(modules_dict) = self.sys_dict_obj("modules") {
-                            dict_set_value(
-                                &modules_dict,
-                                Value::Str(name.to_string()),
-                                Value::Module(module.clone()),
-                            );
+                    // Do not "rescue" modules that were first introduced during this failed
+                    // import attempt. Returning such partially-initialized modules masks the
+                    // underlying exception and causes silent stdlib/third-party corruption.
+                    if existing_modules.contains(name) {
+                        if let Some(module) = self.modules.get(name).cloned() {
+                            if let Some(modules_dict) = self.sys_dict_obj("modules") {
+                                dict_set_value(
+                                    &modules_dict,
+                                    Value::Str(name.to_string()),
+                                    Value::Module(module.clone()),
+                                );
+                            }
+                            return self.return_imported_module(module, caller_depth);
                         }
-                        return self.return_imported_module(module, caller_depth);
-                    }
-                    if let Some(modules_dict) = self.sys_dict_obj("modules") {
-                        let key = Value::Str(name.to_string());
-                        match dict_get_value(&modules_dict, &key) {
-                            Some(Value::Module(module)) => {
-                                self.modules.insert(name.to_string(), module.clone());
-                                return self.return_imported_module(module, caller_depth);
+                        if let Some(modules_dict) = self.sys_dict_obj("modules") {
+                            let key = Value::Str(name.to_string());
+                            match dict_get_value(&modules_dict, &key) {
+                                Some(Value::Module(module)) => {
+                                    self.modules.insert(name.to_string(), module.clone());
+                                    return self.return_imported_module(module, caller_depth);
+                                }
+                                Some(Value::None) => {
+                                    return Err(RuntimeError::new(format!(
+                                        "No module named '{}'",
+                                        name
+                                    )));
+                                }
+                                _ => {}
                             }
-                            Some(Value::None) => {
-                                return Err(RuntimeError::new(format!(
-                                    "No module named '{}'",
-                                    name
-                                )));
-                            }
-                            _ => {}
                         }
                     }
                 }
@@ -7058,11 +7164,13 @@ impl Vm {
         );
         let is_decimal_stack = name == "decimal";
         let is_functools_stack = name == "functools";
+        let is_types_stack = name == "types";
         if !is_json_stack
             && !is_pickle_stack
             && !is_re_stack
             && !is_decimal_stack
             && !is_functools_stack
+            && !is_types_stack
         {
             return false;
         }

@@ -339,6 +339,11 @@ impl Vm {
             } else {
                 frame.locals.insert(name.clone(), value.clone());
             }
+            if frame.is_module
+                && let Some(dict) = frame.module_locals_dict.clone()
+            {
+                dict_set_value(&dict, Value::Str(name.clone()), value.clone());
+            }
             if let Object::Module(module_data) = &mut *frame.function_globals.kind_mut() {
                 module_data.globals.insert(name, value);
                 module_data.touch_globals_version();
@@ -3101,7 +3106,14 @@ impl Vm {
                             self.push_value(Value::MemoryView(obj));
                         }
                         (Value::Dict(obj), index) => {
+                            let sync_key = index.clone();
+                            let sync_value = value.clone();
                             dict_set_value_checked(&obj, index, value)?;
+                            self.sync_module_global_from_locals_dict_write(
+                                &obj,
+                                &sync_key,
+                                Some(sync_value),
+                            );
                             self.push_value(Value::Dict(obj));
                         }
                         (Value::MemoryView(obj), index) => {
@@ -3418,10 +3430,14 @@ impl Vm {
                         }
                         index => match target {
                             Value::Dict(obj) => {
+                                let sync_key = index.clone();
                                 ensure_hashable(&index)?;
                                 if dict_remove_value(&obj, &index).is_none() {
                                     return Err(RuntimeError::new("key not found"));
                                 }
+                                self.sync_module_global_from_locals_dict_write(
+                                    &obj, &sync_key, None,
+                                );
                             }
                             _ => {
                                 if let Some(delitem) =
@@ -4690,6 +4706,7 @@ impl Vm {
             }
             Opcode::ImportName => {
                 let caller_idx = self.frames.len().saturating_sub(1);
+                let caller_depth = self.frames.len();
                 let idx = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing import argument"))?
@@ -4704,7 +4721,11 @@ impl Vm {
                         return Err(RuntimeError::new("import name index out of range"));
                     }
                 };
+                let depth_before_import = self.frames.len();
                 let module = self.import_module_object(&name)?;
+                if self.frames.len() > depth_before_import {
+                    self.run_pending_import_frames(caller_depth)?;
+                }
                 let module = self.canonical_imported_module_for_name(&name, module);
                 let result_module = self.module_for_plain_import(&name, module);
                 self.push_value_to_caller_frame(caller_idx, Value::Module(result_module))?;
@@ -7202,11 +7223,35 @@ impl Vm {
         dict
     }
 
+    fn module_namespace_key_name(&mut self, key: &Value) -> Option<String> {
+        match key {
+            Value::Str(name) => Some(name.clone()),
+            // Preserve CPython-like behavior for str-like object keys written via
+            // globals()[key] by coercing non-primitive object keys through str().
+            // Primitive non-string keys remain non-name entries and are ignored.
+            Value::None
+            | Value::Bool(_)
+            | Value::Int(_)
+            | Value::BigInt(_)
+            | Value::Float(_)
+            | Value::Complex { .. } => None,
+            other => {
+                if self.frames.is_empty() {
+                    return None;
+                }
+                match self.builtin_str(vec![other.clone()], HashMap::new()) {
+                    Ok(Value::Str(name)) => Some(name),
+                    _ => None,
+                }
+            }
+        }
+    }
+
     pub(super) fn sync_module_locals_dict_to_module(&mut self, module: &ObjRef, dict: &ObjRef) {
         let mut map = HashMap::new();
         if let Object::Dict(entries) = &*dict.kind() {
             for (key, value) in entries {
-                if let Value::Str(name) = key {
+                if let Some(name) = self.module_namespace_key_name(key) {
                     map.insert(name.clone(), value.clone());
                 }
             }
@@ -7427,6 +7472,55 @@ impl Vm {
                 }
                 break;
             }
+        }
+    }
+
+    fn module_for_locals_dict(&self, dict: &ObjRef) -> Option<ObjRef> {
+        self.frames.iter().rev().find_map(|frame| {
+            if frame.is_module
+                && let Some(module_dict) = frame.module_locals_dict.as_ref()
+                && module_dict.id() == dict.id()
+            {
+                Some(frame.module.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn remove_module_global(&mut self, module: &ObjRef, name: &str) {
+        let mut removed = false;
+        let mut version = None;
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            removed = module_data.globals.remove(name).is_some();
+            if removed {
+                module_data.touch_globals_version();
+                version = Some(module_data.globals_version);
+            }
+        }
+        if removed {
+            self.sync_module_frame_fast_local(module.id(), name, None);
+            if let Some(version) = version {
+                self.propagate_module_globals_version(module.id(), version);
+            }
+        }
+    }
+
+    fn sync_module_global_from_locals_dict_write(
+        &mut self,
+        dict: &ObjRef,
+        key: &Value,
+        value: Option<Value>,
+    ) {
+        let Some(module) = self.module_for_locals_dict(dict) else {
+            return;
+        };
+        let Some(name) = self.module_namespace_key_name(key) else {
+            return;
+        };
+        match value {
+            Some(value) => self.upsert_module_global(&module, &name, value),
+            None => self.remove_module_global(&module, &name),
         }
     }
 
