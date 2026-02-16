@@ -517,6 +517,25 @@ fn exports_abi3_batch18_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch19_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyErr_NewException",
+        "PyErr_NewExceptionWithDoc",
+        "PyExceptionClass_Name",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch19 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

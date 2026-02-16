@@ -387,6 +387,14 @@ int PyCapsule_IsValid(PyObject *capsule, const char *name);
 void *PyCapsule_Import(const char *name, int no_block);
 
 void PyErr_SetString(PyObject *exception, const char *message);
+PyObject *PyErr_NewException(const char *name, PyObject *base, PyObject *dict);
+PyObject *PyErr_NewExceptionWithDoc(
+    const char *name,
+    const char *doc,
+    PyObject *base,
+    PyObject *dict
+);
+const char *PyExceptionClass_Name(PyObject *exception_class);
 PyObject *PyErr_Occurred(void);
 PyObject *PyErr_GetRaisedException(void);
 void PyErr_SetRaisedException(PyObject *exc);

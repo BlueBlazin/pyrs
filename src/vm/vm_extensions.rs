@@ -2594,6 +2594,17 @@ impl ModuleCapiContext {
         {
             return None;
         }
+        if self.owns_cpython_allocation_ptr(callable)
+            && type_ptr == std::ptr::addr_of_mut!(PyType_Type)
+        {
+            if trace_calls {
+                eprintln!(
+                    "[cpy-call] skip native callable={:p} reason=owned-compat-type-object",
+                    callable
+                );
+            }
+            return None;
+        }
         // SAFETY: `type_ptr` is derived from object header and validated non-null.
         let tp_call_raw = unsafe { (*type_ptr).tp_call };
         if tp_call_raw.is_null() {
@@ -16952,6 +16963,204 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
     }
 }
 
+fn cpython_exception_name_parts(name: &str) -> Option<(&str, &str)> {
+    let dot = name.rfind('.')?;
+    if dot == 0 || dot + 1 >= name.len() {
+        return None;
+    }
+    Some((&name[..dot], &name[dot + 1..]))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_NewException(
+    name: *const c_char,
+    mut base: *mut c_void,
+    mut dict: *mut c_void,
+) -> *mut c_void {
+    if name.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let name_text = match unsafe { c_name_to_string(name) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(format!("PyErr_NewException invalid name: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let Some((module_name, class_name)) = cpython_exception_name_parts(&name_text) else {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyErr_NewException: name must be module.class",
+        );
+        return std::ptr::null_mut();
+    };
+    if base.is_null() {
+        base = unsafe { PyExc_Exception };
+    }
+
+    let mut mydict: *mut c_void = std::ptr::null_mut();
+    let mut modulename_obj: *mut c_void = std::ptr::null_mut();
+    let module_key = unsafe { PyUnicode_FromString(c"__module__".as_ptr()) };
+    if module_key.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    if dict.is_null() {
+        dict = unsafe { PyDict_New() };
+        if dict.is_null() {
+            unsafe { Py_DecRef(module_key) };
+            return std::ptr::null_mut();
+        }
+        mydict = dict;
+    }
+
+    let mut contains_module = unsafe { PyDict_Contains(dict, module_key) };
+    if contains_module < 0 {
+        unsafe {
+            Py_DecRef(module_key);
+            Py_XDecRef(mydict);
+        }
+        return std::ptr::null_mut();
+    }
+    if contains_module == 0 {
+        modulename_obj =
+            unsafe { PyUnicode_FromStringAndSize(module_name.as_ptr().cast(), module_name.len() as isize) };
+        if modulename_obj.is_null() {
+            unsafe {
+                Py_DecRef(module_key);
+                Py_XDecRef(mydict);
+            }
+            return std::ptr::null_mut();
+        }
+        if unsafe { PyDict_SetItem(dict, module_key, modulename_obj) } != 0 {
+            unsafe {
+                Py_DecRef(module_key);
+                Py_XDecRef(modulename_obj);
+                Py_XDecRef(mydict);
+            }
+            return std::ptr::null_mut();
+        }
+        contains_module = 1;
+    }
+    debug_assert!(contains_module == 1);
+
+    let result = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return Err("missing VM context for PyErr_NewException".to_string());
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let base_value = context
+            .cpython_value_from_ptr_or_proxy(base)
+            .ok_or_else(|| "PyErr_NewException received invalid base object".to_string())?;
+        let bases = match base_value {
+            Value::Tuple(_) | Value::List(_) => base_value,
+            other => vm.heap.alloc_tuple(vec![other]),
+        };
+        let namespace = context
+            .cpython_value_from_ptr_or_proxy(dict)
+            .ok_or_else(|| "PyErr_NewException received invalid dict object".to_string())?;
+        let class_value = match vm.call_internal(
+            Value::Builtin(BuiltinFunction::Type),
+            vec![Value::Str(class_name.to_string()), bases, namespace],
+            HashMap::new(),
+        ) {
+            Ok(InternalCallOutcome::Value(value)) => value,
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                return Err(vm
+                    .runtime_error_from_active_exception("PyErr_NewException failed")
+                    .message);
+            }
+            Err(err) => return Err(err.message),
+        };
+        Ok(context.alloc_cpython_ptr_for_value(class_value))
+    })
+    .unwrap_or_else(|err| Err(err.to_string()));
+
+    let result = match result {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    };
+    unsafe {
+        Py_DecRef(module_key);
+        Py_XDecRef(modulename_obj);
+        Py_XDecRef(mydict);
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_NewExceptionWithDoc(
+    name: *const c_char,
+    doc: *const c_char,
+    base: *mut c_void,
+    mut dict: *mut c_void,
+) -> *mut c_void {
+    let mut mydict: *mut c_void = std::ptr::null_mut();
+    if dict.is_null() {
+        dict = unsafe { PyDict_New() };
+        if dict.is_null() {
+            return std::ptr::null_mut();
+        }
+        mydict = dict;
+    }
+
+    if !doc.is_null() {
+        let doc_obj = unsafe { PyUnicode_FromString(doc) };
+        if doc_obj.is_null() {
+            unsafe { Py_XDecRef(mydict) };
+            return std::ptr::null_mut();
+        }
+        let status = unsafe { PyDict_SetItemString(dict, c"__doc__".as_ptr(), doc_obj) };
+        unsafe { Py_DecRef(doc_obj) };
+        if status != 0 {
+            unsafe { Py_XDecRef(mydict) };
+            return std::ptr::null_mut();
+        }
+    }
+
+    let result = unsafe { PyErr_NewException(name, base, dict) };
+    unsafe { Py_XDecRef(mydict) };
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyExceptionClass_Name(exception_class: *mut c_void) -> *const c_char {
+    match with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(exception_class) else {
+            context.set_error("PyExceptionClass_Name received unknown object pointer");
+            return std::ptr::null();
+        };
+        let name = match value {
+            Value::ExceptionType(name) => name,
+            Value::Class(class_obj) => match &*class_obj.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => {
+                    context.set_error("PyExceptionClass_Name expected exception class object");
+                    return std::ptr::null();
+                }
+            },
+            _ => {
+                context.set_error("PyExceptionClass_Name expected exception class");
+                return std::ptr::null();
+            }
+        };
+        context
+            .scratch_c_string_ptr(&name)
+            .unwrap_or(std::ptr::null())
+    }) {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null()
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_Occurred() -> *mut c_void {
     match with_active_cpython_context_mut(|context| {
@@ -19572,6 +19781,22 @@ static KEEP_PYBYTES_CONCAT_AND_DEL: unsafe extern "C" fn(*mut *mut c_void, *mut 
     PyBytes_ConcatAndDel;
 #[used]
 static KEEP_PYERR_SET_STRING: unsafe extern "C" fn(*mut c_void, *const c_char) = PyErr_SetString;
+#[used]
+static KEEP_PYERR_NEW_EXCEPTION: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyErr_NewException;
+#[used]
+static KEEP_PYERR_NEW_EXCEPTION_WITH_DOC: unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyErr_NewExceptionWithDoc;
+#[used]
+static KEEP_PYEXCEPTIONCLASS_NAME: unsafe extern "C" fn(*mut c_void) -> *const c_char =
+    PyExceptionClass_Name;
 #[used]
 static KEEP_PYERR_OCCURRED: unsafe extern "C" fn() -> *mut c_void = PyErr_Occurred;
 #[used]

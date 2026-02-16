@@ -3416,6 +3416,123 @@ PyInit_cpython_api_batch18_probe(void) {
 }
 
 #[test]
+fn cpython_compat_exception_factory_abi_batch19_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch19 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch19 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch19");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch19_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include <string.h>
+#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch19_probe",
+    "cpython api batch19 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch19_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *custom = PyErr_NewException("batch19.CustomError", 0, 0);
+    int custom_ok = 0;
+    if (custom) {
+        const char *tp_name = PyExceptionClass_Name(custom);
+        PyObject *module_attr = PyObject_GetAttrString(custom, "__module__");
+        const char *module_name = module_attr ? PyUnicode_AsUTF8(module_attr) : 0;
+        custom_ok = (tp_name && module_name &&
+                     strcmp(tp_name, "CustomError") == 0 &&
+                     strcmp(module_name, "batch19") == 0) ? 1 : 0;
+        Py_XDECREF(module_attr);
+    }
+
+    PyObject *with_doc = PyErr_NewExceptionWithDoc("batch19.DocError", "doc string value", 0, 0);
+    int with_doc_ok = 0;
+    if (with_doc) {
+        PyObject *doc = PyObject_GetAttrString(with_doc, "__doc__");
+        const char *doc_text = doc ? PyUnicode_AsUTF8(doc) : 0;
+        with_doc_ok = (doc_text && strcmp(doc_text, "doc string value") == 0) ? 1 : 0;
+        Py_XDECREF(doc);
+    }
+
+    PyObject *base = PyErr_NewException("batch19.BaseError", 0, 0);
+    PyObject *derived = base ? PyErr_NewException("batch19.DerivedError", base, 0) : 0;
+    PyObject *base_tuple = base ? PyTuple_Pack(1, base) : 0;
+    PyObject *derived_tuple = base_tuple ? PyErr_NewException("batch19.DerivedTupleError", base_tuple, 0) : 0;
+    PyObject *derived_instance = derived ? PyObject_CallNoArgs(derived) : 0;
+    PyObject *derived_tuple_instance = derived_tuple ? PyObject_CallNoArgs(derived_tuple) : 0;
+    int subclass_ok = (base && derived && derived_tuple &&
+                       derived_instance && derived_tuple_instance &&
+                       PyObject_IsInstance(derived_instance, base) == 1 &&
+                       PyObject_IsInstance(derived_tuple_instance, base) == 1) ? 1 : 0;
+
+    PyErr_Clear();
+    PyObject *invalid_name = PyErr_NewException("NoDotName", 0, 0);
+    int invalid_name_error_ok = (invalid_name == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+    Py_XDECREF(invalid_name);
+
+    Py_XDECREF(derived_tuple_instance);
+    Py_XDECREF(derived_instance);
+    Py_XDECREF(derived_tuple);
+    Py_XDECREF(base_tuple);
+    Py_XDECREF(derived);
+    Py_XDECREF(base);
+    Py_XDECREF(with_doc);
+    Py_XDECREF(custom);
+
+    if (PyModule_AddIntConstant(module, "CUSTOM_OK", custom_ok) != 0 ||
+        PyModule_AddIntConstant(module, "WITH_DOC_OK", with_doc_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SUBCLASS_OK", subclass_ok) != 0 ||
+        PyModule_AddIntConstant(module, "INVALID_NAME_ERROR_OK", invalid_name_error_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch19_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch19 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch19_probe as m\nassert m.CUSTOM_OK == 1\nassert m.WITH_DOC_OK == 1\nassert m.SUBCLASS_OK == 1\nassert m.INVALID_NAME_ERROR_OK == 1",
+    )
+    .expect("cpython api batch19 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
