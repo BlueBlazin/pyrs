@@ -6340,9 +6340,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::new("expected iterable")),
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
-                | IteratorKind::Cycle { .. } => {
-                    Err(RuntimeError::new("expected iterable"))
-                }
+                | IteratorKind::Cycle { .. } => Err(RuntimeError::new("expected iterable")),
             }
         }
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),

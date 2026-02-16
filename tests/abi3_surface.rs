@@ -872,7 +872,11 @@ fn exports_abi3_batch36_symbols() {
 #[test]
 fn exports_abi3_batch37_symbols() {
     let symbols = exported_symbols(&pyrs_bin());
-    let required = ["PyThreadState_GetFrame", "PyFrame_GetCode", "PyFrame_GetLineNumber"];
+    let required = [
+        "PyThreadState_GetFrame",
+        "PyFrame_GetCode",
+        "PyFrame_GetLineNumber",
+    ];
     let missing: Vec<&str> = required
         .iter()
         .copied()
@@ -982,7 +986,10 @@ fn exports_abi3_batch42_symbols() {
 #[test]
 fn exports_abi3_batch43_symbols() {
     let symbols = exported_symbols(&pyrs_bin());
-    let required = ["PyMarshal_ReadObjectFromString", "PyMarshal_WriteObjectToString"];
+    let required = [
+        "PyMarshal_ReadObjectFromString",
+        "PyMarshal_WriteObjectToString",
+    ];
     let missing: Vec<&str> = required
         .iter()
         .copied()
@@ -1016,6 +1023,41 @@ fn exports_abi3_batch44_symbols() {
     assert!(
         missing.is_empty(),
         "missing ABI batch44 symbols: {missing:?}"
+    );
+}
+
+#[test]
+fn exports_abi3_batch45_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyCodec_BackslashReplaceErrors",
+        "PyCodec_Decode",
+        "PyCodec_Decoder",
+        "PyCodec_Encode",
+        "PyCodec_Encoder",
+        "PyCodec_IgnoreErrors",
+        "PyCodec_IncrementalDecoder",
+        "PyCodec_IncrementalEncoder",
+        "PyCodec_KnownEncoding",
+        "PyCodec_LookupError",
+        "PyCodec_NameReplaceErrors",
+        "PyCodec_Register",
+        "PyCodec_RegisterError",
+        "PyCodec_ReplaceErrors",
+        "PyCodec_StreamReader",
+        "PyCodec_StreamWriter",
+        "PyCodec_StrictErrors",
+        "PyCodec_Unregister",
+        "PyCodec_XMLCharRefReplaceErrors",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch45 symbols: {missing:?}"
     );
 }
 

@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_ulong, c_void};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Mutex, Once, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, Once, OnceLock};
 
 use crate::bytecode::CodeObject;
 use crate::bytecode::cpython::{
@@ -1267,7 +1267,9 @@ fn cpython_current_thread_state_ptr() -> usize {
         return current;
     }
     let main_ptr = cpython_main_thread_state_ptr();
-    CURRENT_THREAD_STATE_PTR.compare_exchange(0, main_ptr, Ordering::Relaxed, Ordering::Relaxed).ok();
+    CURRENT_THREAD_STATE_PTR
+        .compare_exchange(0, main_ptr, Ordering::Relaxed, Ordering::Relaxed)
+        .ok();
     CURRENT_THREAD_STATE_PTR.load(Ordering::Relaxed)
 }
 
@@ -1319,10 +1321,12 @@ struct ModuleCapiContext {
     module_dict_handle_by_module_id: HashMap<u64, PyrsObjectHandle>,
     thread_state_dict_handle: Option<PyrsObjectHandle>,
     interpreter_state_dict_handle: Option<PyrsObjectHandle>,
+    codec_error_handlers: HashMap<String, usize>,
 }
 
 impl Drop for ModuleCapiContext {
     fn drop(&mut self) {
+        self.codec_error_handlers.clear();
         if !self.vm.is_null() && !self.buffer_pins.is_empty() {
             let mut stale_pins: Vec<(ObjRef, usize)> = Vec::new();
             for (handle, pins) in &self.buffer_pins {
@@ -1445,6 +1449,7 @@ impl ModuleCapiContext {
             module_dict_handle_by_module_id: HashMap::new(),
             thread_state_dict_handle: None,
             interpreter_state_dict_handle: None,
+            codec_error_handlers: HashMap::new(),
         }
     }
 
@@ -2395,8 +2400,12 @@ impl ModuleCapiContext {
                         },
                     )
                 };
-                let callable =
-                    self.alloc_cpython_method_cfunction_ptr(method_def, self_ptr, std::ptr::null_mut(), class_ptr);
+                let callable = self.alloc_cpython_method_cfunction_ptr(
+                    method_def,
+                    self_ptr,
+                    std::ptr::null_mut(),
+                    class_ptr,
+                );
                 Some(callable)
             }
             CpythonDescriptorKind::GetSet { owner_type, getset } => {
@@ -5426,6 +5435,349 @@ fn cpython_call_builtin(function: BuiltinFunction, args: Vec<Value>) -> Result<V
     })?
 }
 
+fn cpython_call_internal_in_context(
+    context: &mut ModuleCapiContext,
+    callable: Value,
+    args: Vec<Value>,
+    kwargs: HashMap<String, Value>,
+) -> Result<Value, String> {
+    if context.vm.is_null() {
+        return Err("missing VM context for call".to_string());
+    }
+    // SAFETY: VM pointer is valid for active context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    match vm.call_internal(callable, args, kwargs) {
+        Ok(InternalCallOutcome::Value(value)) => Ok(value),
+        Ok(InternalCallOutcome::CallerExceptionHandled) => Err(vm
+            .runtime_error_from_active_exception("call failed")
+            .message),
+        Err(err) => Err(err.message),
+    }
+}
+
+fn cpython_getattr_in_context(
+    context: &mut ModuleCapiContext,
+    target: Value,
+    attr_name: &str,
+) -> Result<Value, String> {
+    if context.vm.is_null() {
+        return Err("missing VM context for getattr".to_string());
+    }
+    // SAFETY: VM pointer is valid for active context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    vm.builtin_getattr(
+        vec![target, Value::Str(attr_name.to_string())],
+        HashMap::new(),
+    )
+    .map_err(|err| err.message)
+}
+
+fn cpython_codec_required_name(name: *const c_char, api_name: &str) -> Result<String, String> {
+    // SAFETY: C-API caller provides NUL-terminated string for non-null pointers.
+    unsafe { c_name_to_string(name) }.map_err(|err| format!("{api_name} {err}"))
+}
+
+fn cpython_codec_optional_name(
+    name: *const c_char,
+    api_name: &str,
+) -> Result<Option<String>, String> {
+    if name.is_null() {
+        return Ok(None);
+    }
+    // SAFETY: C-API caller provides NUL-terminated string for non-null pointers.
+    unsafe { c_name_to_string(name) }
+        .map(Some)
+        .map_err(|err| format!("{api_name} {err}"))
+}
+
+fn cpython_codec_lookup_info_in_context(
+    context: &mut ModuleCapiContext,
+    encoding: &str,
+) -> Result<Value, String> {
+    cpython_call_internal_in_context(
+        context,
+        Value::Builtin(BuiltinFunction::CodecsLookup),
+        vec![Value::Str(encoding.to_string())],
+        HashMap::new(),
+    )
+}
+
+fn cpython_codec_lookup_attr_in_context(
+    context: &mut ModuleCapiContext,
+    encoding: &str,
+    attr_name: &str,
+) -> Result<Value, String> {
+    let codec_info = cpython_codec_lookup_info_in_context(context, encoding)?;
+    cpython_getattr_in_context(context, codec_info, attr_name)
+}
+
+fn cpython_codec_call_callable_in_context(
+    context: &mut ModuleCapiContext,
+    callable: Value,
+    args: Vec<Value>,
+) -> Result<Value, String> {
+    cpython_call_internal_in_context(context, callable, args, HashMap::new())
+}
+
+fn cpython_codec_module_in_context(context: &mut ModuleCapiContext) -> Result<ObjRef, String> {
+    if context.vm.is_null() {
+        return Err("missing VM context for codecs module".to_string());
+    }
+    // SAFETY: VM pointer is valid for active context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    if !vm.modules.contains_key("codecs") {
+        vm.import_module("codecs").map_err(|err| err.message)?;
+    }
+    vm.modules
+        .get("codecs")
+        .cloned()
+        .ok_or_else(|| "codecs module unavailable".to_string())
+}
+
+fn cpython_codec_stream_fallback_in_context(
+    context: &mut ModuleCapiContext,
+    class_name: &str,
+    stream: Value,
+    errors: Option<&str>,
+) -> Result<Value, String> {
+    let codec_module = cpython_codec_module_in_context(context)?;
+    let class_value = {
+        let Object::Module(module_data) = &*codec_module.kind() else {
+            return Err("invalid codecs module object".to_string());
+        };
+        module_data
+            .globals
+            .get(class_name)
+            .cloned()
+            .ok_or_else(|| format!("codecs.{class_name} unavailable"))?
+    };
+    let instance =
+        cpython_call_internal_in_context(context, class_value, Vec::new(), HashMap::new())?;
+    if let Value::Instance(instance_obj) = &instance
+        && let Object::Instance(instance_data) = &mut *instance_obj.kind_mut()
+    {
+        instance_data
+            .attrs
+            .insert("stream".to_string(), stream.clone());
+        if let Some(errors) = errors {
+            instance_data
+                .attrs
+                .insert("errors".to_string(), Value::Str(errors.to_string()));
+        }
+    }
+    Ok(instance)
+}
+
+fn cpython_codec_exception_type_name_for_value(
+    context: &mut ModuleCapiContext,
+    value: &Value,
+) -> Option<String> {
+    match value {
+        Value::Exception(err) => Some(err.name.clone()),
+        Value::Instance(instance) => {
+            if context.vm.is_null() {
+                return None;
+            }
+            // SAFETY: VM pointer is valid for active context lifetime.
+            let vm = unsafe { &*context.vm };
+            vm.exception_class_name_for_instance(instance)
+        }
+        _ => None,
+    }
+}
+
+fn cpython_codec_exception_end_for_value(value: &Value) -> i64 {
+    match value {
+        Value::Exception(err) => {
+            let attrs = err.attrs.borrow();
+            attrs
+                .get("end")
+                .cloned()
+                .and_then(|value| value_to_int(value).ok())
+                .unwrap_or(0)
+        }
+        Value::Instance(instance) => {
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return 0;
+            };
+            instance_data
+                .attrs
+                .get("end")
+                .cloned()
+                .and_then(|value| value_to_int(value).ok())
+                .unwrap_or(0)
+        }
+        _ => 0,
+    }
+}
+
+fn cpython_codec_error_info(
+    context: &mut ModuleCapiContext,
+    exc: *mut c_void,
+) -> Result<(Value, String, i64), String> {
+    if exc.is_null() {
+        return Err("codec must pass exception instance".to_string());
+    }
+    let Some(value) = context.cpython_value_from_ptr_or_proxy(exc) else {
+        return Err("codec must pass exception instance".to_string());
+    };
+    let Some(type_name) = cpython_codec_exception_type_name_for_value(context, &value) else {
+        return Err(format!(
+            "don't know how to handle {} in error callback",
+            if context.vm.is_null() {
+                "object".to_string()
+            } else {
+                // SAFETY: VM pointer is valid for active context lifetime.
+                unsafe { (&*context.vm).value_type_name_for_error(&value) }
+            }
+        ));
+    };
+    let end = cpython_codec_exception_end_for_value(&value);
+    Ok((value, type_name, end))
+}
+
+fn cpython_codec_handler_tuple_result(replacement: String, end: i64) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("missing VM context for codec error handler");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let result = vm
+            .heap
+            .alloc_tuple(vec![Value::Str(replacement), Value::Int(end)]);
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+unsafe extern "C" fn cpython_codec_cfunc_strict(
+    _self: *mut c_void,
+    exc: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCodec_StrictErrors(exc) }
+}
+
+unsafe extern "C" fn cpython_codec_cfunc_ignore(
+    _self: *mut c_void,
+    exc: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCodec_IgnoreErrors(exc) }
+}
+
+unsafe extern "C" fn cpython_codec_cfunc_replace(
+    _self: *mut c_void,
+    exc: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCodec_ReplaceErrors(exc) }
+}
+
+unsafe extern "C" fn cpython_codec_cfunc_xmlcharrefreplace(
+    _self: *mut c_void,
+    exc: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCodec_XMLCharRefReplaceErrors(exc) }
+}
+
+unsafe extern "C" fn cpython_codec_cfunc_backslashreplace(
+    _self: *mut c_void,
+    exc: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCodec_BackslashReplaceErrors(exc) }
+}
+
+unsafe extern "C" fn cpython_codec_cfunc_namereplace(
+    _self: *mut c_void,
+    exc: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCodec_NameReplaceErrors(exc) }
+}
+
+static mut PYCODEC_STRICT_ERRORS_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: c"strict".as_ptr(),
+    ml_meth: Some(cpython_codec_cfunc_strict),
+    ml_flags: METH_O,
+    ml_doc: c"PyCodec strict error handler".as_ptr(),
+};
+
+static mut PYCODEC_IGNORE_ERRORS_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: c"ignore".as_ptr(),
+    ml_meth: Some(cpython_codec_cfunc_ignore),
+    ml_flags: METH_O,
+    ml_doc: c"PyCodec ignore error handler".as_ptr(),
+};
+
+static mut PYCODEC_REPLACE_ERRORS_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: c"replace".as_ptr(),
+    ml_meth: Some(cpython_codec_cfunc_replace),
+    ml_flags: METH_O,
+    ml_doc: c"PyCodec replace error handler".as_ptr(),
+};
+
+static mut PYCODEC_XMLCHARREFREPLACE_ERRORS_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: c"xmlcharrefreplace".as_ptr(),
+    ml_meth: Some(cpython_codec_cfunc_xmlcharrefreplace),
+    ml_flags: METH_O,
+    ml_doc: c"PyCodec xmlcharrefreplace error handler".as_ptr(),
+};
+
+static mut PYCODEC_BACKSLASHREPLACE_ERRORS_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: c"backslashreplace".as_ptr(),
+    ml_meth: Some(cpython_codec_cfunc_backslashreplace),
+    ml_flags: METH_O,
+    ml_doc: c"PyCodec backslashreplace error handler".as_ptr(),
+};
+
+static mut PYCODEC_NAMEREPLACE_ERRORS_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: c"namereplace".as_ptr(),
+    ml_meth: Some(cpython_codec_cfunc_namereplace),
+    ml_flags: METH_O,
+    ml_doc: c"PyCodec namereplace error handler".as_ptr(),
+};
+
+fn cpython_codec_builtin_handler_method_def(name: &str) -> Option<*mut CpythonMethodDef> {
+    match name {
+        "strict" => Some(std::ptr::addr_of_mut!(PYCODEC_STRICT_ERRORS_METHOD_DEF)),
+        "ignore" => Some(std::ptr::addr_of_mut!(PYCODEC_IGNORE_ERRORS_METHOD_DEF)),
+        "replace" => Some(std::ptr::addr_of_mut!(PYCODEC_REPLACE_ERRORS_METHOD_DEF)),
+        "xmlcharrefreplace" => Some(std::ptr::addr_of_mut!(
+            PYCODEC_XMLCHARREFREPLACE_ERRORS_METHOD_DEF
+        )),
+        "backslashreplace" => Some(std::ptr::addr_of_mut!(
+            PYCODEC_BACKSLASHREPLACE_ERRORS_METHOD_DEF
+        )),
+        "namereplace" => Some(std::ptr::addr_of_mut!(
+            PYCODEC_NAMEREPLACE_ERRORS_METHOD_DEF
+        )),
+        _ => None,
+    }
+}
+
+fn cpython_codec_builtin_handler_ptr(
+    context: &mut ModuleCapiContext,
+    name: &str,
+) -> Result<*mut c_void, String> {
+    let Some(method_def) = cpython_codec_builtin_handler_method_def(name) else {
+        return Err(format!("unknown built-in codec error handler '{name}'"));
+    };
+    let ptr = context.alloc_cpython_method_cfunction_ptr(
+        method_def,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    );
+    if ptr.is_null() {
+        return Err(format!(
+            "failed to allocate codec error handler callable for '{name}'"
+        ));
+    }
+    Ok(ptr)
+}
+
 fn cpython_unary_numeric_op(
     object: *mut c_void,
     op: impl FnOnce(Value) -> Result<Value, RuntimeError>,
@@ -5657,7 +6009,10 @@ fn cpython_bind_module_def(
             finalize_func,
         },
     );
-    if let Some(previous) = previous && previous.state != state_ptr as usize && previous.state != 0 {
+    if let Some(previous) = previous
+        && previous.state != state_ptr as usize
+        && previous.state != 0
+    {
         if let Some(finalize) = previous.finalize_func {
             // SAFETY: callback pointer was provided by extension code.
             unsafe {
@@ -5691,7 +6046,9 @@ pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> 
         }
         let module_obj = context.module.clone();
         if let Err(err) = cpython_bind_module_def(context, &module_obj, module) {
-            context.set_error(format!("PyModule_Create2 failed to bind module definition: {err}"));
+            context.set_error(format!(
+                "PyModule_Create2 failed to bind module definition: {err}"
+            ));
             return std::ptr::null_mut();
         }
         if !unsafe { (*module).m_doc.is_null() } {
@@ -5722,7 +6079,9 @@ fn cpython_new_module_data(name: String) -> ModuleObject {
         .globals
         .insert("__name__".to_string(), Value::Str(name));
     module.globals.insert("__doc__".to_string(), Value::None);
-    module.globals.insert("__package__".to_string(), Value::None);
+    module
+        .globals
+        .insert("__package__".to_string(), Value::None);
     module.globals.insert("__loader__".to_string(), Value::None);
     module.globals.insert("__spec__".to_string(), Value::None);
     module.touch_globals_version();
@@ -5829,7 +6188,9 @@ pub unsafe extern "C" fn PyModule_ExecDef(module: *mut c_void, module_def: *mut 
             return -1;
         }
         if let Err(err) = cpython_bind_module_def(context, &module_obj, module_def) {
-            context.set_error(format!("PyModule_ExecDef failed to bind module definition: {err}"));
+            context.set_error(format!(
+                "PyModule_ExecDef failed to bind module definition: {err}"
+            ));
             return -1;
         }
         // SAFETY: module_def points to extension-provided PyModuleDef layout.
@@ -6054,10 +6415,7 @@ pub unsafe extern "C" fn PyModule_Add(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyModule_AddFunctions(
-    module: *mut c_void,
-    functions: *mut c_void,
-) -> i32 {
+pub unsafe extern "C" fn PyModule_AddFunctions(module: *mut c_void, functions: *mut c_void) -> i32 {
     if functions.is_null() {
         return 0;
     }
@@ -6147,8 +6505,12 @@ pub unsafe extern "C" fn PyModule_AddType(module: *mut c_void, type_ptr: *mut c_
         return -1;
     }
     // SAFETY: caller provides a valid type object pointer.
-    let name_ptr = unsafe { (type_ptr as *mut CpythonTypeObject).as_ref().map(|tp| tp.tp_name) }
-        .unwrap_or(std::ptr::null());
+    let name_ptr = unsafe {
+        (type_ptr as *mut CpythonTypeObject)
+            .as_ref()
+            .map(|tp| tp.tp_name)
+    }
+    .unwrap_or(std::ptr::null());
     if name_ptr.is_null() {
         cpython_set_typed_error(unsafe { PyExc_SystemError }, "type has no tp_name");
         return -1;
@@ -7726,7 +8088,9 @@ pub unsafe extern "C" fn PyBytes_DecodeEscape(
     };
     match decoded {
         Value::Tuple(items) => match &*items.kind() {
-            Object::Tuple(values) if !values.is_empty() => cpython_new_ptr_for_value(values[0].clone()),
+            Object::Tuple(values) if !values.is_empty() => {
+                cpython_new_ptr_for_value(values[0].clone())
+            }
             _ => {
                 cpython_set_error("PyBytes_DecodeEscape expected tuple(bytes, consumed)");
                 std::ptr::null_mut()
@@ -8816,10 +9180,7 @@ pub unsafe extern "C" fn PyNumber_Xor(left: *mut c_void, right: *mut c_void) -> 
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyNumber_InPlaceAdd(
-    left: *mut c_void,
-    right: *mut c_void,
-) -> *mut c_void {
+pub unsafe extern "C" fn PyNumber_InPlaceAdd(left: *mut c_void, right: *mut c_void) -> *mut c_void {
     unsafe { PyNumber_Add(left, right) }
 }
 
@@ -8897,26 +9258,17 @@ pub unsafe extern "C" fn PyNumber_InPlaceRshift(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyNumber_InPlaceAnd(
-    left: *mut c_void,
-    right: *mut c_void,
-) -> *mut c_void {
+pub unsafe extern "C" fn PyNumber_InPlaceAnd(left: *mut c_void, right: *mut c_void) -> *mut c_void {
     unsafe { PyNumber_And(left, right) }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyNumber_InPlaceOr(
-    left: *mut c_void,
-    right: *mut c_void,
-) -> *mut c_void {
+pub unsafe extern "C" fn PyNumber_InPlaceOr(left: *mut c_void, right: *mut c_void) -> *mut c_void {
     unsafe { PyNumber_Or(left, right) }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyNumber_InPlaceXor(
-    left: *mut c_void,
-    right: *mut c_void,
-) -> *mut c_void {
+pub unsafe extern "C" fn PyNumber_InPlaceXor(left: *mut c_void, right: *mut c_void) -> *mut c_void {
     unsafe { PyNumber_Xor(left, right) }
 }
 
@@ -9025,9 +9377,7 @@ pub unsafe extern "C" fn PyNumber_ToBase(object: *mut c_void, base: i32) -> *mut
             10 => (10, ""),
             16 => (16, "0x"),
             _ => {
-                return Err(
-                    "PyNumber_ToBase base must be 2, 8, 10 or 16".to_string(),
-                );
+                return Err("PyNumber_ToBase base must be 2, 8, 10 or 16".to_string());
             }
         };
         let is_negative = value.is_negative();
@@ -9051,6 +9401,602 @@ pub unsafe extern "C" fn PyNumber_ToBase(object: *mut c_void, base: i32) -> *mut
     .unwrap_or_else(|err| Err(err.to_string()));
     match result {
         Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_Register(search_function: *mut c_void) -> i32 {
+    if search_function.is_null() {
+        let _ = unsafe { PyErr_BadArgument() };
+        return -1;
+    }
+    let search_value = match cpython_value_from_ptr(search_function) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("PyCodec_Register {err}"));
+            return -1;
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::CodecsRegister, vec![search_value]) {
+        Ok(_) => 0,
+        Err(err) => {
+            cpython_set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_Unregister(search_function: *mut c_void) -> i32 {
+    if search_function.is_null() {
+        let _ = unsafe { PyErr_BadArgument() };
+        return -1;
+    }
+    let search_value = match cpython_value_from_ptr(search_function) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("PyCodec_Unregister {err}"));
+            return -1;
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::CodecsUnregister, vec![search_value]) {
+        Ok(_) => 0,
+        Err(err) => {
+            cpython_set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_KnownEncoding(encoding: *const c_char) -> i32 {
+    let Ok(encoding) = cpython_codec_required_name(encoding, "PyCodec_KnownEncoding") else {
+        return 0;
+    };
+    if cpython_call_builtin(BuiltinFunction::CodecsLookup, vec![Value::Str(encoding)]).is_ok() {
+        1
+    } else {
+        0
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_Encode(
+    object: *mut c_void,
+    encoding: *const c_char,
+    errors: *const c_char,
+) -> *mut c_void {
+    if object.is_null() {
+        let _ = unsafe { PyErr_BadArgument() };
+        return std::ptr::null_mut();
+    }
+    let object_value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("PyCodec_Encode {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_Encode") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let errors = match cpython_codec_optional_name(errors, "PyCodec_Encode") {
+        Ok(errors) => errors,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let mut args = vec![object_value, Value::Str(encoding)];
+    if let Some(errors) = errors {
+        args.push(Value::Str(errors));
+    }
+    match cpython_call_builtin(BuiltinFunction::CodecsEncode, args) {
+        Ok(value) => cpython_new_ptr_for_value(value),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_Decode(
+    object: *mut c_void,
+    encoding: *const c_char,
+    errors: *const c_char,
+) -> *mut c_void {
+    if object.is_null() {
+        let _ = unsafe { PyErr_BadArgument() };
+        return std::ptr::null_mut();
+    }
+    let object_value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("PyCodec_Decode {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_Decode") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let errors = match cpython_codec_optional_name(errors, "PyCodec_Decode") {
+        Ok(errors) => errors,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let mut args = vec![object_value, Value::Str(encoding)];
+    if let Some(errors) = errors {
+        args.push(Value::Str(errors));
+    }
+    match cpython_call_builtin(BuiltinFunction::CodecsDecode, args) {
+        Ok(value) => cpython_new_ptr_for_value(value),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_Encoder(encoding: *const c_char) -> *mut c_void {
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_Encoder") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        match cpython_codec_lookup_attr_in_context(context, &encoding, "encode") {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_Decoder(encoding: *const c_char) -> *mut c_void {
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_Decoder") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        match cpython_codec_lookup_attr_in_context(context, &encoding, "decode") {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_IncrementalEncoder(
+    encoding: *const c_char,
+    errors: *const c_char,
+) -> *mut c_void {
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_IncrementalEncoder") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let errors = match cpython_codec_optional_name(errors, "PyCodec_IncrementalEncoder") {
+        Ok(errors) => errors,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let factory = match cpython_call_internal_in_context(
+            context,
+            Value::Builtin(BuiltinFunction::CodecsGetIncrementalEncoder),
+            vec![Value::Str(encoding.clone())],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let mut args = Vec::new();
+        if let Some(errors) = errors {
+            args.push(Value::Str(errors));
+        }
+        match cpython_codec_call_callable_in_context(context, factory, args) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_IncrementalDecoder(
+    encoding: *const c_char,
+    errors: *const c_char,
+) -> *mut c_void {
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_IncrementalDecoder") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let errors = match cpython_codec_optional_name(errors, "PyCodec_IncrementalDecoder") {
+        Ok(errors) => errors,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let factory = match cpython_call_internal_in_context(
+            context,
+            Value::Builtin(BuiltinFunction::CodecsGetIncrementalDecoder),
+            vec![Value::Str(encoding.clone())],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let mut args = Vec::new();
+        if let Some(errors) = errors {
+            args.push(Value::Str(errors));
+        }
+        match cpython_codec_call_callable_in_context(context, factory, args) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_StreamReader(
+    encoding: *const c_char,
+    stream: *mut c_void,
+    errors: *const c_char,
+) -> *mut c_void {
+    if stream.is_null() {
+        let _ = unsafe { PyErr_BadArgument() };
+        return std::ptr::null_mut();
+    }
+    let stream_value = match cpython_value_from_ptr(stream) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("PyCodec_StreamReader {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_StreamReader") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let errors = match cpython_codec_optional_name(errors, "PyCodec_StreamReader") {
+        Ok(errors) => errors,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let factory = match cpython_codec_lookup_attr_in_context(context, &encoding, "streamreader")
+        {
+            Ok(value) if !matches!(value, Value::None) => value,
+            _ => {
+                return match cpython_codec_stream_fallback_in_context(
+                    context,
+                    "StreamReader",
+                    stream_value.clone(),
+                    errors.as_deref(),
+                ) {
+                    Ok(value) => context.alloc_cpython_ptr_for_value(value),
+                    Err(err) => {
+                        context.set_error(err);
+                        std::ptr::null_mut()
+                    }
+                };
+            }
+        };
+        let mut args = vec![stream_value];
+        if let Some(errors) = errors {
+            args.push(Value::Str(errors));
+        }
+        match cpython_codec_call_callable_in_context(context, factory, args) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_StreamWriter(
+    encoding: *const c_char,
+    stream: *mut c_void,
+    errors: *const c_char,
+) -> *mut c_void {
+    if stream.is_null() {
+        let _ = unsafe { PyErr_BadArgument() };
+        return std::ptr::null_mut();
+    }
+    let stream_value = match cpython_value_from_ptr(stream) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("PyCodec_StreamWriter {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let encoding = match cpython_codec_required_name(encoding, "PyCodec_StreamWriter") {
+        Ok(encoding) => encoding,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let errors = match cpython_codec_optional_name(errors, "PyCodec_StreamWriter") {
+        Ok(errors) => errors,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let factory = match cpython_codec_lookup_attr_in_context(context, &encoding, "streamwriter")
+        {
+            Ok(value) if !matches!(value, Value::None) => value,
+            _ => {
+                return match cpython_codec_stream_fallback_in_context(
+                    context,
+                    "StreamWriter",
+                    stream_value.clone(),
+                    errors.as_deref(),
+                ) {
+                    Ok(value) => context.alloc_cpython_ptr_for_value(value),
+                    Err(err) => {
+                        context.set_error(err);
+                        std::ptr::null_mut()
+                    }
+                };
+            }
+        };
+        let mut args = vec![stream_value];
+        if let Some(errors) = errors {
+            args.push(Value::Str(errors));
+        }
+        match cpython_codec_call_callable_in_context(context, factory, args) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_RegisterError(name: *const c_char, error: *mut c_void) -> i32 {
+    if error.is_null() {
+        let _ = unsafe { PyErr_BadArgument() };
+        return -1;
+    }
+    let name = match cpython_codec_required_name(name, "PyCodec_RegisterError") {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    if unsafe { PyCallable_Check(error) } == 0 {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "handler must be callable");
+        return -1;
+    }
+    with_active_cpython_context_mut(|context| {
+        context.codec_error_handlers.insert(name, error as usize);
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_LookupError(name: *const c_char) -> *mut c_void {
+    let name = if name.is_null() {
+        "strict".to_string()
+    } else {
+        match cpython_codec_required_name(name, "PyCodec_LookupError") {
+            Ok(name) => name,
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        if let Some(handler_ptr) = context.codec_error_handlers.get(&name).copied() {
+            return handler_ptr as *mut c_void;
+        }
+        match cpython_codec_builtin_handler_ptr(context, &name) {
+            Ok(handler_ptr) => handler_ptr,
+            Err(_) => {
+                context.set_error(format!("LookupError: unknown error handler name '{name}'"));
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_StrictErrors(exc: *mut c_void) -> *mut c_void {
+    if exc.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "codec must pass exception instance",
+        );
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| match cpython_codec_error_info(context, exc) {
+        Ok(_) => {
+            // SAFETY: raising the passed exception object mirrors CPython strict handler behavior.
+            unsafe { PyErr_SetObject(std::ptr::null_mut(), exc) };
+            std::ptr::null_mut()
+        }
+        Err(err) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            std::ptr::null_mut()
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_IgnoreErrors(exc: *mut c_void) -> *mut c_void {
+    match with_active_cpython_context_mut(|context| cpython_codec_error_info(context, exc)) {
+        Ok(Ok((_, _, end))) => cpython_codec_handler_tuple_result(String::new(), end),
+        Ok(Err(err)) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            std::ptr::null_mut()
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_ReplaceErrors(exc: *mut c_void) -> *mut c_void {
+    match with_active_cpython_context_mut(|context| cpython_codec_error_info(context, exc)) {
+        Ok(Ok((_, exc_name, end))) => {
+            let replacement = if exc_name == "UnicodeEncodeError" {
+                "?".to_string()
+            } else {
+                "\u{fffd}".to_string()
+            };
+            cpython_codec_handler_tuple_result(replacement, end)
+        }
+        Ok(Err(err)) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            std::ptr::null_mut()
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_XMLCharRefReplaceErrors(exc: *mut c_void) -> *mut c_void {
+    match with_active_cpython_context_mut(|context| cpython_codec_error_info(context, exc)) {
+        Ok(Ok((_, _, end))) => cpython_codec_handler_tuple_result("&#xfffd;".to_string(), end),
+        Ok(Err(err)) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            std::ptr::null_mut()
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_BackslashReplaceErrors(exc: *mut c_void) -> *mut c_void {
+    match with_active_cpython_context_mut(|context| cpython_codec_error_info(context, exc)) {
+        Ok(Ok((_, _, end))) => cpython_codec_handler_tuple_result("\\x3f".to_string(), end),
+        Ok(Err(err)) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            std::ptr::null_mut()
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCodec_NameReplaceErrors(exc: *mut c_void) -> *mut c_void {
+    match with_active_cpython_context_mut(|context| cpython_codec_error_info(context, exc)) {
+        Ok(Ok((_, _, end))) => {
+            cpython_codec_handler_tuple_result("\\N{REPLACEMENT CHARACTER}".to_string(), end)
+        }
+        Ok(Err(err)) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            std::ptr::null_mut()
+        }
         Err(err) => {
             cpython_set_error(err);
             std::ptr::null_mut()
@@ -9208,7 +10154,8 @@ fn cpython_import_from_inittab(
     }
     // SAFETY: VM pointer is valid for active context lifetime.
     let vm = unsafe { &mut *context.vm };
-    vm.modules.insert(module_name.to_string(), module_obj.clone());
+    vm.modules
+        .insert(module_name.to_string(), module_obj.clone());
     if let Some(modules_dict) = vm.sys_dict_obj("modules") {
         dict_set_value_checked(
             &modules_dict,
@@ -9435,15 +10382,17 @@ pub unsafe extern "C" fn PyImport_ImportFrozenModule(name: *const c_char) -> i32
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_ImportFrozenModuleObject(name: *mut c_void) -> i32 {
     with_active_cpython_context_mut(|context| {
-        let module_name =
-            match cpython_module_name_from_object(context, name, "PyImport_ImportFrozenModuleObject")
-            {
-                Ok(name) => name,
-                Err(err) => {
-                    context.set_error(err);
-                    return -1;
-                }
-            };
+        let module_name = match cpython_module_name_from_object(
+            context,
+            name,
+            "PyImport_ImportFrozenModuleObject",
+        ) {
+            Ok(name) => name,
+            Err(err) => {
+                context.set_error(err);
+                return -1;
+            }
+        };
         let c_name = match CString::new(module_name) {
             Ok(name) => name,
             Err(_) => {
@@ -9462,7 +10411,10 @@ pub unsafe extern "C" fn PyImport_ImportFrozenModuleObject(name: *mut c_void) ->
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyImport_ExecCodeModule(name: *const c_char, code: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn PyImport_ExecCodeModule(
+    name: *const c_char,
+    code: *mut c_void,
+) -> *mut c_void {
     let module_name = match unsafe { c_name_to_string(name) } {
         Ok(name) => name,
         Err(err) => {
@@ -9663,15 +10615,17 @@ pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void 
         };
         // SAFETY: VM pointer is valid for active context lifetime.
         let vm = unsafe { &mut *context.vm };
-        let pkgutil = match vm.builtin_import_module(
-            vec![Value::Str("pkgutil".to_string())],
-            HashMap::new(),
-        ) {
+        let pkgutil = match vm
+            .builtin_import_module(vec![Value::Str("pkgutil".to_string())], HashMap::new())
+        {
             Ok(value) => value,
             Err(err) => {
                 vm.clear_active_exception();
                 if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
-                    eprintln!("[cpy-api] PyImport_GetImporter fallback (pkgutil import failed): {}", err.message);
+                    eprintln!(
+                        "[cpy-api] PyImport_GetImporter fallback (pkgutil import failed): {}",
+                        err.message
+                    );
                 }
                 return context.alloc_cpython_ptr_for_value(Value::None);
             }
@@ -9689,7 +10643,10 @@ pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void 
             Err(err) => {
                 vm.clear_active_exception();
                 if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
-                    eprintln!("[cpy-api] PyImport_GetImporter fallback (getattr failed): {}", err.message);
+                    eprintln!(
+                        "[cpy-api] PyImport_GetImporter fallback (getattr failed): {}",
+                        err.message
+                    );
                 }
                 return context.alloc_cpython_ptr_for_value(Value::None);
             }
@@ -9703,7 +10660,10 @@ pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void 
             Err(err) => {
                 vm.clear_active_exception();
                 if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
-                    eprintln!("[cpy-api] PyImport_GetImporter fallback (call failed): {}", err.message);
+                    eprintln!(
+                        "[cpy-api] PyImport_GetImporter fallback (call failed): {}",
+                        err.message
+                    );
                 }
                 context.alloc_cpython_ptr_for_value(Value::None)
             }
@@ -10205,9 +11165,7 @@ pub unsafe extern "C" fn PyEval_GetFuncDesc(func: *mut c_void) -> *const c_char 
         };
         match value {
             Value::Class(_) => c" constructor".as_ptr(),
-            Value::Function(_) | Value::BoundMethod(_) | Value::Builtin(_) => {
-                c"()".as_ptr()
-            }
+            Value::Function(_) | Value::BoundMethod(_) | Value::Builtin(_) => c"()".as_ptr(),
             other => {
                 if context.vm.is_null() {
                     c" object".as_ptr()
@@ -13859,7 +14817,10 @@ pub unsafe extern "C" fn PyObject_GetAIter(object: *mut c_void) -> *mut c_void {
         };
         // SAFETY: VM pointer is valid for context lifetime.
         let vm = unsafe { &mut *context.vm };
-        let aiter = match vm.builtin_getattr(vec![value, Value::Str("__aiter__".to_string())], HashMap::new()) {
+        let aiter = match vm.builtin_getattr(
+            vec![value, Value::Str("__aiter__".to_string())],
+            HashMap::new(),
+        ) {
             Ok(callable) => callable,
             Err(err) => {
                 context.set_error(err.message);
@@ -13869,7 +14830,10 @@ pub unsafe extern "C" fn PyObject_GetAIter(object: *mut c_void) -> *mut c_void {
         match vm.call_internal(aiter, Vec::new(), HashMap::new()) {
             Ok(InternalCallOutcome::Value(result)) => context.alloc_cpython_ptr_for_value(result),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                context.set_error(vm.runtime_error_from_active_exception("PyObject_GetAIter failed").message);
+                context.set_error(
+                    vm.runtime_error_from_active_exception("PyObject_GetAIter failed")
+                        .message,
+                );
                 std::ptr::null_mut()
             }
             Err(err) => {
@@ -15646,7 +16610,8 @@ pub unsafe extern "C" fn PyMapping_Check(object: *mut c_void) -> i32 {
             | Value::ByteArray(_),
         ) => 1,
         Ok(_) => {
-            let status = unsafe { PyObject_HasAttrStringWithError(object, c"__getitem__".as_ptr()) };
+            let status =
+                unsafe { PyObject_HasAttrStringWithError(object, c"__getitem__".as_ptr()) };
             if status < 0 {
                 unsafe { PyErr_Clear() };
                 0
@@ -15671,7 +16636,10 @@ pub unsafe extern "C" fn PyMapping_Size(object: *mut c_void) -> isize {
             return -1;
         }
         if has_len == 1 {
-            cpython_set_typed_error(unsafe { PyExc_TypeError }, format!("{type_name} is not a mapping"));
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                format!("{type_name} is not a mapping"),
+            );
         } else {
             cpython_set_typed_error(
                 unsafe { PyExc_TypeError },
@@ -15905,7 +16873,10 @@ pub unsafe extern "C" fn PySeqIter_New(object: *mut c_void) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyCallIter_New(callable: *mut c_void, sentinel: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn PyCallIter_New(
+    callable: *mut c_void,
+    sentinel: *mut c_void,
+) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if callable.is_null() || sentinel.is_null() {
             context.set_error("PyCallIter_New received null callable/sentinel");
@@ -17248,7 +18219,10 @@ pub unsafe extern "C" fn PyCFunction_New(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyDescr_NewMethod(type_obj: *mut c_void, method: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn PyDescr_NewMethod(
+    type_obj: *mut c_void,
+    method: *mut c_void,
+) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if type_obj.is_null() || method.is_null() {
             context.set_error("bad internal call");
@@ -17344,7 +18318,10 @@ pub unsafe extern "C" fn PyDescr_NewClassMethod(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyDescr_NewMember(type_obj: *mut c_void, member: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn PyDescr_NewMember(
+    type_obj: *mut c_void,
+    member: *mut c_void,
+) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if type_obj.is_null() || member.is_null() {
             context.set_error("bad internal call");
@@ -17383,7 +18360,10 @@ pub unsafe extern "C" fn PyDescr_NewMember(type_obj: *mut c_void, member: *mut c
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyDescr_NewGetSet(type_obj: *mut c_void, getset: *mut c_void) -> *mut c_void {
+pub unsafe extern "C" fn PyDescr_NewGetSet(
+    type_obj: *mut c_void,
+    getset: *mut c_void,
+) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if type_obj.is_null() || getset.is_null() {
             context.set_error("bad internal call");
@@ -18630,7 +19610,10 @@ fn cpython_sys_xoptions_dict(context: &mut ModuleCapiContext) -> Result<ObjRef, 
     Ok(dict_obj)
 }
 
-fn cpython_sys_add_warn_option(context: &mut ModuleCapiContext, option: String) -> Result<(), String> {
+fn cpython_sys_add_warn_option(
+    context: &mut ModuleCapiContext,
+    option: String,
+) -> Result<(), String> {
     let warnoptions = cpython_sys_warnoptions_list(context)?;
     let Object::List(values) = &mut *warnoptions.kind_mut() else {
         return Err("warnoptions is not a list".to_string());
@@ -18835,7 +19818,10 @@ pub unsafe extern "C" fn pyrs_capi_sys_write_stderr(text: *const c_char) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySys_AuditTuple(event: *const c_char, _args: *mut c_void) -> i32 {
     if event.is_null() {
-        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PySys_AuditTuple requires event name");
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PySys_AuditTuple requires event name",
+        );
         return -1;
     }
     0
@@ -18881,13 +19867,12 @@ pub unsafe extern "C" fn PySys_SetPath(path: *const Cwchar) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PySys_SetArgvEx(
-    argc: i32,
-    argv: *mut *mut Cwchar,
-    updatepath: i32,
-) {
+pub unsafe extern "C" fn PySys_SetArgvEx(argc: i32, argv: *mut *mut Cwchar, updatepath: i32) {
     if argc < 0 {
-        cpython_set_typed_error(unsafe { PyExc_ValueError }, "PySys_SetArgvEx argc must be >= 0");
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "PySys_SetArgvEx argc must be >= 0",
+        );
         return;
     }
     let mut argv_values: Vec<Value> = Vec::new();
@@ -18929,9 +19914,10 @@ pub unsafe extern "C" fn PySys_SetArgvEx(
         }
         let mut path_values: Vec<Value> = Vec::new();
         if let Some(Value::Str(program_path)) = argv_values.first() {
-            let first_path = Path::new(program_path)
-                .parent()
-                .map_or_else(|| "".to_string(), |parent| parent.to_string_lossy().to_string());
+            let first_path = Path::new(program_path).parent().map_or_else(
+                || "".to_string(),
+                |parent| parent.to_string_lossy().to_string(),
+            );
             path_values.push(Value::Str(first_path));
         }
         if let Ok(sys_module) = cpython_sys_module_obj(context)
@@ -18961,7 +19947,10 @@ pub unsafe extern "C" fn PyThreadState_Get() -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThreadState_New(interp: *mut c_void) -> *mut c_void {
     if interp.is_null() {
-        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_New requires interpreter");
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyThreadState_New requires interpreter",
+        );
         return std::ptr::null_mut();
     }
     // SAFETY: allocate opaque thread-state token for CPython-ABI compatibility.
@@ -18982,7 +19971,10 @@ pub unsafe extern "C" fn PyThreadState_Swap(new_thread_state: *mut c_void) -> *m
     if !new_thread_state.is_null() {
         let new_ptr = new_thread_state as usize;
         if !cpython_is_known_thread_state_ptr(new_ptr) {
-            cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_Swap received unknown thread state");
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                "PyThreadState_Swap received unknown thread state",
+            );
             return std::ptr::null_mut();
         }
     }
@@ -18996,7 +19988,10 @@ pub unsafe extern "C" fn PyThreadState_Clear(thread_state: *mut c_void) {
         return;
     }
     if !cpython_is_known_thread_state_ptr(thread_state as usize) {
-        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_Clear received unknown thread state");
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyThreadState_Clear received unknown thread state",
+        );
     }
 }
 
@@ -19022,7 +20017,10 @@ pub unsafe extern "C" fn PyThreadState_Delete(thread_state: *mut c_void) {
             free(thread_state);
         }
     } else {
-        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_Delete received unknown thread state");
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyThreadState_Delete received unknown thread state",
+        );
     }
 }
 
@@ -19112,7 +20110,11 @@ pub unsafe extern "C" fn PyFrame_GetLineNumber(frame: *mut c_void) -> i32 {
                 .unwrap_or(0);
         }
         if let Some(Value::Code(code_obj)) = context.cpython_value_from_ptr_or_proxy(frame) {
-            return code_obj.locations.first().map(|loc| loc.line as i32).unwrap_or(0);
+            return code_obj
+                .locations
+                .first()
+                .map(|loc| loc.line as i32)
+                .unwrap_or(0);
         }
         0
     })
@@ -19282,8 +20284,9 @@ pub unsafe extern "C" fn PyErr_NewException(
         return std::ptr::null_mut();
     }
     if contains_module == 0 {
-        modulename_obj =
-            unsafe { PyUnicode_FromStringAndSize(module_name.as_ptr().cast(), module_name.len() as isize) };
+        modulename_obj = unsafe {
+            PyUnicode_FromStringAndSize(module_name.as_ptr().cast(), module_name.len() as isize)
+        };
         if modulename_obj.is_null() {
             unsafe {
                 Py_DecRef(module_key);
@@ -20044,7 +21047,10 @@ pub unsafe extern "C" fn PyErr_SetFromErrnoWithFilenameObjects(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyErr_SetExcFromWindowsErr(exception: *mut c_void, ierr: i32) -> *mut c_void {
+pub unsafe extern "C" fn PyErr_SetExcFromWindowsErr(
+    exception: *mut c_void,
+    ierr: i32,
+) -> *mut c_void {
     cpython_set_os_error_message(exception, Some(ierr), None, None);
     std::ptr::null_mut()
 }
@@ -20117,8 +21123,13 @@ pub unsafe extern "C" fn PyErr_SyntaxLocation(filename: *const c_char, lineno: i
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyErr_SyntaxLocationEx(filename: *const c_char, lineno: i32, col_offset: i32) {
-    let filename = cpython_optional_filename_from_c(filename).unwrap_or_else(|| "<unknown>".to_string());
+pub unsafe extern "C" fn PyErr_SyntaxLocationEx(
+    filename: *const c_char,
+    lineno: i32,
+    col_offset: i32,
+) {
+    let filename =
+        cpython_optional_filename_from_c(filename).unwrap_or_else(|| "<unknown>".to_string());
     let message = format!("invalid syntax ({filename}, line {lineno}, column {col_offset})");
     cpython_set_typed_error(std::ptr::null_mut(), message);
 }
@@ -20207,7 +21218,8 @@ fn cpython_set_import_error_subclass_with_name_from(
     }
     if unsafe { PyObject_SetAttrString(error_instance, c"name".as_ptr(), name_obj) } != 0
         || unsafe { PyObject_SetAttrString(error_instance, c"path".as_ptr(), path_obj) } != 0
-        || unsafe { PyObject_SetAttrString(error_instance, c"name_from".as_ptr(), from_name_obj) } != 0
+        || unsafe { PyObject_SetAttrString(error_instance, c"name_from".as_ptr(), from_name_obj) }
+            != 0
     {
         return std::ptr::null_mut();
     }
@@ -20473,7 +21485,8 @@ pub unsafe extern "C" fn PyFile_FromFd(
             Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
                 context.set_error(
-                    vm.runtime_error_from_active_exception("PyFile_FromFd failed").message,
+                    vm.runtime_error_from_active_exception("PyFile_FromFd failed")
+                        .message,
                 );
                 std::ptr::null_mut()
             }
@@ -21336,9 +22349,7 @@ pub unsafe extern "C" fn PyEval_EvalCodeEx(
         return unsafe { PyEval_EvalCode(code, globals, locals) };
     }
     with_active_cpython_context_mut(|context| {
-        context.set_error(
-            "PyEval_EvalCodeEx extended args/kws/defs/closure are not yet supported",
-        );
+        context.set_error("PyEval_EvalCodeEx extended args/kws/defs/closure are not yet supported");
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -21349,7 +22360,10 @@ pub unsafe extern "C" fn PyEval_EvalCodeEx(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyEval_EvalFrame(frame: *mut c_void) -> *mut c_void {
     if frame.is_null() {
-        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyEval_EvalFrame requires frame");
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_EvalFrame requires frame",
+        );
         return std::ptr::null_mut();
     }
     if frame == unsafe { PyThreadState_Get() } {
@@ -22061,8 +23075,11 @@ static KEEP2_PYMODULE_ADDFUNCTIONS: unsafe extern "C" fn(*mut c_void, *mut c_voi
 static KEEP2_PYMODULE_ADDTYPE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyModule_AddType;
 #[used]
-static KEEP2_PYMODULE_FROMDEFANDSPEC2: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> *mut c_void =
-    PyModule_FromDefAndSpec2;
+static KEEP2_PYMODULE_FROMDEFANDSPEC2: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    i32,
+) -> *mut c_void = PyModule_FromDefAndSpec2;
 #[used]
 static KEEP2_PYMODULE_EXECDEF: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyModule_ExecDef;
@@ -22234,8 +23251,10 @@ static KEEP2_PYMAPPING_SETITEMSTRING: unsafe extern "C" fn(
 static KEEP2_PYMAPPING_HASKEYWITHERROR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyMapping_HasKeyWithError;
 #[used]
-static KEEP2_PYMAPPING_HASKEYSTRINGWITHERROR: unsafe extern "C" fn(*mut c_void, *const c_char) -> i32 =
-    PyMapping_HasKeyStringWithError;
+static KEEP2_PYMAPPING_HASKEYSTRINGWITHERROR: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+) -> i32 = PyMapping_HasKeyStringWithError;
 #[used]
 static KEEP2_PYMAPPING_HASKEY: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyMapping_HasKey;
@@ -22498,8 +23517,7 @@ static KEEP2_PYTHREADSTATE_GETID: unsafe extern "C" fn(*mut c_void) -> u64 = PyT
 #[used]
 static KEEP2_PYTHREADSTATE_GETDICT: unsafe extern "C" fn() -> *mut c_void = PyThreadState_GetDict;
 #[used]
-static KEEP2_PYINTERPRETERSTATE_GET: unsafe extern "C" fn() -> *mut c_void =
-    PyInterpreterState_Get;
+static KEEP2_PYINTERPRETERSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyInterpreterState_Get;
 #[used]
 static KEEP2_PYINTERPRETERSTATE_GETID: unsafe extern "C" fn(*mut c_void) -> i64 =
     PyInterpreterState_GetID;
@@ -22551,8 +23569,11 @@ static KEEP3_PYOBJECT_CALLMETHOD: unsafe extern "C" fn(
     ...
 ) -> *mut c_void = PyObject_CallMethod;
 #[used]
-static KEEP3_PYEVAL_CALLFUNCTION: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> *mut c_void =
-    PyEval_CallFunction;
+static KEEP3_PYEVAL_CALLFUNCTION: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    ...
+) -> *mut c_void = PyEval_CallFunction;
 #[used]
 static KEEP3_PYEVAL_CALLMETHOD: unsafe extern "C" fn(
     *mut c_void,
@@ -22561,8 +23582,7 @@ static KEEP3_PYEVAL_CALLMETHOD: unsafe extern "C" fn(
     ...
 ) -> *mut c_void = PyEval_CallMethod;
 #[used]
-static KEEP3_PYEVAL_EVALFRAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
-    PyEval_EvalFrame;
+static KEEP3_PYEVAL_EVALFRAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyEval_EvalFrame;
 #[used]
 static KEEP3_PYEVAL_EVALFRAMEEX: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
     PyEval_EvalFrameEx;
@@ -22671,6 +23691,75 @@ static KEEP3_PYSYS_FORMATSTDERR: unsafe extern "C" fn(*const c_char, ...) = PySy
 #[used]
 static KEEP3_PYSYS_AUDIT: unsafe extern "C" fn(*const c_char, *const c_char, ...) -> i32 =
     PySys_Audit;
+#[used]
+static KEEP3_PYCODEC_REGISTER: unsafe extern "C" fn(*mut c_void) -> i32 = PyCodec_Register;
+#[used]
+static KEEP3_PYCODEC_UNREGISTER: unsafe extern "C" fn(*mut c_void) -> i32 = PyCodec_Unregister;
+#[used]
+static KEEP3_PYCODEC_KNOWNENCODING: unsafe extern "C" fn(*const c_char) -> i32 =
+    PyCodec_KnownEncoding;
+#[used]
+static KEEP3_PYCODEC_ENCODE: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *const c_char,
+) -> *mut c_void = PyCodec_Encode;
+#[used]
+static KEEP3_PYCODEC_DECODE: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *const c_char,
+) -> *mut c_void = PyCodec_Decode;
+#[used]
+static KEEP3_PYCODEC_ENCODER: unsafe extern "C" fn(*const c_char) -> *mut c_void = PyCodec_Encoder;
+#[used]
+static KEEP3_PYCODEC_DECODER: unsafe extern "C" fn(*const c_char) -> *mut c_void = PyCodec_Decoder;
+#[used]
+static KEEP3_PYCODEC_INCREMENTALENCODER: unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+) -> *mut c_void = PyCodec_IncrementalEncoder;
+#[used]
+static KEEP3_PYCODEC_INCREMENTALDECODER: unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+) -> *mut c_void = PyCodec_IncrementalDecoder;
+#[used]
+static KEEP3_PYCODEC_STREAMREADER: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = PyCodec_StreamReader;
+#[used]
+static KEEP3_PYCODEC_STREAMWRITER: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = PyCodec_StreamWriter;
+#[used]
+static KEEP3_PYCODEC_REGISTERERROR: unsafe extern "C" fn(*const c_char, *mut c_void) -> i32 =
+    PyCodec_RegisterError;
+#[used]
+static KEEP3_PYCODEC_LOOKUPERROR: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+    PyCodec_LookupError;
+#[used]
+static KEEP3_PYCODEC_STRICTERRORS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCodec_StrictErrors;
+#[used]
+static KEEP3_PYCODEC_IGNOREERRORS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCodec_IgnoreErrors;
+#[used]
+static KEEP3_PYCODEC_REPLACEERRORS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCodec_ReplaceErrors;
+#[used]
+static KEEP3_PYCODEC_XMLCHARREFREPLACEERRORS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCodec_XMLCharRefReplaceErrors;
+#[used]
+static KEEP3_PYCODEC_BACKSLASHREPLACEERRORS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCodec_BackslashReplaceErrors;
+#[used]
+static KEEP3_PYCODEC_NAMEREPLACEERRORS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyCodec_NameReplaceErrors;
 #[used]
 static KEEP3_PYERR_GIVENEXCEPTIONMATCHES: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyErr_GivenExceptionMatches;
@@ -23021,18 +24110,13 @@ static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME: unsafe extern "C" fn(
     *const c_char,
 ) -> *mut c_void = PyErr_SetExcFromWindowsErrWithFilename;
 #[used]
-static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME_OBJECT: unsafe extern "C" fn(
-    *mut c_void,
-    i32,
-    *mut c_void,
-) -> *mut c_void = PyErr_SetExcFromWindowsErrWithFilenameObject;
+static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME_OBJECT:
+    unsafe extern "C" fn(*mut c_void, i32, *mut c_void) -> *mut c_void =
+    PyErr_SetExcFromWindowsErrWithFilenameObject;
 #[used]
-static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME_OBJECTS: unsafe extern "C" fn(
-    *mut c_void,
-    i32,
-    *mut c_void,
-    *mut c_void,
-) -> *mut c_void = PyErr_SetExcFromWindowsErrWithFilenameObjects;
+static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME_OBJECTS:
+    unsafe extern "C" fn(*mut c_void, i32, *mut c_void, *mut c_void) -> *mut c_void =
+    PyErr_SetExcFromWindowsErrWithFilenameObjects;
 #[used]
 static KEEP_PYERR_SET_FROM_WINDOWS_ERR: unsafe extern "C" fn(i32) -> *mut c_void =
     PyErr_SetFromWindowsErr;
@@ -23263,8 +24347,10 @@ static KEEP_PYIMPORT_IMPORT_FROZEN_MODULE: unsafe extern "C" fn(*const c_char) -
 static KEEP_PYIMPORT_IMPORT_FROZEN_MODULE_OBJECT: unsafe extern "C" fn(*mut c_void) -> i32 =
     PyImport_ImportFrozenModuleObject;
 #[used]
-static KEEP_PYIMPORT_EXECCODEMODULE: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
-    PyImport_ExecCodeModule;
+static KEEP_PYIMPORT_EXECCODEMODULE: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+) -> *mut c_void = PyImport_ExecCodeModule;
 #[used]
 static KEEP_PYIMPORT_EXECCODEMODULE_EX: unsafe extern "C" fn(
     *const c_char,
@@ -23328,8 +24414,7 @@ static KEEP_PYEVAL_GET_FRAME_BUILTINS: unsafe extern "C" fn() -> *mut c_void =
 static KEEP_PYEVAL_GET_FRAME_GLOBALS: unsafe extern "C" fn() -> *mut c_void =
     PyEval_GetFrameGlobals;
 #[used]
-static KEEP_PYEVAL_GET_FRAME_LOCALS: unsafe extern "C" fn() -> *mut c_void =
-    PyEval_GetFrameLocals;
+static KEEP_PYEVAL_GET_FRAME_LOCALS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetFrameLocals;
 #[used]
 static KEEP_PYEVAL_GET_FUNC_NAME: unsafe extern "C" fn(*mut c_void) -> *const c_char =
     PyEval_GetFuncName;
@@ -23598,8 +24683,7 @@ static KEEP_PYOBJECT_GETITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
 #[used]
 static KEEP_PYAITER_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PyAIter_Check;
 #[used]
-static KEEP_PYOBJECT_GETAITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
-    PyObject_GetAIter;
+static KEEP_PYOBJECT_GETAITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_GetAIter;
 #[used]
 static KEEP_PYOBJECT_SELFITER: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_SelfIter;
 #[used]
@@ -23695,8 +24779,11 @@ static KEEP_PYEVAL_CALL_OBJECT_WITH_KEYWORDS: unsafe extern "C" fn(
     *mut c_void,
 ) -> *mut c_void = PyEval_CallObjectWithKeywords;
 #[used]
-static KEEP_PYEVAL_EVAL_CODE: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
-    PyEval_EvalCode;
+static KEEP_PYEVAL_EVAL_CODE: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyEval_EvalCode;
 #[used]
 static KEEP_PYEVAL_EVAL_CODE_EX: unsafe extern "C" fn(
     *mut c_void,
@@ -23750,8 +24837,10 @@ static KEEP_PYNUMBER_POWER: unsafe extern "C" fn(
     *mut c_void,
 ) -> *mut c_void = PyNumber_Power;
 #[used]
-static KEEP_PYNUMBER_MATRIX_MULTIPLY: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-    PyNumber_MatrixMultiply;
+static KEEP_PYNUMBER_MATRIX_MULTIPLY: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_MatrixMultiply;
 #[used]
 static KEEP_PYNUMBER_LSHIFT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyNumber_Lshift;
@@ -23771,11 +24860,15 @@ static KEEP_PYNUMBER_XOR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut
 static KEEP_PYNUMBER_INPLACE_ADD: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyNumber_InPlaceAdd;
 #[used]
-static KEEP_PYNUMBER_INPLACE_SUBTRACT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-    PyNumber_InPlaceSubtract;
+static KEEP_PYNUMBER_INPLACE_SUBTRACT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_InPlaceSubtract;
 #[used]
-static KEEP_PYNUMBER_INPLACE_MULTIPLY: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-    PyNumber_InPlaceMultiply;
+static KEEP_PYNUMBER_INPLACE_MULTIPLY: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_InPlaceMultiply;
 #[used]
 static KEEP_PYNUMBER_INPLACE_MATRIX_MULTIPLY: unsafe extern "C" fn(
     *mut c_void,
@@ -23833,7 +24926,8 @@ static KEEP_PYNUMBER_INDEX: unsafe extern "C" fn(*mut c_void) -> *mut c_void = P
 static KEEP_PYNUMBER_AS_SSIZE_T: unsafe extern "C" fn(*mut c_void, *mut c_void) -> isize =
     PyNumber_AsSsize_t;
 #[used]
-static KEEP_PYNUMBER_TO_BASE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void = PyNumber_ToBase;
+static KEEP_PYNUMBER_TO_BASE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
+    PyNumber_ToBase;
 #[used]
 static KEEP_PYMEM_RAW_MALLOC: unsafe extern "C" fn(usize) -> *mut c_void = PyMem_RawMalloc;
 #[used]
@@ -23844,11 +24938,15 @@ static KEEP_PYMEM_RAW_REALLOC: unsafe extern "C" fn(*mut c_void, usize) -> *mut 
 #[used]
 static KEEP_PYMEM_RAW_FREE: unsafe extern "C" fn(*mut c_void) = PyMem_RawFree;
 #[used]
-static KEEP_PYMARSHAL_READ_OBJECT_FROM_STRING: unsafe extern "C" fn(*const c_char, isize) -> *mut c_void =
-    PyMarshal_ReadObjectFromString;
+static KEEP_PYMARSHAL_READ_OBJECT_FROM_STRING: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+) -> *mut c_void = PyMarshal_ReadObjectFromString;
 #[used]
-static KEEP_PYMARSHAL_WRITE_OBJECT_TO_STRING: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
-    PyMarshal_WriteObjectToString;
+static KEEP_PYMARSHAL_WRITE_OBJECT_TO_STRING: unsafe extern "C" fn(
+    *mut c_void,
+    i32,
+) -> *mut c_void = PyMarshal_WriteObjectToString;
 #[used]
 static KEEP_PYMEM_MALLOC: unsafe extern "C" fn(usize) -> *mut c_void = PyMem_Malloc;
 #[used]
@@ -24025,22 +25123,25 @@ fn cpython_marshal_object_to_value(
             .collect::<Result<Vec<_>, _>>()
             .map(|items| vm.heap.alloc_frozenset(items)),
         CpythonMarshalObject::Slice { lower, upper, step } => {
-            let parse_int = |value: &Option<Box<CpythonMarshalObject>>| -> Result<Option<i64>, String> {
-                match value {
-                    None => Ok(None),
-                    Some(value) => match value.as_ref() {
-                        CpythonMarshalObject::Int(value) => Ok(Some(*value)),
-                        _ => Err("marshal slice bounds must decode to int".to_string()),
-                    },
-                }
-            };
+            let parse_int =
+                |value: &Option<Box<CpythonMarshalObject>>| -> Result<Option<i64>, String> {
+                    match value {
+                        None => Ok(None),
+                        Some(value) => match value.as_ref() {
+                            CpythonMarshalObject::Int(value) => Ok(Some(*value)),
+                            _ => Err("marshal slice bounds must decode to int".to_string()),
+                        },
+                    }
+                };
             Ok(Value::Slice(Box::new(SliceValue {
                 lower: parse_int(lower)?,
                 upper: parse_int(upper)?,
                 step: parse_int(step)?,
             })))
         }
-        CpythonMarshalObject::Code(_) => Err("marshal code objects are not supported in C-API decode".to_string()),
+        CpythonMarshalObject::Code(_) => {
+            Err("marshal code objects are not supported in C-API decode".to_string())
+        }
     }
 }
 

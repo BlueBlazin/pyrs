@@ -181,6 +181,26 @@ void PySys_SetArgv(int argc, wchar_t **argv);
 void PySys_SetArgvEx(int argc, wchar_t **argv, int updatepath);
 void PySys_SetPath(const wchar_t *path);
 
+int PyCodec_Register(PyObject *search_function);
+int PyCodec_Unregister(PyObject *search_function);
+int PyCodec_KnownEncoding(const char *encoding);
+PyObject *PyCodec_Encode(PyObject *object, const char *encoding, const char *errors);
+PyObject *PyCodec_Decode(PyObject *object, const char *encoding, const char *errors);
+PyObject *PyCodec_Encoder(const char *encoding);
+PyObject *PyCodec_Decoder(const char *encoding);
+PyObject *PyCodec_IncrementalEncoder(const char *encoding, const char *errors);
+PyObject *PyCodec_IncrementalDecoder(const char *encoding, const char *errors);
+PyObject *PyCodec_StreamReader(const char *encoding, PyObject *stream, const char *errors);
+PyObject *PyCodec_StreamWriter(const char *encoding, PyObject *stream, const char *errors);
+int PyCodec_RegisterError(const char *name, PyObject *error);
+PyObject *PyCodec_LookupError(const char *name);
+PyObject *PyCodec_StrictErrors(PyObject *exc);
+PyObject *PyCodec_IgnoreErrors(PyObject *exc);
+PyObject *PyCodec_ReplaceErrors(PyObject *exc);
+PyObject *PyCodec_XMLCharRefReplaceErrors(PyObject *exc);
+PyObject *PyCodec_BackslashReplaceErrors(PyObject *exc);
+PyObject *PyCodec_NameReplaceErrors(PyObject *exc);
+
 PyObject *PyImport_ImportModule(const char *name);
 long PyImport_GetMagicNumber(void);
 const char *PyImport_GetMagicTag(void);

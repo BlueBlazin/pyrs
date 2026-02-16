@@ -6527,6 +6527,183 @@ PyInit_cpython_api_batch44_probe(void) {
 }
 
 #[test]
+fn cpython_compat_codec_abi_batch45_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch45 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch45 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch45");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch45_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static PyObject *
+passthrough(PyObject *self, PyObject *arg) {
+    (void)self;
+    Py_XIncRef(arg);
+    return arg;
+}
+
+static PyMethodDef handler_def = {"passthrough", passthrough, METH_O, "passthrough handler"};
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    int known_utf8 = PyCodec_KnownEncoding("utf-8") == 1 ? 1 : 0;
+    int known_missing = PyCodec_KnownEncoding("missing-does-not-exist") == 0 ? 1 : 0;
+
+    PyObject *text = PyUnicode_FromString("abc");
+    PyObject *encoded = text ? PyCodec_Encode(text, "utf-8", 0) : 0;
+    PyObject *decoded = encoded ? PyCodec_Decode(encoded, "utf-8", 0) : 0;
+    const char *decoded_text = decoded ? PyUnicode_AsUTF8(decoded) : 0;
+    int encode_decode_ok = (encoded && decoded && PyBytes_Size(encoded) == 3 &&
+                            decoded_text && strcmp(decoded_text, "abc") == 0) ? 1 : 0;
+
+    PyObject *encoder = PyCodec_Encoder("utf-8");
+    PyObject *decoder = PyCodec_Decoder("utf-8");
+    int codec_lookup_ok = (encoder && decoder) ? 1 : 0;
+
+    PyObject *inc_encoder = PyCodec_IncrementalEncoder("utf-8", "strict");
+    PyObject *inc_decoder = PyCodec_IncrementalDecoder("utf-8", "strict");
+    int incremental_ok = (inc_encoder && inc_decoder) ? 1 : 0;
+
+    PyObject *stream = PyBytes_FromString("stream");
+    PyObject *stream_reader = stream ? PyCodec_StreamReader("utf-8", stream, "strict") : 0;
+    PyObject *stream_writer = stream ? PyCodec_StreamWriter("utf-8", stream, "strict") : 0;
+    int stream_ok = (stream_reader && stream_writer) ? 1 : 0;
+    if (!stream_ok && PyErr_Occurred()) {
+        PyErr_Clear();
+    }
+
+    int register_ok = (encoder && PyCodec_Register(encoder) == 0 && PyCodec_Unregister(encoder) == 0) ? 1 : 0;
+
+    PyObject *handler = PyCFunction_New(&handler_def, 0);
+    int register_error_ok = (handler && PyCodec_RegisterError("batch45", handler) == 0) ? 1 : 0;
+    PyObject *lookup_custom = register_error_ok ? PyCodec_LookupError("batch45") : 0;
+    int lookup_custom_ok = lookup_custom ? 1 : 0;
+    PyObject *lookup_builtin = PyCodec_LookupError(0);
+    int lookup_builtin_ok = lookup_builtin ? 1 : 0;
+
+    PyObject *plain = PyLong_FromLong(1);
+    int handler_errors_ok = 1;
+    PyObject *strict_fail = PyCodec_StrictErrors(plain);
+    handler_errors_ok = handler_errors_ok && strict_fail == 0 && PyErr_Occurred() != 0;
+    PyErr_Clear();
+    PyObject *ignore_fail = PyCodec_IgnoreErrors(plain);
+    handler_errors_ok = handler_errors_ok && ignore_fail == 0 && PyErr_Occurred() != 0;
+    PyErr_Clear();
+    PyObject *replace_fail = PyCodec_ReplaceErrors(plain);
+    handler_errors_ok = handler_errors_ok && replace_fail == 0 && PyErr_Occurred() != 0;
+    PyErr_Clear();
+    PyObject *xml_fail = PyCodec_XMLCharRefReplaceErrors(plain);
+    handler_errors_ok = handler_errors_ok && xml_fail == 0 && PyErr_Occurred() != 0;
+    PyErr_Clear();
+    PyObject *backslash_fail = PyCodec_BackslashReplaceErrors(plain);
+    handler_errors_ok = handler_errors_ok && backslash_fail == 0 && PyErr_Occurred() != 0;
+    PyErr_Clear();
+    PyObject *name_fail = PyCodec_NameReplaceErrors(plain);
+    handler_errors_ok = handler_errors_ok && name_fail == 0 && PyErr_Occurred() != 0;
+    PyErr_Clear();
+
+    Py_XDECREF(name_fail);
+    Py_XDECREF(backslash_fail);
+    Py_XDECREF(xml_fail);
+    Py_XDECREF(replace_fail);
+    Py_XDECREF(ignore_fail);
+    Py_XDECREF(strict_fail);
+    Py_XDECREF(plain);
+    Py_XDECREF(lookup_builtin);
+    Py_XDECREF(lookup_custom);
+    Py_XDECREF(handler);
+    Py_XDECREF(stream_writer);
+    Py_XDECREF(stream_reader);
+    Py_XDECREF(stream);
+    Py_XDECREF(inc_decoder);
+    Py_XDECREF(inc_encoder);
+    Py_XDECREF(decoder);
+    Py_XDECREF(encoder);
+    Py_XDECREF(decoded);
+    Py_XDECREF(encoded);
+    Py_XDECREF(text);
+
+    return Py_BuildValue(
+        "(iiiiiiiiiii)",
+        known_utf8,
+        known_missing,
+        encode_decode_ok,
+        codec_lookup_ok,
+        incremental_ok,
+        stream_ok,
+        register_ok,
+        register_error_ok,
+        lookup_custom_ok,
+        lookup_builtin_ok,
+        handler_errors_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe codec ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch45_probe",
+    "cpython api batch45 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch45_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch45_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch45 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch45_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch45 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
