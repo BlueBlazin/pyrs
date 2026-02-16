@@ -31,6 +31,7 @@ extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyObject_CallObject(void *callable, void *args);
+extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
@@ -679,6 +680,72 @@ void *PyObject_CallFunctionObjArgs(void *callable, ...)
     va_end(ap);
 
     void *result = call_with_borrowed_stack(callable, (void *const *)stack, nargs);
+    if (stack != stack_items) {
+        free(stack);
+    }
+    return result;
+}
+
+void *PyObject_CallMethodObjArgs(void *object, void *name, ...)
+{
+    void *stack_items[16];
+    void **stack = stack_items;
+    Py_ssize_t nargs = 0;
+    Py_ssize_t capacity = (Py_ssize_t)(sizeof(stack_items) / sizeof(stack_items[0]));
+
+    if (object == NULL || name == NULL) {
+        pyrs_capi_set_error_message("PyObject_CallMethodObjArgs received null object/name");
+        return NULL;
+    }
+    void *callable = PyObject_GetAttr(object, name);
+    if (callable == NULL) {
+        return NULL;
+    }
+
+    va_list ap;
+    va_start(ap, name);
+    for (;;) {
+        void *arg = va_arg(ap, void *);
+        if (arg == NULL) {
+            break;
+        }
+        if (nargs == capacity) {
+            Py_ssize_t next_capacity = capacity * 2;
+            size_t bytes = (size_t)next_capacity * sizeof(void *);
+            if (stack == stack_items) {
+                stack = (void **)malloc(bytes);
+                if (stack == NULL) {
+                    Py_DecRef(callable);
+                    va_end(ap);
+                    pyrs_capi_set_error_message(
+                        "PyObject_CallMethodObjArgs failed allocating stack"
+                    );
+                    return NULL;
+                }
+                for (Py_ssize_t i = 0; i < nargs; i++) {
+                    stack[i] = stack_items[i];
+                }
+            } else {
+                void **grown = (void **)realloc(stack, bytes);
+                if (grown == NULL) {
+                    Py_DecRef(callable);
+                    free(stack);
+                    va_end(ap);
+                    pyrs_capi_set_error_message(
+                        "PyObject_CallMethodObjArgs failed growing stack"
+                    );
+                    return NULL;
+                }
+                stack = grown;
+            }
+            capacity = next_capacity;
+        }
+        stack[nargs++] = arg;
+    }
+    va_end(ap);
+
+    void *result = call_with_borrowed_stack(callable, (void *const *)stack, nargs);
+    Py_DecRef(callable);
     if (stack != stack_items) {
         free(stack);
     }

@@ -374,6 +374,35 @@ fn exports_abi3_batch12_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch13_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyObject_CallNoArgs",
+        "PyObject_CallMethodObjArgs",
+        "PyObject_DelAttr",
+        "PyObject_DelAttrString",
+        "PyObject_DelItemString",
+        "PyObject_Dir",
+        "PyObject_GetOptionalAttrString",
+        "PyObject_HasAttr",
+        "PyObject_HasAttrWithError",
+        "PyObject_HasAttrStringWithError",
+        "PyObject_Length",
+        "PyObject_Repr",
+        "PyObject_SetAttr",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch13 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

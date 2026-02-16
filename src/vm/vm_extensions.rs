@@ -8515,15 +8515,32 @@ fn cpython_exception_value_attr(value: &Value) -> Option<Value> {
     }
 }
 
-fn cpython_value_is_stop_iteration(vm: &Vm, value: &Value) -> bool {
+fn cpython_value_is_exception_name(vm: &Vm, value: &Value, expected: &str) -> bool {
     match value {
-        Value::Exception(exception) => exception.name == "StopIteration",
-        Value::ExceptionType(name) => name == "StopIteration",
+        Value::Exception(exception) => exception.name == expected,
+        Value::ExceptionType(name) => name == expected,
         Value::Instance(instance) => vm
             .exception_class_name_for_instance(instance)
-            .is_some_and(|name| name == "StopIteration"),
+            .is_some_and(|name| name == expected),
         _ => false,
     }
+}
+
+fn cpython_active_exception_is(vm: &Vm, expected: &str) -> bool {
+    vm.frames
+        .last()
+        .and_then(|frame| frame.active_exception.as_ref())
+        .is_some_and(|value| cpython_value_is_exception_name(vm, value, expected))
+}
+
+fn cpython_clear_active_exception(vm: &mut Vm) {
+    if let Some(frame) = vm.frames.last_mut() {
+        frame.active_exception = None;
+    }
+}
+
+fn cpython_value_is_stop_iteration(vm: &Vm, value: &Value) -> bool {
+    cpython_value_is_exception_name(vm, value, "StopIteration")
 }
 
 fn cpython_stop_iteration_value_from_active_exception(vm: &Vm) -> Option<Value> {
@@ -11626,6 +11643,60 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_SetAttr(
+    object: *mut c_void,
+    name: *mut c_void,
+    value: *mut c_void,
+) -> i32 {
+    if value.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { PyObject_GenericSetAttr(object, name, value) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_DelAttr(object: *mut c_void, name: *mut c_void) -> i32 {
+    unsafe { PyObject_GenericSetAttr(object, name, std::ptr::null_mut()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_DelAttrString(object: *mut c_void, name: *const c_char) -> i32 {
+    let name_text = match unsafe { c_name_to_string(name) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let name_obj = cpython_new_ptr_for_value(Value::Str(name_text));
+    if name_obj.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_DelAttr(object, name_obj) };
+    unsafe { Py_DecRef(name_obj) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_DelItemString(object: *mut c_void, key: *const c_char) -> i32 {
+    let key_text = match unsafe { c_name_to_string(key) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let key_obj = cpython_new_ptr_for_value(Value::Str(key_text));
+    if key_obj.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_DelItem(object, key_obj) };
+    unsafe { Py_DecRef(key_obj) };
+    status
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Type(object: *mut c_void) -> *mut c_void {
     if object.is_null() {
         cpython_set_error("PyObject_Type received null object");
@@ -11653,13 +11724,170 @@ pub unsafe extern "C" fn _PyObject_Type(object: *mut c_void) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_HasAttrString(object: *mut c_void, name: *const c_char) -> i32 {
-    let value = unsafe { PyObject_GetAttrString(object, name) };
-    if value.is_null() {
+    let status = unsafe { PyObject_HasAttrStringWithError(object, name) };
+    if status < 0 {
         unsafe { PyErr_Clear() };
         0
     } else {
-        1
+        status
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HasAttr(object: *mut c_void, name: *mut c_void) -> i32 {
+    let status = unsafe { PyObject_HasAttrWithError(object, name) };
+    if status < 0 {
+        unsafe { PyErr_Clear() };
+        0
+    } else {
+        status
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HasAttrWithError(object: *mut c_void, name: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyObject_HasAttrWithError missing VM context");
+            return -1;
+        }
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_HasAttrWithError received unknown object pointer");
+            return -1;
+        };
+        let Some(name_value) = context.cpython_value_from_ptr_or_proxy(name) else {
+            context.set_error("PyObject_HasAttrWithError received unknown name pointer");
+            return -1;
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_getattr(vec![object_value, name_value], HashMap::new()) {
+            Ok(_) => 1,
+            Err(err) => {
+                if cpython_active_exception_is(vm, "AttributeError")
+                    || err.message.contains("has no attribute")
+                {
+                    cpython_clear_active_exception(vm);
+                    0
+                } else {
+                    context.set_error(err.message);
+                    -1
+                }
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HasAttrStringWithError(
+    object: *mut c_void,
+    name: *const c_char,
+) -> i32 {
+    let name_text = match unsafe { c_name_to_string(name) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyObject_HasAttrStringWithError missing VM context");
+            return -1;
+        }
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_HasAttrStringWithError received unknown object pointer");
+            return -1;
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_getattr(
+            vec![object_value, Value::Str(name_text.clone())],
+            HashMap::new(),
+        ) {
+            Ok(_) => 1,
+            Err(err) => {
+                if cpython_active_exception_is(vm, "AttributeError")
+                    || err.message.contains("has no attribute")
+                {
+                    cpython_clear_active_exception(vm);
+                    0
+                } else {
+                    context.set_error(err.message);
+                    -1
+                }
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GetOptionalAttrString(
+    object: *mut c_void,
+    name: *const c_char,
+    result: *mut *mut c_void,
+) -> i32 {
+    if result.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    let name_text = match unsafe { c_name_to_string(name) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyObject_GetOptionalAttrString missing VM context");
+            return -1;
+        }
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_GetOptionalAttrString received unknown object pointer");
+            return -1;
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_getattr(
+            vec![object_value, Value::Str(name_text.clone())],
+            HashMap::new(),
+        ) {
+            Ok(value) => {
+                let ptr = context.alloc_cpython_ptr_for_value(value);
+                if ptr.is_null() {
+                    -1
+                } else {
+                    unsafe { *result = ptr };
+                    1
+                }
+            }
+            Err(err) => {
+                if cpython_active_exception_is(vm, "AttributeError")
+                    || err.message.contains("has no attribute")
+                {
+                    cpython_clear_active_exception(vm);
+                    0
+                } else {
+                    context.set_error(err.message);
+                    -1
+                }
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -11705,6 +11933,47 @@ pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
         }
     };
     match cpython_call_builtin(BuiltinFunction::Str, vec![value]) {
+        Ok(value) => cpython_new_ptr_for_value(value),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
+    let value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::Repr, vec![value]) {
+        Ok(value) => cpython_new_ptr_for_value(value),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_Dir(object: *mut c_void) -> *mut c_void {
+    let args = if object.is_null() {
+        Vec::new()
+    } else {
+        let value = match cpython_value_from_ptr(object) {
+            Ok(value) => value,
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        vec![value]
+    };
+    match cpython_call_builtin(BuiltinFunction::Dir, args) {
         Ok(value) => cpython_new_ptr_for_value(value),
         Err(err) => {
             cpython_set_error(err);
@@ -11838,6 +12107,11 @@ pub unsafe extern "C" fn PyObject_CallOneArg(
         }
     };
     cpython_call_object(callable, vec![arg], HashMap::new())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_CallNoArgs(callable: *mut c_void) -> *mut c_void {
+    cpython_call_object(callable, Vec::new(), HashMap::new())
 }
 
 #[unsafe(no_mangle)]
@@ -12496,6 +12770,11 @@ pub unsafe extern "C" fn PyObject_Size(object: *mut c_void) -> isize {
             -1
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_Length(object: *mut c_void) -> isize {
+    unsafe { PyObject_Size(object) }
 }
 
 #[unsafe(no_mangle)]
@@ -17579,6 +17858,7 @@ unsafe extern "C" {
         format: *const c_char,
         ...
     ) -> *mut c_void;
+    fn PyObject_CallMethodObjArgs(object: *mut c_void, method: *mut c_void, ...) -> *mut c_void;
     fn PyArg_ParseTuple(args: *mut c_void, format: *const c_char, ...) -> i32;
     fn PyArg_ParseTupleAndKeywords(
         args: *mut c_void,
@@ -17655,6 +17935,8 @@ static KEEP2_PYOBJECT_DELITEM: unsafe extern "C" fn(*mut c_void, *mut c_void) ->
     PyObject_DelItem;
 #[used]
 static KEEP2_PYOBJECT_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PyObject_Size;
+#[used]
+static KEEP2_PYOBJECT_LENGTH: unsafe extern "C" fn(*mut c_void) -> isize = PyObject_Length;
 #[used]
 static KEEP2_PYOBJECT_LENGTHHINT: unsafe extern "C" fn(*mut c_void, isize) -> isize =
     PyObject_LengthHint;
@@ -17817,6 +18099,12 @@ static KEEP2_PYBUFFER_FILLINFO: unsafe extern "C" fn(
     i32,
     i32,
 ) -> i32 = PyBuffer_FillInfo;
+#[used]
+static KEEP2_PYOBJECT_CALLMETHODOBJARGS: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    ...
+) -> *mut c_void = PyObject_CallMethodObjArgs;
 #[used]
 static KEEP2_PYOBJECT_PRINT: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32 =
     PyObject_Print;
@@ -18707,14 +18995,47 @@ static KEEP_PYOBJECT_SETATTR_STRING: unsafe extern "C" fn(
     *mut c_void,
 ) -> i32 = PyObject_SetAttrString;
 #[used]
+static KEEP_PYOBJECT_SETATTR: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
+    PyObject_SetAttr;
+#[used]
+static KEEP_PYOBJECT_DELATTR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyObject_DelAttr;
+#[used]
+static KEEP_PYOBJECT_DELATTR_STRING: unsafe extern "C" fn(*mut c_void, *const c_char) -> i32 =
+    PyObject_DelAttrString;
+#[used]
+static KEEP_PYOBJECT_DELITEM_STRING: unsafe extern "C" fn(*mut c_void, *const c_char) -> i32 =
+    PyObject_DelItemString;
+#[used]
 static KEEP_PYOBJECT_HASATTR_STRING: unsafe extern "C" fn(*mut c_void, *const c_char) -> i32 =
     PyObject_HasAttrString;
+#[used]
+static KEEP_PYOBJECT_HASATTR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyObject_HasAttr;
+#[used]
+static KEEP_PYOBJECT_HASATTR_WITH_ERROR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyObject_HasAttrWithError;
+#[used]
+static KEEP_PYOBJECT_HASATTR_STRING_WITH_ERROR: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+) -> i32 = PyObject_HasAttrStringWithError;
+#[used]
+static KEEP_PYOBJECT_GETOPTIONALATTR_STRING: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *mut *mut c_void,
+) -> i32 = PyObject_GetOptionalAttrString;
 #[used]
 static KEEP_PYOBJECT_ISTRUE: unsafe extern "C" fn(*mut c_void) -> i32 = PyObject_IsTrue;
 #[used]
 static KEEP_PYOBJECT_NOT: unsafe extern "C" fn(*mut c_void) -> i32 = PyObject_Not;
 #[used]
 static KEEP_PYOBJECT_STR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_Str;
+#[used]
+static KEEP_PYOBJECT_REPR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_Repr;
+#[used]
+static KEEP_PYOBJECT_DIR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_Dir;
 #[used]
 static KEEP_PYOBJECT_BYTES: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_Bytes;
 #[used]
@@ -18736,6 +19057,9 @@ static KEEP_PYOBJECT_CALL: unsafe extern "C" fn(
 #[used]
 static KEEP_PYOBJECT_CALL_ONEARG: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyObject_CallOneArg;
+#[used]
+static KEEP_PYOBJECT_CALL_NOARGS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyObject_CallNoArgs;
 #[used]
 static KEEP_PYCFUNCTION_CALL: unsafe extern "C" fn(
     *mut c_void,
