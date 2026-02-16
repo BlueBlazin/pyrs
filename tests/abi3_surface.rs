@@ -170,6 +170,31 @@ fn exports_abi3_batch3_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch4_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyImport_GetModuleDict",
+        "PyImport_AddModuleRef",
+        "PyImport_AddModuleObject",
+        "PyImport_AddModule",
+        "PyImport_GetModule",
+        "PyImport_ImportModuleNoBlock",
+        "PyImport_ImportModuleLevelObject",
+        "PyImport_ImportModuleLevel",
+        "PyImport_ReloadModule",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch4 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

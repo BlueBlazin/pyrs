@@ -7175,6 +7175,59 @@ pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_vo
     }
 }
 
+fn cpython_optional_value_from_ptr(
+    context: &mut ModuleCapiContext,
+    object: *mut c_void,
+    label: &str,
+) -> Result<Value, String> {
+    if object.is_null() {
+        return Ok(Value::None);
+    }
+    context
+        .cpython_value_from_ptr_or_proxy(object)
+        .ok_or_else(|| format!("unknown {label} object pointer"))
+}
+
+fn cpython_module_name_from_object(
+    context: &mut ModuleCapiContext,
+    name: *mut c_void,
+    api_name: &str,
+) -> Result<String, String> {
+    if name.is_null() {
+        return Err(format!("{api_name} expected module name"));
+    }
+    match context
+        .cpython_value_from_ptr_or_proxy(name)
+        .ok_or_else(|| format!("{api_name} received unknown module name pointer"))?
+    {
+        Value::Str(name) => Ok(name),
+        _ => Err(format!("{api_name} expected module name string")),
+    }
+}
+
+fn cpython_import_add_module_by_name(
+    context: &mut ModuleCapiContext,
+    module_name: &str,
+) -> Result<ObjRef, String> {
+    if context.vm.is_null() {
+        return Err("missing VM context for import API".to_string());
+    }
+    // SAFETY: VM pointer is valid for the active context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    let module = vm.ensure_module(module_name);
+    if let Some(modules_dict) = vm.sys_dict_obj("modules") {
+        dict_set_value_checked(
+            &modules_dict,
+            Value::Str(module_name.to_string()),
+            Value::Module(module.clone()),
+        )
+        .map_err(|err| err.message)?;
+    } else {
+        vm.refresh_sys_modules_dict();
+    }
+    Ok(module)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_Import(name: *mut c_void) -> *mut c_void {
     let module_name = match cpython_value_from_ptr(name) {
@@ -7196,6 +7249,274 @@ pub unsafe extern "C" fn PyImport_Import(name: *mut c_void) -> *mut c_void {
         }
     };
     unsafe { PyImport_ImportModule(c_name.as_ptr()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_GetModuleDict() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyImport_GetModuleDict missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for the active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        vm.refresh_sys_modules_dict();
+        let Some(modules_dict) = vm.sys_dict_obj("modules") else {
+            context.set_error("unable to get sys.modules");
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(Value::Dict(modules_dict))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_AddModuleRef(name: *const c_char) -> *mut c_void {
+    let module_name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        match cpython_import_add_module_by_name(context, &module_name) {
+            Ok(module) => context.alloc_cpython_ptr_for_value(Value::Module(module)),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_AddModuleObject(name: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let module_name = match cpython_module_name_from_object(context, name, "PyImport_AddModuleObject")
+        {
+            Ok(name) => name,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        match cpython_import_add_module_by_name(context, &module_name) {
+            Ok(module) => context.alloc_cpython_ptr_for_value(Value::Module(module)),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_AddModule(name: *const c_char) -> *mut c_void {
+    unsafe { PyImport_AddModuleRef(name) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_GetModule(name: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let module_name = match cpython_module_name_from_object(context, name, "PyImport_GetModule") {
+            Ok(name) => name,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        if context.vm.is_null() {
+            context.set_error("PyImport_GetModule missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for the active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        vm.refresh_sys_modules_dict();
+        let Some(modules_dict) = vm.sys_dict_obj("modules") else {
+            context.set_error("unable to get sys.modules");
+            return std::ptr::null_mut();
+        };
+        match dict_get_value(&modules_dict, &Value::Str(module_name)) {
+            Some(value) => context.alloc_cpython_ptr_for_value(value),
+            None => std::ptr::null_mut(),
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ImportModuleNoBlock(name: *const c_char) -> *mut c_void {
+    const DEPRECATION_MESSAGE: &[u8] = b"PyImport_ImportModuleNoBlock() is deprecated and scheduled for removal in Python 3.15. Use PyImport_ImportModule() instead.\0";
+    let warning_status = unsafe {
+        PyErr_WarnEx(
+            std::ptr::addr_of_mut!(PyExc_DeprecationWarning).cast(),
+            DEPRECATION_MESSAGE.as_ptr().cast(),
+            1,
+        )
+    };
+    if warning_status != 0 {
+        return std::ptr::null_mut();
+    }
+    unsafe { PyImport_ImportModule(name) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ImportModuleLevelObject(
+    name: *mut c_void,
+    globals: *mut c_void,
+    locals: *mut c_void,
+    fromlist: *mut c_void,
+    level: i32,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyImport_ImportModuleLevelObject missing VM context");
+            return std::ptr::null_mut();
+        }
+        let module_name = match cpython_optional_value_from_ptr(context, name, "module name") {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let globals_value = match cpython_optional_value_from_ptr(context, globals, "globals") {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let locals_value = match cpython_optional_value_from_ptr(context, locals, "locals") {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let fromlist_value = match cpython_optional_value_from_ptr(context, fromlist, "fromlist") {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        // SAFETY: VM pointer is valid for the active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let args = vec![
+            module_name,
+            globals_value,
+            locals_value,
+            fromlist_value,
+            Value::Int(level as i64),
+        ];
+        match vm.call_internal(Value::Builtin(BuiltinFunction::Import), args, HashMap::new()) {
+            Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(
+                    vm.runtime_error_from_active_exception("import module level call failed")
+                        .message,
+                );
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ImportModuleLevel(
+    name: *const c_char,
+    globals: *mut c_void,
+    locals: *mut c_void,
+    fromlist: *mut c_void,
+    level: i32,
+) -> *mut c_void {
+    let module_name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let name_obj = context.alloc_cpython_ptr_for_value(Value::Str(module_name));
+        unsafe { PyImport_ImportModuleLevelObject(name_obj, globals, locals, fromlist, level) }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ReloadModule(module: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if module.is_null() {
+            context.set_error("PyImport_ReloadModule expected module object");
+            return std::ptr::null_mut();
+        }
+        if context.vm.is_null() {
+            context.set_error("PyImport_ReloadModule missing VM context");
+            return std::ptr::null_mut();
+        }
+        let module_value = match context.cpython_value_from_ptr_or_proxy(module) {
+            Some(value) => value,
+            None => {
+                context.set_error("PyImport_ReloadModule received unknown module pointer");
+                return std::ptr::null_mut();
+            }
+        };
+        let module_name = match &module_value {
+            Value::Module(module_obj) => match &*module_obj.kind() {
+                Object::Module(module_data) => module_data.name.clone(),
+                _ => String::new(),
+            },
+            _ => {
+                context.set_error("PyImport_ReloadModule expected module object");
+                return std::ptr::null_mut();
+            }
+        };
+        if module_name.is_empty() {
+            context.set_error("PyImport_ReloadModule could not resolve module name");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_import_module(vec![Value::Str(module_name)], HashMap::new()) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -15000,6 +15321,43 @@ static KEEP_PYIMPORT_IMPORT_MODULE: unsafe extern "C" fn(*const c_char) -> *mut 
     PyImport_ImportModule;
 #[used]
 static KEEP_PYIMPORT_IMPORT: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyImport_Import;
+#[used]
+static KEEP_PYIMPORT_GET_MODULE_DICT: unsafe extern "C" fn() -> *mut c_void =
+    PyImport_GetModuleDict;
+#[used]
+static KEEP_PYIMPORT_ADD_MODULE_REF: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+    PyImport_AddModuleRef;
+#[used]
+static KEEP_PYIMPORT_ADD_MODULE_OBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyImport_AddModuleObject;
+#[used]
+static KEEP_PYIMPORT_ADD_MODULE: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+    PyImport_AddModule;
+#[used]
+static KEEP_PYIMPORT_GET_MODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyImport_GetModule;
+#[used]
+static KEEP_PYIMPORT_IMPORT_MODULE_NO_BLOCK: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+    PyImport_ImportModuleNoBlock;
+#[used]
+static KEEP_PYIMPORT_IMPORT_MODULE_LEVEL_OBJECT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    i32,
+) -> *mut c_void = PyImport_ImportModuleLevelObject;
+#[used]
+static KEEP_PYIMPORT_IMPORT_MODULE_LEVEL: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    i32,
+) -> *mut c_void = PyImport_ImportModuleLevel;
+#[used]
+static KEEP_PYIMPORT_RELOAD_MODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyImport_ReloadModule;
 #[used]
 static KEEP_PYEVAL_GET_BUILTINS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetBuiltins;
 #[used]

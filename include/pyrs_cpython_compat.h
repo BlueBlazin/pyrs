@@ -81,6 +81,30 @@ int PyModule_AddObject(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddIntConstant(PyObject *module, const char *name, long long value);
 int PyModule_AddStringConstant(PyObject *module, const char *name, const char *value);
 
+PyObject *PyImport_ImportModule(const char *name);
+PyObject *PyImport_Import(PyObject *name);
+PyObject *PyImport_GetModuleDict(void);
+PyObject *PyImport_AddModuleRef(const char *name);
+PyObject *PyImport_AddModuleObject(PyObject *name);
+PyObject *PyImport_AddModule(const char *name);
+PyObject *PyImport_GetModule(PyObject *name);
+PyObject *PyImport_ImportModuleNoBlock(const char *name);
+PyObject *PyImport_ImportModuleLevelObject(
+    PyObject *name,
+    PyObject *globals,
+    PyObject *locals,
+    PyObject *fromlist,
+    int level
+);
+PyObject *PyImport_ImportModuleLevel(
+    const char *name,
+    PyObject *globals,
+    PyObject *locals,
+    PyObject *fromlist,
+    int level
+);
+PyObject *PyImport_ReloadModule(PyObject *module);
+
 PyObject *PyLong_FromLong(long long value);
 PyObject *PyLong_FromLongLong(long long value);
 long long PyLong_AsLongLong(PyObject *object);

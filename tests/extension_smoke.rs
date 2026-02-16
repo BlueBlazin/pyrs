@@ -1359,6 +1359,162 @@ PyInit_cpython_api_batch3_probe(void) {
 }
 
 #[test]
+fn cpython_compat_import_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch4 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch4 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch4");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch4_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static int module_name_is(PyObject *module, const char *expected) {
+    if (!module) {
+        return 0;
+    }
+    PyObject *name = PyObject_GetAttrString(module, "__name__");
+    if (!name) {
+        return 0;
+    }
+    const char *text = PyUnicode_AsUTF8(name);
+    if (!text) {
+        return 0;
+    }
+    return strcmp(text, expected) == 0 ? 1 : 0;
+}
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch4_probe",
+    "cpython api batch4 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch4_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *modules_dict = PyImport_GetModuleDict();
+    int modules_dict_ok = modules_dict ? 1 : 0;
+    if (PyModule_AddIntConstant(module, "MODULES_DICT_OK", modules_dict_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *added_ref = PyImport_AddModuleRef("batch4_add_ref");
+    int add_ref_ok = module_name_is(added_ref, "batch4_add_ref");
+    if (PyModule_AddIntConstant(module, "ADD_REF_OK", add_ref_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *added_obj_name = PyUnicode_FromString("batch4_add_obj");
+    if (!added_obj_name) {
+        return 0;
+    }
+    PyObject *added_obj = PyImport_AddModuleObject(added_obj_name);
+    int add_obj_ok = module_name_is(added_obj, "batch4_add_obj");
+    if (PyModule_AddIntConstant(module, "ADD_OBJ_OK", add_obj_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *added_legacy = PyImport_AddModule("batch4_add_legacy");
+    int add_legacy_ok = module_name_is(added_legacy, "batch4_add_legacy");
+    if (PyModule_AddIntConstant(module, "ADD_LEGACY_OK", add_legacy_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *got_obj = PyImport_GetModule(added_obj_name);
+    int get_module_ok = module_name_is(got_obj, "batch4_add_obj");
+    if (PyModule_AddIntConstant(module, "GET_MODULE_OK", get_module_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *missing_name = PyUnicode_FromString("batch4_missing_mod");
+    if (!missing_name) {
+        return 0;
+    }
+    PyObject *missing = PyImport_GetModule(missing_name);
+    int missing_returns_null = (missing == 0) ? 1 : 0;
+    int missing_sets_no_error = PyErr_Occurred() ? 0 : 1;
+    if (PyModule_AddIntConstant(module, "MISSING_RETURNS_NULL", missing_returns_null) != 0 ||
+        PyModule_AddIntConstant(module, "MISSING_NO_ERROR", missing_sets_no_error) != 0) {
+        return 0;
+    }
+
+    PyObject *math_module = PyImport_ImportModuleNoBlock("math");
+    int import_noblock_ok = module_name_is(math_module, "math");
+    if (PyModule_AddIntConstant(module, "IMPORT_NOBLOCK_OK", import_noblock_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *json_module = PyImport_ImportModuleLevel("json", 0, 0, 0, 0);
+    int import_level_ok = module_name_is(json_module, "json");
+    if (PyModule_AddIntConstant(module, "IMPORT_LEVEL_OK", import_level_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *email_name = PyUnicode_FromString("email");
+    if (!email_name) {
+        return 0;
+    }
+    PyObject *fromlist = PyTuple_Pack(1, PyUnicode_FromString("message"));
+    if (!fromlist) {
+        return 0;
+    }
+    PyObject *email_module = PyImport_ImportModuleLevelObject(email_name, 0, 0, fromlist, 0);
+    int import_level_obj_ok = module_name_is(email_module, "email");
+    if (PyModule_AddIntConstant(module, "IMPORT_LEVEL_OBJECT_OK", import_level_obj_ok) != 0) {
+        return 0;
+    }
+
+    PyObject *reloaded_math = PyImport_ReloadModule(math_module);
+    int reload_ok = module_name_is(reloaded_math, "math");
+    if (PyModule_AddIntConstant(module, "RELOAD_OK", reload_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch4_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch4 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch4_probe as m\nassert m.MODULES_DICT_OK == 1\nassert m.ADD_REF_OK == 1\nassert m.ADD_OBJ_OK == 1\nassert m.ADD_LEGACY_OK == 1\nassert m.GET_MODULE_OK == 1\nassert m.MISSING_RETURNS_NULL == 1\nassert m.MISSING_NO_ERROR == 1\nassert m.IMPORT_NOBLOCK_OK == 1\nassert m.IMPORT_LEVEL_OK == 1\nassert m.IMPORT_LEVEL_OBJECT_OK == 1\nassert m.RELOAD_OK == 1",
+    )
+    .expect("cpython api batch4 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
