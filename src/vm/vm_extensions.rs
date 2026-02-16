@@ -210,6 +210,20 @@ struct CpythonMemberDef {
 }
 
 #[repr(C)]
+struct CpythonStructSequenceField {
+    name: *const c_char,
+    doc: *const c_char,
+}
+
+#[repr(C)]
+struct CpythonStructSequenceDesc {
+    name: *const c_char,
+    doc: *const c_char,
+    fields: *mut CpythonStructSequenceField,
+    n_in_sequence: c_int,
+}
+
+#[repr(C)]
 struct CpythonModuleDef {
     _m_base: CpythonModuleDefBase,
     m_name: *const c_char,
@@ -1264,6 +1278,14 @@ static CURRENT_THREAD_STATE_PTR: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_THREAD_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
+    OnceLock::new();
+
+struct CpythonStructSeqTypeInfo {
+    field_count: usize,
+    _visible_count: usize,
+    _name: CString,
+}
 
 fn cpython_main_thread_state_ptr() -> usize {
     std::ptr::addr_of!(MAIN_THREAD_STATE_TOKEN) as usize
@@ -1279,6 +1301,10 @@ fn cpython_main_interpreter_state_ptr() -> usize {
 
 fn cpython_interpreter_state_allocations() -> &'static Mutex<HashSet<usize>> {
     CPYTHON_INTERPRETER_STATE_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_structseq_registry() -> &'static Mutex<HashMap<usize, CpythonStructSeqTypeInfo>> {
+    CPYTHON_STRUCTSEQ_TYPE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn cpython_is_known_interpreter_state_ptr(ptr: usize) -> bool {
@@ -6544,6 +6570,28 @@ fn cpython_module_add_type_name(tp_name: *const c_char) -> Result<String, String
         .filter(|name| !name.is_empty())
         .unwrap_or(full_name.as_str());
     Ok(short_name.to_string())
+}
+
+fn cpython_structseq_count_fields(
+    fields: *mut CpythonStructSequenceField,
+) -> Result<usize, String> {
+    if fields.is_null() {
+        return Err("PyStructSequence_NewType expected non-null fields".to_string());
+    }
+    let mut count = 0usize;
+    let mut cursor = fields;
+    // Field table is null-name terminated per CPython contract.
+    while count < 8192 {
+        // SAFETY: `cursor` points into caller-owned contiguous field table.
+        let name_ptr = unsafe { (*cursor).name };
+        if name_ptr.is_null() {
+            return Ok(count);
+        }
+        count += 1;
+        // SAFETY: `cursor` advances over contiguous field entries.
+        cursor = unsafe { cursor.add(1) };
+    }
+    Err("PyStructSequence_NewType field table is not terminated".to_string())
 }
 
 #[unsafe(no_mangle)]
@@ -12920,6 +12968,137 @@ pub unsafe extern "C" fn PySet_Pop(set: *mut c_void) -> *mut c_void {
         cpython_set_error(err);
         std::ptr::null_mut()
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyStructSequence_NewType(desc: *mut c_void) -> *mut c_void {
+    if desc.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyStructSequence_NewType expected non-null descriptor",
+        );
+        return std::ptr::null_mut();
+    }
+    // SAFETY: descriptor pointer is validated non-null.
+    let desc_ref = unsafe { &*desc.cast::<CpythonStructSequenceDesc>() };
+    if desc_ref.name.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyStructSequence_NewType expected descriptor name",
+        );
+        return std::ptr::null_mut();
+    }
+    let type_name = match unsafe { c_name_to_string(desc_ref.name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(format!("PyStructSequence_NewType invalid name: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let owned_name = match CString::new(type_name.clone()) {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(format!("PyStructSequence_NewType invalid name: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let field_count = match cpython_structseq_count_fields(desc_ref.fields) {
+        Ok(count) => count,
+        Err(err) => {
+            cpython_set_typed_error(unsafe { PyExc_SystemError }, err);
+            return std::ptr::null_mut();
+        }
+    };
+    let visible_count = if desc_ref.n_in_sequence < 0 {
+        field_count
+    } else {
+        (desc_ref.n_in_sequence as usize).min(field_count)
+    };
+
+    // SAFETY: static tuple type can be copied by value to seed a heap-like type shell.
+    let mut type_value = unsafe { std::ptr::read(std::ptr::addr_of!(PyTuple_Type)) };
+    type_value.ob_refcnt = 1;
+    type_value.ob_type = std::ptr::addr_of_mut!(PyType_Type).cast();
+    type_value.ob_size = 0;
+    type_value.tp_name = owned_name.as_ptr();
+    type_value.tp_doc = desc_ref.doc;
+    type_value.tp_base = std::ptr::addr_of_mut!(PyTuple_Type);
+    type_value.tp_members = std::ptr::null_mut();
+    type_value.tp_dict = std::ptr::null_mut();
+    type_value.tp_flags |= PY_TPFLAGS_BASETYPE;
+    type_value.tp_flags &= !PY_TPFLAGS_READY;
+
+    let type_ptr = Box::into_raw(Box::new(type_value));
+    if unsafe { PyType_Ready(type_ptr.cast()) } != 0 {
+        // SAFETY: type_ptr allocated above and not published on failure path.
+        unsafe {
+            let _ = Box::from_raw(type_ptr);
+        }
+        return std::ptr::null_mut();
+    }
+    if let Ok(mut registry) = cpython_structseq_registry().lock() {
+        registry.insert(
+            type_ptr as usize,
+            CpythonStructSeqTypeInfo {
+                field_count,
+                _visible_count: visible_count,
+                _name: owned_name,
+            },
+        );
+    }
+    type_ptr.cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyStructSequence_New(type_obj: *mut c_void) -> *mut c_void {
+    if type_obj.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyStructSequence_New expected non-null type",
+        );
+        return std::ptr::null_mut();
+    }
+    let field_count = cpython_structseq_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| {
+            registry
+                .get(&(type_obj as usize))
+                .map(|entry| entry.field_count)
+        })
+        .unwrap_or(0);
+    unsafe { PyTuple_New(field_count as isize) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyStructSequence_SetItem(
+    object: *mut c_void,
+    index: isize,
+    value: *mut c_void,
+) {
+    if object.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyStructSequence_SetItem expected non-null object",
+        );
+        return;
+    }
+    let _ = unsafe { PyTuple_SetItem(object, index, value) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyStructSequence_GetItem(
+    object: *mut c_void,
+    index: isize,
+) -> *mut c_void {
+    if object.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyStructSequence_GetItem expected non-null object",
+        );
+        return std::ptr::null_mut();
+    }
+    unsafe { PyTuple_GetItem(object, index) }
 }
 
 #[unsafe(no_mangle)]
@@ -23397,6 +23576,9 @@ pub static mut _Py_TrueStruct: CpythonObjectHead = CpythonObjectHead {
     ob_refcnt: -1,
     ob_type: std::ptr::null_mut(),
 };
+#[unsafe(no_mangle)]
+#[used]
+pub static PyStructSequence_UnnamedField: [u8; 14] = *b"unnamed field\0";
 
 const EMPTY_TYPE_FLAGS: usize = 0;
 const PY_TPFLAGS_BASETYPE: usize = 1usize << 10;
@@ -23703,6 +23885,18 @@ static KEEP2_PYMODULE_GETDEF: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
 #[used]
 static KEEP2_PYMODULE_GETSTATE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyModule_GetState;
+#[used]
+static KEEP2_PYSTRUCTSEQUENCE_NEWTYPE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyStructSequence_NewType;
+#[used]
+static KEEP2_PYSTRUCTSEQUENCE_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyStructSequence_New;
+#[used]
+static KEEP2_PYSTRUCTSEQUENCE_SETITEM: unsafe extern "C" fn(*mut c_void, isize, *mut c_void) =
+    PyStructSequence_SetItem;
+#[used]
+static KEEP2_PYSTRUCTSEQUENCE_GETITEM: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
+    PyStructSequence_GetItem;
 #[used]
 static KEEP2_PYTUPLE_NEW: unsafe extern "C" fn(isize) -> *mut c_void = PyTuple_New;
 #[used]

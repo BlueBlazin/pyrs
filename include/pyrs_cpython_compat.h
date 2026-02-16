@@ -41,6 +41,18 @@ typedef struct PyMemberDef {
     const char *doc;
 } PyMemberDef;
 
+typedef struct PyStructSequence_Field {
+    const char *name;
+    const char *doc;
+} PyStructSequence_Field;
+
+typedef struct PyStructSequence_Desc {
+    const char *name;
+    const char *doc;
+    PyStructSequence_Field *fields;
+    int n_in_sequence;
+} PyStructSequence_Desc;
+
 typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 
 typedef enum {
@@ -725,6 +737,10 @@ PyObject *PyDescr_NewMember(PyTypeObject *type, PyMemberDef *member);
 PyObject *PyMember_GetOne(const char *obj_addr, PyMemberDef *member);
 int PyMember_SetOne(char *obj_addr, PyMemberDef *member, PyObject *value);
 PyObject *PyDescr_NewGetSet(PyTypeObject *type, PyGetSetDef *getset);
+PyTypeObject *PyStructSequence_NewType(PyStructSequence_Desc *desc);
+PyObject *PyStructSequence_New(PyTypeObject *type);
+void PyStructSequence_SetItem(PyObject *object, long long index, PyObject *value);
+PyObject *PyStructSequence_GetItem(PyObject *object, long long index);
 PyCFunction PyCFunction_GetFunction(PyObject *op);
 PyObject *PyCFunction_GetSelf(PyObject *op);
 int PyCFunction_GetFlags(PyObject *op);
@@ -749,6 +765,7 @@ extern PyObject *PyExc_OSError;
 extern PyObject *PyExc_ResourceWarning;
 extern PyObject *PyExc_AttributeError;
 extern PyObject *PyExc_BufferError;
+extern const char PyStructSequence_UnnamedField[];
 extern void *PyByteArray_Type;
 extern void *PyClassMethodDescr_Type;
 extern void *PyGetSetDescr_Type;
