@@ -1124,6 +1124,10 @@ pub enum IteratorKind {
         target: Value,
         getitem: Value,
     },
+    CallIter {
+        callable: Value,
+        sentinel: Value,
+    },
 }
 
 #[derive(Debug)]
@@ -1671,6 +1675,10 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
             }
+            IteratorKind::CallIter { callable, sentinel } => {
+                trace_value(callable, stack, marked);
+                trace_value(sentinel, stack, marked);
+            }
             IteratorKind::Str(_)
             | IteratorKind::Count { .. }
             | IteratorKind::RangeObject { .. }
@@ -1804,6 +1812,10 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.index = 0;
                 }
                 IteratorKind::SequenceGetItem { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::CallIter { .. } => {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -6326,7 +6338,9 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     Ok(out)
                 }
                 IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::new("expected iterable")),
-                IteratorKind::Count { .. } | IteratorKind::Cycle { .. } => {
+                IteratorKind::CallIter { .. }
+                | IteratorKind::Count { .. }
+                | IteratorKind::Cycle { .. } => {
                     Err(RuntimeError::new("expected iterable"))
                 }
             }

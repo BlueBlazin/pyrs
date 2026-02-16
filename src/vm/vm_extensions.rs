@@ -17,8 +17,9 @@ use crate::extensions::{
     path_is_shared_library,
 };
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, ModuleObject,
-    NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, IteratorKind,
+    IteratorObject, ModuleObject, NativeMethodKind, NativeMethodObject, Object, RuntimeError,
+    Value,
 };
 
 use super::{
@@ -14967,6 +14968,50 @@ pub unsafe extern "C" fn PySeqIter_New(object: *mut c_void) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCallIter_New(callable: *mut c_void, sentinel: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if callable.is_null() || sentinel.is_null() {
+            context.set_error("PyCallIter_New received null callable/sentinel");
+            return std::ptr::null_mut();
+        }
+        if context.vm.is_null() {
+            context.set_error("PyCallIter_New missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(callable_value) = context.cpython_value_from_ptr_or_proxy(callable) else {
+            context.set_error("PyCallIter_New received unknown callable pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(sentinel_value) = context.cpython_value_from_ptr_or_proxy(sentinel) else {
+            context.set_error("PyCallIter_New received unknown sentinel pointer");
+            return std::ptr::null_mut();
+        };
+        let callable_check = unsafe { PyCallable_Check(callable) };
+        if callable_check < 0 {
+            return std::ptr::null_mut();
+        }
+        if callable_check == 0 {
+            context.set_error("TypeError: iter(v, w): v must be callable");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let iterator = vm.heap.alloc(Object::Iterator(IteratorObject {
+            kind: IteratorKind::CallIter {
+                callable: callable_value,
+                sentinel: sentinel_value,
+            },
+            index: 0,
+        }));
+        context.alloc_cpython_ptr_for_value(Value::Iterator(iterator))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_AsFileDescriptor(object: *mut c_void) -> i32 {
     unsafe { PyLong_AsLong(object) as i32 }
 }
@@ -19541,6 +19586,11 @@ pub unsafe extern "C" fn PyGILState_Ensure() -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyGILState_GetThisThreadState() -> *mut c_void {
+    unsafe { PyThreadState_Get() }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyGILState_Release(_state: i32) {}
 
 #[unsafe(no_mangle)]
@@ -20322,6 +20372,9 @@ static KEEP2_PYMAPPING_HASKEYSTRING: unsafe extern "C" fn(*mut c_void, *const c_
     PyMapping_HasKeyString;
 #[used]
 static KEEP2_PYSEQITER_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PySeqIter_New;
+#[used]
+static KEEP2_PYCALLITER_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyCallIter_New;
 #[used]
 static KEEP2_PYOBJECT_ASFILEDESCRIPTOR: unsafe extern "C" fn(*mut c_void) -> i32 =
     PyObject_AsFileDescriptor;
@@ -21582,6 +21635,9 @@ static KEEP_PYERR_NOMEMORY: unsafe extern "C" fn() -> *mut c_void = PyErr_NoMemo
 static KEEP_PYERR_CHECK_SIGNALS: unsafe extern "C" fn() -> i32 = PyErr_CheckSignals;
 #[used]
 static KEEP_PYGILSTATE_ENSURE: unsafe extern "C" fn() -> i32 = PyGILState_Ensure;
+#[used]
+static KEEP_PYGILSTATE_GET_THIS_THREAD_STATE: unsafe extern "C" fn() -> *mut c_void =
+    PyGILState_GetThisThreadState;
 #[used]
 static KEEP_PYGILSTATE_RELEASE: unsafe extern "C" fn(i32) = PyGILState_Release;
 #[used]

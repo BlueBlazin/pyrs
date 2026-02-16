@@ -4635,6 +4635,195 @@ PyInit_cpython_api_batch28_probe(void) {
 }
 
 #[test]
+fn cpython_compat_calliter_abi_batch29_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch29 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch29 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch29");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch29_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run_iter(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *callable = 0;
+    PyObject *sentinel = 0;
+    if (!PyArg_ParseTuple(args, "OO", &callable, &sentinel)) {
+        return 0;
+    }
+    PyObject *iter = PyCallIter_New(callable, sentinel);
+    if (!iter) {
+        return 0;
+    }
+    long long sum = 0;
+    long long count = 0;
+    for (;;) {
+        PyObject *item = PyIter_Next(iter);
+        if (!item) {
+            break;
+        }
+        sum += PyLong_AsLong(item);
+        count++;
+        Py_DECREF(item);
+    }
+    int iter_no_error = (PyErr_Occurred() == 0) ? 1 : 0;
+    Py_DECREF(iter);
+    return Py_BuildValue("(lli)", count, sum, iter_no_error);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run_iter", run_iter, METH_VARARGS, "run PyCallIter_New over callable/sentinel"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch29_probe",
+    "cpython api batch29 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch29_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    PyObject *sentinel = PyLong_FromLong(0);
+    PyObject *non_callable = PyLong_FromLong(1);
+    PyObject *bad_iter = PyCallIter_New(non_callable, sentinel);
+    int non_callable_rejected = (bad_iter == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(bad_iter);
+    Py_XDECREF(non_callable);
+    Py_XDECREF(sentinel);
+
+    if (PyModule_AddIntConstant(module, "NON_CALLABLE_REJECTED", non_callable_rejected) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch29_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch29 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch29_probe as m\nassert m.NON_CALLABLE_REJECTED == 1\nstate = {'v': -1}\ndef f():\n    state['v'] += 1\n    return state['v']\ncount, total, noerr = m.run_iter(f, 5)\nassert count == 5\nassert total == 10\nassert noerr == 1",
+    )
+    .expect("cpython api batch29 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_gilstate_abi_batch30_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch30 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch30 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch30");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch30_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch30_probe",
+    "cpython api batch30 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch30_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    void *before = PyGILState_GetThisThreadState();
+    int state = PyGILState_Ensure();
+    void *during = PyGILState_GetThisThreadState();
+    PyGILState_Release(state);
+    void *after = PyGILState_GetThisThreadState();
+
+    int before_ok = before != 0 ? 1 : 0;
+    int during_ok = during != 0 ? 1 : 0;
+    int after_ok = after != 0 ? 1 : 0;
+    int stable_ok = (before == during && during == after) ? 1 : 0;
+
+    if (PyModule_AddIntConstant(module, "THREADSTATE_BEFORE_OK", before_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREADSTATE_DURING_OK", during_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREADSTATE_AFTER_OK", after_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREADSTATE_STABLE_OK", stable_ok) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch30_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch30 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch30_probe as m\nassert m.THREADSTATE_BEFORE_OK == 1\nassert m.THREADSTATE_DURING_OK == 1\nassert m.THREADSTATE_AFTER_OK == 1\nassert m.THREADSTATE_STABLE_OK == 1",
+    )
+    .expect("cpython api batch30 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

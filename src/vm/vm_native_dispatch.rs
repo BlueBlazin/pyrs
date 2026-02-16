@@ -5248,6 +5248,7 @@ impl Vm {
                     IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
                     IteratorKind::SequenceGetItem { .. } => "iterator",
+                    IteratorKind::CallIter { .. } => "callable_iterator",
                 },
                 _ => "iterator",
             },
@@ -5269,6 +5270,10 @@ impl Vm {
                 target: Value,
                 getitem: Value,
                 index: i64,
+            },
+            CallIter {
+                callable: Value,
+                sentinel: Value,
             },
         }
 
@@ -5501,6 +5506,12 @@ impl Vm {
                         index: state.index as i64,
                     };
                 }
+                IteratorKind::CallIter { callable, sentinel } => {
+                    pending_step = PendingIteratorStep::CallIter {
+                        callable: callable.clone(),
+                        sentinel: sentinel.clone(),
+                    };
+                }
             }
         }
 
@@ -5583,6 +5594,23 @@ impl Vm {
                         }
                         Err(err)
                     }
+                }
+            }
+            PendingIteratorStep::CallIter { callable, sentinel } => {
+                let produced = match self.call_internal(callable, Vec::new(), HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(RuntimeError::new("callable iterator target failed"));
+                    }
+                };
+                let should_stop = match self.compare_eq_runtime(produced.clone(), sentinel)? {
+                    Value::Bool(flag) => flag,
+                    _ => false,
+                };
+                if should_stop {
+                    Ok(None)
+                } else {
+                    Ok(Some(produced))
                 }
             }
         }

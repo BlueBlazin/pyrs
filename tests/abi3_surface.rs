@@ -726,6 +726,36 @@ fn exports_abi3_batch28_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch29_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyCallIter_New"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch29 symbols: {missing:?}"
+    );
+}
+
+#[test]
+fn exports_abi3_batch30_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyGILState_GetThisThreadState"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch30 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

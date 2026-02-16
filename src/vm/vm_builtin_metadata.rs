@@ -1357,6 +1357,9 @@ impl Vm {
                     IteratorKind::SequenceGetItem { .. } => {
                         ("iterator", None, None, None, false, true)
                     }
+                    IteratorKind::CallIter { .. } => {
+                        ("callable_iterator", None, None, None, false, true)
+                    }
                 },
                 _ => return Err(RuntimeError::new("attribute access unsupported type")),
             };

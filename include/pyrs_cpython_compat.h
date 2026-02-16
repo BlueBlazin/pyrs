@@ -378,6 +378,9 @@ PyObject *PyObject_CallNoArgs(PyObject *callable);
 PyObject *PyEval_CallObjectWithKeywords(PyObject *callable, PyObject *args, PyObject *kwargs);
 PyObject *PyEval_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *PyEval_CallMethod(PyObject *object, const char *name, const char *format, ...);
+int PyGILState_Ensure(void);
+void *PyGILState_GetThisThreadState(void);
+void PyGILState_Release(int state);
 void PyEval_AcquireLock(void);
 void PyEval_ReleaseLock(void);
 void PyEval_AcquireThread(void *state);
@@ -422,6 +425,7 @@ int PyObject_AsReadBuffer(PyObject *object, const void **buffer, long long *buff
 int PyObject_AsWriteBuffer(PyObject *object, void **buffer, long long *buffer_len);
 int PyObject_AsCharBuffer(PyObject *object, const char **buffer, long long *buffer_len);
 int PyObject_CopyData(PyObject *dest, PyObject *src);
+PyObject *PyCallIter_New(PyObject *callable, PyObject *sentinel);
 PyObject *PyMemoryView_FromObject(PyObject *object);
 PyObject *PyMemoryView_FromMemory(char *mem, long long size, int flags);
 PyObject *PyMemoryView_FromBuffer(const Py_buffer *view);
