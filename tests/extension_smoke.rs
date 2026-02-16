@@ -3533,6 +3533,137 @@ PyInit_cpython_api_batch19_probe(void) {
 }
 
 #[test]
+fn cpython_compat_number_abi_batch20_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch20 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch20 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch20");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch20_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include <math.h>
+#include <string.h>
+#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch20_probe",
+    "cpython api batch20 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+static int as_long_is(PyObject *value, long expected) {
+    return value && PyLong_AsLong(value) == expected;
+}
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch20_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *v21 = PyLong_FromLong(21);
+    PyObject *v4 = PyLong_FromLong(4);
+    PyObject *v2 = PyLong_FromLong(2);
+    PyObject *v5 = PyLong_FromLong(5);
+
+    int add_ok = as_long_is(PyNumber_InPlaceAdd(v21, v4), 25);
+    int sub_ok = as_long_is(PyNumber_InPlaceSubtract(v21, v4), 17);
+    int mul_ok = as_long_is(PyNumber_InPlaceMultiply(v21, v4), 84);
+    int floordiv_ok = as_long_is(PyNumber_InPlaceFloorDivide(v21, v4), 5);
+    PyObject *true_div = PyNumber_InPlaceTrueDivide(v21, v4);
+    int truediv_ok = 0;
+    if (true_div) {
+        double value = PyFloat_AsDouble(true_div);
+        truediv_ok = fabs(value - 5.25) < 1e-12;
+    }
+    int rem_ok = as_long_is(PyNumber_InPlaceRemainder(v21, v4), 1);
+    int pow_ok = as_long_is(PyNumber_InPlacePower(v2, v5, 0), 32);
+    int lshift_ok = as_long_is(PyNumber_InPlaceLshift(v21, v2), 84);
+    int rshift_ok = as_long_is(PyNumber_InPlaceRshift(v21, v2), 5);
+    int and_ok = as_long_is(PyNumber_InPlaceAnd(v21, v4), 4);
+    int or_ok = as_long_is(PyNumber_InPlaceOr(v21, v4), 21);
+    int xor_ok = as_long_is(PyNumber_InPlaceXor(v21, v4), 17);
+    int inplace_ok = add_ok && sub_ok && mul_ok && floordiv_ok && truediv_ok &&
+                     rem_ok && pow_ok && lshift_ok && rshift_ok &&
+                     and_ok && or_ok && xor_ok;
+
+    PyObject *matrix = PyNumber_MatrixMultiply(v21, v4);
+    int matrix_error_ok = (matrix == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+    Py_XDECREF(matrix);
+
+    PyObject *hex_text = PyNumber_ToBase(PyLong_FromLong(26), 16);
+    PyObject *bin_text = PyNumber_ToBase(PyLong_FromLong(-10), 2);
+    PyObject *dec_text = PyNumber_ToBase(PyLong_FromLong(42), 10);
+    const char *hex_utf8 = hex_text ? PyUnicode_AsUTF8(hex_text) : 0;
+    const char *bin_utf8 = bin_text ? PyUnicode_AsUTF8(bin_text) : 0;
+    const char *dec_utf8 = dec_text ? PyUnicode_AsUTF8(dec_text) : 0;
+    int tobase_ok = (hex_utf8 && strcmp(hex_utf8, "0x1a") == 0 &&
+                     bin_utf8 && strcmp(bin_utf8, "-0b1010") == 0 &&
+                     dec_utf8 && strcmp(dec_utf8, "42") == 0) ? 1 : 0;
+
+    PyErr_Clear();
+    PyObject *invalid_base = PyNumber_ToBase(PyLong_FromLong(7), 3);
+    int invalid_base_error_ok = (invalid_base == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+    Py_XDECREF(invalid_base);
+
+    Py_XDECREF(dec_text);
+    Py_XDECREF(bin_text);
+    Py_XDECREF(hex_text);
+    Py_XDECREF(true_div);
+    Py_XDECREF(v5);
+    Py_XDECREF(v2);
+    Py_XDECREF(v4);
+    Py_XDECREF(v21);
+
+    if (PyModule_AddIntConstant(module, "INPLACE_OK", inplace_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MATRIX_ERROR_OK", matrix_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "TOBASE_OK", tobase_ok) != 0 ||
+        PyModule_AddIntConstant(module, "TOBASE_INVALID_ERROR_OK", invalid_base_error_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch20_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch20 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch20_probe as m\nassert m.INPLACE_OK == 1\nassert m.MATRIX_ERROR_OK == 1\nassert m.TOBASE_OK == 1\nassert m.TOBASE_INVALID_ERROR_OK == 1",
+    )
+    .expect("cpython api batch20 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

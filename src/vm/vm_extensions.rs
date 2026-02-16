@@ -25,8 +25,9 @@ use super::{
     ExtensionCallableKind, GeneratorResumeKind, GeneratorResumeOutcome, InternalCallOutcome,
     NativeCallResult, ObjRef, Vm, add_values, and_values, dict_contains_key_checked,
     dict_get_value, dict_remove_value, dict_set_value_checked, div_values, floor_div_values,
-    invert_value, is_truthy, lshift_values, memoryview_bounds, mod_values, mul_values, neg_value,
-    or_values, pos_value, pow_values, rshift_values, sub_values, value_to_int, xor_values,
+    invert_value, is_truthy, lshift_values, matmul_values, memoryview_bounds, mod_values,
+    mul_values, neg_value, or_values, pos_value, pow_values, rshift_values, sub_values,
+    value_to_int, xor_values,
 };
 
 struct CapiObjectSlot {
@@ -8078,6 +8079,14 @@ pub unsafe extern "C" fn PyNumber_Power(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_MatrixMultiply(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    cpython_binary_numeric_op(left, right, matmul_values)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Lshift(left: *mut c_void, right: *mut c_void) -> *mut c_void {
     cpython_binary_numeric_op(left, right, lshift_values)
 }
@@ -8100,6 +8109,111 @@ pub unsafe extern "C" fn PyNumber_Or(left: *mut c_void, right: *mut c_void) -> *
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Xor(left: *mut c_void, right: *mut c_void) -> *mut c_void {
     cpython_binary_numeric_op_with_heap(left, right, xor_values)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceAdd(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Add(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceSubtract(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Subtract(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceMultiply(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Multiply(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceMatrixMultiply(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_MatrixMultiply(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceFloorDivide(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_FloorDivide(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceTrueDivide(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_TrueDivide(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceRemainder(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Remainder(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlacePower(
+    left: *mut c_void,
+    right: *mut c_void,
+    modulo: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Power(left, right, modulo) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceLshift(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Lshift(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceRshift(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Rshift(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceAnd(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_And(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceOr(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Or(left, right) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_InPlaceXor(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyNumber_Xor(left, right) }
 }
 
 #[unsafe(no_mangle)]
@@ -8187,6 +8301,57 @@ pub unsafe extern "C" fn PyNumber_Index(object: *mut c_void) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_AsSsize_t(object: *mut c_void, _exc: *mut c_void) -> isize {
     unsafe { PyLong_AsSsize_t(object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyNumber_ToBase(object: *mut c_void, base: i32) -> *mut c_void {
+    let result = with_active_cpython_context_mut(|context| {
+        let value = context
+            .cpython_value_from_ptr_or_proxy(object)
+            .ok_or_else(|| "PyNumber_ToBase requires an integer object".to_string())?;
+        let value = match value {
+            Value::Int(int_value) => BigInt::from_i64(int_value),
+            Value::Bool(flag) => BigInt::from_i64(if flag { 1 } else { 0 }),
+            Value::BigInt(bigint) => *bigint,
+            _ => return Err("PyNumber_ToBase requires an integer object".to_string()),
+        };
+        let (radix, prefix) = match base {
+            2 => (2, "0b"),
+            8 => (8, "0o"),
+            10 => (10, ""),
+            16 => (16, "0x"),
+            _ => {
+                return Err(
+                    "PyNumber_ToBase base must be 2, 8, 10 or 16".to_string(),
+                );
+            }
+        };
+        let is_negative = value.is_negative();
+        let magnitude = if is_negative { value.abs() } else { value };
+        let digits = magnitude
+            .to_str_radix(radix)
+            .ok_or_else(|| "PyNumber_ToBase failed integer formatting".to_string())?;
+        let text = if radix == 10 {
+            if is_negative {
+                format!("-{digits}")
+            } else {
+                digits
+            }
+        } else if is_negative {
+            format!("-{prefix}{digits}")
+        } else {
+            format!("{prefix}{digits}")
+        };
+        Ok(context.alloc_cpython_ptr_for_value(Value::Str(text)))
+    })
+    .unwrap_or_else(|err| Err(err.to_string()));
+    match result {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -20382,6 +20547,9 @@ static KEEP_PYNUMBER_POWER: unsafe extern "C" fn(
     *mut c_void,
 ) -> *mut c_void = PyNumber_Power;
 #[used]
+static KEEP_PYNUMBER_MATRIX_MULTIPLY: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_MatrixMultiply;
+#[used]
 static KEEP_PYNUMBER_LSHIFT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyNumber_Lshift;
 #[used]
@@ -20397,6 +20565,56 @@ static KEEP_PYNUMBER_OR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut 
 static KEEP_PYNUMBER_XOR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyNumber_Xor;
 #[used]
+static KEEP_PYNUMBER_INPLACE_ADD: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceAdd;
+#[used]
+static KEEP_PYNUMBER_INPLACE_SUBTRACT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceSubtract;
+#[used]
+static KEEP_PYNUMBER_INPLACE_MULTIPLY: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceMultiply;
+#[used]
+static KEEP_PYNUMBER_INPLACE_MATRIX_MULTIPLY: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_InPlaceMatrixMultiply;
+#[used]
+static KEEP_PYNUMBER_INPLACE_FLOOR_DIVIDE: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_InPlaceFloorDivide;
+#[used]
+static KEEP_PYNUMBER_INPLACE_TRUE_DIVIDE: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_InPlaceTrueDivide;
+#[used]
+static KEEP_PYNUMBER_INPLACE_REMAINDER: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_InPlaceRemainder;
+#[used]
+static KEEP_PYNUMBER_INPLACE_POWER: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyNumber_InPlacePower;
+#[used]
+static KEEP_PYNUMBER_INPLACE_LSHIFT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceLshift;
+#[used]
+static KEEP_PYNUMBER_INPLACE_RSHIFT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceRshift;
+#[used]
+static KEEP_PYNUMBER_INPLACE_AND: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceAnd;
+#[used]
+static KEEP_PYNUMBER_INPLACE_OR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceOr;
+#[used]
+static KEEP_PYNUMBER_INPLACE_XOR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyNumber_InPlaceXor;
+#[used]
 static KEEP_PYNUMBER_NEGATIVE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyNumber_Negative;
 #[used]
 static KEEP_PYNUMBER_POSITIVE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyNumber_Positive;
@@ -20411,6 +20629,8 @@ static KEEP_PYNUMBER_INDEX: unsafe extern "C" fn(*mut c_void) -> *mut c_void = P
 #[used]
 static KEEP_PYNUMBER_AS_SSIZE_T: unsafe extern "C" fn(*mut c_void, *mut c_void) -> isize =
     PyNumber_AsSsize_t;
+#[used]
+static KEEP_PYNUMBER_TO_BASE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void = PyNumber_ToBase;
 #[used]
 static KEEP_PYMEM_RAW_MALLOC: unsafe extern "C" fn(usize) -> *mut c_void = PyMem_RawMalloc;
 #[used]
