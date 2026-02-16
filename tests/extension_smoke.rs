@@ -3664,6 +3664,128 @@ PyInit_cpython_api_batch20_probe(void) {
 }
 
 #[test]
+fn cpython_compat_error_abi_batch21_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch21 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch21 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch21");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch21_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include <string.h>
+#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch21_probe",
+    "cpython api batch21 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+static int error_is_set(void) {
+    return PyErr_Occurred() != 0 ? 1 : 0;
+}
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch21_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    int errno_family_ok = 1;
+    errno_family_ok &= (PyErr_SetFromErrnoWithFilename(PyExc_OSError, "/tmp/errno_a.txt") == 0 && error_is_set());
+    PyErr_Clear();
+    PyObject *fname_obj = PyUnicode_FromString("/tmp/errno_b.txt");
+    errno_family_ok &= (PyErr_SetFromErrnoWithFilenameObject(PyExc_OSError, fname_obj) == 0 && error_is_set());
+    PyErr_Clear();
+    errno_family_ok &= (PyErr_SetFromErrnoWithFilenameObjects(PyExc_OSError, fname_obj, fname_obj) == 0 && error_is_set());
+    PyErr_Clear();
+    Py_XDECREF(fname_obj);
+
+    int windows_family_ok = 1;
+    windows_family_ok &= (PyErr_SetExcFromWindowsErr(PyExc_OSError, 5) == 0 && error_is_set());
+    PyErr_Clear();
+    windows_family_ok &= (PyErr_SetExcFromWindowsErrWithFilename(PyExc_OSError, 6, "C:/tmp/win_a.txt") == 0 && error_is_set());
+    PyErr_Clear();
+    PyObject *win_fname = PyUnicode_FromString("C:/tmp/win_b.txt");
+    windows_family_ok &= (PyErr_SetExcFromWindowsErrWithFilenameObject(PyExc_OSError, 7, win_fname) == 0 && error_is_set());
+    PyErr_Clear();
+    windows_family_ok &= (PyErr_SetExcFromWindowsErrWithFilenameObjects(PyExc_OSError, 8, win_fname, win_fname) == 0 && error_is_set());
+    PyErr_Clear();
+    windows_family_ok &= (PyErr_SetFromWindowsErr(9) == 0 && error_is_set());
+    PyErr_Clear();
+    windows_family_ok &= (PyErr_SetFromWindowsErrWithFilename(10, "C:/tmp/win_c.txt") == 0 && error_is_set());
+    PyErr_Clear();
+    Py_XDECREF(win_fname);
+
+    int interrupt_ok = 1;
+    PyErr_SetInterrupt();
+    interrupt_ok &= error_is_set();
+    PyErr_Clear();
+    interrupt_ok &= (PyErr_SetInterruptEx(2) == 0 && error_is_set());
+    PyErr_Clear();
+    interrupt_ok &= (PyErr_SetInterruptEx(-1) == -1);
+
+    int syntax_ok = 1;
+    PyErr_SyntaxLocation("syntax_a.py", 12);
+    syntax_ok &= error_is_set();
+    PyErr_Clear();
+    PyErr_SyntaxLocationEx("syntax_b.py", 34, 5);
+    syntax_ok &= error_is_set();
+    PyErr_Clear();
+
+    PyObject *line = PyErr_ProgramText(__FILE__, 1);
+    const char *line_text = line ? PyUnicode_AsUTF8(line) : 0;
+    int program_text_ok = (line_text && strstr(line_text, "include") != 0) ? 1 : 0;
+    Py_XDECREF(line);
+
+    if (PyModule_AddIntConstant(module, "ERRNO_FAMILY_OK", errno_family_ok) != 0 ||
+        PyModule_AddIntConstant(module, "WINDOWS_FAMILY_OK", windows_family_ok) != 0 ||
+        PyModule_AddIntConstant(module, "INTERRUPT_OK", interrupt_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SYNTAX_OK", syntax_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PROGRAM_TEXT_OK", program_text_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch21_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch21 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch21_probe as m\nassert m.ERRNO_FAMILY_OK == 1\nassert m.WINDOWS_FAMILY_OK == 1\nassert m.INTERRUPT_OK == 1\nassert m.SYNTAX_OK == 1\nassert m.PROGRAM_TEXT_OK == 1",
+    )
+    .expect("cpython api batch21 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

@@ -17858,10 +17858,198 @@ pub unsafe extern "C" fn PyErr_NormalizeException(
 ) {
 }
 
+fn cpython_optional_filename_from_c(name: *const c_char) -> Option<String> {
+    if name.is_null() {
+        return None;
+    }
+    unsafe { c_name_to_string(name) }.ok()
+}
+
+fn cpython_optional_filename_from_object(name: *mut c_void) -> Option<String> {
+    if name.is_null() {
+        return None;
+    }
+    with_active_cpython_context_mut(|context| {
+        let value = context.cpython_value_from_ptr_or_proxy(name)?;
+        match value {
+            Value::Str(text) => Some(text),
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
+                _ => None,
+            },
+            Value::ByteArray(bytes_obj) => match &*bytes_obj.kind() {
+                Object::ByteArray(bytes) => Some(String::from_utf8_lossy(bytes).to_string()),
+                _ => None,
+            },
+            _ => None,
+        }
+    })
+    .ok()
+    .flatten()
+}
+
+fn cpython_set_os_error_message(
+    exception: *mut c_void,
+    code: Option<i32>,
+    filename: Option<String>,
+    filename2: Option<String>,
+) {
+    let mut message = match code {
+        Some(code) => format!("system error {code}"),
+        None => "system error".to_string(),
+    };
+    if let Some(filename) = filename {
+        message.push_str(&format!(": {filename}"));
+    }
+    if let Some(filename2) = filename2 {
+        message.push_str(&format!(" -> {filename2}"));
+    }
+    let exception = if exception.is_null() {
+        unsafe { PyExc_OSError }
+    } else {
+        exception
+    };
+    cpython_set_typed_error(exception, message);
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_SetFromErrno(exception: *mut c_void) -> *mut c_void {
-    unsafe { PyErr_SetString(exception, c"system error".as_ptr()) };
+    cpython_set_os_error_message(exception, None, None, None);
     std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetFromErrnoWithFilename(
+    exception: *mut c_void,
+    filename: *const c_char,
+) -> *mut c_void {
+    let filename = cpython_optional_filename_from_c(filename);
+    cpython_set_os_error_message(exception, None, filename, None);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetFromErrnoWithFilenameObject(
+    exception: *mut c_void,
+    filename: *mut c_void,
+) -> *mut c_void {
+    let filename = cpython_optional_filename_from_object(filename);
+    cpython_set_os_error_message(exception, None, filename, None);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetFromErrnoWithFilenameObjects(
+    exception: *mut c_void,
+    filename1: *mut c_void,
+    filename2: *mut c_void,
+) -> *mut c_void {
+    let filename1 = cpython_optional_filename_from_object(filename1);
+    let filename2 = cpython_optional_filename_from_object(filename2);
+    cpython_set_os_error_message(exception, None, filename1, filename2);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetExcFromWindowsErr(exception: *mut c_void, ierr: i32) -> *mut c_void {
+    cpython_set_os_error_message(exception, Some(ierr), None, None);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetExcFromWindowsErrWithFilename(
+    exception: *mut c_void,
+    ierr: i32,
+    filename: *const c_char,
+) -> *mut c_void {
+    let filename = cpython_optional_filename_from_c(filename);
+    cpython_set_os_error_message(exception, Some(ierr), filename, None);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetExcFromWindowsErrWithFilenameObject(
+    exception: *mut c_void,
+    ierr: i32,
+    filename: *mut c_void,
+) -> *mut c_void {
+    let filename = cpython_optional_filename_from_object(filename);
+    cpython_set_os_error_message(exception, Some(ierr), filename, None);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetExcFromWindowsErrWithFilenameObjects(
+    exception: *mut c_void,
+    ierr: i32,
+    filename1: *mut c_void,
+    filename2: *mut c_void,
+) -> *mut c_void {
+    let filename1 = cpython_optional_filename_from_object(filename1);
+    let filename2 = cpython_optional_filename_from_object(filename2);
+    cpython_set_os_error_message(exception, Some(ierr), filename1, filename2);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetFromWindowsErr(ierr: i32) -> *mut c_void {
+    unsafe { PyErr_SetExcFromWindowsErr(std::ptr::null_mut(), ierr) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetFromWindowsErrWithFilename(
+    ierr: i32,
+    filename: *const c_char,
+) -> *mut c_void {
+    unsafe { PyErr_SetExcFromWindowsErrWithFilename(std::ptr::null_mut(), ierr, filename) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetInterrupt() {
+    cpython_set_typed_error(std::ptr::null_mut(), "KeyboardInterrupt");
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetInterruptEx(signum: i32) -> i32 {
+    if signum <= 0 {
+        return -1;
+    }
+    unsafe { PyErr_SetInterrupt() };
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SyntaxLocation(filename: *const c_char, lineno: i32) {
+    unsafe { PyErr_SyntaxLocationEx(filename, lineno, 0) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SyntaxLocationEx(filename: *const c_char, lineno: i32, col_offset: i32) {
+    let filename = cpython_optional_filename_from_c(filename).unwrap_or_else(|| "<unknown>".to_string());
+    let message = format!("invalid syntax ({filename}, line {lineno}, column {col_offset})");
+    cpython_set_typed_error(std::ptr::null_mut(), message);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_ProgramText(filename: *const c_char, lineno: i32) -> *mut c_void {
+    if lineno <= 0 {
+        return std::ptr::null_mut();
+    }
+    let Some(filename) = cpython_optional_filename_from_c(filename) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(contents) = std::fs::read_to_string(&filename) else {
+        return std::ptr::null_mut();
+    };
+    let index = (lineno - 1) as usize;
+    let line = if let Some(line) = contents.split_inclusive('\n').nth(index) {
+        line.to_string()
+    } else if let Some(line) = contents.lines().nth(index) {
+        line.to_string()
+    } else {
+        return std::ptr::null_mut();
+    };
+    cpython_new_ptr_for_value(Value::Str(line))
 }
 
 #[unsafe(no_mangle)]
@@ -19998,6 +20186,67 @@ static KEEP_PYERR_GET_EXCINFO: unsafe extern "C" fn(
 #[used]
 static KEEP_PYERR_SET_EXCINFO: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
     PyErr_SetExcInfo;
+#[used]
+static KEEP_PYERR_SET_FROM_ERRNO: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyErr_SetFromErrno;
+#[used]
+static KEEP_PYERR_SET_FROM_ERRNO_WITH_FILENAME: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = PyErr_SetFromErrnoWithFilename;
+#[used]
+static KEEP_PYERR_SET_FROM_ERRNO_WITH_FILENAME_OBJECT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyErr_SetFromErrnoWithFilenameObject;
+#[used]
+static KEEP_PYERR_SET_FROM_ERRNO_WITH_FILENAME_OBJECTS: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyErr_SetFromErrnoWithFilenameObjects;
+#[used]
+static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
+    PyErr_SetExcFromWindowsErr;
+#[used]
+static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME: unsafe extern "C" fn(
+    *mut c_void,
+    i32,
+    *const c_char,
+) -> *mut c_void = PyErr_SetExcFromWindowsErrWithFilename;
+#[used]
+static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME_OBJECT: unsafe extern "C" fn(
+    *mut c_void,
+    i32,
+    *mut c_void,
+) -> *mut c_void = PyErr_SetExcFromWindowsErrWithFilenameObject;
+#[used]
+static KEEP_PYERR_SET_EXC_FROM_WINDOWS_ERR_WITH_FILENAME_OBJECTS: unsafe extern "C" fn(
+    *mut c_void,
+    i32,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyErr_SetExcFromWindowsErrWithFilenameObjects;
+#[used]
+static KEEP_PYERR_SET_FROM_WINDOWS_ERR: unsafe extern "C" fn(i32) -> *mut c_void =
+    PyErr_SetFromWindowsErr;
+#[used]
+static KEEP_PYERR_SET_FROM_WINDOWS_ERR_WITH_FILENAME: unsafe extern "C" fn(
+    i32,
+    *const c_char,
+) -> *mut c_void = PyErr_SetFromWindowsErrWithFilename;
+#[used]
+static KEEP_PYERR_SET_INTERRUPT: unsafe extern "C" fn() = PyErr_SetInterrupt;
+#[used]
+static KEEP_PYERR_SET_INTERRUPT_EX: unsafe extern "C" fn(i32) -> i32 = PyErr_SetInterruptEx;
+#[used]
+static KEEP_PYERR_SYNTAX_LOCATION: unsafe extern "C" fn(*const c_char, i32) = PyErr_SyntaxLocation;
+#[used]
+static KEEP_PYERR_SYNTAX_LOCATION_EX: unsafe extern "C" fn(*const c_char, i32, i32) =
+    PyErr_SyntaxLocationEx;
+#[used]
+static KEEP_PYERR_PROGRAM_TEXT: unsafe extern "C" fn(*const c_char, i32) -> *mut c_void =
+    PyErr_ProgramText;
 #[used]
 static KEEP_PYFILE_GET_LINE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void = PyFile_GetLine;
 #[used]

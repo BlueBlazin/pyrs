@@ -439,12 +439,44 @@ PyObject *PyErr_GetHandledException(void);
 void PyErr_SetHandledException(PyObject *exc);
 void PyErr_GetExcInfo(PyObject **ptype, PyObject **pvalue, PyObject **ptraceback);
 void PyErr_SetExcInfo(PyObject *type, PyObject *value, PyObject *traceback);
+PyObject *PyErr_SetFromErrno(PyObject *exc);
+PyObject *PyErr_SetFromErrnoWithFilename(PyObject *exc, const char *filename);
+PyObject *PyErr_SetFromErrnoWithFilenameObject(PyObject *exc, PyObject *filename);
+PyObject *PyErr_SetFromErrnoWithFilenameObjects(
+    PyObject *exc,
+    PyObject *filename1,
+    PyObject *filename2
+);
+PyObject *PyErr_SetExcFromWindowsErr(PyObject *exc, int ierr);
+PyObject *PyErr_SetExcFromWindowsErrWithFilename(
+    PyObject *exc,
+    int ierr,
+    const char *filename
+);
+PyObject *PyErr_SetExcFromWindowsErrWithFilenameObject(
+    PyObject *exc,
+    int ierr,
+    PyObject *filename
+);
+PyObject *PyErr_SetExcFromWindowsErrWithFilenameObjects(
+    PyObject *exc,
+    int ierr,
+    PyObject *filename1,
+    PyObject *filename2
+);
+PyObject *PyErr_SetFromWindowsErr(int ierr);
+PyObject *PyErr_SetFromWindowsErrWithFilename(int ierr, const char *filename);
+void PyErr_SetInterrupt(void);
+int PyErr_SetInterruptEx(int signum);
 int PyErr_BadArgument(void);
 void PyErr_BadInternalCall(void);
 void PyErr_PrintEx(int set_sys_last_vars);
 void PyErr_Display(PyObject *unused, PyObject *value, PyObject *tb);
 void PyErr_DisplayException(PyObject *exc);
 void PyErr_Clear(void);
+void PyErr_SyntaxLocation(const char *filename, int lineno);
+void PyErr_SyntaxLocationEx(const char *filename, int lineno, int col_offset);
+PyObject *PyErr_ProgramText(const char *filename, int lineno);
 PyObject *PyException_GetTraceback(PyObject *exception);
 PyObject *PyException_GetCause(PyObject *exception);
 PyObject *PyException_GetContext(PyObject *exception);
@@ -489,6 +521,7 @@ extern PyObject *PyExc_RuntimeError;
 extern PyObject *PyExc_TypeError;
 extern PyObject *PyExc_ValueError;
 extern PyObject *PyExc_EOFError;
+extern PyObject *PyExc_OSError;
 extern PyObject *PyExc_AttributeError;
 extern PyObject *PyExc_BufferError;
 extern void *PyByteArray_Type;

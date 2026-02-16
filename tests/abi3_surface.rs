@@ -567,6 +567,36 @@ fn exports_abi3_batch20_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch21_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyErr_SetFromErrnoWithFilename",
+        "PyErr_SetFromErrnoWithFilenameObject",
+        "PyErr_SetFromErrnoWithFilenameObjects",
+        "PyErr_SetExcFromWindowsErr",
+        "PyErr_SetExcFromWindowsErrWithFilename",
+        "PyErr_SetExcFromWindowsErrWithFilenameObject",
+        "PyErr_SetExcFromWindowsErrWithFilenameObjects",
+        "PyErr_SetFromWindowsErr",
+        "PyErr_SetFromWindowsErrWithFilename",
+        "PyErr_SetInterrupt",
+        "PyErr_SetInterruptEx",
+        "PyErr_SyntaxLocation",
+        "PyErr_SyntaxLocationEx",
+        "PyErr_ProgramText",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch21 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
