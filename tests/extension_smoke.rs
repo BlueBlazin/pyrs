@@ -4186,6 +4186,154 @@ PyInit_cpython_api_batch25_probe(void) {
 }
 
 #[test]
+fn cpython_compat_parse_abi_batch26_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch26 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch26 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch26");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch26_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static int
+run_vaparse(PyObject *args, const char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    int ok = PyArg_VaParse(args, format, ap);
+    va_end(ap);
+    return ok;
+}
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch26_probe",
+    "cpython api batch26 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch26_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *forty_two = PyLong_FromLong(42);
+    if (!forty_two) {
+        return 0;
+    }
+
+    PyObject *parsed_from_parse = 0;
+    int parse_ok = PyArg_Parse(forty_two, "O", &parsed_from_parse);
+    int parse_identity_ok = (parse_ok && parsed_from_parse == forty_two) ? 1 : 0;
+
+    PyObject *tuple = PyTuple_New(1);
+    if (!tuple) {
+        return 0;
+    }
+    Py_INCREF(forty_two);
+    if (PyTuple_SetItem(tuple, 0, forty_two) != 0) {
+        return 0;
+    }
+
+    PyObject *parsed_from_va = 0;
+    int vaparse_ok = run_vaparse(tuple, "O", &parsed_from_va);
+    int vaparse_identity_ok = (vaparse_ok && parsed_from_va == forty_two) ? 1 : 0;
+
+    int vaparse_non_tuple_ok = (run_vaparse(forty_two, "O", &parsed_from_va) == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    int parse_new_features_ok =
+        (PyArg_Parse(forty_two, "OO", &parsed_from_parse, &parsed_from_va) == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    int parse_noargs_ok = PyArg_Parse(0, "") ? 1 : 0;
+
+    PyObject *valid_kwargs = PyDict_New();
+    PyObject *valid_key = PyUnicode_FromString("alpha");
+    if (!valid_kwargs || !valid_key) {
+        return 0;
+    }
+    if (PyDict_SetItem(valid_kwargs, valid_key, forty_two) != 0) {
+        return 0;
+    }
+    int validate_ok = PyArg_ValidateKeywordArguments(valid_kwargs) ? 1 : 0;
+
+    PyObject *invalid_kwargs = PyDict_New();
+    PyObject *invalid_key = PyLong_FromLong(1);
+    if (!invalid_kwargs || !invalid_key) {
+        return 0;
+    }
+    if (PyDict_SetItem(invalid_kwargs, invalid_key, forty_two) != 0) {
+        return 0;
+    }
+    int validate_non_string_key_ok =
+        (PyArg_ValidateKeywordArguments(invalid_kwargs) == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    int validate_not_dict_ok = (PyArg_ValidateKeywordArguments(forty_two) == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(invalid_key);
+    Py_XDECREF(invalid_kwargs);
+    Py_XDECREF(valid_key);
+    Py_XDECREF(valid_kwargs);
+    Py_XDECREF(parsed_from_va);
+    Py_XDECREF(tuple);
+    Py_XDECREF(parsed_from_parse);
+    Py_XDECREF(forty_two);
+
+    if (PyModule_AddIntConstant(module, "PARSE_OK", parse_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PARSE_IDENTITY_OK", parse_identity_ok) != 0 ||
+        PyModule_AddIntConstant(module, "VAPARSE_OK", vaparse_ok) != 0 ||
+        PyModule_AddIntConstant(module, "VAPARSE_IDENTITY_OK", vaparse_identity_ok) != 0 ||
+        PyModule_AddIntConstant(module, "VAPARSE_NON_TUPLE_OK", vaparse_non_tuple_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PARSE_NEW_FEATURES_OK", parse_new_features_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PARSE_NOARGS_OK", parse_noargs_ok) != 0 ||
+        PyModule_AddIntConstant(module, "VALIDATE_OK", validate_ok) != 0 ||
+        PyModule_AddIntConstant(module, "VALIDATE_NON_STRING_KEY_OK", validate_non_string_key_ok) != 0 ||
+        PyModule_AddIntConstant(module, "VALIDATE_NOT_DICT_OK", validate_not_dict_ok) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch26_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch26 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch26_probe as m\nassert m.PARSE_OK == 1\nassert m.PARSE_IDENTITY_OK == 1\nassert m.VAPARSE_OK == 1\nassert m.VAPARSE_IDENTITY_OK == 1\nassert m.VAPARSE_NON_TUPLE_OK == 1\nassert m.PARSE_NEW_FEATURES_OK == 1\nassert m.PARSE_NOARGS_OK == 1\nassert m.VALIDATE_OK == 1\nassert m.VALIDATE_NON_STRING_KEY_OK == 1\nassert m.VALIDATE_NOT_DICT_OK == 1",
+    )
+    .expect("cpython api batch26 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

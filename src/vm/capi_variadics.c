@@ -17,8 +17,11 @@ extern int PyTuple_SetItem(void *tuple, Py_ssize_t index, void *item);
 extern Py_ssize_t PyTuple_Size(void *tuple);
 extern void *PyTuple_GetItem(void *tuple, Py_ssize_t index);
 extern void *PyList_New(Py_ssize_t size);
+extern Py_ssize_t PyList_Size(void *list);
+extern void *PyList_GetItem(void *list, Py_ssize_t index);
 extern int PyList_Append(void *list, void *item);
 extern void *PyDict_New(void);
+extern void *PyDict_Keys(void *dict);
 extern int PyDict_SetItem(void *dict, void *key, void *value);
 extern void *PyDict_GetItemString(void *dict, const char *key);
 extern void *PyLong_FromLong(long value);
@@ -35,11 +38,14 @@ extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
+extern void PyErr_BadInternalCall(void);
 extern void *PyErr_Occurred(void);
 extern void Py_IncRef(void *object);
 extern void Py_DecRef(void *object);
 extern char _Py_NoneStruct;
+extern char PyDict_Type;
 extern char PyTuple_Type;
+extern char PyUnicode_Type;
 
 void *PyErr_Format(void *exception, const char *format, ...)
 {
@@ -950,6 +956,143 @@ static int parse_args_and_keywords_va(
     }
 
     free(spec);
+    return 1;
+}
+
+static int count_old_style_format_args(const char *format, int *min_count, int *max_count)
+{
+    int min = -1;
+    int max = 0;
+    int level = 0;
+    const char *cursor = format;
+    while (*cursor != '\0' && *cursor != ':' && *cursor != ';') {
+        char token = *cursor++;
+        switch (token) {
+            case '(':
+                if (level == 0) {
+                    max++;
+                }
+                level++;
+                break;
+            case ')':
+                if (level > 0) {
+                    level--;
+                }
+                break;
+            case '|':
+                if (level == 0) {
+                    min = max;
+                }
+                break;
+            default:
+                if (level == 0 && ((token >= 'A' && token <= 'Z') || (token >= 'a' && token <= 'z'))) {
+                    if (token != 'e') {
+                        max++;
+                    }
+                }
+                break;
+        }
+    }
+    if (min < 0) {
+        min = max;
+    }
+    *min_count = min;
+    *max_count = max;
+    return 1;
+}
+
+int PyArg_Parse(void *args, const char *format, ...)
+{
+    if (format == NULL) {
+        pyrs_capi_set_error_message("PyArg_Parse received null format");
+        return 0;
+    }
+
+    int min_count = 0;
+    int max_count = 0;
+    count_old_style_format_args(format, &min_count, &max_count);
+
+    va_list ap;
+    va_start(ap, format);
+    int result = 0;
+
+    if (max_count == 0) {
+        if (args == NULL) {
+            result = 1;
+        } else {
+            pyrs_capi_set_error_message("function takes no arguments");
+            result = 0;
+        }
+        va_end(ap);
+        return result;
+    }
+
+    if (min_count == 1 && max_count == 1) {
+        if (args == NULL) {
+            pyrs_capi_set_error_message("function takes at least one argument");
+            va_end(ap);
+            return 0;
+        }
+        void *single = PyTuple_New(1);
+        if (single == NULL) {
+            va_end(ap);
+            return 0;
+        }
+        Py_IncRef(args);
+        if (PyTuple_SetItem(single, 0, args) != 0) {
+            Py_DecRef(args);
+            Py_DecRef(single);
+            va_end(ap);
+            return 0;
+        }
+        result = parse_args_and_keywords_va(single, NULL, format, NULL, &ap);
+        Py_DecRef(single);
+        va_end(ap);
+        return result;
+    }
+
+    pyrs_capi_set_error_message("old style getargs format uses new features");
+    va_end(ap);
+    return 0;
+}
+
+int PyArg_VaParse(void *args, const char *format, va_list va)
+{
+    if (!is_tuple_object(args)) {
+        pyrs_capi_set_error_message("new style getargs format but argument is not a tuple");
+        return 0;
+    }
+    va_list lva;
+    va_copy(lva, va);
+    int result = parse_args_and_keywords_va(args, NULL, format, NULL, &lva);
+    va_end(lva);
+    return result;
+}
+
+int PyArg_ValidateKeywordArguments(void *kwargs)
+{
+    if (!object_is_instance_of_type(kwargs, (void *)&PyDict_Type)) {
+        PyErr_BadInternalCall();
+        return 0;
+    }
+    void *keys = PyDict_Keys(kwargs);
+    if (keys == NULL) {
+        return 0;
+    }
+    Py_ssize_t count = PyList_Size(keys);
+    if (count < 0) {
+        Py_DecRef(keys);
+        return 0;
+    }
+    for (Py_ssize_t i = 0; i < count; i++) {
+        void *key = PyList_GetItem(keys, i);
+        if (!object_is_instance_of_type(key, (void *)&PyUnicode_Type)) {
+            Py_DecRef(keys);
+            pyrs_capi_set_error_message("keywords must be strings");
+            return 0;
+        }
+    }
+    Py_DecRef(keys);
     return 1;
 }
 

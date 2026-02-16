@@ -19915,6 +19915,9 @@ unsafe extern "C" {
         ...
     ) -> *mut c_void;
     fn PyObject_CallMethodObjArgs(object: *mut c_void, method: *mut c_void, ...) -> *mut c_void;
+    fn PyArg_Parse(args: *mut c_void, format: *const c_char, ...) -> i32;
+    fn PyArg_VaParse(args: *mut c_void, format: *const c_char, vargs: *mut c_void) -> i32;
+    fn PyArg_ValidateKeywordArguments(kwargs: *mut c_void) -> i32;
     fn PyArg_ParseTuple(args: *mut c_void, format: *const c_char, ...) -> i32;
     fn PyArg_ParseTupleAndKeywords(
         args: *mut c_void,
@@ -20406,6 +20409,15 @@ static KEEP3_PYOBJECT_CALLMETHOD: unsafe extern "C" fn(
     *const c_char,
     ...
 ) -> *mut c_void = PyObject_CallMethod;
+#[used]
+static KEEP3_PYARG_PARSE: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
+    PyArg_Parse;
+#[used]
+static KEEP3_PYARG_VAPARSE: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> i32 =
+    PyArg_VaParse;
+#[used]
+static KEEP3_PYARG_VALIDATEKEYWORDARGUMENTS: unsafe extern "C" fn(*mut c_void) -> i32 =
+    PyArg_ValidateKeywordArguments;
 #[used]
 static KEEP3_PYARG_PARSETUPLE: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
     PyArg_ParseTuple;

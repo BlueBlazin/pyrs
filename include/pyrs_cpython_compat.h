@@ -2,6 +2,7 @@
 #define PYRS_CPYTHON_COMPAT_H
 
 #include <stddef.h>
+#include <stdarg.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -308,6 +309,9 @@ int PySet_Discard(PyObject *set, PyObject *key);
 int PySet_Clear(PyObject *set);
 PyObject *PySet_Pop(PyObject *set);
 PyObject *Py_BuildValue(const char *format, ...);
+int PyArg_Parse(PyObject *args, const char *format, ...);
+int PyArg_VaParse(PyObject *args, const char *format, va_list va);
+int PyArg_ValidateKeywordArguments(PyObject *kwargs);
 int PyArg_ParseTuple(PyObject *args, const char *format, ...);
 int PyArg_ParseTupleAndKeywords(
     PyObject *args,
@@ -426,6 +430,8 @@ int PyBuffer_FillInfo(
 );
 void PyBuffer_Release(Py_buffer *view);
 
+PyObject *PyDict_New(void);
+int PyDict_SetItem(PyObject *dict, PyObject *key, PyObject *value);
 PyObject *PyDict_Keys(PyObject *dict);
 PyObject *PyDict_Values(PyObject *dict);
 PyObject *PyDict_Items(PyObject *dict);
