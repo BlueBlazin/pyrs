@@ -39,6 +39,7 @@ extern void *PyLong_FromSsize_t(Py_ssize_t value);
 extern void *PyFloat_FromDouble(double value);
 extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
+extern int PyBytes_AsStringAndSize(void *obj, char **buffer, Py_ssize_t *len);
 extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyObject_Call(void *callable, void *args, void *kwargs);
 extern void *PyObject_CallObject(void *callable, void *args);
@@ -1101,6 +1102,32 @@ void *PyBytes_FromFormat(const char *format, ...)
     va_list vargs;
     va_start(vargs, format);
     void *result = PyBytes_FromFormatV(format, vargs);
+    va_end(vargs);
+    return result;
+}
+
+void *PyUnicode_FromFormatV(const char *format, va_list vargs)
+{
+    void *bytes_value = PyBytes_FromFormatV(format, vargs);
+    if (bytes_value == NULL) {
+        return NULL;
+    }
+    char *payload = NULL;
+    Py_ssize_t payload_len = 0;
+    if (PyBytes_AsStringAndSize(bytes_value, &payload, &payload_len) != 0) {
+        Py_DecRef(bytes_value);
+        return NULL;
+    }
+    void *unicode_value = PyUnicode_FromStringAndSize(payload, payload_len);
+    Py_DecRef(bytes_value);
+    return unicode_value;
+}
+
+void *PyUnicode_FromFormat(const char *format, ...)
+{
+    va_list vargs;
+    va_start(vargs, format);
+    void *result = PyUnicode_FromFormatV(format, vargs);
     va_end(vargs);
     return result;
 }

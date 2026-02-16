@@ -418,6 +418,7 @@ PyObject *PyUnicode_FromKindAndData(int kind, const void *buffer, long long size
 PyObject *PyUnicode_FromObject(PyObject *object);
 PyObject *PyUnicode_FromOrdinal(int ordinal);
 const char *PyUnicode_GetDefaultEncoding(void);
+PyObject *PyUnicode_FromFormatV(const char *format, va_list vargs);
 const char *PyUnicode_AsUTF8(PyObject *object);
 const char *PyUnicode_AsUTF8AndSize(PyObject *object, long long *size);
 PyObject *PyUnicode_AsUTF8String(PyObject *object);

@@ -7983,11 +7983,6 @@ pub unsafe extern "C" fn PyUnicode_InternFromString(value: *const c_char) -> *mu
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicode_FromFormat(format: *const c_char) -> *mut c_void {
-    unsafe { PyUnicode_FromString(format) }
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_FromObject(object: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if object.is_null() {
@@ -27826,6 +27821,8 @@ pub static mut PyZip_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_ZIP.as_pt
 unsafe extern "C" {
     fn PyTuple_Pack(size: isize, ...) -> *mut c_void;
     fn Py_BuildValue(format: *const c_char, ...) -> *mut c_void;
+    fn PyUnicode_FromFormat(format: *const c_char, ...) -> *mut c_void;
+    fn PyUnicode_FromFormatV(format: *const c_char, vargs: *mut c_void) -> *mut c_void;
     fn PyBytes_FromFormat(format: *const c_char, ...) -> *mut c_void;
     fn PyBytes_FromFormatV(format: *const c_char, vargs: *mut c_void) -> *mut c_void;
     fn PyObject_CallFunction(callable: *mut c_void, format: *const c_char, ...) -> *mut c_void;
@@ -28997,8 +28994,13 @@ static KEEP3_PYUNICODE_GETLENGTH: unsafe extern "C" fn(*mut c_void) -> isize = P
 static KEEP3_PYUNICODE_INTERNFROMSTRING: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyUnicode_InternFromString;
 #[used]
-static KEEP3_PYUNICODE_FROMFORMAT: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+static KEEP3_PYUNICODE_FROMFORMAT: unsafe extern "C" fn(*const c_char, ...) -> *mut c_void =
     PyUnicode_FromFormat;
+#[used]
+static KEEP3_PYUNICODE_FROMFORMATV: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+) -> *mut c_void = PyUnicode_FromFormatV;
 #[used]
 static KEEP3_PYUNICODE_FROMOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyUnicode_FromObject;
