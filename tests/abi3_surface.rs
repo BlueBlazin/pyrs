@@ -1691,6 +1691,29 @@ fn exports_abi3_batch67_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch68_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "_Py_CheckRecursiveCall",
+        "_Py_DecRef",
+        "_Py_IncRef",
+        "_Py_NegativeRefcount",
+        "_Py_SetRefcnt",
+        "_PyObject_GC_NewVar",
+        "_PyObject_GC_Resize",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch68 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

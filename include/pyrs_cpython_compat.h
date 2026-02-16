@@ -1133,6 +1133,13 @@ void Py_IncRef(PyObject *object);
 void Py_DecRef(PyObject *object);
 void Py_XIncRef(PyObject *object);
 void Py_XDecRef(PyObject *object);
+void _Py_IncRef(PyObject *object);
+void _Py_DecRef(PyObject *object);
+void _Py_SetRefcnt(PyObject *object, long long refcnt);
+void _Py_NegativeRefcount(const char *filename, int lineno, PyObject *object);
+int _Py_CheckRecursiveCall(const char *where);
+PyObject *_PyObject_GC_NewVar(PyTypeObject *type, long long nitems);
+PyObject *_PyObject_GC_Resize(PyObject *object, long long nitems);
 
 #define Py_INCREF(op) Py_IncRef((PyObject *)(op))
 #define Py_DECREF(op) Py_DecRef((PyObject *)(op))

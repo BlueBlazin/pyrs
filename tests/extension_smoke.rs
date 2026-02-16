@@ -9732,6 +9732,116 @@ PyInit_cpython_api_batch67_probe(void) {
 }
 
 #[test]
+fn cpython_compat_internal_ref_gc_abi_batch68_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch68 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch68 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch68");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch68_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *value = PyLong_FromLong(7);
+    _Py_SetRefcnt(value, 2);
+    int set_ok = (Py_REFCNT(value) == 2) ? 1 : 0;
+
+    _Py_IncRef(value);
+    int inc_ok = (Py_REFCNT(value) == 3) ? 1 : 0;
+
+    _Py_DecRef(value);
+    int dec_ok = (Py_REFCNT(value) == 2) ? 1 : 0;
+
+    int recurse_ok = (_Py_CheckRecursiveCall("batch68") == 0) ? 1 : 0;
+
+    PyObject *gc_obj = _PyObject_GC_NewVar(0, 3);
+    int gc_new_ok = (gc_obj != 0) ? 1 : 0;
+    PyObject *resized = _PyObject_GC_Resize(gc_obj, 1);
+    int gc_resize_ok = (resized == gc_obj && resized != 0) ? 1 : 0;
+
+    _Py_NegativeRefcount("batch68", 42, value);
+    int negative_ok = (PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    _Py_SetRefcnt(value, 1);
+    Py_DECREF(value);
+    PyObject_Free(gc_obj);
+
+    return Py_BuildValue(
+        "(iiiiiii)",
+        set_ok,
+        inc_ok,
+        dec_ok,
+        recurse_ok,
+        gc_new_ok,
+        gc_resize_ok,
+        negative_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe internal ref/gc ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch68_probe",
+    "cpython api batch68 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch68_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch68_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch68 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch68_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch68 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
