@@ -1246,6 +1246,38 @@ thread_local! {
     static ACTIVE_CPYTHON_INIT_CONTEXT: Cell<*mut ModuleCapiContext> = const { Cell::new(std::ptr::null_mut()) };
 }
 
+static MAIN_THREAD_STATE_TOKEN: u8 = 0;
+static CURRENT_THREAD_STATE_PTR: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_THREAD_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+
+fn cpython_main_thread_state_ptr() -> usize {
+    std::ptr::addr_of!(MAIN_THREAD_STATE_TOKEN) as usize
+}
+
+fn cpython_thread_state_allocations() -> &'static Mutex<HashSet<usize>> {
+    CPYTHON_THREAD_STATE_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_current_thread_state_ptr() -> usize {
+    let current = CURRENT_THREAD_STATE_PTR.load(Ordering::Relaxed);
+    if current != 0 {
+        return current;
+    }
+    let main_ptr = cpython_main_thread_state_ptr();
+    CURRENT_THREAD_STATE_PTR.compare_exchange(0, main_ptr, Ordering::Relaxed, Ordering::Relaxed).ok();
+    CURRENT_THREAD_STATE_PTR.load(Ordering::Relaxed)
+}
+
+fn cpython_is_known_thread_state_ptr(ptr: usize) -> bool {
+    if ptr == 0 || ptr == cpython_main_thread_state_ptr() {
+        return ptr != 0;
+    }
+    cpython_thread_state_allocations()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(&ptr))
+}
+
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
     fn calloc(count: usize, size: usize) -> *mut c_void;
@@ -18761,7 +18793,93 @@ pub unsafe extern "C" fn PySys_AddWarnOptionUnicode(option: *const Cwchar) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThreadState_Get() -> *mut c_void {
-    1usize as *mut c_void
+    cpython_current_thread_state_ptr() as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_New(interp: *mut c_void) -> *mut c_void {
+    if interp.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_New requires interpreter");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: allocate opaque thread-state token for CPython-ABI compatibility.
+    let raw = unsafe { calloc(1, 1) } as usize;
+    if raw == 0 {
+        cpython_set_error("PyThreadState_New failed to allocate thread state");
+        return std::ptr::null_mut();
+    }
+    if let Ok(mut set) = cpython_thread_state_allocations().lock() {
+        set.insert(raw);
+    }
+    raw as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_Swap(new_thread_state: *mut c_void) -> *mut c_void {
+    let previous = cpython_current_thread_state_ptr() as *mut c_void;
+    if !new_thread_state.is_null() {
+        let new_ptr = new_thread_state as usize;
+        if !cpython_is_known_thread_state_ptr(new_ptr) {
+            cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_Swap received unknown thread state");
+            return std::ptr::null_mut();
+        }
+    }
+    CURRENT_THREAD_STATE_PTR.store(new_thread_state as usize, Ordering::Relaxed);
+    previous
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_Clear(thread_state: *mut c_void) {
+    if thread_state.is_null() {
+        return;
+    }
+    if !cpython_is_known_thread_state_ptr(thread_state as usize) {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_Clear received unknown thread state");
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_Delete(thread_state: *mut c_void) {
+    if thread_state.is_null() {
+        return;
+    }
+    let ptr = thread_state as usize;
+    if ptr == cpython_main_thread_state_ptr() {
+        return;
+    }
+    let removed = cpython_thread_state_allocations()
+        .lock()
+        .ok()
+        .is_some_and(|mut set| set.remove(&ptr));
+    if removed {
+        if CURRENT_THREAD_STATE_PTR.load(Ordering::Relaxed) == ptr {
+            CURRENT_THREAD_STATE_PTR.store(cpython_main_thread_state_ptr(), Ordering::Relaxed);
+        }
+        // SAFETY: pointer was allocated in PyThreadState_New and removed from registry once.
+        unsafe {
+            free(thread_state);
+        }
+    } else {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyThreadState_Delete received unknown thread state");
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_DeleteCurrent() {
+    let current = cpython_current_thread_state_ptr();
+    if current == cpython_main_thread_state_ptr() {
+        return;
+    }
+    unsafe { PyThreadState_Delete(current as *mut c_void) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_SetAsyncExc(id: u64, _exc: *mut c_void) -> i32 {
+    if id == vm_current_thread_ident() as u64 {
+        1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -22087,6 +22205,21 @@ static KEEP2_PYSYS_ADDWARNOPTIONUNICODE: unsafe extern "C" fn(*const Cwchar) =
     PySys_AddWarnOptionUnicode;
 #[used]
 static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThreadState_Get;
+#[used]
+static KEEP2_PYTHREADSTATE_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyThreadState_New;
+#[used]
+static KEEP2_PYTHREADSTATE_SWAP: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyThreadState_Swap;
+#[used]
+static KEEP2_PYTHREADSTATE_CLEAR: unsafe extern "C" fn(*mut c_void) = PyThreadState_Clear;
+#[used]
+static KEEP2_PYTHREADSTATE_DELETE: unsafe extern "C" fn(*mut c_void) = PyThreadState_Delete;
+#[used]
+static KEEP2_PYTHREADSTATE_DELETECURRENT: unsafe extern "C" fn() = PyThreadState_DeleteCurrent;
+#[used]
+static KEEP2_PYTHREADSTATE_SETASYNCEXC: unsafe extern "C" fn(u64, *mut c_void) -> i32 =
+    PyThreadState_SetAsyncExc;
 #[used]
 static KEEP2_PYTHREADSTATE_GETFRAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyThreadState_GetFrame;
