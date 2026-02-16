@@ -1165,6 +1165,64 @@ fn exports_abi3_batch50_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch51_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyExc_ArithmeticError",
+        "PyExc_AssertionError",
+        "PyExc_BaseException",
+        "PyExc_BaseExceptionGroup",
+        "PyExc_BlockingIOError",
+        "PyExc_BrokenPipeError",
+        "PyExc_BytesWarning",
+        "PyExc_ChildProcessError",
+        "PyExc_ConnectionAbortedError",
+        "PyExc_ConnectionError",
+        "PyExc_ConnectionRefusedError",
+        "PyExc_ConnectionResetError",
+        "PyExc_EncodingWarning",
+        "PyExc_EnvironmentError",
+        "PyExc_FileExistsError",
+        "PyExc_FileNotFoundError",
+        "PyExc_GeneratorExit",
+        "PyExc_IndentationError",
+        "PyExc_InterruptedError",
+        "PyExc_IsADirectoryError",
+        "PyExc_KeyboardInterrupt",
+        "PyExc_LookupError",
+        "PyExc_ModuleNotFoundError",
+        "PyExc_NotADirectoryError",
+        "PyExc_PendingDeprecationWarning",
+        "PyExc_PermissionError",
+        "PyExc_ProcessLookupError",
+        "PyExc_ReferenceError",
+        "PyExc_StopAsyncIteration",
+        "PyExc_StopIteration",
+        "PyExc_SyntaxError",
+        "PyExc_SyntaxWarning",
+        "PyExc_SystemExit",
+        "PyExc_TabError",
+        "PyExc_TimeoutError",
+        "PyExc_UnboundLocalError",
+        "PyExc_UnicodeError",
+        "PyExc_UnicodeTranslateError",
+        "PyExc_UnicodeWarning",
+        "PyExc_Warning",
+        "PyExc_WindowsError",
+        "PyExc_ZeroDivisionError",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch51 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

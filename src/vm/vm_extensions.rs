@@ -1091,68 +1091,94 @@ fn cpython_value_debug_tag(value: &Value) -> String {
     }
 }
 
+macro_rules! for_each_cpython_exception_symbol {
+    ($apply:ident) => {
+        $apply!(PyExc_BaseException, "BaseException");
+        $apply!(PyExc_Exception, "Exception");
+        $apply!(PyExc_BaseExceptionGroup, "BaseExceptionGroup");
+        $apply!(PyExc_GeneratorExit, "GeneratorExit");
+        $apply!(PyExc_KeyboardInterrupt, "KeyboardInterrupt");
+        $apply!(PyExc_SystemExit, "SystemExit");
+        $apply!(PyExc_StopIteration, "StopIteration");
+        $apply!(PyExc_StopAsyncIteration, "StopAsyncIteration");
+        $apply!(PyExc_ArithmeticError, "ArithmeticError");
+        $apply!(PyExc_OverflowError, "OverflowError");
+        $apply!(PyExc_FloatingPointError, "FloatingPointError");
+        $apply!(PyExc_ZeroDivisionError, "ZeroDivisionError");
+        $apply!(PyExc_AssertionError, "AssertionError");
+        $apply!(PyExc_AttributeError, "AttributeError");
+        $apply!(PyExc_BufferError, "BufferError");
+        $apply!(PyExc_EOFError, "EOFError");
+        $apply!(PyExc_ImportError, "ImportError");
+        $apply!(PyExc_ModuleNotFoundError, "ModuleNotFoundError");
+        $apply!(PyExc_LookupError, "LookupError");
+        $apply!(PyExc_IndexError, "IndexError");
+        $apply!(PyExc_KeyError, "KeyError");
+        $apply!(PyExc_MemoryError, "MemoryError");
+        $apply!(PyExc_NameError, "NameError");
+        $apply!(PyExc_UnboundLocalError, "UnboundLocalError");
+        $apply!(PyExc_OSError, "OSError");
+        $apply!(PyExc_BlockingIOError, "BlockingIOError");
+        $apply!(PyExc_BrokenPipeError, "BrokenPipeError");
+        $apply!(PyExc_ChildProcessError, "ChildProcessError");
+        $apply!(PyExc_ConnectionError, "ConnectionError");
+        $apply!(PyExc_ConnectionAbortedError, "ConnectionAbortedError");
+        $apply!(PyExc_ConnectionRefusedError, "ConnectionRefusedError");
+        $apply!(PyExc_ConnectionResetError, "ConnectionResetError");
+        $apply!(PyExc_FileExistsError, "FileExistsError");
+        $apply!(PyExc_FileNotFoundError, "FileNotFoundError");
+        $apply!(PyExc_InterruptedError, "InterruptedError");
+        $apply!(PyExc_IsADirectoryError, "IsADirectoryError");
+        $apply!(PyExc_NotADirectoryError, "NotADirectoryError");
+        $apply!(PyExc_PermissionError, "PermissionError");
+        $apply!(PyExc_ProcessLookupError, "ProcessLookupError");
+        $apply!(PyExc_TimeoutError, "TimeoutError");
+        $apply!(PyExc_ReferenceError, "ReferenceError");
+        $apply!(PyExc_RuntimeError, "RuntimeError");
+        $apply!(PyExc_NotImplementedError, "NotImplementedError");
+        $apply!(PyExc_RecursionError, "RecursionError");
+        $apply!(PyExc_SyntaxError, "SyntaxError");
+        $apply!(PyExc_IndentationError, "IndentationError");
+        $apply!(PyExc_TabError, "TabError");
+        $apply!(PyExc_SystemError, "SystemError");
+        $apply!(PyExc_TypeError, "TypeError");
+        $apply!(PyExc_ValueError, "ValueError");
+        $apply!(PyExc_UnicodeError, "UnicodeError");
+        $apply!(PyExc_UnicodeDecodeError, "UnicodeDecodeError");
+        $apply!(PyExc_UnicodeEncodeError, "UnicodeEncodeError");
+        $apply!(PyExc_UnicodeTranslateError, "UnicodeTranslateError");
+        $apply!(PyExc_Warning, "Warning");
+        $apply!(PyExc_DeprecationWarning, "DeprecationWarning");
+        $apply!(PyExc_PendingDeprecationWarning, "PendingDeprecationWarning");
+        $apply!(PyExc_RuntimeWarning, "RuntimeWarning");
+        $apply!(PyExc_SyntaxWarning, "SyntaxWarning");
+        $apply!(PyExc_UserWarning, "UserWarning");
+        $apply!(PyExc_FutureWarning, "FutureWarning");
+        $apply!(PyExc_ImportWarning, "ImportWarning");
+        $apply!(PyExc_UnicodeWarning, "UnicodeWarning");
+        $apply!(PyExc_BytesWarning, "BytesWarning");
+        $apply!(PyExc_ResourceWarning, "ResourceWarning");
+        $apply!(PyExc_EncodingWarning, "EncodingWarning");
+        $apply!(PyExc_EnvironmentError, "EnvironmentError");
+        $apply!(PyExc_IOError, "IOError");
+        $apply!(PyExc_WindowsError, "WindowsError");
+    };
+}
+
 fn cpython_exception_value_from_ptr(raw: usize) -> Option<Value> {
-    // SAFETY: exception symbol pointers are process-global and stable.
-    unsafe {
-        let exception_name = if raw == PyExc_Exception as usize {
-            Some("Exception")
-        } else if raw == PyExc_ImportError as usize {
-            Some("ImportError")
-        } else if raw == PyExc_RuntimeError as usize {
-            Some("RuntimeError")
-        } else if raw == PyExc_TypeError as usize {
-            Some("TypeError")
-        } else if raw == PyExc_ValueError as usize {
-            Some("ValueError")
-        } else if raw == PyExc_AttributeError as usize {
-            Some("AttributeError")
-        } else if raw == PyExc_BufferError as usize {
-            Some("BufferError")
-        } else if raw == PyExc_DeprecationWarning as usize {
-            Some("DeprecationWarning")
-        } else if raw == PyExc_EOFError as usize {
-            Some("EOFError")
-        } else if raw == PyExc_FloatingPointError as usize {
-            Some("FloatingPointError")
-        } else if raw == PyExc_FutureWarning as usize {
-            Some("FutureWarning")
-        } else if raw == PyExc_IOError as usize {
-            Some("IOError")
-        } else if raw == PyExc_ImportWarning as usize {
-            Some("ImportWarning")
-        } else if raw == PyExc_IndexError as usize {
-            Some("IndexError")
-        } else if raw == PyExc_KeyError as usize {
-            Some("KeyError")
-        } else if raw == PyExc_MemoryError as usize {
-            Some("MemoryError")
-        } else if raw == PyExc_NameError as usize {
-            Some("NameError")
-        } else if raw == PyExc_NotImplementedError as usize {
-            Some("NotImplementedError")
-        } else if raw == PyExc_OSError as usize {
-            Some("OSError")
-        } else if raw == PyExc_OverflowError as usize {
-            Some("OverflowError")
-        } else if raw == PyExc_RecursionError as usize {
-            Some("RecursionError")
-        } else if raw == PyExc_ResourceWarning as usize {
-            Some("ResourceWarning")
-        } else if raw == PyExc_RuntimeWarning as usize {
-            Some("RuntimeWarning")
-        } else if raw == PyExc_SystemError as usize {
-            Some("SystemError")
-        } else if raw == PyExc_UnicodeDecodeError as usize {
-            Some("UnicodeDecodeError")
-        } else if raw == PyExc_UnicodeEncodeError as usize {
-            Some("UnicodeEncodeError")
-        } else if raw == PyExc_UserWarning as usize {
-            Some("UserWarning")
-        } else {
-            None
-        }?;
-        Some(Value::ExceptionType(exception_name.to_string()))
+    macro_rules! match_exception_symbol {
+        ($symbol:ident, $name:literal) => {
+            // SAFETY: exception symbol pointers are process-global and stable.
+            unsafe {
+                let symbol = $symbol as usize;
+                if symbol != 0 && raw == symbol {
+                    return Some(Value::ExceptionType($name.to_string()));
+                }
+            }
+        };
     }
+    for_each_cpython_exception_symbol!(match_exception_symbol);
+    None
 }
 
 unsafe fn ensure_cpython_exception_symbol(slot: *mut *mut c_void, type_ptr: *mut c_void) {
@@ -1236,36 +1262,15 @@ fn initialize_cpython_compat_type_objects() {
         _Py_FalseStruct.ob_type = std::ptr::addr_of_mut!(PyBool_Type).cast();
         _Py_TrueStruct.ob_type = std::ptr::addr_of_mut!(PyBool_Type).cast();
 
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_Exception), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_ImportError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_RuntimeError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_TypeError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_ValueError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_AttributeError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_BufferError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_DeprecationWarning), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_EOFError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_FloatingPointError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_FutureWarning), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_IOError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_ImportWarning), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_IndexError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_KeyError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_MemoryError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_NameError), type_ptr);
-        ensure_cpython_exception_symbol(
-            std::ptr::addr_of_mut!(PyExc_NotImplementedError),
-            type_ptr,
-        );
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_OSError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_OverflowError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_RecursionError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_ResourceWarning), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_RuntimeWarning), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_SystemError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_UnicodeDecodeError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_UnicodeEncodeError), type_ptr);
-        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_UserWarning), type_ptr);
+        macro_rules! init_exception_symbol {
+            ($symbol:ident, $name:literal) => {
+                ensure_cpython_exception_symbol(std::ptr::addr_of_mut!($symbol), type_ptr);
+            };
+        }
+        for_each_cpython_exception_symbol!(init_exception_symbol);
+        PyExc_EnvironmentError = PyExc_OSError;
+        PyExc_IOError = PyExc_OSError;
+        PyExc_WindowsError = PyExc_OSError;
     });
 }
 
@@ -23444,88 +23449,14 @@ pub unsafe extern "C" fn Py_XDecRef(object: *mut c_void) {
     }
 }
 
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_Exception: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_ImportError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_RuntimeError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_TypeError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_ValueError: *mut c_void = std::ptr::null_mut();
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_AttributeError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_BufferError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_DeprecationWarning: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_EOFError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_FloatingPointError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_FutureWarning: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_IOError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_ImportWarning: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_IndexError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_KeyError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_MemoryError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_NameError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_NotImplementedError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_OSError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_OverflowError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_RecursionError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_ResourceWarning: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_RuntimeWarning: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_SystemError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_UnicodeDecodeError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_UnicodeEncodeError: *mut c_void = std::ptr::null_mut();
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyExc_UserWarning: *mut c_void = std::ptr::null_mut();
+macro_rules! define_exception_symbol {
+    ($symbol:ident, $name:literal) => {
+        #[unsafe(no_mangle)]
+        #[used]
+        pub static mut $symbol: *mut c_void = std::ptr::null_mut();
+    };
+}
+for_each_cpython_exception_symbol!(define_exception_symbol);
 
 const fn py_ascii_whitespace_table() -> [u8; 128] {
     let mut table = [0u8; 128];
