@@ -158,6 +158,8 @@ Recent Lane A slice:
 - Added Stable-ABI exports and semantics for long mask/int-info parsing APIs:
   - `PyLong_{AsUnsignedLongMask,AsUnsignedLongLongMask,FromString,GetInfo}`
   - mask wrap semantics (`-1 -> UINT64_MAX`, large-int modulo) and parse/error paths are smoke-covered in the batch7 extension probe.
+- Remaining long-only abi3 gaps are now narrowed to native-byte APIs:
+  - `PyLong_{AsNativeBytes,FromNativeBytes,FromUnsignedNativeBytes}`.
 
 Interpretation:
 - Lane A is substantial remaining work.
