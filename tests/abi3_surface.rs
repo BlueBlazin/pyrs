@@ -612,6 +612,21 @@ fn exports_abi3_batch22_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch23_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyErr_WarnExplicit", "PyErr_ResourceWarning"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch23 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

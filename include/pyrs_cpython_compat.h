@@ -468,6 +468,17 @@ PyObject *PyErr_SetFromWindowsErr(int ierr);
 PyObject *PyErr_SetFromWindowsErrWithFilename(int ierr, const char *filename);
 void PyErr_SetInterrupt(void);
 int PyErr_SetInterruptEx(int signum);
+int PyErr_WarnEx(PyObject *category, const char *message, long long stack_level);
+int PyErr_WarnFormat(PyObject *category, long long stack_level, const char *format);
+int PyErr_WarnExplicit(
+    PyObject *category,
+    const char *message,
+    const char *filename,
+    int lineno,
+    const char *module,
+    PyObject *registry
+);
+int PyErr_ResourceWarning(PyObject *source, long long stack_level, const char *format);
 int PyErr_BadArgument(void);
 void PyErr_BadInternalCall(void);
 void PyErr_PrintEx(int set_sys_last_vars);
@@ -529,6 +540,7 @@ extern PyObject *PyExc_TypeError;
 extern PyObject *PyExc_ValueError;
 extern PyObject *PyExc_EOFError;
 extern PyObject *PyExc_OSError;
+extern PyObject *PyExc_ResourceWarning;
 extern PyObject *PyExc_AttributeError;
 extern PyObject *PyExc_BufferError;
 extern void *PyByteArray_Type;

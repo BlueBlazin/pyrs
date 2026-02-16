@@ -1083,6 +1083,8 @@ fn cpython_exception_value_from_ptr(raw: usize) -> Option<Value> {
             Some("OverflowError")
         } else if raw == PyExc_RecursionError as usize {
             Some("RecursionError")
+        } else if raw == PyExc_ResourceWarning as usize {
+            Some("ResourceWarning")
         } else if raw == PyExc_RuntimeWarning as usize {
             Some("RuntimeWarning")
         } else if raw == PyExc_SystemError as usize {
@@ -1204,6 +1206,7 @@ fn initialize_cpython_compat_type_objects() {
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_OSError), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_OverflowError), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_RecursionError), type_ptr);
+        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_ResourceWarning), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_RuntimeWarning), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_SystemError), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_UnicodeDecodeError), type_ptr);
@@ -18177,12 +18180,90 @@ pub unsafe extern "C" fn PyErr_WarnEx(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_WarnExplicit(
+    category: *mut c_void,
+    text: *const c_char,
+    filename: *const c_char,
+    lineno: i32,
+    module: *const c_char,
+    _registry: *mut c_void,
+) -> i32 {
+    let text = match unsafe { c_name_to_string(text) } {
+        Ok(value) => value,
+        Err(_) => {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "PyErr_WarnExplicit requires non-null message",
+            );
+            return -1;
+        }
+    };
+    let filename = if filename.is_null() {
+        "<string>".to_string()
+    } else {
+        match unsafe { c_name_to_string(filename) } {
+            Ok(value) => value,
+            Err(err) => {
+                cpython_set_error(err);
+                return -1;
+            }
+        }
+    };
+    let module = if module.is_null() {
+        None
+    } else {
+        match unsafe { c_name_to_string(module) } {
+            Ok(value) => Some(value),
+            Err(err) => {
+                cpython_set_error(err);
+                return -1;
+            }
+        }
+    };
+    let mut rendered = format!("{filename}:{lineno}: {text}");
+    if let Some(module) = module {
+        rendered = format!("{module}: {rendered}");
+    }
+    let Ok(rendered) = CString::new(rendered) else {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "warning message contains interior NUL byte",
+        );
+        return -1;
+    };
+    unsafe { PyErr_WarnEx(category, rendered.as_ptr(), 1) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_WarnFormat(
     category: *mut c_void,
     stacklevel: isize,
     format: *const c_char,
 ) -> i32 {
     unsafe { PyErr_WarnEx(category, format, stacklevel) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_ResourceWarning(
+    _source: *mut c_void,
+    stack_level: isize,
+    format: *const c_char,
+) -> i32 {
+    if format.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "PyErr_ResourceWarning requires non-null format string",
+        );
+        return -1;
+    }
+    let category = unsafe {
+        if PyExc_ResourceWarning.is_null() {
+            PyExc_RuntimeWarning
+        } else {
+            PyExc_ResourceWarning
+        }
+    };
+    unsafe { PyErr_WarnEx(category, format, stack_level) }
 }
 
 #[unsafe(no_mangle)]
@@ -19177,6 +19258,9 @@ pub static mut PyExc_OverflowError: *mut c_void = std::ptr::null_mut();
 pub static mut PyExc_RecursionError: *mut c_void = std::ptr::null_mut();
 #[unsafe(no_mangle)]
 #[used]
+pub static mut PyExc_ResourceWarning: *mut c_void = std::ptr::null_mut();
+#[unsafe(no_mangle)]
+#[used]
 pub static mut PyExc_RuntimeWarning: *mut c_void = std::ptr::null_mut();
 #[unsafe(no_mangle)]
 #[used]
@@ -20030,6 +20114,18 @@ static KEEP3_PYERR_WARNEX: unsafe extern "C" fn(*mut c_void, *const c_char, isiz
 #[used]
 static KEEP3_PYERR_WARNFORMAT: unsafe extern "C" fn(*mut c_void, isize, *const c_char) -> i32 =
     PyErr_WarnFormat;
+#[used]
+static KEEP3_PYERR_WARNEXPLICIT: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *const c_char,
+    i32,
+    *const c_char,
+    *mut c_void,
+) -> i32 = PyErr_WarnExplicit;
+#[used]
+static KEEP3_PYERR_RESOURCEWARNING: unsafe extern "C" fn(*mut c_void, isize, *const c_char) -> i32 =
+    PyErr_ResourceWarning;
 #[used]
 static KEEP3_PYERR_WRITEUNRAISABLE: unsafe extern "C" fn(*mut c_void) = PyErr_WriteUnraisable;
 #[used]
