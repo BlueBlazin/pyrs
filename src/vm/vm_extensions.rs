@@ -1252,6 +1252,8 @@ thread_local! {
 static MAIN_THREAD_STATE_TOKEN: u8 = 0;
 static CURRENT_THREAD_STATE_PTR: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_THREAD_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
+static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 
 fn cpython_main_thread_state_ptr() -> usize {
     std::ptr::addr_of!(MAIN_THREAD_STATE_TOKEN) as usize
@@ -1259,6 +1261,24 @@ fn cpython_main_thread_state_ptr() -> usize {
 
 fn cpython_thread_state_allocations() -> &'static Mutex<HashSet<usize>> {
     CPYTHON_THREAD_STATE_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_main_interpreter_state_ptr() -> usize {
+    std::ptr::addr_of!(MAIN_INTERPRETER_STATE_TOKEN) as usize
+}
+
+fn cpython_interpreter_state_allocations() -> &'static Mutex<HashSet<usize>> {
+    CPYTHON_INTERPRETER_STATE_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_is_known_interpreter_state_ptr(ptr: usize) -> bool {
+    if ptr == 0 || ptr == cpython_main_interpreter_state_ptr() {
+        return ptr != 0;
+    }
+    cpython_interpreter_state_allocations()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(&ptr))
 }
 
 fn cpython_current_thread_state_ptr() -> usize {
@@ -20123,12 +20143,75 @@ pub unsafe extern "C" fn PyFrame_GetLineNumber(frame: *mut c_void) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInterpreterState_Get() -> *mut c_void {
-    2usize as *mut c_void
+    cpython_main_interpreter_state_ptr() as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyInterpreterState_New() -> *mut c_void {
+    // SAFETY: allocate opaque interpreter-state token for CPython-ABI compatibility.
+    let raw = unsafe { calloc(1, 1) } as usize;
+    if raw == 0 {
+        cpython_set_error("PyInterpreterState_New failed to allocate interpreter state");
+        return std::ptr::null_mut();
+    }
+    if let Ok(mut set) = cpython_interpreter_state_allocations().lock() {
+        set.insert(raw);
+    }
+    raw as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyInterpreterState_Clear(interp: *mut c_void) {
+    if interp.is_null() {
+        return;
+    }
+    if !cpython_is_known_interpreter_state_ptr(interp as usize) {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyInterpreterState_Clear received unknown interpreter state",
+        );
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyInterpreterState_Delete(interp: *mut c_void) {
+    if interp.is_null() {
+        return;
+    }
+    let ptr = interp as usize;
+    if ptr == cpython_main_interpreter_state_ptr() {
+        return;
+    }
+    let removed = cpython_interpreter_state_allocations()
+        .lock()
+        .ok()
+        .is_some_and(|mut set| set.remove(&ptr));
+    if removed {
+        // SAFETY: pointer was allocated in PyInterpreterState_New and removed once.
+        unsafe {
+            free(interp);
+        }
+    } else {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyInterpreterState_Delete received unknown interpreter state",
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInterpreterState_GetID(interp: *mut c_void) -> i64 {
-    if interp.is_null() { -1 } else { 1 }
+    if interp.is_null() {
+        return -1;
+    }
+    let raw = interp as usize;
+    if !cpython_is_known_interpreter_state_ptr(raw) {
+        return -1;
+    }
+    if raw == cpython_main_interpreter_state_ptr() {
+        return 1;
+    }
+    raw as i64
 }
 
 #[unsafe(no_mangle)]
@@ -23518,6 +23601,13 @@ static KEEP2_PYTHREADSTATE_GETID: unsafe extern "C" fn(*mut c_void) -> u64 = PyT
 static KEEP2_PYTHREADSTATE_GETDICT: unsafe extern "C" fn() -> *mut c_void = PyThreadState_GetDict;
 #[used]
 static KEEP2_PYINTERPRETERSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyInterpreterState_Get;
+#[used]
+static KEEP2_PYINTERPRETERSTATE_NEW: unsafe extern "C" fn() -> *mut c_void = PyInterpreterState_New;
+#[used]
+static KEEP2_PYINTERPRETERSTATE_CLEAR: unsafe extern "C" fn(*mut c_void) = PyInterpreterState_Clear;
+#[used]
+static KEEP2_PYINTERPRETERSTATE_DELETE: unsafe extern "C" fn(*mut c_void) =
+    PyInterpreterState_Delete;
 #[used]
 static KEEP2_PYINTERPRETERSTATE_GETID: unsafe extern "C" fn(*mut c_void) -> i64 =
     PyInterpreterState_GetID;

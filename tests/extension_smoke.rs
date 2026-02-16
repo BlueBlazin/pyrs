@@ -6704,6 +6704,99 @@ PyInit_cpython_api_batch45_probe(void) {
 }
 
 #[test]
+fn cpython_compat_interpreterstate_abi_batch46_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch46 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch46 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch46");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch46_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    void *main_interp = PyInterpreterState_Get();
+    void *fresh_interp = PyInterpreterState_New();
+    int fresh_ok = (main_interp != 0 && fresh_interp != 0 && fresh_interp != main_interp) ? 1 : 0;
+
+    long long main_id = PyInterpreterState_GetID(main_interp);
+    long long fresh_id = PyInterpreterState_GetID(fresh_interp);
+    int id_ok = (main_id > 0 && fresh_id > 0 && fresh_id != main_id) ? 1 : 0;
+
+    PyObject *main_dict = PyInterpreterState_GetDict(main_interp);
+    PyObject *fresh_dict = PyInterpreterState_GetDict(fresh_interp);
+    int dict_ok = (main_dict != 0 && fresh_dict != 0) ? 1 : 0;
+
+    PyInterpreterState_Clear(fresh_interp);
+    PyInterpreterState_Delete(fresh_interp);
+    int deleted_id_is_invalid = (PyInterpreterState_GetID(fresh_interp) == -1) ? 1 : 0;
+
+    return Py_BuildValue("(iiii)", fresh_ok, id_ok, dict_ok, deleted_id_is_invalid);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe interpreter-state APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch46_probe",
+    "cpython api batch46 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch46_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch46_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch46 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch46_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1)",
+    )
+    .expect("cpython api batch46 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

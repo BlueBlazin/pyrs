@@ -1062,6 +1062,25 @@ fn exports_abi3_batch45_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch46_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyInterpreterState_New",
+        "PyInterpreterState_Clear",
+        "PyInterpreterState_Delete",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch46 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
