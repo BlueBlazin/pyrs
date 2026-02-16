@@ -7568,6 +7568,153 @@ PyInit_cpython_api_batch52_probe(void) {
 }
 
 #[test]
+fn cpython_compat_thread_abi_batch53_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch53 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch53 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch53");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch53_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static void noop_thread_fn(void *arg) {
+    (void)arg;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyThread_init_thread();
+    int ident_ok = (PyThread_get_thread_ident() != 0 &&
+                    PyThread_get_thread_native_id() != 0) ? 1 : 0;
+
+    void *lock = PyThread_allocate_lock();
+    int lock_ok = 0;
+    if (lock) {
+        int first = PyThread_acquire_lock(lock, NOWAIT_LOCK);
+        int second = PyThread_acquire_lock(lock, NOWAIT_LOCK);
+        int timed = PyThread_acquire_lock_timed(lock, 1000, 0);
+        PyThread_release_lock(lock);
+        int reacquire = PyThread_acquire_lock(lock, NOWAIT_LOCK);
+        PyThread_release_lock(lock);
+        lock_ok = (first == PY_LOCK_ACQUIRED &&
+                   second == PY_LOCK_FAILURE &&
+                   timed == PY_LOCK_FAILURE &&
+                   reacquire == PY_LOCK_ACQUIRED) ? 1 : 0;
+        PyThread_free_lock(lock);
+    }
+
+    int tls_ok = 0;
+    int key = PyThread_create_key();
+    if (key > 0 &&
+        PyThread_set_key_value(key, (void *)0x1234) == 0 &&
+        PyThread_get_key_value(key) == (void *)0x1234) {
+        PyThread_delete_key_value(key);
+        tls_ok = (PyThread_get_key_value(key) == 0) ? 1 : 0;
+        PyThread_delete_key(key);
+    }
+
+    int tss_ok = 0;
+    void *tss = PyThread_tss_alloc();
+    if (tss &&
+        PyThread_tss_is_created(tss) == 0 &&
+        PyThread_tss_create(tss) == 0 &&
+        PyThread_tss_is_created(tss) == 1 &&
+        PyThread_tss_set(tss, (void *)0x5678) == 0 &&
+        PyThread_tss_get(tss) == (void *)0x5678) {
+        PyThread_tss_delete(tss);
+        tss_ok = (PyThread_tss_get(tss) == 0) ? 1 : 0;
+    }
+    PyThread_tss_free(tss);
+
+    size_t original_stack = PyThread_get_stacksize();
+    int stack_ok = (PyThread_set_stacksize(0) == 0 &&
+                    PyThread_set_stacksize(4096) == -1 &&
+                    PyThread_set_stacksize(65536) == 0 &&
+                    PyThread_get_stacksize() == 65536 &&
+                    PyThread_set_stacksize(original_stack) == 0) ? 1 : 0;
+
+    PyObject *info = PyThread_GetInfo();
+    int info_ok = (info && PyObject_Length(info) == 3) ? 1 : 0;
+    Py_XDECREF(info);
+
+    unsigned long spawned = PyThread_start_new_thread(noop_thread_fn, 0);
+    int start_ok = spawned != (unsigned long)-1 ? 1 : 0;
+
+    return Py_BuildValue(
+        "(iiiiiii)",
+        ident_ok,
+        lock_ok,
+        tls_ok,
+        tss_ok,
+        stack_ok,
+        info_ok,
+        start_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe thread ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch53_probe",
+    "cpython api batch53 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch53_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch53_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch53 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch53_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch53 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

@@ -1286,6 +1286,48 @@ fn exports_abi3_batch52_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch53_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyThread_GetInfo",
+        "PyThread_ReInitTLS",
+        "PyThread_acquire_lock",
+        "PyThread_acquire_lock_timed",
+        "PyThread_allocate_lock",
+        "PyThread_create_key",
+        "PyThread_delete_key",
+        "PyThread_delete_key_value",
+        "PyThread_exit_thread",
+        "PyThread_free_lock",
+        "PyThread_get_key_value",
+        "PyThread_get_stacksize",
+        "PyThread_get_thread_ident",
+        "PyThread_get_thread_native_id",
+        "PyThread_init_thread",
+        "PyThread_release_lock",
+        "PyThread_set_key_value",
+        "PyThread_set_stacksize",
+        "PyThread_start_new_thread",
+        "PyThread_tss_alloc",
+        "PyThread_tss_create",
+        "PyThread_tss_delete",
+        "PyThread_tss_free",
+        "PyThread_tss_get",
+        "PyThread_tss_is_created",
+        "PyThread_tss_set",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch53 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

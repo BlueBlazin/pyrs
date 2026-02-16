@@ -4,8 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_ulong, c_void};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, Once, OnceLock};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, Once, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::bytecode::CodeObject;
 use crate::bytecode::cpython::{
@@ -32,8 +33,8 @@ use super::{
     NativeCallResult, ObjRef, Vm, add_values, and_values, dict_contains_key_checked,
     dict_get_value, dict_remove_value, dict_set_value_checked, div_values, floor_div_values,
     invert_value, is_truthy, lshift_values, matmul_values, memoryview_bounds, mod_values,
-    mul_values, neg_value, or_values, pos_value, pow_values, rshift_values, sub_values,
-    value_to_int, vm_current_thread_ident, xor_values,
+    mul_values, neg_value, or_values, pos_value, pow_values, rshift_values, sub_values, value_to_int,
+    vm_current_thread_ident, vm_os_thread_ident, xor_values,
 };
 
 #[cfg(windows)]
@@ -1321,10 +1322,29 @@ thread_local! {
 static MAIN_THREAD_STATE_TOKEN: u8 = 0;
 static CURRENT_THREAD_STATE_PTR: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_THREAD_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static CPYTHON_THREAD_LOCK_REGISTRY: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static CPYTHON_THREAD_STACK_SIZE: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_THREAD_NEXT_IDENT: AtomicU64 = AtomicU64::new(1);
+static CPYTHON_THREAD_TLS_NEXT_KEY: AtomicUsize = AtomicUsize::new(1);
+static CPYTHON_THREAD_TLS_KEY_REGISTRY: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static CPYTHON_THREAD_TLS_VALUES: OnceLock<Mutex<HashMap<(u64, usize), usize>>> = OnceLock::new();
+static CPYTHON_THREAD_TSS_REGISTRY: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static CPYTHON_THREAD_TSS_VALUES: OnceLock<Mutex<HashMap<(u64, usize), usize>>> = OnceLock::new();
 static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
     OnceLock::new();
+
+struct CpythonThreadLock {
+    state: Mutex<bool>,
+    condvar: Condvar,
+}
+
+#[repr(C)]
+struct CpythonThreadTss {
+    initialized: c_int,
+    key: usize,
+}
 
 struct CpythonStructSeqTypeInfo {
     field_count: usize,
@@ -1338,6 +1358,26 @@ fn cpython_main_thread_state_ptr() -> usize {
 
 fn cpython_thread_state_allocations() -> &'static Mutex<HashSet<usize>> {
     CPYTHON_THREAD_STATE_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_thread_lock_registry() -> &'static Mutex<HashSet<usize>> {
+    CPYTHON_THREAD_LOCK_REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_thread_tls_key_registry() -> &'static Mutex<HashSet<usize>> {
+    CPYTHON_THREAD_TLS_KEY_REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_thread_tls_values() -> &'static Mutex<HashMap<(u64, usize), usize>> {
+    CPYTHON_THREAD_TLS_VALUES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cpython_thread_tss_registry() -> &'static Mutex<HashSet<usize>> {
+    CPYTHON_THREAD_TSS_REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_thread_tss_values() -> &'static Mutex<HashMap<(u64, usize), usize>> {
+    CPYTHON_THREAD_TSS_VALUES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn cpython_main_interpreter_state_ptr() -> usize {
@@ -1382,6 +1422,15 @@ fn cpython_is_known_thread_state_ptr(ptr: usize) -> bool {
         .lock()
         .ok()
         .is_some_and(|set| set.contains(&ptr))
+}
+
+fn cpython_current_thread_ident_u64() -> u64 {
+    let ident = vm_current_thread_ident();
+    if ident >= 0 {
+        ident as u64
+    } else {
+        ident.unsigned_abs()
+    }
 }
 
 unsafe extern "C" {
@@ -20589,6 +20638,408 @@ pub unsafe extern "C" fn PySys_SetArgv(argc: i32, argv: *mut *mut Cwchar) {
     unsafe { PySys_SetArgvEx(argc, argv, 1) }
 }
 
+fn cpython_thread_lock_is_known(ptr: usize) -> bool {
+    cpython_thread_lock_registry()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(&ptr))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_init_thread() {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_start_new_thread(
+    function: Option<unsafe extern "C" fn(*mut c_void)>,
+    arg: *mut c_void,
+) -> c_ulong {
+    let Some(function) = function else {
+        return c_ulong::MAX;
+    };
+    let stack_size = CPYTHON_THREAD_STACK_SIZE.load(Ordering::Relaxed);
+    let arg_bits = arg as usize;
+    let ident = CPYTHON_THREAD_NEXT_IDENT.fetch_add(1, Ordering::Relaxed);
+    let mut builder = std::thread::Builder::new();
+    if stack_size > 0 {
+        builder = builder.stack_size(stack_size);
+    }
+    match builder.spawn(move || {
+        // SAFETY: C-API contract provides callable + argument pointer.
+        unsafe { function(arg_bits as *mut c_void) };
+    }) {
+        Ok(handle) => {
+            std::mem::drop(handle);
+            ident as c_ulong
+        }
+        Err(_) => c_ulong::MAX,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_exit_thread() {
+    loop {
+        std::thread::park();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_get_thread_ident() -> c_ulong {
+    vm_os_thread_ident() as c_ulong
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_get_thread_native_id() -> c_ulong {
+    vm_os_thread_ident() as c_ulong
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_allocate_lock() -> *mut c_void {
+    let raw = Box::into_raw(Box::new(CpythonThreadLock {
+        state: Mutex::new(false),
+        condvar: Condvar::new(),
+    })) as usize;
+    if let Ok(mut set) = cpython_thread_lock_registry().lock() {
+        set.insert(raw);
+    }
+    raw as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_free_lock(lock: *mut c_void) {
+    if lock.is_null() {
+        return;
+    }
+    let ptr = lock as usize;
+    let removed = cpython_thread_lock_registry()
+        .lock()
+        .ok()
+        .is_some_and(|mut set| set.remove(&ptr));
+    if removed {
+        // SAFETY: pointer was produced by Box::into_raw in PyThread_allocate_lock and removed once.
+        unsafe {
+            drop(Box::from_raw(lock.cast::<CpythonThreadLock>()));
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_acquire_lock(lock: *mut c_void, waitflag: c_int) -> c_int {
+    let timeout = if waitflag != 0 { -1 } else { 0 };
+    let status = unsafe { PyThread_acquire_lock_timed(lock, timeout, 0) };
+    if status == 1 { 1 } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_acquire_lock_timed(
+    lock: *mut c_void,
+    microseconds: i64,
+    _intr_flag: c_int,
+) -> c_int {
+    if lock.is_null() {
+        return 0;
+    }
+    let lock_ptr = lock as usize;
+    if !cpython_thread_lock_is_known(lock_ptr) {
+        return 0;
+    }
+    // SAFETY: lock pointer validity is guarded by registry membership.
+    let lock_ref = unsafe { &*lock.cast::<CpythonThreadLock>() };
+    let mut state = match lock_ref.state.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if !*state {
+        *state = true;
+        return 1;
+    }
+    if microseconds == 0 {
+        return 0;
+    }
+    if microseconds < 0 {
+        while *state {
+            state = match lock_ref.condvar.wait(state) {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+        }
+        *state = true;
+        return 1;
+    }
+    let timeout = Duration::from_micros(microseconds as u64);
+    let start = Instant::now();
+    while *state {
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            return 0;
+        }
+        let remaining = timeout - elapsed;
+        let result = lock_ref.condvar.wait_timeout(state, remaining);
+        let (new_state, wait_outcome) = match result {
+            Ok(value) => value,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        state = new_state;
+        if wait_outcome.timed_out() && *state {
+            return 0;
+        }
+    }
+    *state = true;
+    1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_release_lock(lock: *mut c_void) {
+    if lock.is_null() {
+        return;
+    }
+    let lock_ptr = lock as usize;
+    if !cpython_thread_lock_is_known(lock_ptr) {
+        return;
+    }
+    // SAFETY: lock pointer validity is guarded by registry membership.
+    let lock_ref = unsafe { &*lock.cast::<CpythonThreadLock>() };
+    let mut state = match lock_ref.state.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if *state {
+        *state = false;
+        lock_ref.condvar.notify_one();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_get_stacksize() -> usize {
+    CPYTHON_THREAD_STACK_SIZE.load(Ordering::Relaxed)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_set_stacksize(size: usize) -> c_int {
+    if size == 0 {
+        CPYTHON_THREAD_STACK_SIZE.store(0, Ordering::Relaxed);
+        return 0;
+    }
+    if size < 32 * 1024 {
+        return -1;
+    }
+    CPYTHON_THREAD_STACK_SIZE.store(size, Ordering::Relaxed);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_GetInfo() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyThread_GetInfo missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let info = vm.heap.alloc_tuple(vec![
+            Value::Str("pyrs".to_string()),
+            Value::Str("mutex+cond".to_string()),
+            Value::None,
+        ]);
+        context.alloc_cpython_ptr_for_value(info)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_create_key() -> c_int {
+    let raw = CPYTHON_THREAD_TLS_NEXT_KEY.fetch_add(1, Ordering::Relaxed);
+    if raw > c_int::MAX as usize {
+        return -1;
+    }
+    if let Ok(mut set) = cpython_thread_tls_key_registry().lock() {
+        set.insert(raw);
+    }
+    raw as c_int
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_delete_key(key: c_int) {
+    if key <= 0 {
+        return;
+    }
+    let key_id = key as usize;
+    if let Ok(mut set) = cpython_thread_tls_key_registry().lock() {
+        set.remove(&key_id);
+    }
+    if let Ok(mut map) = cpython_thread_tls_values().lock() {
+        map.retain(|(_, stored_key), _| *stored_key != key_id);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_set_key_value(key: c_int, value: *mut c_void) -> c_int {
+    if key <= 0 {
+        return -1;
+    }
+    let key_id = key as usize;
+    let is_known = cpython_thread_tls_key_registry()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(&key_id));
+    if !is_known {
+        return -1;
+    }
+    let thread_id = cpython_current_thread_ident_u64();
+    if let Ok(mut map) = cpython_thread_tls_values().lock() {
+        map.insert((thread_id, key_id), value as usize);
+        0
+    } else {
+        -1
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_get_key_value(key: c_int) -> *mut c_void {
+    if key <= 0 {
+        return std::ptr::null_mut();
+    }
+    let key_id = key as usize;
+    let thread_id = cpython_current_thread_ident_u64();
+    cpython_thread_tls_values()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&(thread_id, key_id)).copied())
+        .unwrap_or(0) as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_delete_key_value(key: c_int) {
+    if key <= 0 {
+        return;
+    }
+    let key_id = key as usize;
+    let thread_id = cpython_current_thread_ident_u64();
+    if let Ok(mut map) = cpython_thread_tls_values().lock() {
+        map.remove(&(thread_id, key_id));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_ReInitTLS() {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_tss_alloc() -> *mut c_void {
+    Box::into_raw(Box::new(CpythonThreadTss {
+        initialized: 0,
+        key: 0,
+    })) as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_tss_free(key: *mut c_void) {
+    if key.is_null() {
+        return;
+    }
+    unsafe { PyThread_tss_delete(key) };
+    // SAFETY: pointer was allocated by PyThread_tss_alloc.
+    unsafe {
+        drop(Box::from_raw(key.cast::<CpythonThreadTss>()));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_tss_is_created(key: *mut c_void) -> c_int {
+    if key.is_null() {
+        return 0;
+    }
+    // SAFETY: caller provided pointer is expected to reference Py_tss_t compatible storage.
+    let key_ref = unsafe { &*key.cast::<CpythonThreadTss>() };
+    if key_ref.initialized != 0 { 1 } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_tss_create(key: *mut c_void) -> c_int {
+    if key.is_null() {
+        return -1;
+    }
+    // SAFETY: caller provided pointer is expected to reference Py_tss_t compatible storage.
+    let key_ref = unsafe { &mut *key.cast::<CpythonThreadTss>() };
+    if key_ref.initialized != 0 {
+        return 0;
+    }
+    let key_id = CPYTHON_THREAD_TLS_NEXT_KEY.fetch_add(1, Ordering::Relaxed);
+    if let Ok(mut set) = cpython_thread_tss_registry().lock() {
+        set.insert(key_id);
+    }
+    key_ref.key = key_id;
+    key_ref.initialized = 1;
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_tss_delete(key: *mut c_void) {
+    if key.is_null() {
+        return;
+    }
+    // SAFETY: caller provided pointer is expected to reference Py_tss_t compatible storage.
+    let key_ref = unsafe { &mut *key.cast::<CpythonThreadTss>() };
+    if key_ref.initialized == 0 {
+        return;
+    }
+    let key_id = key_ref.key;
+    if let Ok(mut set) = cpython_thread_tss_registry().lock() {
+        set.remove(&key_id);
+    }
+    if let Ok(mut map) = cpython_thread_tss_values().lock() {
+        map.retain(|(_, stored_key), _| *stored_key != key_id);
+    }
+    key_ref.key = 0;
+    key_ref.initialized = 0;
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_tss_set(key: *mut c_void, value: *mut c_void) -> c_int {
+    if key.is_null() {
+        return -1;
+    }
+    // SAFETY: caller provided pointer is expected to reference Py_tss_t compatible storage.
+    let key_ref = unsafe { &*key.cast::<CpythonThreadTss>() };
+    if key_ref.initialized == 0 {
+        return -1;
+    }
+    let key_id = key_ref.key;
+    let is_known = cpython_thread_tss_registry()
+        .lock()
+        .ok()
+        .is_some_and(|set| set.contains(&key_id));
+    if !is_known {
+        return -1;
+    }
+    let thread_id = cpython_current_thread_ident_u64();
+    if let Ok(mut map) = cpython_thread_tss_values().lock() {
+        map.insert((thread_id, key_id), value as usize);
+        0
+    } else {
+        -1
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThread_tss_get(key: *mut c_void) -> *mut c_void {
+    if key.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller provided pointer is expected to reference Py_tss_t compatible storage.
+    let key_ref = unsafe { &*key.cast::<CpythonThreadTss>() };
+    if key_ref.initialized == 0 {
+        return std::ptr::null_mut();
+    }
+    let thread_id = cpython_current_thread_ident_u64();
+    cpython_thread_tss_values()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&(thread_id, key_ref.key)).copied())
+        .unwrap_or(0) as *mut c_void
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThreadState_Get() -> *mut c_void {
     cpython_current_thread_state_ptr() as *mut c_void
@@ -24495,6 +24946,71 @@ static KEEP2_PYSYS_SETARGV: unsafe extern "C" fn(i32, *mut *mut Cwchar) = PySys_
 static KEEP2_PYSYS_SETARGVEX: unsafe extern "C" fn(i32, *mut *mut Cwchar, i32) = PySys_SetArgvEx;
 #[used]
 static KEEP2_PYSYS_SETPATH: unsafe extern "C" fn(*const Cwchar) = PySys_SetPath;
+#[used]
+static KEEP2_PYTHREAD_INIT_THREAD: unsafe extern "C" fn() = PyThread_init_thread;
+#[used]
+static KEEP2_PYTHREAD_START_NEW_THREAD: unsafe extern "C" fn(
+    Option<unsafe extern "C" fn(*mut c_void)>,
+    *mut c_void,
+) -> c_ulong = PyThread_start_new_thread;
+#[used]
+static KEEP2_PYTHREAD_EXIT_THREAD: unsafe extern "C" fn() = PyThread_exit_thread;
+#[used]
+static KEEP2_PYTHREAD_GET_THREAD_IDENT: unsafe extern "C" fn() -> c_ulong =
+    PyThread_get_thread_ident;
+#[used]
+static KEEP2_PYTHREAD_GET_THREAD_NATIVE_ID: unsafe extern "C" fn() -> c_ulong =
+    PyThread_get_thread_native_id;
+#[used]
+static KEEP2_PYTHREAD_ALLOCATE_LOCK: unsafe extern "C" fn() -> *mut c_void =
+    PyThread_allocate_lock;
+#[used]
+static KEEP2_PYTHREAD_FREE_LOCK: unsafe extern "C" fn(*mut c_void) = PyThread_free_lock;
+#[used]
+static KEEP2_PYTHREAD_ACQUIRE_LOCK: unsafe extern "C" fn(*mut c_void, c_int) -> c_int =
+    PyThread_acquire_lock;
+#[used]
+static KEEP2_PYTHREAD_ACQUIRE_LOCK_TIMED: unsafe extern "C" fn(*mut c_void, i64, c_int) -> c_int =
+    PyThread_acquire_lock_timed;
+#[used]
+static KEEP2_PYTHREAD_RELEASE_LOCK: unsafe extern "C" fn(*mut c_void) = PyThread_release_lock;
+#[used]
+static KEEP2_PYTHREAD_GET_STACKSIZE: unsafe extern "C" fn() -> usize = PyThread_get_stacksize;
+#[used]
+static KEEP2_PYTHREAD_SET_STACKSIZE: unsafe extern "C" fn(usize) -> c_int = PyThread_set_stacksize;
+#[used]
+static KEEP2_PYTHREAD_GETINFO: unsafe extern "C" fn() -> *mut c_void = PyThread_GetInfo;
+#[used]
+static KEEP2_PYTHREAD_CREATE_KEY: unsafe extern "C" fn() -> c_int = PyThread_create_key;
+#[used]
+static KEEP2_PYTHREAD_DELETE_KEY: unsafe extern "C" fn(c_int) = PyThread_delete_key;
+#[used]
+static KEEP2_PYTHREAD_SET_KEY_VALUE: unsafe extern "C" fn(c_int, *mut c_void) -> c_int =
+    PyThread_set_key_value;
+#[used]
+static KEEP2_PYTHREAD_GET_KEY_VALUE: unsafe extern "C" fn(c_int) -> *mut c_void =
+    PyThread_get_key_value;
+#[used]
+static KEEP2_PYTHREAD_DELETE_KEY_VALUE: unsafe extern "C" fn(c_int) = PyThread_delete_key_value;
+#[used]
+static KEEP2_PYTHREAD_REINIT_TLS: unsafe extern "C" fn() = PyThread_ReInitTLS;
+#[used]
+static KEEP2_PYTHREAD_TSS_ALLOC: unsafe extern "C" fn() -> *mut c_void = PyThread_tss_alloc;
+#[used]
+static KEEP2_PYTHREAD_TSS_FREE: unsafe extern "C" fn(*mut c_void) = PyThread_tss_free;
+#[used]
+static KEEP2_PYTHREAD_TSS_IS_CREATED: unsafe extern "C" fn(*mut c_void) -> c_int =
+    PyThread_tss_is_created;
+#[used]
+static KEEP2_PYTHREAD_TSS_CREATE: unsafe extern "C" fn(*mut c_void) -> c_int =
+    PyThread_tss_create;
+#[used]
+static KEEP2_PYTHREAD_TSS_DELETE: unsafe extern "C" fn(*mut c_void) = PyThread_tss_delete;
+#[used]
+static KEEP2_PYTHREAD_TSS_SET: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    PyThread_tss_set;
+#[used]
+static KEEP2_PYTHREAD_TSS_GET: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyThread_tss_get;
 #[used]
 static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThreadState_Get;
 #[used]

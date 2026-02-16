@@ -99,7 +99,7 @@ Acceptance criteria:
 ## Current Baseline Snapshot
 
 From `perf/abi3_manifest_latest.json`:
-- Stable ABI functions implemented/exported: `572 / 782`
+- Stable ABI functions implemented/exported: `598 / 782`
 - Stable ABI data symbols implemented/exported: `143 / 143`
 
 Recent Lane A slice:
@@ -150,6 +150,13 @@ Recent Lane A slice:
 - Added Stable-ABI data-symbol coverage for remaining type/global exports (`batch52`):
   - exported all remaining missing data symbols in the current manifest (`Py*Type` iterator/view globals, weakref globals, filesystem/default-encoding globals, `Py_Version`, `_Py_RefTotal`, `_Py_SwappedOp`, `PyOS_InputHook`).
   - data-symbol coverage is now complete (`143 / 143`), with behavior probes for default-fs metadata/version/swapped-op and representative type-symbol availability.
+- Added Stable-ABI exports and baseline semantics for `PyThread_*` runtime APIs (`batch53`):
+  - `PyThread_init_thread`, `PyThread_start_new_thread`, `PyThread_exit_thread`, `PyThread_{get_thread_ident,get_thread_native_id}`,
+    `PyThread_{allocate_lock,free_lock,acquire_lock,acquire_lock_timed,release_lock}`,
+    `PyThread_{get_stacksize,set_stacksize,GetInfo}`,
+    deprecated TLS APIs `PyThread_{create_key,delete_key,set_key_value,get_key_value,delete_key_value,ReInitTLS}`,
+    and TSS APIs `PyThread_tss_{alloc,free,is_created,create,delete,set,get}`.
+  - thread API behavior is smoke-covered for lock acquire/release semantics, TLS/TSS set/get lifecycles, stack-size guard behavior, and start-new-thread return contract.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`
@@ -224,6 +231,7 @@ Recent Lane A slice:
     - `tests/abi3_surface.rs::exports_abi3_batch50_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch51_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch52_symbols`
+    - `tests/abi3_surface.rs::exports_abi3_batch53_symbols`
   - behavior gates:
     - `tests/extension_smoke.rs::cpython_compat_list_set_exception_gc_and_float_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_bytes_error_and_cfunction_apis_work`
@@ -276,6 +284,7 @@ Recent Lane A slice:
     - `tests/extension_smoke.rs::cpython_compat_pyos_abi_batch50_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_exceptions_abi_batch51_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_data_symbols_abi_batch52_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_thread_abi_batch53_apis_work`
 - Added Stable-ABI exports and semantics for error/file APIs:
   - `PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`
   - `PyFile_{GetLine,WriteObject,WriteString}`

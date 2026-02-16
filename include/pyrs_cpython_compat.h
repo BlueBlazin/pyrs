@@ -88,6 +88,19 @@ typedef enum {
 #define Py_DTST_NAN 2
 #endif
 
+#ifndef PY_LOCK_FAILURE
+#define PY_LOCK_FAILURE 0
+#define PY_LOCK_ACQUIRED 1
+#define PY_LOCK_INTR 2
+#endif
+
+#ifndef WAIT_LOCK
+#define WAIT_LOCK 1
+#define NOWAIT_LOCK 0
+#endif
+
+typedef long long PY_TIMEOUT_T;
+
 #ifndef Py_RELATIVE_OFFSET
 #define Py_RELATIVE_OFFSET 8
 #endif
@@ -525,6 +538,32 @@ int PyFrame_GetLineNumber(PyObject *frame);
 int PyGILState_Ensure(void);
 void *PyGILState_GetThisThreadState(void);
 void PyGILState_Release(int state);
+void PyThread_init_thread(void);
+unsigned long PyThread_start_new_thread(void (*func)(void *), void *arg);
+void PyThread_exit_thread(void);
+unsigned long PyThread_get_thread_ident(void);
+unsigned long PyThread_get_thread_native_id(void);
+void *PyThread_allocate_lock(void);
+void PyThread_free_lock(void *lock);
+int PyThread_acquire_lock(void *lock, int waitflag);
+int PyThread_acquire_lock_timed(void *lock, PY_TIMEOUT_T microseconds, int intr_flag);
+void PyThread_release_lock(void *lock);
+size_t PyThread_get_stacksize(void);
+int PyThread_set_stacksize(size_t size);
+PyObject *PyThread_GetInfo(void);
+int PyThread_create_key(void);
+void PyThread_delete_key(int key);
+int PyThread_set_key_value(int key, void *value);
+void *PyThread_get_key_value(int key);
+void PyThread_delete_key_value(int key);
+void PyThread_ReInitTLS(void);
+void *PyThread_tss_alloc(void);
+void PyThread_tss_free(void *key);
+int PyThread_tss_is_created(void *key);
+int PyThread_tss_create(void *key);
+void PyThread_tss_delete(void *key);
+int PyThread_tss_set(void *key, void *value);
+void *PyThread_tss_get(void *key);
 void *PyThreadState_Get(void);
 void *PyThreadState_New(void *interp);
 void *PyThreadState_Swap(void *state);
