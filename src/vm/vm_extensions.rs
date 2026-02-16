@@ -859,6 +859,8 @@ fn cpython_exception_value_from_ptr(raw: usize) -> Option<Value> {
             Some("BufferError")
         } else if raw == PyExc_DeprecationWarning as usize {
             Some("DeprecationWarning")
+        } else if raw == PyExc_EOFError as usize {
+            Some("EOFError")
         } else if raw == PyExc_FloatingPointError as usize {
             Some("FloatingPointError")
         } else if raw == PyExc_FutureWarning as usize {
@@ -988,6 +990,7 @@ fn initialize_cpython_compat_type_objects() {
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_AttributeError), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_BufferError), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_DeprecationWarning), type_ptr);
+        ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_EOFError), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_FloatingPointError), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_FutureWarning), type_ptr);
         ensure_cpython_exception_symbol(std::ptr::addr_of_mut!(PyExc_IOError), type_ptr);
@@ -1034,6 +1037,7 @@ struct ModuleCapiContext {
     objects: HashMap<PyrsObjectHandle, CapiObjectSlot>,
     capsules: HashMap<PyrsObjectHandle, CapiCapsuleSlot>,
     current_error: Option<CpythonErrorState>,
+    handled_exception: Option<Value>,
     last_error: Option<String>,
     first_error: Option<String>,
     scratch_strings: Vec<CString>,
@@ -1156,6 +1160,7 @@ impl ModuleCapiContext {
             objects: HashMap::new(),
             capsules: HashMap::new(),
             current_error: None,
+            handled_exception: None,
             last_error: None,
             first_error: None,
             scratch_strings: Vec::new(),
@@ -1283,6 +1288,17 @@ impl ModuleCapiContext {
         let message = self.error_message_from_ptr(state.pvalue);
         self.current_error = Some(state);
         self.set_error_message(message);
+    }
+
+    fn handled_exception_get(&self) -> Option<Value> {
+        self.handled_exception.clone()
+    }
+
+    fn handled_exception_set(&mut self, value: Option<Value>) {
+        self.handled_exception = match value {
+            Some(Value::None) | None => None,
+            Some(value) => Some(value),
+        };
     }
 
     fn allocate_handle(&mut self) -> PyrsObjectHandle {
@@ -4816,6 +4832,20 @@ fn cpython_set_error(message: impl Into<String>) {
     }
     let _ = with_active_cpython_context_mut(|context| {
         context.set_error(message);
+    });
+}
+
+fn cpython_set_typed_error(ptype: *mut c_void, message: impl Into<String>) {
+    let message = message.into();
+    let _ = with_active_cpython_context_mut(|context| {
+        let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
+        let ty = if ptype.is_null() {
+            // SAFETY: exception singleton pointer is process-global.
+            unsafe { PyExc_RuntimeError }
+        } else {
+            ptype
+        };
+        context.set_error_state(ty, pvalue, std::ptr::null_mut(), message);
     });
 }
 
@@ -13518,6 +13548,288 @@ pub unsafe extern "C" fn PyErr_Restore(
     });
 }
 
+fn cpython_exception_type_ptr_for_value(
+    context: &mut ModuleCapiContext,
+    value: &Value,
+) -> Option<*mut c_void> {
+    match value {
+        Value::Exception(exception_obj) => {
+            if context.vm.is_null() {
+                return None;
+            }
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let class = vm.alloc_synthetic_exception_class(&exception_obj.name);
+            Some(context.alloc_cpython_ptr_for_value(Value::Class(class)))
+        }
+        Value::Instance(instance) => {
+            if !cpython_is_exception_instance(context, instance) {
+                return None;
+            }
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return None;
+            };
+            let class = instance_data.class.clone();
+            Some(context.alloc_cpython_ptr_for_value(Value::Class(class)))
+        }
+        Value::ExceptionType(name) => {
+            if context.vm.is_null() {
+                return None;
+            }
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let class = vm.alloc_synthetic_exception_class(name);
+            Some(context.alloc_cpython_ptr_for_value(Value::Class(class)))
+        }
+        Value::Class(class) => Some(context.alloc_cpython_ptr_for_value(Value::Class(class.clone()))),
+        _ => None,
+    }
+}
+
+fn cpython_exception_traceback_ptr_for_value(
+    context: &mut ModuleCapiContext,
+    value: &Value,
+) -> Option<*mut c_void> {
+    match value {
+        Value::Exception(exception_obj) => exception_obj
+            .attrs
+            .borrow()
+            .get("__traceback__")
+            .cloned()
+            .or_else(|| exception_obj.attrs.borrow().get("exc_traceback").cloned())
+            .filter(|tb| !matches!(tb, Value::None))
+            .map(|tb| context.alloc_cpython_ptr_for_value(tb)),
+        Value::Instance(instance) => {
+            if !cpython_is_exception_instance(context, instance) {
+                return None;
+            }
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return None;
+            };
+            instance_data
+                .attrs
+                .get("__traceback__")
+                .cloned()
+                .or_else(|| instance_data.attrs.get("exc_traceback").cloned())
+                .filter(|tb| !matches!(tb, Value::None))
+                .map(|tb| context.alloc_cpython_ptr_for_value(tb))
+        }
+        _ => None,
+    }
+}
+
+fn cpython_make_exception_instance_from_type_and_value(
+    context: &mut ModuleCapiContext,
+    ptype: *mut c_void,
+    pvalue: Option<Value>,
+) -> Option<*mut c_void> {
+    if context.vm.is_null() || ptype.is_null() {
+        return None;
+    }
+    // SAFETY: VM pointer is valid for active C-API context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    let callable = if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(ptype as usize) {
+        Value::Class(vm.alloc_synthetic_exception_class(&name))
+    } else {
+        match context.cpython_value_from_ptr_or_proxy(ptype)? {
+            Value::Class(class) => Value::Class(class),
+            Value::ExceptionType(name) => Value::Class(vm.alloc_synthetic_exception_class(&name)),
+            _ => return None,
+        }
+    };
+    let args = match pvalue {
+        Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+            Object::Tuple(values) => values.clone(),
+            _ => Vec::new(),
+        },
+        Some(Value::None) | None => Vec::new(),
+        Some(value) => vec![value],
+    };
+    match vm.call_internal(callable, args, HashMap::new()) {
+        Ok(InternalCallOutcome::Value(value)) => match vm.normalize_exception_value(value) {
+            Ok(value) => Some(context.alloc_cpython_ptr_for_value(value)),
+            Err(_) => None,
+        },
+        _ => None,
+    }
+}
+
+fn cpython_raised_exception_ptr_from_state(
+    context: &mut ModuleCapiContext,
+    state: CpythonErrorState,
+) -> *mut c_void {
+    if state.ptype.is_null() && state.pvalue.is_null() && state.ptraceback.is_null() {
+        return std::ptr::null_mut();
+    }
+    let value = if !state.pvalue.is_null() {
+        context.cpython_value_from_ptr_or_proxy(state.pvalue)
+    } else {
+        None
+    };
+    if let Some(value) = value.as_ref() {
+        if cpython_is_exception_value(context, value) {
+            return context.alloc_cpython_ptr_for_value(value.clone());
+        }
+    }
+    if let Some(ptr) =
+        cpython_make_exception_instance_from_type_and_value(context, state.ptype, value.clone())
+    {
+        return ptr;
+    }
+    if let Some(value) = value {
+        return context.alloc_cpython_ptr_for_value(value);
+    }
+    if !state.ptype.is_null() {
+        return state.ptype;
+    }
+    std::ptr::null_mut()
+}
+
+fn cpython_is_exception_value(context: &ModuleCapiContext, value: &Value) -> bool {
+    match value {
+        Value::Exception(_) | Value::ExceptionType(_) => true,
+        Value::Instance(instance) => cpython_is_exception_instance(context, instance),
+        _ => false,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_GetRaisedException() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let state = context.fetch_error_state();
+        cpython_raised_exception_ptr_from_state(context, state)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetRaisedException(exc: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        if exc.is_null() {
+            context.clear_error();
+            return;
+        }
+        let message = context.error_message_from_ptr(exc);
+        let ptype = cpython_exception_type_ptr(exc);
+        if ptype.is_null() {
+            context.set_error("PyErr_SetRaisedException expected exception object");
+            return;
+        }
+        let ptraceback = context
+            .cpython_value_from_ptr_or_proxy(exc)
+            .as_ref()
+            .and_then(|value| cpython_exception_traceback_ptr_for_value(context, value))
+            .unwrap_or(std::ptr::null_mut());
+        context.set_error_state(ptype, exc, ptraceback, message);
+    })
+    .map_err(cpython_set_error);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_GetHandledException() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        context
+            .handled_exception_get()
+            .map(|value| context.alloc_cpython_ptr_for_value(value))
+            .unwrap_or(std::ptr::null_mut())
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetHandledException(exc: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        if exc.is_null() {
+            context.handled_exception_set(None);
+            return;
+        }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(exc) else {
+            context.set_error("PyErr_SetHandledException received unknown exception pointer");
+            return;
+        };
+        if matches!(value, Value::None) {
+            context.handled_exception_set(None);
+            return;
+        }
+        let normalized = if context.vm.is_null() {
+            value
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.normalize_exception_value(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    context.set_error(err.message);
+                    return;
+                }
+            }
+        };
+        if !cpython_is_exception_value(context, &normalized) {
+            context.set_error("PyErr_SetHandledException expected exception object");
+            return;
+        }
+        context.handled_exception_set(Some(normalized));
+    })
+    .map_err(cpython_set_error);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_GetExcInfo(
+    p_type: *mut *mut c_void,
+    p_value: *mut *mut c_void,
+    p_traceback: *mut *mut c_void,
+) {
+    let _ = with_active_cpython_context_mut(|context| {
+        let handled = context.handled_exception_get();
+        if !p_type.is_null() {
+            let value = handled
+                .as_ref()
+                .and_then(|value| cpython_exception_type_ptr_for_value(context, value))
+                .unwrap_or_else(|| context.alloc_cpython_ptr_for_value(Value::None));
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *p_type = value };
+        }
+        if !p_value.is_null() {
+            let value = handled
+                .clone()
+                .map(|value| context.alloc_cpython_ptr_for_value(value))
+                .unwrap_or(std::ptr::null_mut());
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *p_value = value };
+        }
+        if !p_traceback.is_null() {
+            let value = handled
+                .as_ref()
+                .and_then(|value| cpython_exception_traceback_ptr_for_value(context, value))
+                .unwrap_or_else(|| context.alloc_cpython_ptr_for_value(Value::None));
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *p_traceback = value };
+        }
+    })
+    .map_err(cpython_set_error);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetExcInfo(
+    p_type: *mut c_void,
+    p_value: *mut c_void,
+    p_traceback: *mut c_void,
+) {
+    unsafe { PyErr_SetHandledException(p_value) };
+    // Keep CPython ownership semantics: arguments are stolen.
+    unsafe {
+        Py_XDecRef(p_value);
+        Py_XDecRef(p_type);
+        Py_XDecRef(p_traceback);
+    }
+}
+
 fn pyrs_pyerr_format_basic(format: *const c_char) -> *mut c_void {
     let message = if format.is_null() {
         "error".to_string()
@@ -13627,6 +13939,211 @@ pub unsafe extern "C" fn PyErr_Display(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_DisplayException(exc: *mut c_void) {
     unsafe { PyErr_Display(std::ptr::null_mut(), exc, std::ptr::null_mut()) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFile_GetLine(file: *mut c_void, n: i32) -> *mut c_void {
+    if file.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let readline = unsafe { PyObject_GetAttrString(file, c"readline".as_ptr()) };
+    if readline.is_null() {
+        return std::ptr::null_mut();
+    }
+    let result = if n <= 0 {
+        unsafe { PyObject_CallObject(readline, std::ptr::null_mut()) }
+    } else {
+        let arg = unsafe { PyLong_FromLong(n as i64) };
+        if arg.is_null() {
+            unsafe { Py_DecRef(readline) };
+            return std::ptr::null_mut();
+        }
+        let result = unsafe { PyObject_CallOneArg(readline, arg) };
+        unsafe { Py_DecRef(arg) };
+        result
+    };
+    unsafe { Py_DecRef(readline) };
+    if result.is_null() {
+        return std::ptr::null_mut();
+    }
+    let value = match cpython_value_from_ptr(result) {
+        Ok(value) => value,
+        Err(err) => {
+            unsafe { Py_DecRef(result) };
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match value {
+        Value::Bytes(bytes_obj) => {
+            let Object::Bytes(payload) = &*bytes_obj.kind() else {
+                unsafe { Py_DecRef(result) };
+                cpython_set_typed_error(
+                    unsafe { PyExc_TypeError },
+                    "object.readline() returned non-string",
+                );
+                return std::ptr::null_mut();
+            };
+            if n < 0 {
+                if payload.is_empty() {
+                    unsafe { Py_DecRef(result) };
+                    cpython_set_typed_error(
+                        unsafe { PyExc_EOFError },
+                        "EOF when reading a line",
+                    );
+                    return std::ptr::null_mut();
+                }
+                if payload.last().copied() == Some(b'\n') {
+                    let mut trimmed = payload.clone();
+                    trimmed.pop();
+                    unsafe { Py_DecRef(result) };
+                    return cpython_new_bytes_ptr(trimmed);
+                }
+            }
+            result
+        }
+        Value::Str(text) => {
+            if n < 0 {
+                if text.is_empty() {
+                    unsafe { Py_DecRef(result) };
+                    cpython_set_typed_error(
+                        unsafe { PyExc_EOFError },
+                        "EOF when reading a line",
+                    );
+                    return std::ptr::null_mut();
+                }
+                if text.ends_with('\n') {
+                    let mut trimmed = text;
+                    let _ = trimmed.pop();
+                    unsafe { Py_DecRef(result) };
+                    return cpython_new_ptr_for_value(Value::Str(trimmed));
+                }
+            }
+            result
+        }
+        _ => {
+            unsafe { Py_DecRef(result) };
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "object.readline() returned non-string",
+            );
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFile_WriteObject(
+    value: *mut c_void,
+    file: *mut c_void,
+    flags: i32,
+) -> i32 {
+    const PY_PRINT_RAW_FLAG: i32 = 1;
+    with_active_cpython_context_mut(|context| {
+        if file.is_null() {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, "writeobject with NULL file");
+            return -1;
+        }
+        let Some(file_value) = context.cpython_value_from_ptr_or_proxy(file) else {
+            context.set_error("PyFile_WriteObject received unknown file pointer");
+            return -1;
+        };
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(value) else {
+            context.set_error("PyFile_WriteObject received unknown value pointer");
+            return -1;
+        };
+        if context.vm.is_null() {
+            context.set_error("missing VM context for PyFile_WriteObject");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+
+        let rendered = match vm.call_internal(
+            Value::Builtin(if (flags & PY_PRINT_RAW_FLAG) != 0 {
+                BuiltinFunction::Str
+            } else {
+                BuiltinFunction::Repr
+            }),
+            vec![value],
+            HashMap::new(),
+        ) {
+            Ok(InternalCallOutcome::Value(rendered)) => rendered,
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(
+                    vm.runtime_error_from_active_exception("PyFile_WriteObject render failed")
+                        .message,
+                );
+                return -1;
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                return -1;
+            }
+        };
+
+        let writer = match vm.call_internal(
+            Value::Builtin(BuiltinFunction::GetAttr),
+            vec![file_value, Value::Str("write".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(InternalCallOutcome::Value(writer)) => writer,
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(
+                    vm.runtime_error_from_active_exception("PyFile_WriteObject missing write")
+                        .message,
+                );
+                return -1;
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                return -1;
+            }
+        };
+
+        match vm.call_internal(writer, vec![rendered], HashMap::new()) {
+            Ok(InternalCallOutcome::Value(_)) => 0,
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(
+                    vm.runtime_error_from_active_exception("PyFile_WriteObject write failed")
+                        .message,
+                );
+                -1
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFile_WriteString(text: *const c_char, file: *mut c_void) -> i32 {
+    if file.is_null() {
+        if unsafe { PyErr_Occurred() }.is_null() {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                "null file for PyFile_WriteString",
+            );
+        }
+        return -1;
+    }
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        return -1;
+    }
+    let value = unsafe { PyUnicode_FromString(text) };
+    if value.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyFile_WriteObject(value, file, 1) };
+    unsafe { Py_DecRef(value) };
+    status
 }
 
 fn cpython_is_exception_instance(context: &ModuleCapiContext, instance: &ObjRef) -> bool {
@@ -14341,6 +14858,9 @@ pub static mut PyExc_BufferError: *mut c_void = std::ptr::null_mut();
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyExc_DeprecationWarning: *mut c_void = std::ptr::null_mut();
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyExc_EOFError: *mut c_void = std::ptr::null_mut();
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyExc_FloatingPointError: *mut c_void = std::ptr::null_mut();
@@ -15220,6 +15740,33 @@ static KEEP_PYERR_DISPLAY: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c
     PyErr_Display;
 #[used]
 static KEEP_PYERR_DISPLAY_EXCEPTION: unsafe extern "C" fn(*mut c_void) = PyErr_DisplayException;
+#[used]
+static KEEP_PYERR_GET_RAISED_EXCEPTION: unsafe extern "C" fn() -> *mut c_void =
+    PyErr_GetRaisedException;
+#[used]
+static KEEP_PYERR_SET_RAISED_EXCEPTION: unsafe extern "C" fn(*mut c_void) =
+    PyErr_SetRaisedException;
+#[used]
+static KEEP_PYERR_GET_HANDLED_EXCEPTION: unsafe extern "C" fn() -> *mut c_void =
+    PyErr_GetHandledException;
+#[used]
+static KEEP_PYERR_SET_HANDLED_EXCEPTION: unsafe extern "C" fn(*mut c_void) =
+    PyErr_SetHandledException;
+#[used]
+static KEEP_PYERR_GET_EXCINFO: unsafe extern "C" fn(*mut *mut c_void, *mut *mut c_void, *mut *mut c_void) =
+    PyErr_GetExcInfo;
+#[used]
+static KEEP_PYERR_SET_EXCINFO: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
+    PyErr_SetExcInfo;
+#[used]
+static KEEP_PYFILE_GET_LINE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
+    PyFile_GetLine;
+#[used]
+static KEEP_PYFILE_WRITE_OBJECT: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32 =
+    PyFile_WriteObject;
+#[used]
+static KEEP_PYFILE_WRITE_STRING: unsafe extern "C" fn(*const c_char, *mut c_void) -> i32 =
+    PyFile_WriteString;
 #[used]
 static KEEP_PY_INCREF: unsafe extern "C" fn(*mut c_void) = Py_IncRef;
 #[used]

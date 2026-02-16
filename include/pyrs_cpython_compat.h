@@ -30,6 +30,10 @@ typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 #define METH_METHOD 0x0200
 #endif
 
+#ifndef Py_PRINT_RAW
+#define Py_PRINT_RAW 0x0001
+#endif
+
 typedef struct PyModuleDef_Base {
     unsigned long _ob_refcnt;
     void *_ob_type;
@@ -192,6 +196,12 @@ void *PyCapsule_Import(const char *name, int no_block);
 
 void PyErr_SetString(PyObject *exception, const char *message);
 PyObject *PyErr_Occurred(void);
+PyObject *PyErr_GetRaisedException(void);
+void PyErr_SetRaisedException(PyObject *exc);
+PyObject *PyErr_GetHandledException(void);
+void PyErr_SetHandledException(PyObject *exc);
+void PyErr_GetExcInfo(PyObject **ptype, PyObject **pvalue, PyObject **ptraceback);
+void PyErr_SetExcInfo(PyObject *type, PyObject *value, PyObject *traceback);
 int PyErr_BadArgument(void);
 void PyErr_BadInternalCall(void);
 void PyErr_PrintEx(int set_sys_last_vars);
@@ -211,6 +221,10 @@ long long PyGC_Collect(void);
 int PyGC_Enable(void);
 int PyGC_Disable(void);
 int PyGC_IsEnabled(void);
+
+PyObject *PyFile_GetLine(PyObject *f, int n);
+int PyFile_WriteObject(PyObject *v, PyObject *f, int flags);
+int PyFile_WriteString(const char *s, PyObject *f);
 
 PyObject *PyCFunction_Call(PyObject *callable, PyObject *args, PyObject *kwargs);
 PyObject *PyCFunction_New(PyMethodDef *ml, PyObject *self);
@@ -235,6 +249,7 @@ extern PyObject *PyExc_ImportError;
 extern PyObject *PyExc_RuntimeError;
 extern PyObject *PyExc_TypeError;
 extern PyObject *PyExc_ValueError;
+extern PyObject *PyExc_EOFError;
 extern void *PyByteArray_Type;
 
 #define PyMODINIT_FUNC PyObject *

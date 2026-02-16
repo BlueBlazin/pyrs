@@ -1515,6 +1515,143 @@ PyInit_cpython_api_batch4_probe(void) {
 }
 
 #[test]
+fn cpython_compat_error_state_and_file_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch5 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch5 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch5");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch5_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch5_probe",
+    "cpython api batch5 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch5_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyErr_SetString(PyExc_ValueError, "boom");
+    PyObject *raised = PyErr_GetRaisedException();
+    int raised_non_null = raised ? 1 : 0;
+    int raised_cleared = PyErr_Occurred() ? 0 : 1;
+    PyErr_SetRaisedException(raised);
+    int raised_restored = PyErr_Occurred() ? 1 : 0;
+    PyObject *raised_again = PyErr_GetRaisedException();
+    int raised_again_non_null = raised_again ? 1 : 0;
+    PyErr_SetRaisedException(0);
+    int raised_cleared_again = PyErr_Occurred() ? 0 : 1;
+
+    PyObject *handled = PyObject_CallFunction((PyObject *)PyExc_RuntimeError, "s", "handled");
+    if (!handled) {
+        return 0;
+    }
+    PyErr_SetHandledException(handled);
+    PyObject *handled_readback = PyErr_GetHandledException();
+    int handled_roundtrip = handled_readback ? 1 : 0;
+    PyObject *etype = 0;
+    PyObject *evalue = 0;
+    PyObject *etb = 0;
+    PyErr_GetExcInfo(&etype, &evalue, &etb);
+    int excinfo_type = etype ? 1 : 0;
+    int excinfo_value = evalue ? 1 : 0;
+    int excinfo_tb = etb ? 1 : 0;
+    PyErr_SetExcInfo(etype, evalue, etb);
+    PyObject *handled_after_setexc = PyErr_GetHandledException();
+    int setexc_roundtrip = handled_after_setexc ? 1 : 0;
+    PyErr_SetHandledException(0);
+    PyObject *handled_after_clear = PyErr_GetHandledException();
+    int handled_cleared = handled_after_clear ? 0 : 1;
+
+    PyObject *line_null = PyFile_GetLine(0, 0);
+    int getline_null_error = (!line_null && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+    PyObject *text = PyUnicode_FromString("hello");
+    if (!text) {
+        return 0;
+    }
+    int writeobj_null_status = PyFile_WriteObject(text, 0, 0);
+    int writeobj_null_error = (writeobj_null_status == -1 && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+    int writestr_null_status = PyFile_WriteString("hello", 0);
+    int writestr_null_error = (writestr_null_status == -1 && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+
+    PyObject *sys_module = PyImport_ImportModule("sys");
+    if (!sys_module) {
+        return 0;
+    }
+    PyObject *stderr_obj = PyObject_GetAttrString(sys_module, "stderr");
+    if (!stderr_obj) {
+        return 0;
+    }
+    int writeobj_sys_ok = (PyFile_WriteObject(text, stderr_obj, Py_PRINT_RAW) == 0) ? 1 : 0;
+    int writestr_sys_ok = (PyFile_WriteString("!", stderr_obj) == 0) ? 1 : 0;
+
+    if (PyModule_AddIntConstant(module, "RAISED_NON_NULL", raised_non_null) != 0 ||
+        PyModule_AddIntConstant(module, "RAISED_CLEARED", raised_cleared) != 0 ||
+        PyModule_AddIntConstant(module, "RAISED_RESTORED", raised_restored) != 0 ||
+        PyModule_AddIntConstant(module, "RAISED_AGAIN_NON_NULL", raised_again_non_null) != 0 ||
+        PyModule_AddIntConstant(module, "RAISED_CLEARED_AGAIN", raised_cleared_again) != 0 ||
+        PyModule_AddIntConstant(module, "HANDLED_ROUNDTRIP", handled_roundtrip) != 0 ||
+        PyModule_AddIntConstant(module, "EXCINFO_TYPE", excinfo_type) != 0 ||
+        PyModule_AddIntConstant(module, "EXCINFO_VALUE", excinfo_value) != 0 ||
+        PyModule_AddIntConstant(module, "EXCINFO_TB", excinfo_tb) != 0 ||
+        PyModule_AddIntConstant(module, "SETEXC_ROUNDTRIP", setexc_roundtrip) != 0 ||
+        PyModule_AddIntConstant(module, "HANDLED_CLEARED", handled_cleared) != 0 ||
+        PyModule_AddIntConstant(module, "GETLINE_NULL_ERROR", getline_null_error) != 0 ||
+        PyModule_AddIntConstant(module, "WRITEOBJECT_NULL_ERROR", writeobj_null_error) != 0 ||
+        PyModule_AddIntConstant(module, "WRITESTRING_NULL_ERROR", writestr_null_error) != 0 ||
+        PyModule_AddIntConstant(module, "WRITEOBJECT_SYS_OK", writeobj_sys_ok) != 0 ||
+        PyModule_AddIntConstant(module, "WRITESTRING_SYS_OK", writestr_sys_ok) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch5_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch5 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch5_probe as m\nassert m.RAISED_NON_NULL == 1\nassert m.RAISED_CLEARED == 1\nassert m.RAISED_RESTORED == 1\nassert m.RAISED_AGAIN_NON_NULL == 1\nassert m.RAISED_CLEARED_AGAIN == 1\nassert m.HANDLED_ROUNDTRIP == 1\nassert m.EXCINFO_TYPE == 1\nassert m.EXCINFO_VALUE == 1\nassert m.EXCINFO_TB == 1\nassert m.SETEXC_ROUNDTRIP == 1\nassert m.HANDLED_CLEARED == 1\nassert m.GETLINE_NULL_ERROR == 1\nassert m.WRITEOBJECT_NULL_ERROR == 1\nassert m.WRITESTRING_NULL_ERROR == 1\nassert m.WRITEOBJECT_SYS_OK == 1\nassert m.WRITESTRING_SYS_OK == 1",
+    )
+    .expect("cpython api batch5 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
