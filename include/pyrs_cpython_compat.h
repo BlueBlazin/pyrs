@@ -466,6 +466,12 @@ PyObject *PyUnicode_Splitlines(PyObject *str, int keepends);
 PyObject *PyUnicode_Partition(PyObject *str, PyObject *sep);
 PyObject *PyUnicode_RPartition(PyObject *str, PyObject *sep);
 int PyUnicode_IsIdentifier(PyObject *str);
+long long PyUnicode_GetSize(PyObject *unicode);
+void PyUnicode_InternInPlace(PyObject **unicode);
+void PyUnicode_InternImmortal(PyObject **unicode);
+void PyUnicode_Append(PyObject **left, PyObject *right);
+void PyUnicode_AppendAndDel(PyObject **left, PyObject *right);
+PyObject *PyUnicode_RichCompare(PyObject *left, PyObject *right, int op);
 PyObject *PyUnicode_Replace(
     PyObject *str,
     PyObject *substr,
@@ -786,6 +792,7 @@ int PyObject_HasAttr(PyObject *object, PyObject *name);
 int PyObject_HasAttrWithError(PyObject *object, PyObject *name);
 int PyObject_HasAttrStringWithError(PyObject *object, const char *name);
 int PyObject_GetOptionalAttrString(PyObject *object, const char *name, PyObject **result);
+PyObject *PyObject_Str(PyObject *object);
 PyObject *PyObject_Repr(PyObject *object);
 PyObject *PyObject_ASCII(PyObject *object);
 PyObject *PyObject_Dir(PyObject *object);

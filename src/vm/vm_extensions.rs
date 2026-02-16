@@ -8424,6 +8424,202 @@ pub unsafe extern "C" fn PyUnicode_IsIdentifier(object: *mut c_void) -> c_int {
     })
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_GetSize(unicode: *mut c_void) -> isize {
+    let _ = unicode;
+    cpython_set_typed_error(
+        unsafe { PyExc_RuntimeError },
+        "PyUnicode_GetSize has been removed.",
+    );
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_InternInPlace(unicode: *mut *mut c_void) {
+    if unicode.is_null() {
+        if unsafe { PyErr_Occurred() }.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+        }
+        return;
+    }
+    // SAFETY: caller provides writable pointer slot.
+    let object = unsafe { *unicode };
+    if object.is_null() {
+        if unsafe { PyErr_Occurred() }.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+        }
+        return;
+    }
+    let _ = with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(object) else {
+            if unsafe { PyErr_Occurred() }.is_null() {
+                unsafe { PyErr_BadInternalCall() };
+            }
+            return;
+        };
+        if cpython_unicode_text_from_value(&value).is_none()
+            && unsafe { PyErr_Occurred() }.is_null()
+        {
+            unsafe { PyErr_BadInternalCall() };
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_InternImmortal(unicode: *mut *mut c_void) {
+    unsafe { PyUnicode_InternInPlace(unicode) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Append(left: *mut *mut c_void, right: *mut c_void) {
+    if left.is_null() {
+        if unsafe { PyErr_Occurred() }.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+        }
+        return;
+    }
+    // SAFETY: caller provides writable pointer slot.
+    let left_ptr = unsafe { *left };
+    let mut should_clear_left = false;
+    let mut replacement: Option<*mut c_void> = None;
+    let status = with_active_cpython_context_mut(|context| {
+        if left_ptr.is_null() || right.is_null() {
+            if unsafe { PyErr_Occurred() }.is_null() {
+                unsafe { PyErr_BadInternalCall() };
+            }
+            should_clear_left = true;
+            return;
+        }
+        let Some(left_value) = context.cpython_value_from_ptr(left_ptr) else {
+            if unsafe { PyErr_Occurred() }.is_null() {
+                unsafe { PyErr_BadInternalCall() };
+            }
+            should_clear_left = true;
+            return;
+        };
+        let Some(right_value) = context.cpython_value_from_ptr(right) else {
+            if unsafe { PyErr_Occurred() }.is_null() {
+                unsafe { PyErr_BadInternalCall() };
+            }
+            should_clear_left = true;
+            return;
+        };
+        let Some(left_text) = cpython_unicode_text_from_value(&left_value) else {
+            if unsafe { PyErr_Occurred() }.is_null() {
+                unsafe { PyErr_BadInternalCall() };
+            }
+            should_clear_left = true;
+            return;
+        };
+        let Some(right_text) = cpython_unicode_text_from_value(&right_value) else {
+            if unsafe { PyErr_Occurred() }.is_null() {
+                unsafe { PyErr_BadInternalCall() };
+            }
+            should_clear_left = true;
+            return;
+        };
+        if left_text.is_empty() {
+            unsafe { Py_IncRef(right) };
+            replacement = Some(right);
+            return;
+        }
+        if right_text.is_empty() {
+            return;
+        }
+        let combined = format!("{left_text}{right_text}");
+        replacement = Some(context.alloc_cpython_ptr_for_value(Value::Str(combined)));
+    });
+    if status.is_err() {
+        if unsafe { PyErr_Occurred() }.is_null() {
+            cpython_set_error("PyUnicode_Append failed due to missing active C-API context");
+        }
+        should_clear_left = true;
+    }
+    if should_clear_left {
+        // SAFETY: left points to writable slot; Py_CLEAR semantics.
+        unsafe {
+            if !(*left).is_null() {
+                Py_DecRef(*left);
+            }
+            *left = std::ptr::null_mut();
+        }
+        return;
+    }
+    if let Some(new_left) = replacement {
+        // SAFETY: left points to writable slot.
+        unsafe {
+            Py_DecRef(*left);
+            *left = new_left;
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AppendAndDel(left: *mut *mut c_void, right: *mut c_void) {
+    unsafe { PyUnicode_Append(left, right) };
+    unsafe { Py_XDecRef(right) };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_RichCompare(
+    left: *mut c_void,
+    right: *mut c_void,
+    op: c_int,
+) -> *mut c_void {
+    const PY_LT: c_int = 0;
+    const PY_LE: c_int = 1;
+    const PY_EQ: c_int = 2;
+    const PY_NE: c_int = 3;
+    const PY_GT: c_int = 4;
+    const PY_GE: c_int = 5;
+
+    with_active_cpython_context_mut(|context| {
+        let Some(left_value) = context.cpython_value_from_ptr(left) else {
+            context.set_error("PyUnicode_RichCompare received unknown left pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(right_value) = context.cpython_value_from_ptr(right) else {
+            context.set_error("PyUnicode_RichCompare received unknown right pointer");
+            return std::ptr::null_mut();
+        };
+        let left_text = cpython_unicode_text_from_value(&left_value);
+        let right_text = cpython_unicode_text_from_value(&right_value);
+        if left_text.is_none() || right_text.is_none() {
+            let not_impl = std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>();
+            unsafe { Py_IncRef(not_impl) };
+            return not_impl;
+        }
+        let left_text = left_text.unwrap_or_default();
+        let right_text = right_text.unwrap_or_default();
+        let result = if left == right {
+            match op {
+                PY_EQ | PY_LE | PY_GE => Some(true),
+                PY_NE | PY_LT | PY_GT => Some(false),
+                _ => None,
+            }
+        } else {
+            match op {
+                PY_EQ => Some(left_text == right_text),
+                PY_NE => Some(left_text != right_text),
+                PY_LT => Some(left_text < right_text),
+                PY_LE => Some(left_text <= right_text),
+                PY_GT => Some(left_text > right_text),
+                PY_GE => Some(left_text >= right_text),
+                _ => None,
+            }
+        };
+        let Some(result) = result else {
+            unsafe { PyErr_BadArgument() };
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(Value::Bool(result))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
 fn cpython_unicode_decode_common(
     bytes_ptr: *const c_char,
     size: isize,
@@ -28450,6 +28646,26 @@ static KEEP3_PYUNICODE_RPARTITION: unsafe extern "C" fn(*mut c_void, *mut c_void
 #[used]
 static KEEP3_PYUNICODE_ISIDENTIFIER: unsafe extern "C" fn(*mut c_void) -> c_int =
     PyUnicode_IsIdentifier;
+#[used]
+static KEEP3_PYUNICODE_GETSIZE: unsafe extern "C" fn(*mut c_void) -> isize = PyUnicode_GetSize;
+#[used]
+static KEEP3_PYUNICODE_INTERNINPLACE: unsafe extern "C" fn(*mut *mut c_void) =
+    PyUnicode_InternInPlace;
+#[used]
+static KEEP3_PYUNICODE_INTERNIMMORTAL: unsafe extern "C" fn(*mut *mut c_void) =
+    PyUnicode_InternImmortal;
+#[used]
+static KEEP3_PYUNICODE_APPEND: unsafe extern "C" fn(*mut *mut c_void, *mut c_void) =
+    PyUnicode_Append;
+#[used]
+static KEEP3_PYUNICODE_APPENDANDDEL: unsafe extern "C" fn(*mut *mut c_void, *mut c_void) =
+    PyUnicode_AppendAndDel;
+#[used]
+static KEEP3_PYUNICODE_RICHCOMPARE: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    c_int,
+) -> *mut c_void = PyUnicode_RichCompare;
 #[used]
 static KEEP3_PYUNICODE_REPLACE: unsafe extern "C" fn(
     *mut c_void,
