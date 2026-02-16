@@ -684,7 +684,7 @@ impl Vm {
         if let Some(frame_index) = self
             .frames
             .iter()
-            .rposition(|item| item.is_module && item.module.id() == globals_module.id())
+            .rposition(|item| item.module.id() == globals_module.id())
         {
             let dict = self.ensure_frame_module_locals_dict(frame_index);
             return Ok(Value::Dict(dict));

@@ -1943,8 +1943,10 @@ impl Vm {
             BoundFunctionKind::NativeMethod(_) => None,
             BoundFunctionKind::Unsupported => None,
         };
-        if matches!(attr_name, "__name__" | "__qualname__" | "__module__" | "__doc__")
-            && let Some(overrides) = self.callable_attr_overrides.get(&function.id())
+        if matches!(
+            attr_name,
+            "__name__" | "__qualname__" | "__module__" | "__doc__"
+        ) && let Some(overrides) = self.callable_attr_overrides.get(&function.id())
             && let Some(value) = overrides.get(attr_name)
         {
             return Ok(value.clone());
@@ -2046,7 +2048,9 @@ impl Vm {
         }
         let function_kind = function.kind();
         match &*function_kind {
-            Object::Function(_) => self.store_attr_function(&function, attr_name.to_string(), value),
+            Object::Function(_) => {
+                self.store_attr_function(&function, attr_name.to_string(), value)
+            }
             Object::NativeMethod(_) => {
                 self.callable_attr_overrides
                     .entry(function.id())
