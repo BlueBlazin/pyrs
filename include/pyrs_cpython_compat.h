@@ -21,6 +21,15 @@ typedef struct PyMethodDef {
 
 typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 
+#ifndef METH_VARARGS
+#define METH_VARARGS 0x0001
+#define METH_KEYWORDS 0x0002
+#define METH_NOARGS 0x0004
+#define METH_O 0x0008
+#define METH_FASTCALL 0x0080
+#define METH_METHOD 0x0200
+#endif
+
 typedef struct PyModuleDef_Base {
     unsigned long _ob_refcnt;
     void *_ob_type;
@@ -180,6 +189,9 @@ int PyGC_Disable(void);
 int PyGC_IsEnabled(void);
 
 PyObject *PyCFunction_Call(PyObject *callable, PyObject *args, PyObject *kwargs);
+PyObject *PyCFunction_New(PyMethodDef *ml, PyObject *self);
+PyObject *PyCFunction_NewEx(PyMethodDef *ml, PyObject *self, PyObject *module);
+PyObject *PyCMethod_New(PyMethodDef *ml, PyObject *self, PyObject *module, void *cls);
 PyCFunction PyCFunction_GetFunction(PyObject *op);
 PyObject *PyCFunction_GetSelf(PyObject *op);
 int PyCFunction_GetFlags(PyObject *op);

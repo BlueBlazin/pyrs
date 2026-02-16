@@ -130,6 +130,7 @@ struct CpythonCFunctionCompatObject {
     m_ml: *mut CpythonMethodDef,
     m_self: *mut c_void,
     m_module: *mut c_void,
+    m_class: *mut c_void,
 }
 
 #[repr(C)]
@@ -1043,7 +1044,7 @@ struct ModuleCapiContext {
     cpython_object_handles_by_id: HashMap<u64, PyrsObjectHandle>,
     cpython_allocations: Vec<*mut CpythonCompatObject>,
     cpython_owned_ptrs: HashSet<usize>,
-    cpython_cfunction_ptr_cache: HashMap<(usize, usize), *mut c_void>,
+    cpython_cfunction_ptr_cache: HashMap<(usize, usize, usize, usize), *mut c_void>,
     cpython_list_buffers: HashMap<PyrsObjectHandle, (*mut *mut c_void, usize)>,
     cpython_sync_in_progress: HashSet<PyrsObjectHandle>,
     module_dict_handles: HashMap<PyrsObjectHandle, ObjRef>,
@@ -1589,6 +1590,8 @@ impl ModuleCapiContext {
                 let cfunction_ptr = self.alloc_cpython_method_cfunction_ptr(
                     method_def as *mut CpythonMethodDef,
                     self_ptr,
+                    self_ptr,
+                    std::ptr::null_mut(),
                 );
                 if !cfunction_ptr.is_null() {
                     return cfunction_ptr;
@@ -1898,8 +1901,15 @@ impl ModuleCapiContext {
         &mut self,
         method_def: *mut CpythonMethodDef,
         self_ptr: *mut c_void,
+        module_ptr: *mut c_void,
+        class_ptr: *mut c_void,
     ) -> *mut c_void {
-        let cache_key = (method_def as usize, self_ptr as usize);
+        let cache_key = (
+            method_def as usize,
+            self_ptr as usize,
+            module_ptr as usize,
+            class_ptr as usize,
+        );
         if let Some(existing) = self.cpython_cfunction_ptr_cache.get(&cache_key).copied() {
             return existing;
         }
@@ -1919,7 +1929,8 @@ impl ModuleCapiContext {
                 },
                 m_ml: method_def,
                 m_self: self_ptr,
-                m_module: std::ptr::null_mut(),
+                m_module: module_ptr,
+                m_class: class_ptr,
             });
         }
         let ptr = raw.cast::<c_void>();
@@ -2131,7 +2142,12 @@ impl ModuleCapiContext {
                         traced_methods += 1;
                     }
                     if method_name == attr_name {
-                        let callable_ptr = self.alloc_cpython_method_cfunction_ptr(method, object);
+                        let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                            method,
+                            object,
+                            std::ptr::null_mut(),
+                            current.cast::<c_void>(),
+                        );
                         if is_proxy_trace {
                             eprintln!(
                                 "[cpy-proxy] tp_methods lookup hit current={:p} method={} callable_ptr={:p}",
@@ -11575,6 +11591,7 @@ fn cpython_invoke_method_from_values(
     context: &mut ModuleCapiContext,
     method_def: *mut CpythonMethodDef,
     self_obj: *mut c_void,
+    class_obj: *mut c_void,
     args: Vec<Value>,
     kwargs: HashMap<String, Value>,
 ) -> *mut c_void {
@@ -11598,6 +11615,78 @@ fn cpython_invoke_method_from_values(
     };
     // SAFETY: method definition layout follows CPython ABI.
     let flags = unsafe { (*method_def).ml_flags };
+    if flags & METH_METHOD != 0 {
+        if flags & (METH_FASTCALL | METH_KEYWORDS) != (METH_FASTCALL | METH_KEYWORDS) {
+            context.set_error("METH_METHOD requires METH_FASTCALL|METH_KEYWORDS");
+            return std::ptr::null_mut();
+        }
+        if class_obj.is_null() {
+            context.set_error("METH_METHOD call missing defining class");
+            return std::ptr::null_mut();
+        }
+        let mut stack: Vec<*mut c_void> =
+            Vec::with_capacity(args.len().saturating_add(kwargs.len()));
+        for value in &args {
+            let ptr = context.alloc_cpython_ptr_for_value(value.clone());
+            if ptr.is_null() {
+                context.set_error("failed to materialize METH_METHOD positional argument");
+                return std::ptr::null_mut();
+            }
+            stack.push(ptr);
+        }
+        let mut kw_names = Vec::with_capacity(kwargs.len());
+        for (name, value) in &kwargs {
+            kw_names.push(Value::Str(name.clone()));
+            let ptr = context.alloc_cpython_ptr_for_value(value.clone());
+            if ptr.is_null() {
+                context.set_error("failed to materialize METH_METHOD keyword argument");
+                return std::ptr::null_mut();
+            }
+            stack.push(ptr);
+        }
+        if context.vm.is_null() {
+            context.set_error("METH_METHOD call missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let kwnames_ptr = if kw_names.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            context.alloc_cpython_ptr_for_value(vm.heap.alloc_tuple(kw_names))
+        };
+        if !kwargs.is_empty() && kwnames_ptr.is_null() {
+            context.set_error("failed to materialize METH_METHOD keyword names");
+            return std::ptr::null_mut();
+        }
+        let call: unsafe extern "C" fn(
+            *mut c_void,
+            *mut c_void,
+            *const *mut c_void,
+            usize,
+            *mut c_void,
+        ) -> *mut c_void =
+            // SAFETY: flags indicate `PyCMethod`-compatible signature.
+            unsafe { std::mem::transmute(method) };
+        let args_ptr = if stack.is_empty() {
+            std::ptr::null()
+        } else {
+            stack.as_ptr()
+        };
+        let result = unsafe { call(self_obj, class_obj, args_ptr, args.len(), kwnames_ptr) };
+        if trace_calls {
+            eprintln!(
+                "[cpy-method-call] name={} flags={} cmethod nargs={} kwargs={} class={:p} result={:p}",
+                method_name,
+                flags,
+                args.len(),
+                kwargs.len(),
+                class_obj,
+                result
+            );
+        }
+        return result;
+    }
     if flags & METH_FASTCALL != 0 {
         if context.vm.is_null() {
             context.set_error("METH_FASTCALL call missing VM context");
@@ -11738,6 +11827,82 @@ fn cpython_invoke_method_from_values(
     std::ptr::null_mut()
 }
 
+fn cpython_method_call_flags_are_valid(flags: i32) -> bool {
+    let call_flags =
+        flags & (METH_VARARGS | METH_FASTCALL | METH_NOARGS | METH_O | METH_KEYWORDS | METH_METHOD);
+    call_flags == METH_VARARGS
+        || call_flags == (METH_VARARGS | METH_KEYWORDS)
+        || call_flags == METH_FASTCALL
+        || call_flags == (METH_FASTCALL | METH_KEYWORDS)
+        || call_flags == METH_NOARGS
+        || call_flags == METH_O
+        || call_flags == (METH_METHOD | METH_FASTCALL | METH_KEYWORDS)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCMethod_New(
+    method_def: *mut c_void,
+    self_obj: *mut c_void,
+    module_obj: *mut c_void,
+    class_obj: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if method_def.is_null() {
+            context.set_error("bad internal call");
+            return std::ptr::null_mut();
+        }
+        let method_def = method_def.cast::<CpythonMethodDef>();
+        // SAFETY: method table pointer is non-null and points to extension-owned definition.
+        let flags = unsafe { (*method_def).ml_flags };
+        let has_meth_method = (flags & METH_METHOD) != 0;
+        if !cpython_method_call_flags_are_valid(flags) {
+            // SAFETY: `ml_name` is expected NUL-terminated by PyMethodDef contract.
+            let method_name = unsafe {
+                c_name_to_string((*method_def).ml_name).unwrap_or_else(|_| "<unnamed>".to_string())
+            };
+            context.set_error(format!(
+                "SystemError: {}() method: bad call flags",
+                method_name
+            ));
+            return std::ptr::null_mut();
+        }
+        if has_meth_method && class_obj.is_null() {
+            context.set_error(
+                "SystemError: attempting to create PyCMethod with a METH_METHOD flag but no class",
+            );
+            return std::ptr::null_mut();
+        }
+        if !has_meth_method && !class_obj.is_null() {
+            context.set_error(
+                "SystemError: attempting to create PyCFunction with class but no METH_METHOD flag",
+            );
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_method_cfunction_ptr(method_def, self_obj, module_obj, class_obj)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCFunction_NewEx(
+    method_def: *mut c_void,
+    self_obj: *mut c_void,
+    module_obj: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCMethod_New(method_def, self_obj, module_obj, std::ptr::null_mut()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCFunction_New(
+    method_def: *mut c_void,
+    self_obj: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyCFunction_NewEx(method_def, self_obj, std::ptr::null_mut()) }
+}
+
 unsafe extern "C" fn cpython_cfunction_tp_call(
     callable: *mut c_void,
     args: *mut c_void,
@@ -11757,6 +11922,8 @@ unsafe extern "C" fn cpython_cfunction_tp_call(
         }
         // SAFETY: cfunction object layout is stable for this context.
         let self_obj = unsafe { (*raw).m_self };
+        // SAFETY: cfunction object layout is stable for this context.
+        let class_obj = unsafe { (*raw).m_class };
         let positional = match cpython_positional_args_from_tuple_object(args) {
             Ok(values) => values,
             Err(err) => {
@@ -11771,7 +11938,14 @@ unsafe extern "C" fn cpython_cfunction_tp_call(
                 return std::ptr::null_mut();
             }
         };
-        cpython_invoke_method_from_values(context, method_def, self_obj, positional, keyword_args)
+        cpython_invoke_method_from_values(
+            context,
+            method_def,
+            self_obj,
+            class_obj,
+            positional,
+            keyword_args,
+        )
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -11912,9 +12086,13 @@ unsafe extern "C" fn cpython_cfunction_tp_getattro(
             "__module__" => {
                 // SAFETY: cfunction object layout is stable for this context.
                 let self_obj = unsafe { (*raw).m_self };
+                // SAFETY: cfunction object layout is stable for this context.
+                let module_obj = unsafe { (*raw).m_module };
                 let module_name = context
-                    .cpython_value_from_ptr(self_obj)
+                    .cpython_value_from_ptr(module_obj)
+                    .or_else(|| context.cpython_value_from_ptr(self_obj))
                     .and_then(|value| match value {
+                        Value::Str(text) => Some(text),
                         Value::Module(module_obj) => match &*module_obj.kind() {
                             Object::Module(module_data) => Some(module_data.name.clone()),
                             _ => None,
@@ -13959,6 +14137,7 @@ const METH_KEYWORDS: c_int = 0x0002;
 const METH_NOARGS: c_int = 0x0004;
 const METH_O: c_int = 0x0008;
 const METH_FASTCALL: c_int = 0x0080;
+const METH_METHOD: c_int = 0x0200;
 
 const fn empty_type(name: *const c_char) -> CpythonTypeObject {
     CpythonTypeObject {
@@ -15061,6 +15240,22 @@ static KEEP_PYCFUNCTION_CALL: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
 ) -> *mut c_void = PyCFunction_Call;
+#[used]
+static KEEP_PYCFUNCTION_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyCFunction_New;
+#[used]
+static KEEP_PYCFUNCTION_NEW_EX: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyCFunction_NewEx;
+#[used]
+static KEEP_PYCMETHOD_NEW: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyCMethod_New;
 #[used]
 static KEEP_PYCFUNCTION_GET_FUNCTION: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyCFunction_GetFunction;
@@ -17538,6 +17733,7 @@ impl Vm {
                     &mut call_ctx,
                     method_def as *mut CpythonMethodDef,
                     self_obj,
+                    std::ptr::null_mut(),
                     args,
                     kwargs,
                 );

@@ -1128,8 +1128,26 @@ static PyObject *probe_echo(PyObject *self, PyObject *args) {
     return args;
 }
 
+static PyObject *probe_noargs(PyObject *self, PyObject *unused) {
+    (void)self;
+    (void)unused;
+    return PyLong_FromLong(42);
+}
+
+static PyObject *probe_method(PyObject *self, PyObject *cls, PyObject *const *args, unsigned long nargs, PyObject *kwnames) {
+    (void)self;
+    (void)cls;
+    (void)args;
+    (void)kwnames;
+    return PyLong_FromLong((long long)nargs);
+}
+
+static PyMethodDef noargs_def = {"generated_noargs", probe_noargs, METH_NOARGS, "generated noargs"};
+static PyMethodDef varargs_def = {"generated_varargs", probe_echo, METH_VARARGS, "generated varargs"};
+static PyMethodDef method_def = {"generated_method", (PyObject *(*)(PyObject *, PyObject *))probe_method, METH_METHOD | METH_FASTCALL | METH_KEYWORDS, "generated method"};
+
 static PyMethodDef module_methods[] = {
-    {"echo", probe_echo, 1, "echo tuple args"},
+    {"echo", probe_echo, METH_VARARGS, "echo tuple args"},
     {0, 0, 0, 0}
 };
 
@@ -1240,6 +1258,53 @@ PyInit_cpython_api_batch3_probe(void) {
         return 0;
     }
 
+    PyObject *module_name = PyUnicode_FromString("cpython_api_batch3_probe");
+    if (!module_name) {
+        return 0;
+    }
+    PyObject *generated_noargs = PyCFunction_New(&noargs_def, module);
+    if (!generated_noargs) {
+        return 0;
+    }
+    PyObject *noargs_result = PyCFunction_Call(generated_noargs, PyTuple_New(0), 0);
+    int noargs_ok = noargs_result && PyLong_AsLongLong(noargs_result) == 42 ? 1 : 0;
+
+    PyObject *generated_varargs = PyCFunction_NewEx(&varargs_def, module, module_name);
+    if (!generated_varargs) {
+        return 0;
+    }
+    PyObject *generated_varargs_mod = PyObject_GetAttrString(generated_varargs, "__module__");
+    int generated_varargs_mod_ok = generated_varargs_mod && PyUnicode_AsUTF8(generated_varargs_mod) &&
+        PyUnicode_AsUTF8(generated_varargs_mod)[0] == 'c' ? 1 : 0;
+    PyObject *generated_varargs_call = PyCFunction_Call(
+        generated_varargs,
+        PyTuple_Pack(1, PyLong_FromLong(7)),
+        0
+    );
+    int generated_varargs_len = generated_varargs_call ? (int)PyTuple_Size(generated_varargs_call) : -1;
+    int generated_varargs_flags = PyCFunction_GetFlags(generated_varargs);
+    PyObject *generated_varargs_self = PyCFunction_GetSelf(generated_varargs);
+    void *generated_varargs_fn = (void *)PyCFunction_GetFunction(generated_varargs);
+
+    PyObject *generated_method = PyCMethod_New(&method_def, module, module_name, module);
+    if (!generated_method) {
+        return 0;
+    }
+    PyObject *generated_method_call = PyCFunction_Call(
+        generated_method,
+        PyTuple_Pack(3, PyLong_FromLong(1), PyLong_FromLong(2), PyLong_FromLong(3)),
+        0
+    );
+    int generated_method_nargs = generated_method_call ? (int)PyLong_AsLongLong(generated_method_call) : -1;
+    int generated_method_flags = PyCFunction_GetFlags(generated_method);
+
+    PyObject *bad_missing_cls = PyCMethod_New(&method_def, module, module_name, 0);
+    int bad_missing_cls_error = (!bad_missing_cls && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+    PyObject *bad_unexpected_cls = PyCMethod_New(&noargs_def, module, module_name, module);
+    int bad_unexpected_cls_error = (!bad_unexpected_cls && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+
     int cfunc_flags = PyCFunction_GetFlags(0);
     int cfunc_flags_fail = (cfunc_flags == -1 && PyErr_Occurred()) ? 1 : 0;
     PyErr_Clear();
@@ -1252,7 +1317,17 @@ PyInit_cpython_api_batch3_probe(void) {
     PyObject *cfunc_call = PyCFunction_Call(0, 0, 0);
     int cfunc_call_fail = (!cfunc_call && PyErr_Occurred()) ? 1 : 0;
     PyErr_Clear();
-    if (PyModule_AddIntConstant(module, "CFUNC_FLAGS_FAIL", cfunc_flags_fail) != 0 ||
+    if (PyModule_AddIntConstant(module, "CFUNC_NOARGS_OK", noargs_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_VARARGS_MODULE_OK", generated_varargs_mod_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_VARARGS_LEN", generated_varargs_len) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_VARARGS_FLAGS", generated_varargs_flags) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_VARARGS_SELF_NON_NULL", generated_varargs_self ? 1 : 0) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_VARARGS_FN_NON_NULL", generated_varargs_fn ? 1 : 0) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_METHOD_NARGS", generated_method_nargs) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_METHOD_FLAGS", generated_method_flags) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_METHOD_MISSING_CLS_ERROR", bad_missing_cls_error) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_METHOD_UNEXPECTED_CLS_ERROR", bad_unexpected_cls_error) != 0 ||
+        PyModule_AddIntConstant(module, "CFUNC_FLAGS_FAIL", cfunc_flags_fail) != 0 ||
         PyModule_AddIntConstant(module, "CFUNC_SELF_FAIL", cfunc_self_fail) != 0 ||
         PyModule_AddIntConstant(module, "CFUNC_FN_FAIL", cfunc_fn_fail) != 0 ||
         PyModule_AddIntConstant(module, "CFUNC_CALL_FAIL", cfunc_call_fail) != 0) {
@@ -1274,7 +1349,7 @@ PyInit_cpython_api_batch3_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch3_probe as m\nassert m.FROM_OBJ_LEN == 2\nassert m.FROM_LIST_FIRST == 65\nassert m.INT_FAIL == 1\nassert m.CONCAT_LEN == 4\nassert m.CONCAT_AND_DEL_LEN == 6\nassert m.CONCAT_NULL_CLEARS == 1\nassert m.BAD_ARGUMENT_RESULT == 0\nassert m.BAD_ARGUMENT_SET == 1\nassert m.BAD_INTERNAL_SET == 1\nassert m.PRINT_NOOP_OK == 1\nassert m.DISPLAY_NOOP_OK == 1\nassert m.DISPLAY_EXCEPTION_NOOP_OK == 1\nassert m.CFUNC_FLAGS_FAIL == 1\nassert m.CFUNC_SELF_FAIL == 1\nassert m.CFUNC_FN_FAIL == 1\nassert m.CFUNC_CALL_FAIL == 1",
+        "import cpython_api_batch3_probe as m\nassert m.FROM_OBJ_LEN == 2\nassert m.FROM_LIST_FIRST == 65\nassert m.INT_FAIL == 1\nassert m.CONCAT_LEN == 4\nassert m.CONCAT_AND_DEL_LEN == 6\nassert m.CONCAT_NULL_CLEARS == 1\nassert m.BAD_ARGUMENT_RESULT == 0\nassert m.BAD_ARGUMENT_SET == 1\nassert m.BAD_INTERNAL_SET == 1\nassert m.PRINT_NOOP_OK == 1\nassert m.DISPLAY_NOOP_OK == 1\nassert m.DISPLAY_EXCEPTION_NOOP_OK == 1\nassert m.CFUNC_NOARGS_OK == 1\nassert m.CFUNC_VARARGS_MODULE_OK == 1\nassert m.CFUNC_VARARGS_LEN == 1\nassert m.CFUNC_VARARGS_FLAGS == 1\nassert m.CFUNC_VARARGS_SELF_NON_NULL == 1\nassert m.CFUNC_VARARGS_FN_NON_NULL == 1\nassert m.CFUNC_METHOD_NARGS == 3\nassert m.CFUNC_METHOD_FLAGS == 642\nassert m.CFUNC_METHOD_MISSING_CLS_ERROR == 1\nassert m.CFUNC_METHOD_UNEXPECTED_CLS_ERROR == 1\nassert m.CFUNC_FLAGS_FAIL == 1\nassert m.CFUNC_SELF_FAIL == 1\nassert m.CFUNC_FN_FAIL == 1\nassert m.CFUNC_CALL_FAIL == 1",
     )
     .expect("cpython api batch3 extension import should succeed");
 
