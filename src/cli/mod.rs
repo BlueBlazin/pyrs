@@ -295,6 +295,16 @@ fn run_bytecode(path: &str) -> Result<(), String> {
 fn print_code_recursive(code: &crate::bytecode::CodeObject, depth: usize) {
     let indent = "  ".repeat(depth);
     println!("{indent}code {}:", code.name);
+    if std::env::var_os("PYRS_BYTECODE_SHOW_TABLES").is_some() {
+        println!("{indent}  names:");
+        for (idx, name) in code.names.iter().enumerate() {
+            println!("{indent}    {idx:04}: {name}");
+        }
+        println!("{indent}  constants:");
+        for (idx, value) in code.constants.iter().enumerate() {
+            println!("{indent}    {idx:04}: {value:?}");
+        }
+    }
     for line in code.disassemble().lines() {
         println!("{indent}  {line}");
     }
