@@ -11960,6 +11960,24 @@ pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_ASCII(object: *mut c_void) -> *mut c_void {
+    let value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::Ascii, vec![value]) {
+        Ok(value) => cpython_new_ptr_for_value(value),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Dir(object: *mut c_void) -> *mut c_void {
     let args = if object.is_null() {
         Vec::new()
@@ -13787,6 +13805,205 @@ pub unsafe extern "C" fn PyObject_CheckBuffer(object: *mut c_void) -> i32 {
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_CheckReadBuffer(object: *mut c_void) -> i32 {
+    unsafe { PyObject_CheckBuffer(object) }
+}
+
+fn cpython_legacy_bytes_buffer_slot(
+    context: &mut ModuleCapiContext,
+    object: *mut c_void,
+    writable: bool,
+) -> Result<(PyrsObjectHandle, *mut c_void, usize), String> {
+    let handle = context
+        .cpython_handle_from_ptr(object)
+        .ok_or_else(|| "unknown object pointer".to_string())?;
+    let slot = context
+        .objects
+        .get(&handle)
+        .ok_or_else(|| "unknown object handle".to_string())?;
+    let len = match &slot.value {
+        Value::Bytes(obj) => {
+            if writable {
+                return Err("expected writable bytes-like object".to_string());
+            }
+            match &*obj.kind() {
+                Object::Bytes(bytes) => bytes.len(),
+                _ => return Err("invalid bytes storage".to_string()),
+            }
+        }
+        Value::ByteArray(obj) => match &*obj.kind() {
+            Object::ByteArray(bytes) => bytes.len(),
+            _ => return Err("invalid bytearray storage".to_string()),
+        },
+        _ => return Err("expected bytes-like object".to_string()),
+    };
+    context.sync_cpython_storage_from_value(handle);
+    let raw_ptr = context
+        .cpython_ptr_by_handle
+        .get(&handle)
+        .copied()
+        .ok_or_else(|| "missing CPython storage pointer".to_string())?;
+    Ok((handle, raw_ptr, len))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_AsReadBuffer(
+    object: *mut c_void,
+    buffer: *mut *const c_void,
+    buffer_len: *mut isize,
+) -> i32 {
+    if buffer.is_null() || buffer_len.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe {
+        *buffer = std::ptr::null();
+        *buffer_len = 0;
+    }
+    with_active_cpython_context_mut(|context| {
+        match cpython_legacy_bytes_buffer_slot(context, object, false) {
+            Ok((_handle, raw_ptr, len)) => {
+                // SAFETY: raw_ptr is owned CPython-compatible bytes/bytearray storage.
+                let data = unsafe { cpython_bytes_data_ptr(raw_ptr) };
+                unsafe {
+                    *buffer = data.cast();
+                    *buffer_len = len as isize;
+                }
+                0
+            }
+            Err(err) => {
+                context.set_error(format!("PyObject_AsReadBuffer {err}"));
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_AsWriteBuffer(
+    object: *mut c_void,
+    buffer: *mut *mut c_void,
+    buffer_len: *mut isize,
+) -> i32 {
+    if buffer.is_null() || buffer_len.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe {
+        *buffer = std::ptr::null_mut();
+        *buffer_len = 0;
+    }
+    with_active_cpython_context_mut(|context| {
+        match cpython_legacy_bytes_buffer_slot(context, object, true) {
+            Ok((_handle, raw_ptr, len)) => {
+                // SAFETY: raw_ptr is owned CPython-compatible bytearray storage.
+                let data = unsafe { cpython_bytes_data_ptr(raw_ptr) };
+                unsafe {
+                    *buffer = data.cast();
+                    *buffer_len = len as isize;
+                }
+                0
+            }
+            Err(err) => {
+                let message = format!("PyObject_AsWriteBuffer {err}");
+                let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
+                context.set_error_state(
+                    unsafe { PyExc_TypeError },
+                    pvalue,
+                    std::ptr::null_mut(),
+                    message,
+                );
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_AsCharBuffer(
+    object: *mut c_void,
+    buffer: *mut *const c_char,
+    buffer_len: *mut isize,
+) -> i32 {
+    if buffer.is_null() || buffer_len.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let mut raw: *const c_void = std::ptr::null();
+    let status = unsafe { PyObject_AsReadBuffer(object, &mut raw, buffer_len) };
+    if status != 0 {
+        return status;
+    }
+    unsafe { *buffer = raw.cast() };
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_CopyData(dest: *mut c_void, src: *mut c_void) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        let (src_handle, src_ptr, src_len) =
+            match cpython_legacy_bytes_buffer_slot(context, src, false) {
+                Ok(state) => state,
+                Err(err) => {
+                    context.set_error(format!("PyObject_CopyData source {err}"));
+                    return -1;
+                }
+            };
+        let (dest_handle, dest_ptr, dest_len) =
+            match cpython_legacy_bytes_buffer_slot(context, dest, true) {
+                Ok(state) => state,
+                Err(err) => {
+                    let message = format!("PyObject_CopyData destination {err}");
+                    let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
+                    context.set_error_state(
+                        unsafe { PyExc_TypeError },
+                        pvalue,
+                        std::ptr::null_mut(),
+                        message,
+                    );
+                    return -1;
+                }
+            };
+        if src_len != dest_len {
+            let message = "source and destination buffers have different lengths".to_string();
+            let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
+            context.set_error_state(
+                unsafe { PyExc_ValueError },
+                pvalue,
+                std::ptr::null_mut(),
+                message,
+            );
+            return -1;
+        }
+        if src_len > 0 {
+            // SAFETY: pointers are owned bytes storage with at least src_len bytes each.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    cpython_bytes_data_ptr(src_ptr).cast::<u8>(),
+                    cpython_bytes_data_ptr(dest_ptr).cast::<u8>(),
+                    src_len,
+                );
+            }
+        }
+        context.sync_value_from_cpython_storage(src_handle, src_ptr);
+        context.sync_value_from_cpython_storage(dest_handle, dest_ptr);
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
 fn cpython_buffer_layout_from_view(
     view: &CpythonBuffer,
 ) -> (
@@ -15389,6 +15606,16 @@ pub unsafe extern "C" fn PyType_GenericNew(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Malloc(size: usize) -> *mut c_void {
     unsafe { PyMem_Malloc(size) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_Calloc(count: usize, size: usize) -> *mut c_void {
+    if count.checked_mul(size).is_none() {
+        cpython_set_error("PyObject_Calloc size overflow");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: libc calloc contract; returns null on failure.
+    unsafe { calloc(count, size) }
 }
 
 #[unsafe(no_mangle)]
@@ -18040,6 +18267,30 @@ static KEEP2_PYOBJECT_ASFILEDESCRIPTOR: unsafe extern "C" fn(*mut c_void) -> i32
 #[used]
 static KEEP2_PYOBJECT_CHECKBUFFER: unsafe extern "C" fn(*mut c_void) -> i32 = PyObject_CheckBuffer;
 #[used]
+static KEEP2_PYOBJECT_CHECKREADBUFFER: unsafe extern "C" fn(*mut c_void) -> i32 =
+    PyObject_CheckReadBuffer;
+#[used]
+static KEEP2_PYOBJECT_ASREADBUFFER: unsafe extern "C" fn(
+    *mut c_void,
+    *mut *const c_void,
+    *mut isize,
+) -> i32 = PyObject_AsReadBuffer;
+#[used]
+static KEEP2_PYOBJECT_ASWRITEBUFFER: unsafe extern "C" fn(
+    *mut c_void,
+    *mut *mut c_void,
+    *mut isize,
+) -> i32 = PyObject_AsWriteBuffer;
+#[used]
+static KEEP2_PYOBJECT_ASCHARBUFFER: unsafe extern "C" fn(
+    *mut c_void,
+    *mut *const c_char,
+    *mut isize,
+) -> i32 = PyObject_AsCharBuffer;
+#[used]
+static KEEP2_PYOBJECT_COPYDATA: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    PyObject_CopyData;
+#[used]
 static KEEP2_PYMEMORYVIEW_FROMOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyMemoryView_FromObject;
 #[used]
@@ -18126,6 +18377,8 @@ static KEEP2_PYTYPE_GENERICNEW: unsafe extern "C" fn(
 ) -> *mut c_void = PyType_GenericNew;
 #[used]
 static KEEP2_PYOBJECT_MALLOC: unsafe extern "C" fn(usize) -> *mut c_void = PyObject_Malloc;
+#[used]
+static KEEP2_PYOBJECT_CALLOC: unsafe extern "C" fn(usize, usize) -> *mut c_void = PyObject_Calloc;
 #[used]
 static KEEP2_PYOBJECT_REALLOC: unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void =
     PyObject_Realloc;
@@ -19034,6 +19287,8 @@ static KEEP_PYOBJECT_NOT: unsafe extern "C" fn(*mut c_void) -> i32 = PyObject_No
 static KEEP_PYOBJECT_STR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_Str;
 #[used]
 static KEEP_PYOBJECT_REPR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_Repr;
+#[used]
+static KEEP_PYOBJECT_ASCII: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_ASCII;
 #[used]
 static KEEP_PYOBJECT_DIR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyObject_Dir;
 #[used]

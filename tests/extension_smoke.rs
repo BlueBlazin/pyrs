@@ -2749,6 +2749,150 @@ PyInit_cpython_api_batch13_probe(void) {
 }
 
 #[test]
+fn cpython_compat_object_buffer_abi_batch14_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch14 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch14 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch14");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch14_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include <string.h>
+#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch14_probe",
+    "cpython api batch14 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch14_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *unicode_obj = PyUnicode_FromString("A\xc3\xa9");
+    PyObject *ascii_obj = unicode_obj ? PyObject_ASCII(unicode_obj) : 0;
+    const char *ascii_text = ascii_obj ? PyUnicode_AsUTF8(ascii_obj) : 0;
+    int ascii_ok = (ascii_text && strstr(ascii_text, "\\xe9") != 0) ? 1 : 0;
+    Py_XDECREF(ascii_obj);
+    Py_XDECREF(unicode_obj);
+
+    unsigned char *alloc = (unsigned char *)PyObject_Calloc(4, 2);
+    int calloc_ok = (alloc != 0);
+    if (alloc) {
+        int zero_ok = 1;
+        for (int i = 0; i < 8; i++) {
+            if (alloc[i] != 0) {
+                zero_ok = 0;
+                break;
+            }
+        }
+        calloc_ok = calloc_ok && zero_ok;
+        PyObject_Free(alloc);
+    }
+
+    PyObject *bytes_obj = PyBytes_FromStringAndSize("abcd", 4);
+    const void *read_buf = 0;
+    long long read_len = 0;
+    int read_ok = (bytes_obj &&
+                   PyObject_AsReadBuffer(bytes_obj, &read_buf, &read_len) == 0 &&
+                   read_buf != 0 &&
+                   read_len == 4 &&
+                   ((const unsigned char *)read_buf)[0] == 'a') ? 1 : 0;
+    const char *char_buf = 0;
+    long long char_len = 0;
+    int char_ok = (bytes_obj &&
+                   PyObject_AsCharBuffer(bytes_obj, &char_buf, &char_len) == 0 &&
+                   char_buf != 0 &&
+                   char_len == 4 &&
+                   char_buf[3] == 'd') ? 1 : 0;
+
+    PyObject *bytearray_obj = PyByteArray_FromStringAndSize("abcd", 4);
+    void *write_buf = 0;
+    long long write_len = 0;
+    int write_ok = 0;
+    if (bytearray_obj &&
+        PyObject_AsWriteBuffer(bytearray_obj, &write_buf, &write_len) == 0 &&
+        write_buf != 0 &&
+        write_len == 4) {
+        ((unsigned char *)write_buf)[0] = 'Z';
+        char *text = PyByteArray_AsString(bytearray_obj);
+        write_ok = (text && text[0] == 'Z') ? 1 : 0;
+    }
+
+    PyObject *number_obj = PyLong_FromLong(7);
+    int check_read_buffer_ok = (PyObject_CheckReadBuffer(bytes_obj) == 1 &&
+                                PyObject_CheckReadBuffer(number_obj) == 0) ? 1 : 0;
+    Py_XDECREF(number_obj);
+
+    PyObject *copy_src = PyBytes_FromStringAndSize("wxyz", 4);
+    PyObject *copy_dst = PyByteArray_FromStringAndSize("----", 4);
+    int copy_data_ok = 0;
+    if (copy_src && copy_dst && PyObject_CopyData(copy_dst, copy_src) == 0) {
+        char *dst_text = PyByteArray_AsString(copy_dst);
+        copy_data_ok = (dst_text &&
+                        dst_text[0] == 'w' &&
+                        dst_text[1] == 'x' &&
+                        dst_text[2] == 'y' &&
+                        dst_text[3] == 'z') ? 1 : 0;
+    }
+    Py_XDECREF(copy_dst);
+    Py_XDECREF(copy_src);
+    Py_XDECREF(bytearray_obj);
+    Py_XDECREF(bytes_obj);
+
+    if (PyModule_AddIntConstant(module, "ASCII_OK", ascii_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CALLOC_OK", calloc_ok) != 0 ||
+        PyModule_AddIntConstant(module, "READ_OK", read_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CHAR_OK", char_ok) != 0 ||
+        PyModule_AddIntConstant(module, "WRITE_OK", write_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CHECK_READ_BUFFER_OK", check_read_buffer_ok) != 0 ||
+        PyModule_AddIntConstant(module, "COPY_DATA_OK", copy_data_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch14_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch14 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch14_probe as m\nassert m.ASCII_OK == 1\nassert m.CALLOC_OK == 1\nassert m.READ_OK == 1\nassert m.CHAR_OK == 1\nassert m.WRITE_OK == 1\nassert m.CHECK_READ_BUFFER_OK == 1\nassert m.COPY_DATA_OK == 1",
+    )
+    .expect("cpython api batch14 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
