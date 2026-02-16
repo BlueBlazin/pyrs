@@ -9234,6 +9234,249 @@ PyInit_cpython_api_batch63_probe(void) {
 }
 
 #[test]
+fn cpython_compat_weakref_abi_batch64_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch64 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch64 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch64");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch64_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *target = PyList_New(0);
+    PyObject *weak = PyWeakref_NewRef(target, 0);
+    PyObject *proxy = PyWeakref_NewProxy(target, 0);
+    int create_ok = (weak != 0 && proxy != 0) ? 1 : 0;
+
+    PyObject *borrowed = weak ? PyWeakref_GetObject(weak) : 0;
+    int getobject_ok = (borrowed != 0) ? 1 : 0;
+
+    PyObject *strong = 0;
+    int getref_rc = weak ? PyWeakref_GetRef(weak, &strong) : -1;
+    int getref_ok = (getref_rc == 1 && strong != 0) ? 1 : 0;
+
+    PyObject *invalid_out = 0;
+    int invalid_getref_rc = PyWeakref_GetRef(target, &invalid_out);
+    int invalid_getref_ok = (invalid_getref_rc == -1 && invalid_out == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    PyObject *not_callable = PyLong_FromLong(123);
+    PyObject *bad = PyWeakref_NewRef(target, not_callable);
+    int callback_ok = (bad == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(not_callable);
+    Py_XDECREF(strong);
+    Py_XDECREF(proxy);
+    Py_XDECREF(weak);
+    Py_XDECREF(target);
+
+    return Py_BuildValue(
+        "(iiiii)",
+        create_ok,
+        getobject_ok,
+        getref_ok,
+        invalid_getref_ok,
+        callback_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe weakref ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch64_probe",
+    "cpython api batch64 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch64_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch64_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch64 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch64_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch64 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_runtime_misc_abi_batch65_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch65 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch65 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch65");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch65_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static int pending_hits = 0;
+
+static int
+pending_callback(void *arg) {
+    (void)arg;
+    pending_hits += 1;
+    return 0;
+}
+
+static void
+at_exit_callback(void) {
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    const char *version = Py_GetVersion();
+    const char *build_info = Py_GetBuildInfo();
+    const char *compiler = Py_GetCompiler();
+    const char *platform = Py_GetPlatform();
+    const char *copyright = Py_GetCopyright();
+    int text_ok = (
+        version && build_info && compiler && platform && copyright &&
+        strlen(version) > 0 && strlen(build_info) > 0 &&
+        strlen(compiler) > 0 && strlen(platform) > 0 &&
+        strlen(copyright) > 0
+    ) ? 1 : 0;
+
+    int previous_limit = Py_GetRecursionLimit();
+    Py_SetRecursionLimit(previous_limit + 7);
+    int raised_limit = Py_GetRecursionLimit();
+    Py_SetRecursionLimit(previous_limit);
+    int restored_limit = Py_GetRecursionLimit();
+    int recursion_ok = (raised_limit == previous_limit + 7 && restored_limit == previous_limit) ? 1 : 0;
+
+    PyObject *obj = PyList_New(0);
+    int repr_first = Py_ReprEnter(obj);
+    int repr_second = Py_ReprEnter(obj);
+    Py_ReprLeave(obj);
+    int repr_third = Py_ReprEnter(obj);
+    Py_ReprLeave(obj);
+    int repr_ok = (repr_first == 0 && repr_second == 1 && repr_third == 0) ? 1 : 0;
+
+    pending_hits = 0;
+    int add_pending_rc = Py_AddPendingCall(pending_callback, 0);
+    int make_pending_rc = Py_MakePendingCalls();
+    int pending_ok = (add_pending_rc == 0 && make_pending_rc == 0 && pending_hits == 1) ? 1 : 0;
+
+    int at_exit_ok = (Py_AtExit(at_exit_callback) == 0) ? 1 : 0;
+
+    Py_XDECREF(obj);
+    return Py_BuildValue(
+        "(iiiii)",
+        text_ok,
+        recursion_ok,
+        repr_ok,
+        pending_ok,
+        at_exit_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe runtime misc ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch65_probe",
+    "cpython api batch65 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch65_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch65_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch65 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch65_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch65 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

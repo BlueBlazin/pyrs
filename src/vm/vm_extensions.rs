@@ -1,10 +1,10 @@
 use std::backtrace::Backtrace;
-use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, c_void};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -1365,6 +1365,7 @@ fn initialize_cpython_compat_type_objects() {
 
 thread_local! {
     static ACTIVE_CPYTHON_INIT_CONTEXT: Cell<*mut ModuleCapiContext> = const { Cell::new(std::ptr::null_mut()) };
+    static CPYTHON_REPR_STACK: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
 static MAIN_THREAD_STATE_TOKEN: u8 = 0;
@@ -1378,6 +1379,13 @@ static CPYTHON_THREAD_TLS_KEY_REGISTRY: OnceLock<Mutex<HashSet<usize>>> = OnceLo
 static CPYTHON_THREAD_TLS_VALUES: OnceLock<Mutex<HashMap<(u64, usize), usize>>> = OnceLock::new();
 static CPYTHON_THREAD_TSS_REGISTRY: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_THREAD_TSS_VALUES: OnceLock<Mutex<HashMap<(u64, usize), usize>>> = OnceLock::new();
+static CPYTHON_PENDING_CALLS: OnceLock<Mutex<VecDeque<CpythonPendingCall>>> = OnceLock::new();
+static CPYTHON_ATEXIT_CALLBACKS: OnceLock<Mutex<Vec<unsafe extern "C" fn()>>> = OnceLock::new();
+static CPYTHON_RECURSION_LIMIT: AtomicI64 = AtomicI64::new(1000);
+static CPYTHON_VERSION_TEXT: OnceLock<CString> = OnceLock::new();
+static CPYTHON_BUILD_INFO_TEXT: OnceLock<CString> = OnceLock::new();
+static CPYTHON_COMPILER_TEXT: OnceLock<CString> = OnceLock::new();
+static CPYTHON_PLATFORM_TEXT: OnceLock<CString> = OnceLock::new();
 static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
@@ -1413,6 +1421,12 @@ struct CpythonHeapTypeInfo {
     slots: HashMap<c_int, usize>,
 }
 
+#[derive(Clone, Copy)]
+struct CpythonPendingCall {
+    func: unsafe extern "C" fn(*mut c_void) -> c_int,
+    arg: usize,
+}
+
 fn cpython_main_thread_state_ptr() -> usize {
     std::ptr::addr_of!(MAIN_THREAD_STATE_TOKEN) as usize
 }
@@ -1439,6 +1453,14 @@ fn cpython_thread_tss_registry() -> &'static Mutex<HashSet<usize>> {
 
 fn cpython_thread_tss_values() -> &'static Mutex<HashMap<(u64, usize), usize>> {
     CPYTHON_THREAD_TSS_VALUES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cpython_pending_calls() -> &'static Mutex<VecDeque<CpythonPendingCall>> {
+    CPYTHON_PENDING_CALLS.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn cpython_atexit_callbacks() -> &'static Mutex<Vec<unsafe extern "C" fn()>> {
+    CPYTHON_ATEXIT_CALLBACKS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 fn cpython_main_interpreter_state_ptr() -> usize {
@@ -22796,8 +22818,453 @@ pub unsafe extern "C" fn PyGC_IsEnabled() -> i32 {
     })
 }
 
+fn cpython_is_runtime_weakref_ref(value: &Value) -> bool {
+    let Value::BoundMethod(bound_obj) = value else {
+        return false;
+    };
+    let Object::BoundMethod(bound_method) = &*bound_obj.kind() else {
+        return false;
+    };
+    let Object::NativeMethod(native_method) = &*bound_method.function.kind() else {
+        return false;
+    };
+    if !matches!(
+        native_method.kind,
+        NativeMethodKind::Builtin(BuiltinFunction::WeakRefRef)
+    ) {
+        return false;
+    }
+    let Object::Module(module_data) = &*bound_method.receiver.kind() else {
+        return false;
+    };
+    matches!(
+        module_data.globals.get("__pyrs_weakref_ref__"),
+        Some(Value::Bool(true))
+    )
+}
+
+fn cpython_weakref_target_from_value(
+    context: &mut ModuleCapiContext,
+    weakref_value: Value,
+) -> Result<Option<Value>, String> {
+    if !cpython_is_runtime_weakref_ref(&weakref_value) {
+        return Err("expected a weakref".to_string());
+    }
+    match cpython_call_internal_in_context(context, weakref_value, Vec::new(), HashMap::new()) {
+        Ok(Value::None) => Ok(None),
+        Ok(value) => Ok(Some(value)),
+        Err(err) => Err(err),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyWeakref_NewRef(ob: *mut c_void, callback: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if ob.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        }
+        let Some(target_value) = context.cpython_value_from_ptr_or_proxy(ob) else {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        };
+
+        let callback_value = if callback.is_null() {
+            Value::None
+        } else {
+            let Some(value) = context.cpython_value_from_ptr_or_proxy(callback) else {
+                unsafe { PyErr_BadInternalCall() };
+                return std::ptr::null_mut();
+            };
+            value
+        };
+        if callback.is_null() {
+            // use implicit None
+        } else if !matches!(callback_value, Value::None) {
+            let callback_ptr = context.alloc_cpython_ptr_for_value(callback_value.clone());
+            let is_callable = unsafe { PyCallable_Check(callback_ptr) != 0 };
+            unsafe { Py_DecRef(callback_ptr) };
+            if !is_callable {
+                cpython_set_typed_error(
+                    unsafe { PyExc_TypeError },
+                    "weakref callback must be callable or None",
+                );
+                return std::ptr::null_mut();
+            }
+        }
+
+        let created = match cpython_call_internal_in_context(
+            context,
+            Value::Builtin(BuiltinFunction::WeakRefRef),
+            vec![target_value.clone(), callback_value],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        if !cpython_is_runtime_weakref_ref(&created) {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "cannot create weak reference to object",
+            );
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_ptr_for_value(created)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyWeakref_NewProxy(ob: *mut c_void, callback: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if ob.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        }
+        let Some(target_value) = context.cpython_value_from_ptr_or_proxy(ob) else {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        };
+        let callback_value = if callback.is_null() {
+            Value::None
+        } else {
+            let Some(value) = context.cpython_value_from_ptr_or_proxy(callback) else {
+                unsafe { PyErr_BadInternalCall() };
+                return std::ptr::null_mut();
+            };
+            value
+        };
+        if callback.is_null() {
+            // use implicit None
+        } else if !matches!(callback_value, Value::None) {
+            let callback_ptr = context.alloc_cpython_ptr_for_value(callback_value.clone());
+            let is_callable = unsafe { PyCallable_Check(callback_ptr) != 0 };
+            unsafe { Py_DecRef(callback_ptr) };
+            if !is_callable {
+                cpython_set_typed_error(
+                    unsafe { PyExc_TypeError },
+                    "weakref callback must be callable or None",
+                );
+                return std::ptr::null_mut();
+            }
+        }
+
+        let probe = match cpython_call_internal_in_context(
+            context,
+            Value::Builtin(BuiltinFunction::WeakRefRef),
+            vec![target_value.clone(), Value::None],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        if !cpython_is_runtime_weakref_ref(&probe) {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "cannot create weak reference to object",
+            );
+            return std::ptr::null_mut();
+        }
+
+        match cpython_call_internal_in_context(
+            context,
+            Value::Builtin(BuiltinFunction::WeakRefProxy),
+            vec![target_value, callback_value],
+            HashMap::new(),
+        ) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyWeakref_GetRef(ref_obj: *mut c_void, pobj: *mut *mut c_void) -> c_int {
+    if pobj.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    // SAFETY: caller provided output pointer.
+    unsafe {
+        *pobj = std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        if ref_obj.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        }
+        let Some(ref_value) = context.cpython_value_from_ptr_or_proxy(ref_obj) else {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        };
+        let target = match cpython_weakref_target_from_value(context, ref_value) {
+            Ok(value) => value,
+            Err(message) => {
+                cpython_set_typed_error(unsafe { PyExc_TypeError }, message);
+                return -1;
+            }
+        };
+        match target {
+            None => 0,
+            Some(value) => {
+                let target_ptr = context.alloc_cpython_ptr_for_value(value);
+                // SAFETY: caller-provided output pointer is writable.
+                unsafe {
+                    *pobj = target_ptr;
+                }
+                1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyWeakref_GetObject(ref_obj: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if ref_obj.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        }
+        let Some(ref_value) = context.cpython_value_from_ptr_or_proxy(ref_obj) else {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        };
+        let target = match cpython_weakref_target_from_value(context, ref_value) {
+            Ok(value) => value,
+            Err(_) => {
+                unsafe { PyErr_BadInternalCall() };
+                return std::ptr::null_mut();
+            }
+        };
+        match target {
+            None => std::ptr::addr_of_mut!(_Py_NoneStruct).cast(),
+            Some(value) => {
+                let ptr = context.alloc_cpython_ptr_for_value(value);
+                unsafe { Py_DecRef(ptr) };
+                ptr
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_ClearWeakRefs(_object: *mut c_void) {}
+
+const CPYTHON_PENDING_CALLS_MAX: usize = 32;
+const CPYTHON_ATEXIT_CALLBACKS_MAX: usize = 32;
+
+fn cpython_build_info_cstring() -> &'static CString {
+    CPYTHON_BUILD_INFO_TEXT.get_or_init(|| {
+        let package_version = env!("CARGO_PKG_VERSION");
+        let target_arch = std::env::consts::ARCH;
+        let target_os = std::env::consts::OS;
+        CString::new(format!("pyrs-{package_version}, {target_arch}-{target_os}"))
+            .expect("build info should not contain interior NUL")
+    })
+}
+
+fn cpython_compiler_cstring() -> &'static CString {
+    CPYTHON_COMPILER_TEXT.get_or_init(|| {
+        let rustc_version = option_env!("RUSTC_VERSION").unwrap_or("rustc");
+        CString::new(format!("[Rust {rustc_version}]"))
+            .expect("compiler info should not contain interior NUL")
+    })
+}
+
+fn cpython_platform_cstring() -> &'static CString {
+    CPYTHON_PLATFORM_TEXT.get_or_init(|| {
+        CString::new(std::env::consts::OS).expect("platform should not contain interior NUL")
+    })
+}
+
+fn cpython_version_cstring() -> &'static CString {
+    CPYTHON_VERSION_TEXT.get_or_init(|| {
+        let build = cpython_build_info_cstring().to_string_lossy();
+        let compiler = cpython_compiler_cstring().to_string_lossy();
+        CString::new(format!("3.14.0 ({build}) {compiler}"))
+            .expect("version info should not contain interior NUL")
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_ReprEnter(object: *mut c_void) -> c_int {
+    if object.is_null() {
+        return 0;
+    }
+    CPYTHON_REPR_STACK.with(|stack| {
+        let mut seen = stack.borrow_mut();
+        let key = object as usize;
+        if seen.contains(&key) {
+            1
+        } else {
+            seen.push(key);
+            0
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_ReprLeave(object: *mut c_void) {
+    if object.is_null() {
+        return;
+    }
+    CPYTHON_REPR_STACK.with(|stack| {
+        let mut seen = stack.borrow_mut();
+        let key = object as usize;
+        if let Some(index) = seen.iter().rposition(|entry| *entry == key) {
+            seen.remove(index);
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_AddPendingCall(
+    func: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    arg: *mut c_void,
+) -> c_int {
+    let Some(func) = func else {
+        return -1;
+    };
+    match cpython_pending_calls().lock() {
+        Ok(mut queue) => {
+            if queue.len() >= CPYTHON_PENDING_CALLS_MAX {
+                return -1;
+            }
+            queue.push_back(CpythonPendingCall {
+                func,
+                arg: arg as usize,
+            });
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_MakePendingCalls() -> c_int {
+    for _ in 0..CPYTHON_PENDING_CALLS_MAX {
+        let next = match cpython_pending_calls().lock() {
+            Ok(mut queue) => queue.pop_front(),
+            Err(_) => return -1,
+        };
+        let Some(pending) = next else {
+            break;
+        };
+        // SAFETY: callback pointer was registered via `Py_AddPendingCall`.
+        let status = unsafe { (pending.func)(pending.arg as *mut c_void) };
+        if status != 0 {
+            return -1;
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_AtExit(func: Option<unsafe extern "C" fn()>) -> c_int {
+    let Some(func) = func else {
+        return -1;
+    };
+    match cpython_atexit_callbacks().lock() {
+        Ok(mut callbacks) => {
+            if callbacks.len() >= CPYTHON_ATEXIT_CALLBACKS_MAX {
+                return -1;
+            }
+            callbacks.push(func);
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetRecursionLimit() -> c_int {
+    let mut limit = CPYTHON_RECURSION_LIMIT.load(Ordering::Relaxed);
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context.
+        let vm = unsafe { &mut *context.vm };
+        limit = vm.recursion_limit;
+    });
+    CPYTHON_RECURSION_LIMIT.store(limit, Ordering::Relaxed);
+    limit as c_int
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_SetRecursionLimit(new_limit: c_int) {
+    let new_limit = new_limit as i64;
+    CPYTHON_RECURSION_LIMIT.store(new_limit, Ordering::Relaxed);
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context.
+        unsafe {
+            (*context.vm).recursion_limit = new_limit;
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetVersion() -> *const c_char {
+    cpython_version_cstring().as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetBuildInfo() -> *const c_char {
+    cpython_build_info_cstring().as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetCompiler() -> *const c_char {
+    cpython_compiler_cstring().as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetPlatform() -> *const c_char {
+    cpython_platform_cstring().as_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetCopyright() -> *const c_char {
+    c"Copyright (c) 2001 Python Software Foundation.\n\
+All Rights Reserved.\n\
+\n\
+Copyright (c) 2000 BeOpen.com.\n\
+All Rights Reserved.\n\
+\n\
+Copyright (c) 1995-2001 Corporation for National Research Initiatives.\n\
+All Rights Reserved.\n\
+\n\
+Copyright (c) 1991-1995 Stichting Mathematisch Centrum, Amsterdam.\n\
+All Rights Reserved."
+        .as_ptr()
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Init(object: *mut c_void, ty: *mut c_void) -> *mut c_void {
@@ -28358,6 +28825,45 @@ static KEEP2_PYGC_DISABLE: unsafe extern "C" fn() -> i32 = PyGC_Disable;
 static KEEP2_PYGC_IS_ENABLED: unsafe extern "C" fn() -> i32 = PyGC_IsEnabled;
 #[used]
 static KEEP2_PYOBJECT_CLEAR_WEAKREFS: unsafe extern "C" fn(*mut c_void) = PyObject_ClearWeakRefs;
+#[used]
+static KEEP2_PYWEAKREF_NEWREF: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyWeakref_NewRef;
+#[used]
+static KEEP2_PYWEAKREF_NEWPROXY: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyWeakref_NewProxy;
+#[used]
+static KEEP2_PYWEAKREF_GETREF: unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> c_int =
+    PyWeakref_GetRef;
+#[used]
+static KEEP2_PYWEAKREF_GETOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyWeakref_GetObject;
+#[used]
+static KEEP2_PY_ADDPENDINGCALL: unsafe extern "C" fn(
+    Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    *mut c_void,
+) -> c_int = Py_AddPendingCall;
+#[used]
+static KEEP2_PY_MAKEPENDINGCALLS: unsafe extern "C" fn() -> c_int = Py_MakePendingCalls;
+#[used]
+static KEEP2_PY_ATEXIT: unsafe extern "C" fn(Option<unsafe extern "C" fn()>) -> c_int = Py_AtExit;
+#[used]
+static KEEP2_PY_GETRECURSIONLIMIT: unsafe extern "C" fn() -> c_int = Py_GetRecursionLimit;
+#[used]
+static KEEP2_PY_SETRECURSIONLIMIT: unsafe extern "C" fn(c_int) = Py_SetRecursionLimit;
+#[used]
+static KEEP2_PY_GETVERSION: unsafe extern "C" fn() -> *const c_char = Py_GetVersion;
+#[used]
+static KEEP2_PY_GETBUILDINFO: unsafe extern "C" fn() -> *const c_char = Py_GetBuildInfo;
+#[used]
+static KEEP2_PY_GETCOMPILER: unsafe extern "C" fn() -> *const c_char = Py_GetCompiler;
+#[used]
+static KEEP2_PY_GETPLATFORM: unsafe extern "C" fn() -> *const c_char = Py_GetPlatform;
+#[used]
+static KEEP2_PY_GETCOPYRIGHT: unsafe extern "C" fn() -> *const c_char = Py_GetCopyright;
+#[used]
+static KEEP2_PY_REPRENTER: unsafe extern "C" fn(*mut c_void) -> c_int = Py_ReprEnter;
+#[used]
+static KEEP2_PY_REPRLEAVE: unsafe extern "C" fn(*mut c_void) = Py_ReprLeave;
 #[used]
 static KEEP2_PYOBJECT_INIT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyObject_Init;

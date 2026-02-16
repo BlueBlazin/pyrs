@@ -1590,6 +1590,54 @@ fn exports_abi3_batch63_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch64_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyWeakref_GetObject",
+        "PyWeakref_GetRef",
+        "PyWeakref_NewProxy",
+        "PyWeakref_NewRef",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch64 symbols: {missing:?}"
+    );
+}
+
+#[test]
+fn exports_abi3_batch65_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "Py_AddPendingCall",
+        "Py_AtExit",
+        "Py_GetBuildInfo",
+        "Py_GetCompiler",
+        "Py_GetCopyright",
+        "Py_GetPlatform",
+        "Py_GetRecursionLimit",
+        "Py_GetVersion",
+        "Py_MakePendingCalls",
+        "Py_ReprEnter",
+        "Py_ReprLeave",
+        "Py_SetRecursionLimit",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch65 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
