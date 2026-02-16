@@ -1386,6 +1386,14 @@ static CPYTHON_VERSION_TEXT: OnceLock<CString> = OnceLock::new();
 static CPYTHON_BUILD_INFO_TEXT: OnceLock<CString> = OnceLock::new();
 static CPYTHON_COMPILER_TEXT: OnceLock<CString> = OnceLock::new();
 static CPYTHON_PLATFORM_TEXT: OnceLock<CString> = OnceLock::new();
+static CPYTHON_PROGRAM_NAME_WIDE: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_PROGRAM_FULL_PATH_WIDE: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_PYTHON_HOME_WIDE: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_PATH_WIDE: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_PREFIX_WIDE: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_EXEC_PREFIX_WIDE: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_ARGC: AtomicI64 = AtomicI64::new(0);
+static CPYTHON_ARGV: AtomicUsize = AtomicUsize::new(0);
 static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
@@ -1461,6 +1469,114 @@ fn cpython_pending_calls() -> &'static Mutex<VecDeque<CpythonPendingCall>> {
 
 fn cpython_atexit_callbacks() -> &'static Mutex<Vec<unsafe extern "C" fn()>> {
     CPYTHON_ATEXIT_CALLBACKS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn cpython_leak_wide_string(text: &str) -> *mut Cwchar {
+    let mut units = cpython_string_to_wide_units(text);
+    units.push(0);
+    let boxed = units.into_boxed_slice();
+    Box::into_raw(boxed).cast::<Cwchar>()
+}
+
+fn cpython_set_wide_storage(storage: &AtomicUsize, text: &str) -> *mut Cwchar {
+    let pointer = cpython_leak_wide_string(text);
+    storage.store(pointer as usize, Ordering::Relaxed);
+    pointer
+}
+
+fn cpython_get_or_init_wide_storage(
+    storage: &AtomicUsize,
+    fallback: impl FnOnce() -> String,
+) -> *mut Cwchar {
+    let current = storage.load(Ordering::Relaxed) as *mut Cwchar;
+    if !current.is_null() {
+        return current;
+    }
+    cpython_set_wide_storage(storage, &fallback())
+}
+
+fn cpython_read_sys_string(name: &str) -> Option<String> {
+    let mut value = None;
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        if let Ok(sys_module) = cpython_sys_module_obj(context)
+            && let Object::Module(data) = &*sys_module.kind()
+            && let Some(Value::Str(text)) = data.globals.get(name)
+        {
+            value = Some(text.clone());
+        }
+    });
+    value
+}
+
+fn cpython_read_sys_path_string() -> Option<String> {
+    let mut value = None;
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        if let Ok(sys_module) = cpython_sys_module_obj(context)
+            && let Object::Module(data) = &*sys_module.kind()
+            && let Some(Value::List(path_list)) = data.globals.get("path")
+            && let Object::List(entries) = &*path_list.kind()
+        {
+            #[cfg(windows)]
+            let delimiter = ';';
+            #[cfg(not(windows))]
+            let delimiter = ':';
+            let joined = entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    Value::Str(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(&delimiter.to_string());
+            value = Some(joined);
+        }
+    });
+    value
+}
+
+fn cpython_store_argv_wide(arguments: &[String]) {
+    let argc = arguments.len() as i64;
+    let pointers: Vec<*mut Cwchar> = arguments
+        .iter()
+        .map(|arg| cpython_leak_wide_string(arg))
+        .collect();
+    let argv = if pointers.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        let boxed = pointers.into_boxed_slice();
+        Box::into_raw(boxed).cast::<*mut Cwchar>()
+    };
+    CPYTHON_ARGC.store(argc, Ordering::Relaxed);
+    CPYTHON_ARGV.store(argv as usize, Ordering::Relaxed);
+}
+
+fn cpython_collect_sys_argv() -> Option<Vec<String>> {
+    let mut argv = None;
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        if let Ok(sys_module) = cpython_sys_module_obj(context)
+            && let Object::Module(data) = &*sys_module.kind()
+            && let Some(Value::List(list_obj)) = data.globals.get("argv")
+            && let Object::List(entries) = &*list_obj.kind()
+        {
+            let mut extracted = Vec::with_capacity(entries.len());
+            for entry in entries {
+                if let Value::Str(text) = entry {
+                    extracted.push(text.clone());
+                }
+            }
+            argv = Some(extracted);
+        }
+    });
+    argv
 }
 
 fn cpython_main_interpreter_state_ptr() -> usize {
@@ -23267,6 +23383,222 @@ All Rights Reserved."
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_SetProgramName(name: *const Cwchar) {
+    if name.is_null() {
+        cpython_set_wide_storage(&CPYTHON_PROGRAM_NAME_WIDE, "");
+        return;
+    }
+    if let Ok(decoded) = unsafe { c_wide_name_to_string(name) } {
+        cpython_set_wide_storage(&CPYTHON_PROGRAM_NAME_WIDE, &decoded);
+        if CPYTHON_PROGRAM_FULL_PATH_WIDE.load(Ordering::Relaxed) == 0 {
+            cpython_set_wide_storage(&CPYTHON_PROGRAM_FULL_PATH_WIDE, &decoded);
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetProgramName() -> *mut Cwchar {
+    cpython_get_or_init_wide_storage(&CPYTHON_PROGRAM_NAME_WIDE, || {
+        if let Some(executable) = cpython_read_sys_string("executable")
+            && let Some(name) = Path::new(&executable).file_name()
+        {
+            return name.to_string_lossy().to_string();
+        }
+        "pyrs".to_string()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_SetPythonHome(home: *const Cwchar) {
+    if home.is_null() {
+        cpython_set_wide_storage(&CPYTHON_PYTHON_HOME_WIDE, "");
+        return;
+    }
+    if let Ok(decoded) = unsafe { c_wide_name_to_string(home) } {
+        cpython_set_wide_storage(&CPYTHON_PYTHON_HOME_WIDE, &decoded);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetPythonHome() -> *mut Cwchar {
+    cpython_get_or_init_wide_storage(&CPYTHON_PYTHON_HOME_WIDE, || {
+        std::env::var("PYTHONHOME")
+            .ok()
+            .or_else(|| cpython_read_sys_string("prefix"))
+            .unwrap_or_default()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_SetPath(path: *const Cwchar) {
+    if path.is_null() {
+        cpython_set_wide_storage(&CPYTHON_PATH_WIDE, "");
+        return;
+    }
+    if let Ok(decoded) = unsafe { c_wide_name_to_string(path) } {
+        cpython_set_wide_storage(&CPYTHON_PATH_WIDE, &decoded);
+        let _ = with_active_cpython_context_mut(|_| {
+            unsafe { PySys_SetPath(path) };
+        });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetPath() -> *mut Cwchar {
+    cpython_get_or_init_wide_storage(&CPYTHON_PATH_WIDE, || {
+        cpython_read_sys_path_string().unwrap_or_default()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetPrefix() -> *mut Cwchar {
+    cpython_get_or_init_wide_storage(&CPYTHON_PREFIX_WIDE, || {
+        cpython_read_sys_string("prefix").unwrap_or_default()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetExecPrefix() -> *mut Cwchar {
+    cpython_get_or_init_wide_storage(&CPYTHON_EXEC_PREFIX_WIDE, || {
+        cpython_read_sys_string("exec_prefix").unwrap_or_default()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetProgramFullPath() -> *mut Cwchar {
+    cpython_get_or_init_wide_storage(&CPYTHON_PROGRAM_FULL_PATH_WIDE, || {
+        cpython_read_sys_string("executable").unwrap_or_else(|| "pyrs".to_string())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_GetArgcArgv(argc: *mut c_int, argv: *mut *mut *mut Cwchar) {
+    if CPYTHON_ARGV.load(Ordering::Relaxed) == 0
+        && let Some(collected) = cpython_collect_sys_argv()
+    {
+        cpython_store_argv_wide(&collected);
+    }
+    if !argc.is_null() {
+        // SAFETY: caller provided output pointer.
+        unsafe {
+            *argc = CPYTHON_ARGC.load(Ordering::Relaxed) as c_int;
+        }
+    }
+    if !argv.is_null() {
+        // SAFETY: caller provided output pointer.
+        unsafe {
+            *argv = CPYTHON_ARGV.load(Ordering::Relaxed) as *mut *mut Cwchar;
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_DecodeLocale(arg: *const c_char, wlen: *mut usize) -> *mut Cwchar {
+    if arg.is_null() {
+        if !wlen.is_null() {
+            // SAFETY: caller provided output pointer.
+            unsafe {
+                *wlen = usize::MAX;
+            }
+        }
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller guarantees a valid NUL-terminated bytes string.
+    let bytes = unsafe { CStr::from_ptr(arg) }.to_bytes();
+    let decoded = String::from_utf8_lossy(bytes).into_owned();
+    let units = cpython_string_to_wide_units(&decoded);
+    if !wlen.is_null() {
+        // SAFETY: caller provided output pointer.
+        unsafe {
+            *wlen = units.len();
+        }
+    }
+    let byte_len = match units
+        .len()
+        .checked_add(1)
+        .and_then(|count| count.checked_mul(std::mem::size_of::<Cwchar>()))
+    {
+        Some(len) => len,
+        None => {
+            if !wlen.is_null() {
+                // SAFETY: caller provided output pointer.
+                unsafe {
+                    *wlen = usize::MAX;
+                }
+            }
+            return std::ptr::null_mut();
+        }
+    };
+    let out = unsafe { PyMem_RawMalloc(byte_len) }.cast::<Cwchar>();
+    if out.is_null() {
+        if !wlen.is_null() {
+            // SAFETY: caller provided output pointer.
+            unsafe {
+                *wlen = usize::MAX;
+            }
+        }
+        return std::ptr::null_mut();
+    }
+    // SAFETY: destination buffer is sized for `units + trailing NUL`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(units.as_ptr(), out, units.len());
+        *out.add(units.len()) = 0;
+    }
+    out
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_EncodeLocale(
+    text: *const Cwchar,
+    error_pos: *mut usize,
+) -> *mut c_char {
+    if text.is_null() {
+        if !error_pos.is_null() {
+            // SAFETY: caller provided output pointer.
+            unsafe {
+                *error_pos = 0;
+            }
+        }
+        return std::ptr::null_mut();
+    }
+    let decoded = match unsafe { cpython_wide_ptr_to_string(text, -1, "Py_EncodeLocale") } {
+        Ok(value) => value,
+        Err(_) => {
+            if !error_pos.is_null() {
+                // SAFETY: caller provided output pointer.
+                unsafe {
+                    *error_pos = 0;
+                }
+            }
+            return std::ptr::null_mut();
+        }
+    };
+    let bytes = decoded.into_bytes();
+    let out = unsafe { PyMem_RawMalloc(bytes.len().saturating_add(1)) }.cast::<c_char>();
+    if out.is_null() {
+        if !error_pos.is_null() {
+            // SAFETY: caller provided output pointer.
+            unsafe {
+                *error_pos = 0;
+            }
+        }
+        return std::ptr::null_mut();
+    }
+    // SAFETY: destination has at least `bytes.len() + 1` bytes.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, bytes.len());
+        *out.add(bytes.len()) = 0;
+    }
+    if !error_pos.is_null() {
+        // SAFETY: caller provided output pointer.
+        unsafe {
+            *error_pos = usize::MAX;
+        }
+    }
+    out
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Init(object: *mut c_void, ty: *mut c_void) -> *mut c_void {
     if object.is_null() || ty.is_null() {
         cpython_set_error("PyObject_Init received null object/type");
@@ -24101,6 +24433,14 @@ pub unsafe extern "C" fn PySys_SetArgvEx(argc: i32, argv: *mut *mut Cwchar, upda
         };
         argv_values.push(Value::Str(arg));
     }
+    let argv_strings: Vec<String> = argv_values
+        .iter()
+        .filter_map(|value| match value {
+            Value::Str(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    cpython_store_argv_wide(&argv_strings);
 
     let _ = with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
@@ -28860,6 +29200,33 @@ static KEEP2_PY_GETCOMPILER: unsafe extern "C" fn() -> *const c_char = Py_GetCom
 static KEEP2_PY_GETPLATFORM: unsafe extern "C" fn() -> *const c_char = Py_GetPlatform;
 #[used]
 static KEEP2_PY_GETCOPYRIGHT: unsafe extern "C" fn() -> *const c_char = Py_GetCopyright;
+#[used]
+static KEEP2_PY_GETARGCARGV: unsafe extern "C" fn(*mut c_int, *mut *mut *mut Cwchar) =
+    Py_GetArgcArgv;
+#[used]
+static KEEP2_PY_SETPROGRAMNAME: unsafe extern "C" fn(*const Cwchar) = Py_SetProgramName;
+#[used]
+static KEEP2_PY_GETPROGRAMNAME: unsafe extern "C" fn() -> *mut Cwchar = Py_GetProgramName;
+#[used]
+static KEEP2_PY_SETPYTHONHOME: unsafe extern "C" fn(*const Cwchar) = Py_SetPythonHome;
+#[used]
+static KEEP2_PY_GETPYTHONHOME: unsafe extern "C" fn() -> *mut Cwchar = Py_GetPythonHome;
+#[used]
+static KEEP2_PY_SETPATH: unsafe extern "C" fn(*const Cwchar) = Py_SetPath;
+#[used]
+static KEEP2_PY_GETPATH: unsafe extern "C" fn() -> *mut Cwchar = Py_GetPath;
+#[used]
+static KEEP2_PY_GETPREFIX: unsafe extern "C" fn() -> *mut Cwchar = Py_GetPrefix;
+#[used]
+static KEEP2_PY_GETEXECPREFIX: unsafe extern "C" fn() -> *mut Cwchar = Py_GetExecPrefix;
+#[used]
+static KEEP2_PY_GETPROGRAMFULLPATH: unsafe extern "C" fn() -> *mut Cwchar = Py_GetProgramFullPath;
+#[used]
+static KEEP2_PY_ENCODELOCALE: unsafe extern "C" fn(*const Cwchar, *mut usize) -> *mut c_char =
+    Py_EncodeLocale;
+#[used]
+static KEEP2_PY_DECODELOCALE: unsafe extern "C" fn(*const c_char, *mut usize) -> *mut Cwchar =
+    Py_DecodeLocale;
 #[used]
 static KEEP2_PY_REPRENTER: unsafe extern "C" fn(*mut c_void) -> c_int = Py_ReprEnter;
 #[used]

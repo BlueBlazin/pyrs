@@ -1638,6 +1638,34 @@ fn exports_abi3_batch65_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch66_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "Py_DecodeLocale",
+        "Py_EncodeLocale",
+        "Py_GetArgcArgv",
+        "Py_GetExecPrefix",
+        "Py_GetPath",
+        "Py_GetPrefix",
+        "Py_GetProgramFullPath",
+        "Py_GetProgramName",
+        "Py_GetPythonHome",
+        "Py_SetPath",
+        "Py_SetProgramName",
+        "Py_SetPythonHome",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch66 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
