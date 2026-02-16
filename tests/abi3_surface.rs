@@ -1550,6 +1550,31 @@ fn exports_abi3_batch61_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch62_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "Py_Is",
+        "Py_IsFalse",
+        "Py_IsNone",
+        "Py_IsTrue",
+        "Py_NewRef",
+        "Py_REFCNT",
+        "Py_TYPE",
+        "Py_XNewRef",
+        "PyVectorcall_NARGS",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch62 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -9016,6 +9016,122 @@ PyInit_cpython_api_batch61_probe(void) {
 }
 
 #[test]
+fn cpython_compat_core_ref_and_identity_abi_batch62_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch62 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch62 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch62");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch62_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *one = PyLong_FromLong(1);
+    PyObject *none_obj = Py_BuildValue("");
+    PyObject *true_obj = PyBool_FromLong(1);
+    PyObject *false_obj = PyBool_FromLong(0);
+    int identity_ok = (Py_Is(none_obj, none_obj) == 1 &&
+                       Py_Is(one, none_obj) == 0 &&
+                       Py_IsNone(none_obj) == 1 &&
+                       Py_IsTrue(true_obj) == 1 &&
+                       Py_IsFalse(false_obj) == 1) ? 1 : 0;
+
+    long long before = Py_REFCNT(one);
+    PyObject *new_ref = Py_NewRef(one);
+    PyObject *xnew_ref = Py_XNewRef(one);
+    PyObject *xnew_null = Py_XNewRef(0);
+    long long after = Py_REFCNT(one);
+    int newref_ok = (new_ref == one &&
+                     xnew_ref == one &&
+                     xnew_null == 0 &&
+                     after >= before + 2) ? 1 : 0;
+
+    PyTypeObject *type_ptr = Py_TYPE(one);
+    int type_ok = (type_ptr != 0) ? 1 : 0;
+
+    size_t offset_flag = ((size_t)1) << ((sizeof(size_t) * 8) - 1);
+    int vectorcall_ok = (PyVectorcall_NARGS(offset_flag | 7) == 7 &&
+                         PyVectorcall_NARGS(3) == 3) ? 1 : 0;
+
+    Py_XDECREF(new_ref);
+    Py_XDECREF(xnew_ref);
+    Py_XDECREF(false_obj);
+    Py_XDECREF(true_obj);
+    Py_XDECREF(none_obj);
+    Py_XDECREF(one);
+
+    return Py_BuildValue(
+        "(iiii)",
+        identity_ok,
+        newref_ok,
+        type_ok,
+        vectorcall_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe core ref/identity ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch62_probe",
+    "cpython api batch62 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch62_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch62_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch62 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch62_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch62 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

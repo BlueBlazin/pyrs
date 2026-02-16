@@ -1081,6 +1081,16 @@ PyCFunction PyCFunction_GetFunction(PyObject *op);
 PyObject *PyCFunction_GetSelf(PyObject *op);
 int PyCFunction_GetFlags(PyObject *op);
 
+int Py_IsInitialized(void);
+int Py_Is(PyObject *left, PyObject *right);
+int Py_IsNone(PyObject *object);
+int Py_IsTrue(PyObject *object);
+int Py_IsFalse(PyObject *object);
+PyObject *Py_NewRef(PyObject *object);
+PyObject *Py_XNewRef(PyObject *object);
+long long Py_REFCNT(PyObject *object);
+PyTypeObject *Py_TYPE(PyObject *object);
+size_t PyVectorcall_NARGS(size_t nargsf);
 void Py_IncRef(PyObject *object);
 void Py_DecRef(PyObject *object);
 void Py_XIncRef(PyObject *object);

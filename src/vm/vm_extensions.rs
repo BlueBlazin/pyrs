@@ -24526,6 +24526,91 @@ pub unsafe extern "C" fn Py_IsInitialized() -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_Is(left: *mut c_void, right: *mut c_void) -> c_int {
+    i32::from(std::ptr::eq(left, right))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_IsNone(object: *mut c_void) -> c_int {
+    i32::from(std::ptr::eq(
+        object,
+        std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>(),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_IsTrue(object: *mut c_void) -> c_int {
+    i32::from(std::ptr::eq(
+        object,
+        std::ptr::addr_of_mut!(_Py_TrueStruct).cast::<c_void>(),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_IsFalse(object: *mut c_void) -> c_int {
+    i32::from(std::ptr::eq(
+        object,
+        std::ptr::addr_of_mut!(_Py_FalseStruct).cast::<c_void>(),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_NewRef(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    unsafe { Py_IncRef(object) };
+    object
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_XNewRef(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { Py_IncRef(object) };
+    object
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_REFCNT(object: *mut c_void) -> isize {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return 0;
+    }
+    // SAFETY: caller is expected to provide a valid PyObject*.
+    unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_refcnt)
+            .unwrap_or(0)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_TYPE(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller is expected to provide a valid PyObject*.
+    unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map_or(std::ptr::null_mut(), |head| head.ob_type)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyVectorcall_NARGS(nargsf: usize) -> usize {
+    let offset_mask: usize = 1usize << (usize::BITS - 1);
+    nargsf & !offset_mask
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *const c_char) {
     match unsafe { c_name_to_string(message) } {
         Ok(message) => {
@@ -28480,6 +28565,24 @@ static KEEP2_PY_ENTERRECURSIVECALL: unsafe extern "C" fn(*const c_char) -> i32 =
 static KEEP2_PY_LEAVERECURSIVECALL: unsafe extern "C" fn() = Py_LeaveRecursiveCall;
 #[used]
 static KEEP2_PY_ISINITIALIZED: unsafe extern "C" fn() -> i32 = Py_IsInitialized;
+#[used]
+static KEEP2_PY_IS: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int = Py_Is;
+#[used]
+static KEEP2_PY_ISNONE: unsafe extern "C" fn(*mut c_void) -> c_int = Py_IsNone;
+#[used]
+static KEEP2_PY_ISTRUE: unsafe extern "C" fn(*mut c_void) -> c_int = Py_IsTrue;
+#[used]
+static KEEP2_PY_ISFALSE: unsafe extern "C" fn(*mut c_void) -> c_int = Py_IsFalse;
+#[used]
+static KEEP2_PY_NEWREF: unsafe extern "C" fn(*mut c_void) -> *mut c_void = Py_NewRef;
+#[used]
+static KEEP2_PY_XNEWREF: unsafe extern "C" fn(*mut c_void) -> *mut c_void = Py_XNewRef;
+#[used]
+static KEEP2_PY_REFCNT: unsafe extern "C" fn(*mut c_void) -> isize = Py_REFCNT;
+#[used]
+static KEEP2_PY_TYPE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = Py_TYPE;
+#[used]
+static KEEP2_PYVECTORCALL_NARGS: unsafe extern "C" fn(usize) -> usize = PyVectorcall_NARGS;
 #[used]
 static KEEP3_PYCONTEXTVAR_NEW: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
     PyContextVar_New;
