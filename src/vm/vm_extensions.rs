@@ -18639,6 +18639,24 @@ fn cpython_sys_add_warn_option(context: &mut ModuleCapiContext, option: String) 
     Ok(())
 }
 
+fn cpython_sys_set_global(
+    context: &mut ModuleCapiContext,
+    name: &str,
+    value: Value,
+) -> Result<(), String> {
+    let sys_module = cpython_sys_module_obj(context)?;
+    {
+        let Object::Module(sys_data) = &mut *sys_module.kind_mut() else {
+            return Err("sys module object is invalid".to_string());
+        };
+        sys_data.globals.insert(name.to_string(), value.clone());
+    }
+    context
+        .sync_module_dict_set(&sys_module, name, &value)
+        .map_err(|err| format!("failed syncing sys.{name}: {err}"))?;
+    Ok(())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySys_SetObject(name: *const c_char, value: *mut c_void) -> i32 {
     let name = match unsafe { c_name_to_string(name) } {
@@ -18792,6 +18810,147 @@ pub unsafe extern "C" fn PySys_AddWarnOption(option: *const Cwchar) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySys_AddWarnOptionUnicode(option: *const Cwchar) {
     unsafe { PySys_AddWarnOption(option) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pyrs_capi_sys_write_stdout(text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    // SAFETY: caller guarantees a valid NUL-terminated string.
+    let line = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+    print!("{line}");
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pyrs_capi_sys_write_stderr(text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    // SAFETY: caller guarantees a valid NUL-terminated string.
+    let line = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+    eprint!("{line}");
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_AuditTuple(event: *const c_char, _args: *mut c_void) -> i32 {
+    if event.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PySys_AuditTuple requires event name");
+        return -1;
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pyrs_capi_sys_audit_noargs(event: *const c_char) -> i32 {
+    unsafe { PySys_AuditTuple(event, std::ptr::null_mut()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_SetPath(path: *const Cwchar) {
+    let path_text = match unsafe { c_wide_name_to_string(path) } {
+        Ok(path) => path,
+        Err(err) => {
+            cpython_set_error(err);
+            return;
+        }
+    };
+    #[cfg(windows)]
+    let delimiter = ';';
+    #[cfg(not(windows))]
+    let delimiter = ':';
+    let entries: Vec<Value> = if path_text.is_empty() {
+        Vec::new()
+    } else {
+        path_text
+            .split(delimiter)
+            .map(|entry| Value::Str(entry.to_string()))
+            .collect()
+    };
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySys_SetPath missing VM context");
+            return;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let path_list = unsafe { (&mut *context.vm).heap.alloc_list(entries) };
+        if let Err(err) = cpython_sys_set_global(context, "path", path_list) {
+            context.set_error(format!("PySys_SetPath {err}"));
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_SetArgvEx(
+    argc: i32,
+    argv: *mut *mut Cwchar,
+    updatepath: i32,
+) {
+    if argc < 0 {
+        cpython_set_typed_error(unsafe { PyExc_ValueError }, "PySys_SetArgvEx argc must be >= 0");
+        return;
+    }
+    let mut argv_values: Vec<Value> = Vec::new();
+    for idx in 0..(argc as usize) {
+        let arg_ptr = if argv.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: caller guarantees `argv` has `argc` entries when non-null.
+            unsafe { *argv.add(idx) }
+        };
+        let arg = if arg_ptr.is_null() {
+            String::new()
+        } else {
+            match unsafe { c_wide_name_to_string(arg_ptr) } {
+                Ok(arg) => arg,
+                Err(err) => {
+                    cpython_set_error(format!("PySys_SetArgvEx invalid argument: {err}"));
+                    return;
+                }
+            }
+        };
+        argv_values.push(Value::Str(arg));
+    }
+
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySys_SetArgvEx missing VM context");
+            return;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let argv_list = vm.heap.alloc_list(argv_values.clone());
+        if let Err(err) = cpython_sys_set_global(context, "argv", argv_list) {
+            context.set_error(format!("PySys_SetArgvEx {err}"));
+            return;
+        }
+        if updatepath == 0 {
+            return;
+        }
+        let mut path_values: Vec<Value> = Vec::new();
+        if let Some(Value::Str(program_path)) = argv_values.first() {
+            let first_path = Path::new(program_path)
+                .parent()
+                .map_or_else(|| "".to_string(), |parent| parent.to_string_lossy().to_string());
+            path_values.push(Value::Str(first_path));
+        }
+        if let Ok(sys_module) = cpython_sys_module_obj(context)
+            && let Object::Module(sys_data) = &*sys_module.kind()
+            && let Some(Value::List(existing_list)) = sys_data.globals.get("path")
+            && let Object::List(items) = &*existing_list.kind()
+        {
+            path_values.extend(items.iter().cloned());
+        }
+        let path_list = vm.heap.alloc_list(path_values);
+        if let Err(err) = cpython_sys_set_global(context, "path", path_list) {
+            context.set_error(format!("PySys_SetArgvEx {err}"));
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_SetArgv(argc: i32, argv: *mut *mut Cwchar) {
+    unsafe { PySys_SetArgvEx(argc, argv, 1) }
 }
 
 #[unsafe(no_mangle)]
@@ -21831,6 +21990,11 @@ unsafe extern "C" {
         format: *const c_char,
         vargs: *mut c_void,
     ) -> *mut c_void;
+    fn PySys_WriteStdout(format: *const c_char, ...);
+    fn PySys_WriteStderr(format: *const c_char, ...);
+    fn PySys_FormatStdout(format: *const c_char, ...);
+    fn PySys_FormatStderr(format: *const c_char, ...);
+    fn PySys_Audit(event: *const c_char, format: *const c_char, ...) -> i32;
 }
 
 #[used]
@@ -22293,6 +22457,15 @@ static KEEP2_PYSYS_ADDWARNOPTION: unsafe extern "C" fn(*const Cwchar) = PySys_Ad
 static KEEP2_PYSYS_ADDWARNOPTIONUNICODE: unsafe extern "C" fn(*const Cwchar) =
     PySys_AddWarnOptionUnicode;
 #[used]
+static KEEP2_PYSYS_AUDITTUPLE: unsafe extern "C" fn(*const c_char, *mut c_void) -> i32 =
+    PySys_AuditTuple;
+#[used]
+static KEEP2_PYSYS_SETARGV: unsafe extern "C" fn(i32, *mut *mut Cwchar) = PySys_SetArgv;
+#[used]
+static KEEP2_PYSYS_SETARGVEX: unsafe extern "C" fn(i32, *mut *mut Cwchar, i32) = PySys_SetArgvEx;
+#[used]
+static KEEP2_PYSYS_SETPATH: unsafe extern "C" fn(*const Cwchar) = PySys_SetPath;
+#[used]
 static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThreadState_Get;
 #[used]
 static KEEP2_PYTHREADSTATE_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
@@ -22487,6 +22660,17 @@ static KEEP3_PYERR_FORMATV: unsafe extern "C" fn(
     *const c_char,
     *mut c_void,
 ) -> *mut c_void = PyErr_FormatV;
+#[used]
+static KEEP3_PYSYS_WRITESTDOUT: unsafe extern "C" fn(*const c_char, ...) = PySys_WriteStdout;
+#[used]
+static KEEP3_PYSYS_WRITESTDERR: unsafe extern "C" fn(*const c_char, ...) = PySys_WriteStderr;
+#[used]
+static KEEP3_PYSYS_FORMATSTDOUT: unsafe extern "C" fn(*const c_char, ...) = PySys_FormatStdout;
+#[used]
+static KEEP3_PYSYS_FORMATSTDERR: unsafe extern "C" fn(*const c_char, ...) = PySys_FormatStderr;
+#[used]
+static KEEP3_PYSYS_AUDIT: unsafe extern "C" fn(*const c_char, *const c_char, ...) -> i32 =
+    PySys_Audit;
 #[used]
 static KEEP3_PYERR_GIVENEXCEPTIONMATCHES: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyErr_GivenExceptionMatches;

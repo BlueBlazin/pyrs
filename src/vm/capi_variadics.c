@@ -12,6 +12,9 @@ extern void *pyrs_capi_tuple_pack_from_array(Py_ssize_t n, void *const *items);
 extern void pyrs_capi_set_error_message(const char *message);
 extern void *pyrs_capi_pyerr_format_fallback(void *exception, const char *format);
 extern void *pyrs_capi_pyerr_formatv_fallback(void *exception, const char *format, void *vargs);
+extern void pyrs_capi_sys_write_stdout(const char *text);
+extern void pyrs_capi_sys_write_stderr(const char *text);
+extern int pyrs_capi_sys_audit_noargs(const char *event);
 
 extern void *PyTuple_New(Py_ssize_t size);
 extern int PyTuple_SetItem(void *tuple, Py_ssize_t index, void *item);
@@ -48,6 +51,75 @@ extern char _Py_NoneStruct;
 extern char PyDict_Type;
 extern char PyTuple_Type;
 extern char PyUnicode_Type;
+
+static void pyrs_sys_vwrite(void (*sink)(const char *), const char *format, va_list ap)
+{
+    char stack_buf[4096];
+    va_list copy;
+    va_copy(copy, ap);
+    int needed = vsnprintf(stack_buf, sizeof(stack_buf), format ? format : "", copy);
+    va_end(copy);
+
+    if (needed < 0) {
+        sink("");
+        return;
+    }
+    if ((size_t)needed < sizeof(stack_buf)) {
+        sink(stack_buf);
+        return;
+    }
+
+    size_t dynamic_len = (size_t)needed + 1;
+    char *dynamic_buf = (char *)malloc(dynamic_len);
+    if (dynamic_buf == NULL) {
+        sink("");
+        return;
+    }
+    vsnprintf(dynamic_buf, dynamic_len, format ? format : "", ap);
+    sink(dynamic_buf);
+    free(dynamic_buf);
+}
+
+void PySys_WriteStdout(const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    pyrs_sys_vwrite(pyrs_capi_sys_write_stdout, format, ap);
+    va_end(ap);
+}
+
+void PySys_WriteStderr(const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    pyrs_sys_vwrite(pyrs_capi_sys_write_stderr, format, ap);
+    va_end(ap);
+}
+
+void PySys_FormatStdout(const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    pyrs_sys_vwrite(pyrs_capi_sys_write_stdout, format, ap);
+    va_end(ap);
+}
+
+void PySys_FormatStderr(const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    pyrs_sys_vwrite(pyrs_capi_sys_write_stderr, format, ap);
+    va_end(ap);
+}
+
+int PySys_Audit(const char *event, const char *format, ...)
+{
+    (void)format;
+    va_list ap;
+    va_start(ap, format);
+    va_end(ap);
+    return pyrs_capi_sys_audit_noargs(event);
+}
 
 void *PyErr_Format(void *exception, const char *format, ...)
 {

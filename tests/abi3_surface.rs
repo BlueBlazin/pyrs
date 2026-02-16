@@ -995,6 +995,31 @@ fn exports_abi3_batch43_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch44_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PySys_Audit",
+        "PySys_AuditTuple",
+        "PySys_FormatStderr",
+        "PySys_FormatStdout",
+        "PySys_SetArgv",
+        "PySys_SetArgvEx",
+        "PySys_SetPath",
+        "PySys_WriteStderr",
+        "PySys_WriteStdout",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch44 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

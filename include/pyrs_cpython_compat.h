@@ -171,6 +171,15 @@ int PySys_HasWarnOptions(void);
 void PySys_ResetWarnOptions(void);
 void PySys_AddWarnOption(const wchar_t *option);
 void PySys_AddWarnOptionUnicode(const wchar_t *option);
+void PySys_WriteStdout(const char *format, ...);
+void PySys_WriteStderr(const char *format, ...);
+void PySys_FormatStdout(const char *format, ...);
+void PySys_FormatStderr(const char *format, ...);
+int PySys_Audit(const char *event, const char *format, ...);
+int PySys_AuditTuple(const char *event, PyObject *args);
+void PySys_SetArgv(int argc, wchar_t **argv);
+void PySys_SetArgvEx(int argc, wchar_t **argv, int updatepath);
+void PySys_SetPath(const wchar_t *path);
 
 PyObject *PyImport_ImportModule(const char *name);
 long PyImport_GetMagicNumber(void);
