@@ -1398,7 +1398,15 @@ impl ModuleCapiContext {
                     )
                 }
             }
-            Some(other) => format!("{other:?}"),
+            Some(other) => {
+                if self.vm.is_null() {
+                    "error".to_string()
+                } else {
+                    // SAFETY: VM pointer is valid while CPython init context is active.
+                    let vm = unsafe { &mut *self.vm };
+                    format!("{} object", vm.value_type_name_for_error(&other))
+                }
+            }
             None => "error".to_string(),
         }
     }
@@ -18052,6 +18060,108 @@ pub unsafe extern "C" fn PyErr_ProgramText(filename: *const c_char, lineno: i32)
     cpython_new_ptr_for_value(Value::Str(line))
 }
 
+fn cpython_import_error_arg_or_none(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        cpython_new_ptr_for_value(Value::None)
+    } else {
+        object
+    }
+}
+
+fn cpython_set_import_error_subclass_with_name_from(
+    exception: *mut c_void,
+    msg: *mut c_void,
+    name: *mut c_void,
+    path: *mut c_void,
+    from_name: *mut c_void,
+) -> *mut c_void {
+    if exception.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "expected a subclass of ImportError",
+        );
+        return std::ptr::null_mut();
+    }
+    let is_subclass = unsafe { PyObject_IsSubclass(exception, PyExc_ImportError) };
+    if is_subclass < 0 {
+        return std::ptr::null_mut();
+    }
+    if is_subclass == 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "expected a subclass of ImportError",
+        );
+        return std::ptr::null_mut();
+    }
+    if msg.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "expected a message argument");
+        return std::ptr::null_mut();
+    }
+
+    let name_obj = cpython_import_error_arg_or_none(name);
+    let path_obj = cpython_import_error_arg_or_none(path);
+    let from_name_obj = cpython_import_error_arg_or_none(from_name);
+    if name_obj.is_null() || path_obj.is_null() || from_name_obj.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let args = unsafe { PyTuple_New(1) };
+    if args.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { Py_IncRef(msg) };
+    if unsafe { PyTuple_SetItem(args, 0, msg) } != 0 {
+        unsafe { Py_DecRef(args) };
+        return std::ptr::null_mut();
+    }
+
+    let error_instance = unsafe { PyObject_CallObject(exception, args) };
+    unsafe { Py_DecRef(args) };
+    if error_instance.is_null() {
+        return std::ptr::null_mut();
+    }
+    if unsafe { PyObject_SetAttrString(error_instance, c"name".as_ptr(), name_obj) } != 0
+        || unsafe { PyObject_SetAttrString(error_instance, c"path".as_ptr(), path_obj) } != 0
+        || unsafe { PyObject_SetAttrString(error_instance, c"name_from".as_ptr(), from_name_obj) } != 0
+    {
+        return std::ptr::null_mut();
+    }
+
+    unsafe { PyErr_SetObject(exception, error_instance) };
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetImportError(
+    msg: *mut c_void,
+    name: *mut c_void,
+    path: *mut c_void,
+) -> *mut c_void {
+    cpython_set_import_error_subclass_with_name_from(
+        unsafe { PyExc_ImportError },
+        msg,
+        name,
+        path,
+        std::ptr::null_mut(),
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyErr_SetImportErrorSubclass(
+    exception: *mut c_void,
+    msg: *mut c_void,
+    name: *mut c_void,
+    path: *mut c_void,
+) -> *mut c_void {
+    cpython_set_import_error_subclass_with_name_from(
+        exception,
+        msg,
+        name,
+        path,
+        std::ptr::null_mut(),
+    )
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_WarnEx(
     _category: *mut c_void,
@@ -20247,6 +20357,19 @@ static KEEP_PYERR_SYNTAX_LOCATION_EX: unsafe extern "C" fn(*const c_char, i32, i
 #[used]
 static KEEP_PYERR_PROGRAM_TEXT: unsafe extern "C" fn(*const c_char, i32) -> *mut c_void =
     PyErr_ProgramText;
+#[used]
+static KEEP_PYERR_SET_IMPORT_ERROR: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyErr_SetImportError;
+#[used]
+static KEEP_PYERR_SET_IMPORT_ERROR_SUBCLASS: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyErr_SetImportErrorSubclass;
 #[used]
 static KEEP_PYFILE_GET_LINE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void = PyFile_GetLine;
 #[used]

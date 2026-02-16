@@ -3786,6 +3786,120 @@ PyInit_cpython_api_batch21_probe(void) {
 }
 
 #[test]
+fn cpython_compat_import_error_abi_batch22_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch22 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch22 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch22");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch22_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch22_probe",
+    "cpython api batch22 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+static int raised_is(PyObject *expected) {
+    PyObject *raised = PyErr_Occurred();
+    return (raised == expected) ? 1 : 0;
+}
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch22_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *msg = PyUnicode_FromString("probe import error");
+    PyObject *name = PyUnicode_FromString("pkg.mod");
+    PyObject *path = PyUnicode_FromString("/tmp/pkg/mod.py");
+    if (!msg || !name || !path) {
+        return 0;
+    }
+
+    int import_error_ok = 1;
+    import_error_ok &= (PyErr_SetImportError(msg, name, path) == 0 && raised_is(PyExc_ImportError));
+    PyErr_Clear();
+
+    PyObject *custom = PyErr_NewException(
+        "cpython_api_batch22_probe.CustomImportError",
+        PyExc_ImportError,
+        0
+    );
+    if (!custom) {
+        return 0;
+    }
+    import_error_ok &= (
+        PyErr_SetImportErrorSubclass(custom, msg, name, path) == 0 &&
+        raised_is(custom)
+    );
+    PyErr_Clear();
+
+    int subclass_validation_ok = 1;
+    subclass_validation_ok &= (
+        PyErr_SetImportErrorSubclass(PyExc_TypeError, msg, name, path) == 0 &&
+        raised_is(PyExc_TypeError)
+    );
+    PyErr_Clear();
+    subclass_validation_ok &= (
+        PyErr_SetImportErrorSubclass(PyExc_ImportError, 0, name, path) == 0 &&
+        raised_is(PyExc_TypeError)
+    );
+    PyErr_Clear();
+
+    Py_XDECREF(custom);
+    Py_XDECREF(path);
+    Py_XDECREF(name);
+    Py_XDECREF(msg);
+
+    if (PyModule_AddIntConstant(module, "IMPORT_ERROR_OK", import_error_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SUBCLASS_VALIDATION_OK", subclass_validation_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch22_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch22 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch22_probe as m\nassert m.IMPORT_ERROR_OK == 1\nassert m.SUBCLASS_VALIDATION_OK == 1",
+    )
+    .expect("cpython api batch22 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

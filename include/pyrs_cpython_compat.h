@@ -477,6 +477,13 @@ void PyErr_Clear(void);
 void PyErr_SyntaxLocation(const char *filename, int lineno);
 void PyErr_SyntaxLocationEx(const char *filename, int lineno, int col_offset);
 PyObject *PyErr_ProgramText(const char *filename, int lineno);
+PyObject *PyErr_SetImportError(PyObject *msg, PyObject *name, PyObject *path);
+PyObject *PyErr_SetImportErrorSubclass(
+    PyObject *exception,
+    PyObject *msg,
+    PyObject *name,
+    PyObject *path
+);
 PyObject *PyException_GetTraceback(PyObject *exception);
 PyObject *PyException_GetCause(PyObject *exception);
 PyObject *PyException_GetContext(PyObject *exception);
