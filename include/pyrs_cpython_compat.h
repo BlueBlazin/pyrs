@@ -482,6 +482,49 @@ long long PyUnicode_Tailmatch(
 );
 uint32_t *PyUnicode_AsUCS4(PyObject *object, uint32_t *buffer, long long buflen, int copy_null);
 uint32_t *PyUnicode_AsUCS4Copy(PyObject *object);
+PyObject *PyUnicode_Decode(
+    const char *str,
+    long long size,
+    const char *encoding,
+    const char *errors
+);
+PyObject *PyUnicode_DecodeASCII(const char *str, long long size, const char *errors);
+PyObject *PyUnicode_DecodeLatin1(const char *str, long long size, const char *errors);
+PyObject *PyUnicode_DecodeUTF8(const char *str, long long size, const char *errors);
+PyObject *PyUnicode_DecodeUTF8Stateful(
+    const char *str,
+    long long size,
+    const char *errors,
+    long long *consumed
+);
+PyObject *PyUnicode_DecodeFSDefault(const char *str);
+PyObject *PyUnicode_DecodeFSDefaultAndSize(const char *str, long long size);
+PyObject *PyUnicode_DecodeLocale(const char *str, const char *errors);
+PyObject *PyUnicode_DecodeLocaleAndSize(const char *str, long long size, const char *errors);
+PyObject *PyUnicode_EncodeFSDefault(PyObject *unicode);
+PyObject *PyUnicode_EncodeLocale(PyObject *unicode, const char *errors);
+PyObject *PyUnicode_AsDecodedObject(
+    PyObject *unicode,
+    const char *encoding,
+    const char *errors
+);
+PyObject *PyUnicode_AsDecodedUnicode(
+    PyObject *unicode,
+    const char *encoding,
+    const char *errors
+);
+PyObject *PyUnicode_AsEncodedObject(
+    PyObject *unicode,
+    const char *encoding,
+    const char *errors
+);
+PyObject *PyUnicode_AsEncodedUnicode(
+    PyObject *unicode,
+    const char *encoding,
+    const char *errors
+);
+int PyUnicode_FSConverter(PyObject *arg, void *addr);
+int PyUnicode_FSDecoder(PyObject *arg, void *addr);
 PyObject *PyBytes_FromString(const char *value);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
 PyObject *PyBytes_FromFormat(const char *format, ...);

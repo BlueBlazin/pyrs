@@ -8425,6 +8425,181 @@ PyInit_cpython_api_batch57_probe(void) {
 }
 
 #[test]
+fn cpython_compat_unicode_codec_abi_batch58_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch58 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch58 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch58");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch58_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static int
+utf8_equals(PyObject *value, const char *expected) {
+    const char *text = value ? PyUnicode_AsUTF8(value) : 0;
+    return (text && strcmp(text, expected) == 0) ? 1 : 0;
+}
+
+static int
+bytes_equals(PyObject *value, const char *expected, long long expected_len) {
+    char *data = 0;
+    long long len = -1;
+    if (!value || PyBytes_AsStringAndSize(value, &data, &len) != 0 || !data) {
+        return 0;
+    }
+    return (len == expected_len && memcmp(data, expected, (size_t)expected_len) == 0) ? 1 : 0;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    const char utf8_raw[] = {'h', (char)0xc3, (char)0xa9};
+    const char latin1_raw[] = {(char)0xe9};
+    const char ascii_raw[] = {'a', 'b', 'c'};
+
+    PyObject *dec_utf8 = PyUnicode_Decode(utf8_raw, 3, "utf-8", 0);
+    PyObject *dec_ascii = PyUnicode_DecodeASCII(ascii_raw, 3, 0);
+    PyObject *dec_latin1 = PyUnicode_DecodeLatin1(latin1_raw, 1, 0);
+    long long consumed = -1;
+    PyObject *dec_stateful = PyUnicode_DecodeUTF8Stateful(utf8_raw, 3, 0, &consumed);
+    int decode_ok = utf8_equals(dec_utf8, "hé") &&
+                    utf8_equals(dec_ascii, "abc") &&
+                    utf8_equals(dec_latin1, "é") &&
+                    utf8_equals(dec_stateful, "hé") &&
+                    consumed == 3;
+    Py_XDECREF(dec_stateful);
+    Py_XDECREF(dec_latin1);
+    Py_XDECREF(dec_ascii);
+    Py_XDECREF(dec_utf8);
+
+    PyObject *dec_fs = PyUnicode_DecodeFSDefault("abc");
+    PyObject *dec_fs_n = PyUnicode_DecodeFSDefaultAndSize("abc", 3);
+    PyObject *dec_loc = PyUnicode_DecodeLocale("abc", 0);
+    PyObject *dec_loc_n = PyUnicode_DecodeLocaleAndSize("abc", 3, 0);
+    int decode_fs_locale_ok = utf8_equals(dec_fs, "abc") &&
+                              utf8_equals(dec_fs_n, "abc") &&
+                              utf8_equals(dec_loc, "abc") &&
+                              utf8_equals(dec_loc_n, "abc");
+    Py_XDECREF(dec_loc_n);
+    Py_XDECREF(dec_loc);
+    Py_XDECREF(dec_fs_n);
+    Py_XDECREF(dec_fs);
+
+    PyObject *text = PyUnicode_FromString("abc");
+    PyObject *enc_fs = text ? PyUnicode_EncodeFSDefault(text) : 0;
+    PyObject *enc_loc = text ? PyUnicode_EncodeLocale(text, 0) : 0;
+    int encode_fs_locale_ok = bytes_equals(enc_fs, "abc", 3) && bytes_equals(enc_loc, "abc", 3);
+    Py_XDECREF(enc_loc);
+    Py_XDECREF(enc_fs);
+
+    PyObject *dec_obj = text ? PyUnicode_AsDecodedObject(text, "rot_13", 0) : 0;
+    PyObject *dec_unicode = text ? PyUnicode_AsDecodedUnicode(text, "rot_13", 0) : 0;
+    int decoded_helpers_ok = utf8_equals(dec_obj, "nop") && utf8_equals(dec_unicode, "nop");
+    Py_XDECREF(dec_unicode);
+    Py_XDECREF(dec_obj);
+
+    PyObject *enc_obj = text ? PyUnicode_AsEncodedObject(text, "utf-8", 0) : 0;
+    int encoded_object_ok = bytes_equals(enc_obj, "abc", 3);
+    Py_XDECREF(enc_obj);
+
+    PyObject *enc_unicode = text ? PyUnicode_AsEncodedUnicode(text, "utf-8", 0) : 0;
+    int encoded_unicode_type_guard_ok = (enc_unicode == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+    Py_XDECREF(enc_unicode);
+
+    PyObject *conv_slot = 0;
+    int conv_ok = text ? PyUnicode_FSConverter(text, &conv_slot) : 0;
+    int fs_converter_ok = conv_ok == 1 && conv_slot && bytes_equals(conv_slot, "abc", 3);
+    Py_XDECREF(conv_slot);
+    conv_slot = 0;
+    int fs_converter_cleanup_ok = (PyUnicode_FSConverter(0, &conv_slot) == 1 && conv_slot == 0) ? 1 : 0;
+
+    PyObject *bytes_path = PyBytes_FromString("abc");
+    PyObject *decode_slot = 0;
+    int dec_ok = bytes_path ? PyUnicode_FSDecoder(bytes_path, &decode_slot) : 0;
+    int fs_decoder_ok = dec_ok == 1 && decode_slot && utf8_equals(decode_slot, "abc");
+    Py_XDECREF(decode_slot);
+    decode_slot = 0;
+    int fs_decoder_cleanup_ok = (PyUnicode_FSDecoder(0, &decode_slot) == 1 && decode_slot == 0) ? 1 : 0;
+    Py_XDECREF(bytes_path);
+    Py_XDECREF(text);
+
+    return Py_BuildValue(
+        "(iiiiiiiii)",
+        decode_ok,
+        decode_fs_locale_ok,
+        encode_fs_locale_ok,
+        decoded_helpers_ok,
+        encoded_object_ok,
+        encoded_unicode_type_guard_ok,
+        fs_converter_ok,
+        fs_converter_cleanup_ok,
+        fs_decoder_ok && fs_decoder_cleanup_ok ? 1 : 0);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe unicode codec ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch58_probe",
+    "cpython api batch58 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch58_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch58_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch58 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch58_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch58 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
