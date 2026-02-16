@@ -6112,6 +6112,93 @@ PyInit_cpython_api_batch40_probe(void) {
 }
 
 #[test]
+fn cpython_compat_eval_frame_abi_batch41_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch41 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch41 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch41");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch41_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    int frame_present = PyEval_GetFrame() != 0 ? 1 : 0;
+
+    PyObject *value1 = PyEval_EvalFrame(0);
+    int eval1_ok = (value1 == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    PyObject *value2 = PyEval_EvalFrameEx(0, 0);
+    int eval2_ok = (value2 == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    return Py_BuildValue("(iii)", frame_present, eval1_ok, eval2_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe PyEval_EvalFrame APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch41_probe",
+    "cpython api batch41 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch41_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch41_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch41 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch41_probe as m\nres = m.run()\nassert res == (1, 1, 1)",
+    )
+    .expect("cpython api batch41 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

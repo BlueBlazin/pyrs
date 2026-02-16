@@ -404,6 +404,7 @@ PyObject *PyObject_GetAttr(PyObject *object, PyObject *name);
 PyObject *PyObject_Type(PyObject *object);
 PyObject *PyObject_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *format, ...);
+PyObject *PyObject_CallObject(PyObject *callable, PyObject *args);
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 PyObject *PyObject_CallMethodObjArgs(PyObject *object, PyObject *name, ...);
 PyObject *PyObject_CallNoArgs(PyObject *callable);
@@ -424,6 +425,8 @@ PyObject *PyEval_EvalCodeEx(
     PyObject *kwdefs,
     PyObject *closure
 );
+PyObject *PyEval_EvalFrame(void *frame);
+PyObject *PyEval_EvalFrameEx(void *frame, int throwflag);
 void *PyEval_GetFrame(void);
 PyObject *PyEval_GetGlobals(void);
 PyObject *PyEval_GetLocals(void);

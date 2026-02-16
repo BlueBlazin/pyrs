@@ -21067,6 +21067,52 @@ pub unsafe extern "C" fn PyEval_EvalCodeEx(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_EvalFrame(frame: *mut c_void) -> *mut c_void {
+    if frame.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "PyEval_EvalFrame requires frame");
+        return std::ptr::null_mut();
+    }
+    if frame == unsafe { PyThreadState_Get() } {
+        cpython_set_error("PyEval_EvalFrame current-frame evaluation is not yet supported");
+        return std::ptr::null_mut();
+    }
+    let code = unsafe { PyFrame_GetCode(frame) };
+    if code.is_null() {
+        return std::ptr::null_mut();
+    }
+    let globals_from_frame = unsafe { PyEval_GetFrameGlobals() };
+    let globals = if globals_from_frame.is_null() {
+        let fallback = with_active_cpython_context_mut(|context| {
+            context.alloc_cpython_ptr_for_value(Value::Module(context.module.clone()))
+        })
+        .unwrap_or_else(|_| std::ptr::null_mut());
+        fallback
+    } else {
+        globals_from_frame
+    };
+    if globals.is_null() {
+        unsafe { Py_DecRef(code) };
+        return std::ptr::null_mut();
+    }
+    let locals = unsafe { PyEval_GetFrameLocals() };
+    let locals_arg = if locals.is_null() { globals } else { locals };
+    let result = unsafe { PyEval_EvalCode(code, globals, locals_arg) };
+    unsafe {
+        Py_DecRef(code);
+        Py_DecRef(globals);
+        if !locals.is_null() && locals != globals {
+            Py_DecRef(locals);
+        }
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_EvalFrameEx(frame: *mut c_void, _throwflag: i32) -> *mut c_void {
+    unsafe { PyEval_EvalFrame(frame) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyEval_SaveThread() -> *mut c_void {
     std::ptr::null_mut()
 }
@@ -22119,6 +22165,12 @@ static KEEP3_PYEVAL_CALLMETHOD: unsafe extern "C" fn(
     *const c_char,
     ...
 ) -> *mut c_void = PyEval_CallMethod;
+#[used]
+static KEEP3_PYEVAL_EVALFRAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyEval_EvalFrame;
+#[used]
+static KEEP3_PYEVAL_EVALFRAMEEX: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
+    PyEval_EvalFrameEx;
 #[used]
 static KEEP3_PYARG_PARSE: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
     PyArg_Parse;
