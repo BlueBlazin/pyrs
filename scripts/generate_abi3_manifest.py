@@ -101,7 +101,12 @@ def read_exported_symbols(binary: pathlib.Path) -> set[str]:
             continue
         parts = line.split()
         symbol = parts[-1]
-        if symbol.startswith("_") and len(symbol) > 1 and symbol[1].isalpha():
+        # macOS `nm` prefixes symbols with `_`. For CPython private globals that
+        # already start with `_` (for example `_Py_NoneStruct`), this becomes a
+        # double underscore (`__Py_NoneStruct`). Normalize both forms.
+        if symbol.startswith("__") and len(symbol) > 2 and symbol[2].isalpha():
+            symbol = symbol[1:]
+        elif symbol.startswith("_") and len(symbol) > 1 and symbol[1].isalpha():
             symbol = symbol[1:]
         exported.add(symbol)
     return exported
