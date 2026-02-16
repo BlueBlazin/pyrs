@@ -39,6 +39,22 @@ typedef struct PyModuleDef {
     void *m_free;
 } PyModuleDef;
 
+typedef struct {
+    void *buf;
+    PyObject *obj;
+    long long len;
+    long long itemsize;
+    int readonly;
+    int ndim;
+    char *format;
+    long long *shape;
+    long long *strides;
+    long long *suboffsets;
+    void *internal;
+} Py_buffer;
+
+typedef void (*PyCapsule_Destructor)(PyObject *);
+
 #define PyModuleDef_HEAD_INIT {0, 0, 0, 0, 0}
 
 #ifndef PYTHON_API_VERSION
@@ -64,6 +80,12 @@ PyObject *PyUnicode_FromString(const char *value);
 const char *PyUnicode_AsUTF8(PyObject *object);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
 int PyBytes_AsStringAndSize(PyObject *object, char **buffer, long long *len);
+PyObject *PyByteArray_FromObject(PyObject *object);
+PyObject *PyByteArray_FromStringAndSize(const char *value, long long len);
+long long PyByteArray_Size(PyObject *object);
+char *PyByteArray_AsString(PyObject *object);
+int PyByteArray_Resize(PyObject *object, long long requested_size);
+PyObject *PyByteArray_Concat(PyObject *left, PyObject *right);
 PyObject *PyTuple_New(long long size);
 PyObject *PyTuple_Pack(long long size, ...);
 long long PyTuple_Size(PyObject *tuple);
@@ -83,6 +105,28 @@ PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *fo
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 int PyObject_IsTrue(PyObject *object);
 int PyObject_IsInstance(PyObject *object, PyObject *class_obj);
+int PyObject_GetBuffer(PyObject *object, Py_buffer *view, int flags);
+void PyBuffer_Release(Py_buffer *view);
+
+PyObject *PyDict_Keys(PyObject *dict);
+PyObject *PyDict_Values(PyObject *dict);
+PyObject *PyDict_Items(PyObject *dict);
+void PyDict_Clear(PyObject *dict);
+int PyDict_Update(PyObject *dict, PyObject *other);
+int PyDict_Merge(PyObject *dict, PyObject *other, int override_existing);
+int PyDict_MergeFromSeq2(PyObject *dict, PyObject *seq2, int override_existing);
+
+PyObject *PyCapsule_New(void *pointer, const char *name, PyCapsule_Destructor destructor);
+void *PyCapsule_GetPointer(PyObject *capsule, const char *name);
+const char *PyCapsule_GetName(PyObject *capsule);
+PyCapsule_Destructor PyCapsule_GetDestructor(PyObject *capsule);
+int PyCapsule_SetPointer(PyObject *capsule, void *pointer);
+int PyCapsule_SetName(PyObject *capsule, const char *name);
+int PyCapsule_SetDestructor(PyObject *capsule, PyCapsule_Destructor destructor);
+void *PyCapsule_GetContext(PyObject *capsule);
+int PyCapsule_SetContext(PyObject *capsule, void *context);
+int PyCapsule_IsValid(PyObject *capsule, const char *name);
+void *PyCapsule_Import(const char *name, int no_block);
 
 void PyErr_SetString(PyObject *exception, const char *message);
 PyObject *PyErr_Occurred(void);
@@ -103,6 +147,7 @@ extern PyObject *PyExc_ImportError;
 extern PyObject *PyExc_RuntimeError;
 extern PyObject *PyExc_TypeError;
 extern PyObject *PyExc_ValueError;
+extern void *PyByteArray_Type;
 
 #define PyMODINIT_FUNC PyObject *
 

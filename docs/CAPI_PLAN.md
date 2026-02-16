@@ -78,8 +78,14 @@ Acceptance criteria:
 ## Current Baseline Snapshot
 
 From `perf/abi3_manifest_latest.json`:
-- Stable ABI functions implemented/exported: `236 / 782`
-- Stable ABI data symbols implemented/exported: `46 / 143`
+- Stable ABI functions implemented/exported: `252 / 782`
+- Stable ABI data symbols implemented/exported: `47 / 143`
+
+Recent Lane A slice:
+- Added Stable-ABI exports and semantics for `PyDict_{Clear,Update,Keys,Values,Items,MergeFromSeq2}`.
+- Added Stable-ABI exports and semantics for `PyCapsule_{GetName,SetPointer,GetDestructor,SetDestructor}`.
+- Added Stable-ABI exports and semantics for `PyByteArray_*` constructor/access/resize/concat APIs.
+- Fixed `PyBuffer_Release` to release pin/ref state (was previously a no-op).
 
 Interpretation:
 - Lane A is substantial remaining work.

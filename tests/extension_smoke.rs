@@ -692,6 +692,192 @@ PyInit_cpython_varargs_probe(void) {
 }
 
 #[test]
+fn cpython_compat_dict_capsule_and_bytearray_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api probe smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api probe smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_probe");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+extern int PyDict_Size(PyObject *dict);
+extern PyObject *PyDict_GetItemString(PyObject *dict, const char *key);
+extern int PyList_Size(PyObject *list);
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_probe",
+    "cpython api probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+static void probe_capsule_destructor(PyObject *capsule) {
+    (void)capsule;
+}
+
+PyMODINIT_FUNC
+PyInit_cpython_api_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *dict_values = Py_BuildValue("{s:i,s:i}", "a", 1, "b", 2);
+    PyObject *keys = PyDict_Keys(dict_values);
+    PyObject *values = PyDict_Values(dict_values);
+    PyObject *items = PyDict_Items(dict_values);
+    if (!dict_values || !keys || !values || !items) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "DICT_KEYS_LEN", PyList_Size(keys)) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "DICT_VALUES_LEN", PyList_Size(values)) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "DICT_ITEMS_LEN", PyList_Size(items)) != 0) {
+        return 0;
+    }
+    PyDict_Clear(dict_values);
+    if (PyModule_AddIntConstant(module, "DICT_SIZE_AFTER_CLEAR", PyDict_Size(dict_values)) != 0) {
+        return 0;
+    }
+
+    PyObject *base = Py_BuildValue("{s:i}", "x", 1);
+    PyObject *other = Py_BuildValue("{s:i,s:i}", "x", 2, "y", 3);
+    if (!base || !other) {
+        return 0;
+    }
+    if (PyDict_Update(base, other) != 0) {
+        return 0;
+    }
+    PyObject *updated_x = PyDict_GetItemString(base, "x");
+    if (PyModule_AddIntConstant(module, "DICT_UPDATE_X", (int)PyLong_AsLongLong(updated_x)) != 0) {
+        return 0;
+    }
+    PyObject *base2 = Py_BuildValue("{s:i}", "x", 1);
+    PyObject *other2 = Py_BuildValue("{s:i,s:i}", "x", 2, "y", 3);
+    if (!base2 || !other2) {
+        return 0;
+    }
+    if (PyDict_Merge(base2, other2, 0) != 0) {
+        return 0;
+    }
+    PyObject *merged_x = PyDict_GetItemString(base2, "x");
+    PyObject *merged_y = PyDict_GetItemString(base2, "y");
+    if (PyModule_AddIntConstant(module, "DICT_MERGE_X", (int)PyLong_AsLongLong(merged_x)) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "DICT_MERGE_Y", (int)PyLong_AsLongLong(merged_y)) != 0) {
+        return 0;
+    }
+
+    PyObject *bytearray_value = PyByteArray_FromStringAndSize("abc", 3);
+    PyObject *bytearray_bang = PyByteArray_FromStringAndSize("!", 1);
+    if (!bytearray_value || !bytearray_bang) {
+        return 0;
+    }
+    char *bytearray_data = PyByteArray_AsString(bytearray_value);
+    if (!bytearray_data) {
+        return 0;
+    }
+    bytearray_data[1] = 'Z';
+    if (PyModule_AddIntConstant(module, "BYTEARRAY_LEN", (int)PyByteArray_Size(bytearray_value)) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "BYTEARRAY_MIDDLE_CHAR", (int)bytearray_data[1]) != 0) {
+        return 0;
+    }
+    PyObject *joined = PyByteArray_Concat(bytearray_value, bytearray_bang);
+    if (!joined) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "BYTEARRAY_JOINED_LEN", (int)PyByteArray_Size(joined)) != 0) {
+        return 0;
+    }
+    Py_buffer view;
+    int blocked_resize = 0;
+    int resize_after_release = 0;
+    if (PyObject_GetBuffer(bytearray_value, &view, 0) == 0) {
+        blocked_resize = (PyByteArray_Resize(bytearray_value, 8) != 0);
+        PyBuffer_Release(&view);
+        resize_after_release = (PyByteArray_Resize(bytearray_value, 8) == 0);
+    }
+    if (PyModule_AddIntConstant(module, "BYTEARRAY_RESIZE_BLOCKED", blocked_resize) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "BYTEARRAY_RESIZE_AFTER_RELEASE", resize_after_release) != 0) {
+        return 0;
+    }
+
+    int sentinel_a = 11;
+    int sentinel_b = 22;
+    PyObject *capsule = PyCapsule_New((void *)&sentinel_a, "probe.capsule", 0);
+    if (!capsule) {
+        return 0;
+    }
+    const char *capsule_name = PyCapsule_GetName(capsule);
+    int capsule_valid = PyCapsule_IsValid(capsule, "probe.capsule");
+    int capsule_name_matches = capsule_name && capsule_name[0] == 'p';
+    void *capsule_ptr_before = PyCapsule_GetPointer(capsule, "probe.capsule");
+    if (PyCapsule_SetPointer(capsule, (void *)&sentinel_b) != 0) {
+        return 0;
+    }
+    void *capsule_ptr_after = PyCapsule_GetPointer(capsule, "probe.capsule");
+    if (PyCapsule_SetDestructor(capsule, probe_capsule_destructor) != 0) {
+        return 0;
+    }
+    int capsule_has_destructor = (PyCapsule_GetDestructor(capsule) != 0);
+    if (PyModule_AddIntConstant(module, "CAPSULE_VALID", capsule_valid) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "CAPSULE_NAME_MATCHES", capsule_name_matches) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "CAPSULE_POINTER_CHANGED", capsule_ptr_before != capsule_ptr_after) != 0) {
+        return 0;
+    }
+    if (PyModule_AddIntConstant(module, "CAPSULE_HAS_DESTRUCTOR", capsule_has_destructor) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename("cpython_api_probe"));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api probe extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_probe\nassert cpython_api_probe.DICT_KEYS_LEN == 2\nassert cpython_api_probe.DICT_VALUES_LEN == 2\nassert cpython_api_probe.DICT_ITEMS_LEN == 2\nassert cpython_api_probe.DICT_SIZE_AFTER_CLEAR == 0\nassert cpython_api_probe.DICT_UPDATE_X == 2\nassert cpython_api_probe.DICT_MERGE_X == 1\nassert cpython_api_probe.DICT_MERGE_Y == 3\nassert cpython_api_probe.BYTEARRAY_LEN == 3\nassert cpython_api_probe.BYTEARRAY_MIDDLE_CHAR == ord('Z')\nassert cpython_api_probe.BYTEARRAY_JOINED_LEN == 4\nassert cpython_api_probe.BYTEARRAY_RESIZE_BLOCKED == 1\nassert cpython_api_probe.BYTEARRAY_RESIZE_AFTER_RELEASE == 1\nassert cpython_api_probe.CAPSULE_VALID == 1\nassert cpython_api_probe.CAPSULE_NAME_MATCHES == 1\nassert cpython_api_probe.CAPSULE_POINTER_CHANGED == 1\nassert cpython_api_probe.CAPSULE_HAS_DESTRUCTOR == 1",
+    )
+    .expect("cpython api probe extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

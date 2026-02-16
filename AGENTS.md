@@ -108,7 +108,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - CI has a dedicated extension smoke lane (`cargo test -q --test extension_smoke`).
   - NumPy bring-up import + source-build probes are landed (`scripts/probe_numpy_gate.py`, `docs/NUMPY_BRINGUP_GATE.md`, artifacts `perf/numpy_gate_direct_latest.json` and `perf/numpy_gate_source_build_latest.json`).
   - C-API execution strategy is now split into Lane A (CPython Stable ABI / abi3 closure) and Lane B (NumPy/scientific-stack non-abi3 closure), tracked in `docs/CAPI_PLAN.md`.
-  - ABI coverage baseline is now generated from CPython 3.14 `Misc/stable_abi.toml` via `scripts/generate_abi3_manifest.py`; current snapshot is `functions 236/782`, `data 46/143` in `perf/abi3_manifest_latest.json`.
+  - ABI coverage baseline is now generated from CPython 3.14 `Misc/stable_abi.toml` via `scripts/generate_abi3_manifest.py`; current snapshot is `functions 252/782`, `data 47/143` in `perf/abi3_manifest_latest.json`.
+  - latest abi3 closure slice landed: `PyDict_{Clear,Update,Keys,Values,Items,MergeFromSeq2}`, `PyCapsule_{GetName,SetPointer,GetDestructor,SetDestructor}`, `PyByteArray_*` constructor/access/resize/concat APIs, and `PyBuffer_Release` now correctly releases buffer pins/ref state (no longer a no-op).
+  - extension smoke coverage now includes CPython-compat API probe `tests/extension_smoke.rs::cpython_compat_dict_capsule_and_bytearray_apis_work`.
   - probe script now supports optional scientific-stack cases (`--include-scientific-stack`) and module-aware local probe mode (`--probe-local-stack`), with direct-mode artifact updates in `perf/numpy_gate_direct_latest.json`.
   - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
   - direct shared-object imports now fall back from `pyrs_extension_init_v1` to `PyInit_<module>` when CPython-style symbols are present.
