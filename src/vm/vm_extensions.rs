@@ -1394,6 +1394,8 @@ static CPYTHON_PREFIX_WIDE: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_EXEC_PREFIX_WIDE: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_ARGC: AtomicI64 = AtomicI64::new(0);
 static CPYTHON_ARGV: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_IS_INITIALIZED: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_IS_FINALIZING: AtomicUsize = AtomicUsize::new(0);
 static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
@@ -23599,6 +23601,72 @@ pub unsafe extern "C" fn Py_EncodeLocale(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_PACK_FULL_VERSION(
+    major: c_int,
+    minor: c_int,
+    micro: c_int,
+    level: c_int,
+    serial: c_int,
+) -> u32 {
+    ((major as u32 & 0xff) << 24)
+        | ((minor as u32 & 0xff) << 16)
+        | ((micro as u32 & 0xff) << 8)
+        | ((level as u32 & 0x0f) << 4)
+        | (serial as u32 & 0x0f)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_PACK_VERSION(major: c_int, minor: c_int) -> u32 {
+    unsafe { Py_PACK_FULL_VERSION(major, minor, 0, 0, 0) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_IsFinalizing() -> c_int {
+    c_int::from(CPYTHON_IS_FINALIZING.load(Ordering::Relaxed) != 0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_Initialize() {
+    CPYTHON_IS_FINALIZING.store(0, Ordering::Relaxed);
+    CPYTHON_IS_INITIALIZED.store(1, Ordering::Relaxed);
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_InitializeEx(_initsigs: c_int) {
+    unsafe { Py_Initialize() };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_FinalizeEx() -> c_int {
+    if CPYTHON_IS_INITIALIZED.load(Ordering::Relaxed) == 0 {
+        return 0;
+    }
+    CPYTHON_IS_FINALIZING.store(1, Ordering::Relaxed);
+    if let Ok(mut callbacks) = cpython_atexit_callbacks().lock() {
+        while let Some(callback) = callbacks.pop() {
+            // SAFETY: callback pointer was registered via `Py_AtExit`.
+            unsafe { callback() };
+        }
+    }
+    CPYTHON_IS_INITIALIZED.store(0, Ordering::Relaxed);
+    CPYTHON_IS_FINALIZING.store(0, Ordering::Relaxed);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_Finalize() {
+    let _ = unsafe { Py_FinalizeEx() };
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_NewInterpreter() -> *mut c_void {
+    unsafe { PyThreadState_Get() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Py_EndInterpreter(_state: *mut c_void) {}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Init(object: *mut c_void, ty: *mut c_void) -> *mut c_void {
     if object.is_null() || ty.is_null() {
         cpython_set_error("PyObject_Init received null object/type");
@@ -29227,6 +29295,25 @@ static KEEP2_PY_ENCODELOCALE: unsafe extern "C" fn(*const Cwchar, *mut usize) ->
 #[used]
 static KEEP2_PY_DECODELOCALE: unsafe extern "C" fn(*const c_char, *mut usize) -> *mut Cwchar =
     Py_DecodeLocale;
+#[used]
+static KEEP2_PY_PACK_FULL_VERSION: unsafe extern "C" fn(c_int, c_int, c_int, c_int, c_int) -> u32 =
+    Py_PACK_FULL_VERSION;
+#[used]
+static KEEP2_PY_PACK_VERSION: unsafe extern "C" fn(c_int, c_int) -> u32 = Py_PACK_VERSION;
+#[used]
+static KEEP2_PY_INITIALIZE: unsafe extern "C" fn() = Py_Initialize;
+#[used]
+static KEEP2_PY_INITIALIZEEX: unsafe extern "C" fn(c_int) = Py_InitializeEx;
+#[used]
+static KEEP2_PY_FINALIZE: unsafe extern "C" fn() = Py_Finalize;
+#[used]
+static KEEP2_PY_FINALIZEEX: unsafe extern "C" fn() -> c_int = Py_FinalizeEx;
+#[used]
+static KEEP2_PY_NEWINTERPRETER: unsafe extern "C" fn() -> *mut c_void = Py_NewInterpreter;
+#[used]
+static KEEP2_PY_ENDINTERPRETER: unsafe extern "C" fn(*mut c_void) = Py_EndInterpreter;
+#[used]
+static KEEP2_PY_ISFINALIZING: unsafe extern "C" fn() -> c_int = Py_IsFinalizing;
 #[used]
 static KEEP2_PY_REPRENTER: unsafe extern "C" fn(*mut c_void) -> c_int = Py_ReprEnter;
 #[used]

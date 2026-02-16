@@ -99,7 +99,7 @@ Acceptance criteria:
 ## Current Baseline Snapshot
 
 From `perf/abi3_manifest_latest.json`:
-- Stable ABI functions implemented/exported: `733 / 782`
+- Stable ABI functions implemented/exported: `742 / 782`
 - Stable ABI data symbols implemented/exported: `143 / 143`
 
 Recent Lane A slice:
@@ -199,6 +199,9 @@ Recent Lane A slice:
 - Added Stable-ABI exports and baseline semantics for path-config + locale helper APIs (`batch66`):
   - `Py_{GetArgcArgv,SetProgramName,GetProgramName,SetPythonHome,GetPythonHome,SetPath,GetPath,GetPrefix,GetExecPrefix,GetProgramFullPath,DecodeLocale,EncodeLocale}`
   - path-config/locale behavior is smoke-covered for setter/getter round-trips, argv export pointer updates, and decode/encode locale round-trip with `PyMem_RawFree` ownership semantics.
+- Added Stable-ABI exports and baseline semantics for lifecycle/pack helper APIs (`batch67`):
+  - `Py_{Initialize,InitializeEx,Finalize,FinalizeEx,IsFinalizing,NewInterpreter,EndInterpreter,PACK_FULL_VERSION,PACK_VERSION}`
+  - lifecycle/pack behavior is smoke-covered for finalize callback execution ordering, finalizing-state reset, interpreter pointer baseline, and packed-version bit layout parity.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`
@@ -287,6 +290,7 @@ Recent Lane A slice:
     - `tests/abi3_surface.rs::exports_abi3_batch64_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch65_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch66_symbols`
+    - `tests/abi3_surface.rs::exports_abi3_batch67_symbols`
   - behavior gates:
     - `tests/extension_smoke.rs::cpython_compat_list_set_exception_gc_and_float_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_bytes_error_and_cfunction_apis_work`
@@ -353,6 +357,7 @@ Recent Lane A slice:
     - `tests/extension_smoke.rs::cpython_compat_weakref_abi_batch64_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_runtime_misc_abi_batch65_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_pathconfig_and_locale_abi_batch66_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_lifecycle_and_pack_abi_batch67_apis_work`
 - Added Stable-ABI exports and semantics for error/file APIs:
   - `PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`
   - `PyFile_{GetLine,WriteObject,WriteString}`
