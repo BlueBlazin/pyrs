@@ -411,7 +411,77 @@ double PyFloat_GetMax(void);
 double PyFloat_GetMin(void);
 PyObject *PyFloat_GetInfo(void);
 PyObject *PyUnicode_FromString(const char *value);
+PyObject *PyUnicode_FromStringAndSize(const char *value, long long len);
+PyObject *PyUnicode_FromEncodedObject(PyObject *object, const char *encoding, const char *errors);
+PyObject *PyUnicode_FromKindAndData(int kind, const void *buffer, long long size);
+PyObject *PyUnicode_FromObject(PyObject *object);
+PyObject *PyUnicode_FromOrdinal(int ordinal);
+const char *PyUnicode_GetDefaultEncoding(void);
 const char *PyUnicode_AsUTF8(PyObject *object);
+const char *PyUnicode_AsUTF8AndSize(PyObject *object, long long *size);
+PyObject *PyUnicode_AsUTF8String(PyObject *object);
+PyObject *PyUnicode_AsASCIIString(PyObject *object);
+PyObject *PyUnicode_AsLatin1String(PyObject *object);
+PyObject *PyUnicode_AsEncodedString(
+    PyObject *object,
+    const char *encoding,
+    const char *errors
+);
+int PyUnicode_Compare(PyObject *left, PyObject *right);
+int PyUnicode_CompareWithASCIIString(PyObject *left, const char *right);
+PyObject *PyUnicode_Concat(PyObject *left, PyObject *right);
+int PyUnicode_Contains(PyObject *container, PyObject *element);
+PyObject *PyUnicode_Format(PyObject *format, PyObject *arg);
+long long PyUnicode_GetLength(PyObject *object);
+PyObject *PyUnicode_InternFromString(const char *value);
+PyObject *PyUnicode_FromFormat(const char *format, ...);
+int PyUnicode_Equal(PyObject *left, PyObject *right);
+int PyUnicode_EqualToUTF8(PyObject *left, const char *right);
+int PyUnicode_EqualToUTF8AndSize(PyObject *left, const char *right, long long size);
+uint32_t PyUnicode_ReadChar(PyObject *unicode, long long index);
+long long PyUnicode_Find(
+    PyObject *str,
+    PyObject *substr,
+    long long start,
+    long long end,
+    int direction
+);
+long long PyUnicode_FindChar(
+    PyObject *str,
+    uint32_t ch,
+    long long start,
+    long long end,
+    int direction
+);
+long long PyUnicode_Count(
+    PyObject *str,
+    PyObject *substr,
+    long long start,
+    long long end
+);
+PyObject *PyUnicode_Join(PyObject *separator, PyObject *seq);
+PyObject *PyUnicode_Split(PyObject *str, PyObject *sep, long long maxsplit);
+PyObject *PyUnicode_RSplit(PyObject *str, PyObject *sep, long long maxsplit);
+PyObject *PyUnicode_Splitlines(PyObject *str, int keepends);
+PyObject *PyUnicode_Partition(PyObject *str, PyObject *sep);
+PyObject *PyUnicode_RPartition(PyObject *str, PyObject *sep);
+int PyUnicode_IsIdentifier(PyObject *str);
+PyObject *PyUnicode_Replace(
+    PyObject *str,
+    PyObject *substr,
+    PyObject *replstr,
+    long long maxcount
+);
+PyObject *PyUnicode_Substring(PyObject *object, long long start, long long end);
+long long PyUnicode_Tailmatch(
+    PyObject *object,
+    PyObject *substr,
+    long long start,
+    long long end,
+    int direction
+);
+uint32_t *PyUnicode_AsUCS4(PyObject *object, uint32_t *buffer, long long buflen, int copy_null);
+uint32_t *PyUnicode_AsUCS4Copy(PyObject *object);
 PyObject *PyBytes_FromString(const char *value);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
 PyObject *PyBytes_FromFormat(const char *format, ...);

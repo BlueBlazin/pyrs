@@ -1416,6 +1416,39 @@ fn exports_abi3_batch56_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch57_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyUnicode_Count",
+        "PyUnicode_Equal",
+        "PyUnicode_EqualToUTF8",
+        "PyUnicode_EqualToUTF8AndSize",
+        "PyUnicode_Find",
+        "PyUnicode_FindChar",
+        "PyUnicode_FromObject",
+        "PyUnicode_FromOrdinal",
+        "PyUnicode_GetDefaultEncoding",
+        "PyUnicode_IsIdentifier",
+        "PyUnicode_Join",
+        "PyUnicode_Partition",
+        "PyUnicode_ReadChar",
+        "PyUnicode_RPartition",
+        "PyUnicode_RSplit",
+        "PyUnicode_Split",
+        "PyUnicode_Splitlines",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch57 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

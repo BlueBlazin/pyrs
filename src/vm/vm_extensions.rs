@@ -7352,6 +7352,45 @@ pub unsafe extern "C" fn PyFloat_FromString(
     }
 }
 
+fn cpython_unicode_text_from_value(value: &Value) -> Option<String> {
+    match value {
+        Value::Str(text) => Some(text.clone()),
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(STR_BACKING_STORAGE_ATTR) {
+                    Some(Value::Str(text)) => Some(text.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn cpython_call_method_for_capi(
+    context: &mut ModuleCapiContext,
+    receiver: Value,
+    method: &str,
+    args: Vec<Value>,
+    api_name: &str,
+) -> Option<Value> {
+    let callable = match cpython_getattr_in_context(context, receiver, method) {
+        Ok(value) => value,
+        Err(err) => {
+            context.set_error(format!("{api_name} {err}"));
+            return None;
+        }
+    };
+    match cpython_call_internal_in_context(context, callable, args, HashMap::new()) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            context.set_error(format!("{api_name} {err}"));
+            None
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_FromString(value: *const c_char) -> *mut c_void {
     match unsafe { c_name_to_string(value) } {
@@ -7680,6 +7719,581 @@ pub unsafe extern "C" fn PyUnicode_InternFromString(value: *const c_char) -> *mu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_FromFormat(format: *const c_char) -> *mut c_void {
     unsafe { PyUnicode_FromString(format) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_FromObject(object: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if object.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        }
+        let Some(value) = context.cpython_value_from_ptr(object) else {
+            context.set_error("PyUnicode_FromObject received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        match value {
+            Value::Str(_) => context.alloc_cpython_ptr_for_value(value),
+            other => match cpython_unicode_text_from_value(&other) {
+                Some(text) => context.alloc_cpython_ptr_for_value(Value::Str(text)),
+                None => {
+                    let got = if context.vm.is_null() {
+                        "object".to_string()
+                    } else {
+                        // SAFETY: VM pointer is valid for active C-API context lifetime.
+                        unsafe { (&mut *context.vm).value_type_name_for_error(&other) }
+                    };
+                    context.set_error(format!("Can't convert '{got}' object to str implicitly"));
+                    std::ptr::null_mut()
+                }
+            },
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_FromOrdinal(ordinal: c_int) -> *mut c_void {
+    if !(0..=0x10FFFF).contains(&ordinal) {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "chr() arg not in range(0x110000)",
+        );
+        return std::ptr::null_mut();
+    }
+    let Some(ch) = char::from_u32(ordinal as u32) else {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "chr() arg not in range(0x110000)",
+        );
+        return std::ptr::null_mut();
+    };
+    cpython_new_ptr_for_value(Value::Str(ch.to_string()))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_GetDefaultEncoding() -> *const c_char {
+    static UTF8: &[u8] = b"utf-8\0";
+    UTF8.as_ptr().cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Equal(str1: *mut c_void, str2: *mut c_void) -> c_int {
+    with_active_cpython_context_mut(|context| {
+        let Some(value1) = context.cpython_value_from_ptr(str1) else {
+            context.set_error("PyUnicode_Equal received unknown first pointer");
+            return -1;
+        };
+        let Some(value2) = context.cpython_value_from_ptr(str2) else {
+            context.set_error("PyUnicode_Equal received unknown second pointer");
+            return -1;
+        };
+        let Some(text1) = cpython_unicode_text_from_value(&value1) else {
+            let got = if context.vm.is_null() {
+                "object".to_string()
+            } else {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                unsafe { (&mut *context.vm).value_type_name_for_error(&value1) }
+            };
+            context.set_error(format!("first argument must be str, not {got}"));
+            return -1;
+        };
+        let Some(text2) = cpython_unicode_text_from_value(&value2) else {
+            let got = if context.vm.is_null() {
+                "object".to_string()
+            } else {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                unsafe { (&mut *context.vm).value_type_name_for_error(&value2) }
+            };
+            context.set_error(format!("second argument must be str, not {got}"));
+            return -1;
+        };
+        if text1 == text2 { 1 } else { 0 }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_EqualToUTF8(unicode: *mut c_void, text: *const c_char) -> c_int {
+    if text.is_null() {
+        return 0;
+    }
+    let utf8 = match unsafe { CStr::from_ptr(text).to_str() } {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(unicode) else {
+            return 0;
+        };
+        let Some(unicode_text) = cpython_unicode_text_from_value(&value) else {
+            return 0;
+        };
+        if unicode_text == utf8 { 1 } else { 0 }
+    })
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_EqualToUTF8AndSize(
+    unicode: *mut c_void,
+    text: *const c_char,
+    size: isize,
+) -> c_int {
+    if text.is_null() || size < 0 {
+        return 0;
+    }
+    let bytes = if size == 0 {
+        &[][..]
+    } else {
+        // SAFETY: caller guarantees readable `size` bytes at `text`.
+        unsafe { std::slice::from_raw_parts(text.cast::<u8>(), size as usize) }
+    };
+    let utf8 = match std::str::from_utf8(bytes) {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(unicode) else {
+            return 0;
+        };
+        let Some(unicode_text) = cpython_unicode_text_from_value(&value) else {
+            return 0;
+        };
+        if unicode_text == utf8 { 1 } else { 0 }
+    })
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_ReadChar(unicode: *mut c_void, index: isize) -> u32 {
+    let text = match cpython_value_from_ptr(unicode) {
+        Ok(value) => match cpython_unicode_text_from_value(&value) {
+            Some(text) => text,
+            None => {
+                unsafe { PyErr_BadArgument() };
+                return u32::MAX;
+            }
+        },
+        Err(err) => {
+            cpython_set_error(err);
+            return u32::MAX;
+        }
+    };
+    if index < 0 || index >= text.chars().count() as isize {
+        cpython_set_typed_error(unsafe { PyExc_IndexError }, "string index out of range");
+        return u32::MAX;
+    }
+    text.chars()
+        .nth(index as usize)
+        .map(|ch| ch as u32)
+        .unwrap_or(u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Find(
+    str_obj: *mut c_void,
+    substr: *mut c_void,
+    start: isize,
+    end: isize,
+    direction: c_int,
+) -> isize {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(str_obj) else {
+            context.set_error("PyUnicode_Find received unknown string pointer");
+            return -2;
+        };
+        let Some(needle) = context.cpython_value_from_ptr(substr) else {
+            context.set_error("PyUnicode_Find received unknown substring pointer");
+            return -2;
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none()
+            || cpython_unicode_text_from_value(&needle).is_none()
+        {
+            context.set_error("PyUnicode_Find expects str arguments");
+            return -2;
+        }
+        let method = if direction >= 0 { "find" } else { "rfind" };
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            receiver,
+            method,
+            vec![needle, Value::Int(start as i64), Value::Int(end as i64)],
+            "PyUnicode_Find",
+        ) else {
+            return -2;
+        };
+        match value_to_int(result) {
+            Ok(index) => index as isize,
+            Err(_) => {
+                context.set_error("PyUnicode_Find expected integer return value");
+                -2
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -2
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_FindChar(
+    str_obj: *mut c_void,
+    ch: u32,
+    start: isize,
+    end: isize,
+    direction: c_int,
+) -> isize {
+    let Some(ch) = char::from_u32(ch) else {
+        return -1;
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(str_obj) else {
+            context.set_error("PyUnicode_FindChar received unknown string pointer");
+            return -1;
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none() {
+            context.set_error("PyUnicode_FindChar expects str object");
+            return -1;
+        }
+        let method = if direction >= 0 { "find" } else { "rfind" };
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            receiver,
+            method,
+            vec![
+                Value::Str(ch.to_string()),
+                Value::Int(start as i64),
+                Value::Int(end as i64),
+            ],
+            "PyUnicode_FindChar",
+        ) else {
+            return -1;
+        };
+        match value_to_int(result) {
+            Ok(index) => index as isize,
+            Err(_) => {
+                context.set_error("PyUnicode_FindChar expected integer return value");
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Count(
+    str_obj: *mut c_void,
+    substr: *mut c_void,
+    start: isize,
+    end: isize,
+) -> isize {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(str_obj) else {
+            context.set_error("PyUnicode_Count received unknown string pointer");
+            return -1;
+        };
+        let Some(needle) = context.cpython_value_from_ptr(substr) else {
+            context.set_error("PyUnicode_Count received unknown substring pointer");
+            return -1;
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none()
+            || cpython_unicode_text_from_value(&needle).is_none()
+        {
+            context.set_error("PyUnicode_Count expects str arguments");
+            return -1;
+        }
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            receiver,
+            "count",
+            vec![needle, Value::Int(start as i64), Value::Int(end as i64)],
+            "PyUnicode_Count",
+        ) else {
+            return -1;
+        };
+        match value_to_int(result) {
+            Ok(count) => count as isize,
+            Err(_) => {
+                context.set_error("PyUnicode_Count expected integer return value");
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Join(separator: *mut c_void, seq: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(separator_value) = context.cpython_value_from_ptr(separator) else {
+            context.set_error("PyUnicode_Join received unknown separator pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(seq_value) = context.cpython_value_from_ptr_or_proxy(seq) else {
+            context.set_error("PyUnicode_Join received unknown sequence pointer");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&separator_value).is_none() {
+            context.set_error("PyUnicode_Join expects str separator");
+            return std::ptr::null_mut();
+        }
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            separator_value,
+            "join",
+            vec![seq_value],
+            "PyUnicode_Join",
+        ) else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Split(
+    string: *mut c_void,
+    sep: *mut c_void,
+    maxsplit: isize,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(string) else {
+            context.set_error("PyUnicode_Split received unknown string pointer");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none() {
+            context.set_error("PyUnicode_Split expects str receiver");
+            return std::ptr::null_mut();
+        }
+        let args = if sep.is_null() {
+            if maxsplit < 0 {
+                Vec::new()
+            } else {
+                vec![Value::None, Value::Int(maxsplit as i64)]
+            }
+        } else {
+            let Some(sep_value) = context.cpython_value_from_ptr(sep) else {
+                context.set_error("PyUnicode_Split received unknown separator pointer");
+                return std::ptr::null_mut();
+            };
+            vec![sep_value, Value::Int(maxsplit as i64)]
+        };
+        let Some(result) =
+            cpython_call_method_for_capi(context, receiver, "split", args, "PyUnicode_Split")
+        else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_RSplit(
+    string: *mut c_void,
+    sep: *mut c_void,
+    maxsplit: isize,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(string) else {
+            context.set_error("PyUnicode_RSplit received unknown string pointer");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none() {
+            context.set_error("PyUnicode_RSplit expects str receiver");
+            return std::ptr::null_mut();
+        }
+        let args = if sep.is_null() {
+            if maxsplit < 0 {
+                Vec::new()
+            } else {
+                vec![Value::None, Value::Int(maxsplit as i64)]
+            }
+        } else {
+            let Some(sep_value) = context.cpython_value_from_ptr(sep) else {
+                context.set_error("PyUnicode_RSplit received unknown separator pointer");
+                return std::ptr::null_mut();
+            };
+            vec![sep_value, Value::Int(maxsplit as i64)]
+        };
+        let Some(result) =
+            cpython_call_method_for_capi(context, receiver, "rsplit", args, "PyUnicode_RSplit")
+        else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Splitlines(string: *mut c_void, keepends: c_int) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(string) else {
+            context.set_error("PyUnicode_Splitlines received unknown string pointer");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none() {
+            context.set_error("PyUnicode_Splitlines expects str receiver");
+            return std::ptr::null_mut();
+        }
+        let args = if keepends == 0 {
+            Vec::new()
+        } else {
+            vec![Value::Bool(true)]
+        };
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            receiver,
+            "splitlines",
+            args,
+            "PyUnicode_Splitlines",
+        ) else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_Partition(string: *mut c_void, sep: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(string) else {
+            context.set_error("PyUnicode_Partition received unknown string pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(sep_value) = context.cpython_value_from_ptr(sep) else {
+            context.set_error("PyUnicode_Partition received unknown separator pointer");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none()
+            || cpython_unicode_text_from_value(&sep_value).is_none()
+        {
+            context.set_error("PyUnicode_Partition expects str arguments");
+            return std::ptr::null_mut();
+        }
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            receiver,
+            "partition",
+            vec![sep_value],
+            "PyUnicode_Partition",
+        ) else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_RPartition(
+    string: *mut c_void,
+    sep: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(string) else {
+            context.set_error("PyUnicode_RPartition received unknown string pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(sep_value) = context.cpython_value_from_ptr(sep) else {
+            context.set_error("PyUnicode_RPartition received unknown separator pointer");
+            return std::ptr::null_mut();
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none()
+            || cpython_unicode_text_from_value(&sep_value).is_none()
+        {
+            context.set_error("PyUnicode_RPartition expects str arguments");
+            return std::ptr::null_mut();
+        }
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            receiver,
+            "rpartition",
+            vec![sep_value],
+            "PyUnicode_RPartition",
+        ) else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_IsIdentifier(object: *mut c_void) -> c_int {
+    with_active_cpython_context_mut(|context| {
+        let Some(receiver) = context.cpython_value_from_ptr(object) else {
+            context.set_error("PyUnicode_IsIdentifier received unknown string pointer");
+            return -1;
+        };
+        if cpython_unicode_text_from_value(&receiver).is_none() {
+            context.set_error("PyUnicode_IsIdentifier expects str object");
+            return -1;
+        }
+        let Some(result) = cpython_call_method_for_capi(
+            context,
+            receiver,
+            "isidentifier",
+            Vec::new(),
+            "PyUnicode_IsIdentifier",
+        ) else {
+            return -1;
+        };
+        match result {
+            Value::Bool(value) => i32::from(value),
+            other => {
+                let got = if context.vm.is_null() {
+                    "object".to_string()
+                } else {
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    unsafe { (&mut *context.vm).value_type_name_for_error(&other) }
+                };
+                context.set_error(format!(
+                    "PyUnicode_IsIdentifier expected bool return value, got {got}"
+                ));
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -27129,6 +27743,77 @@ static KEEP3_PYUNICODE_INTERNFROMSTRING: unsafe extern "C" fn(*const c_char) -> 
 #[used]
 static KEEP3_PYUNICODE_FROMFORMAT: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyUnicode_FromFormat;
+#[used]
+static KEEP3_PYUNICODE_FROMOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicode_FromObject;
+#[used]
+static KEEP3_PYUNICODE_FROMORDINAL: unsafe extern "C" fn(c_int) -> *mut c_void =
+    PyUnicode_FromOrdinal;
+#[used]
+static KEEP3_PYUNICODE_GETDEFAULTENCODING: unsafe extern "C" fn() -> *const c_char =
+    PyUnicode_GetDefaultEncoding;
+#[used]
+static KEEP3_PYUNICODE_EQUAL: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    PyUnicode_Equal;
+#[used]
+static KEEP3_PYUNICODE_EQUALTOUTF8: unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int =
+    PyUnicode_EqualToUTF8;
+#[used]
+static KEEP3_PYUNICODE_EQUALTOUTF8ANDSIZE: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    isize,
+) -> c_int = PyUnicode_EqualToUTF8AndSize;
+#[used]
+static KEEP3_PYUNICODE_READCHAR: unsafe extern "C" fn(*mut c_void, isize) -> u32 =
+    PyUnicode_ReadChar;
+#[used]
+static KEEP3_PYUNICODE_FIND: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    isize,
+    isize,
+    c_int,
+) -> isize = PyUnicode_Find;
+#[used]
+static KEEP3_PYUNICODE_FINDCHAR: unsafe extern "C" fn(
+    *mut c_void,
+    u32,
+    isize,
+    isize,
+    c_int,
+) -> isize = PyUnicode_FindChar;
+#[used]
+static KEEP3_PYUNICODE_COUNT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    isize,
+    isize,
+) -> isize = PyUnicode_Count;
+#[used]
+static KEEP3_PYUNICODE_JOIN: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyUnicode_Join;
+#[used]
+static KEEP3_PYUNICODE_SPLIT: unsafe extern "C" fn(*mut c_void, *mut c_void, isize) -> *mut c_void =
+    PyUnicode_Split;
+#[used]
+static KEEP3_PYUNICODE_RSPLIT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    isize,
+) -> *mut c_void = PyUnicode_RSplit;
+#[used]
+static KEEP3_PYUNICODE_SPLITLINES: unsafe extern "C" fn(*mut c_void, c_int) -> *mut c_void =
+    PyUnicode_Splitlines;
+#[used]
+static KEEP3_PYUNICODE_PARTITION: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyUnicode_Partition;
+#[used]
+static KEEP3_PYUNICODE_RPARTITION: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyUnicode_RPartition;
+#[used]
+static KEEP3_PYUNICODE_ISIDENTIFIER: unsafe extern "C" fn(*mut c_void) -> c_int =
+    PyUnicode_IsIdentifier;
 #[used]
 static KEEP3_PYUNICODE_REPLACE: unsafe extern "C" fn(
     *mut c_void,

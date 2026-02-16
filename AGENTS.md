@@ -194,8 +194,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/extension_smoke.rs::cpython_compat_type_abi_batch54_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_traceback_abi_batch55_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_unicode_error_abi_batch56_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_unicode_abi_batch57_apis_work`
   - latest abi3 batch56 closure landed for Unicode error helper APIs (`PyUnicodeDecodeError_Create`, `PyUnicode{Encode,Decode,Translate}Error_{GetObject,GetStart,SetStart,GetEnd,SetEnd,GetReason,SetReason}` and encoding/object getters where applicable), with smoke coverage for clipping/type-guard behavior.
-  - current abi3 manifest coverage: functions `641/782`, data `143/143` (`perf/abi3_manifest_latest.json`).
+  - latest abi3 batch57 closure landed for Unicode utility APIs (`PyUnicode_{FromObject,FromOrdinal,GetDefaultEncoding,Equal,EqualToUTF8,EqualToUTF8AndSize,ReadChar,Find,FindChar,Count,Join,Split,RSplit,Splitlines,Partition,RPartition,IsIdentifier}`), with smoke coverage for conversion/equality/read/find/count/split/join/partition semantics.
+  - current abi3 manifest coverage: functions `658/782`, data `143/143` (`perf/abi3_manifest_latest.json`).
   - probe script now supports optional scientific-stack cases (`--include-scientific-stack`) and module-aware local probe mode (`--probe-local-stack`), with direct-mode artifact updates in `perf/numpy_gate_direct_latest.json`.
   - NumPy probe now supports local-install detection mode (`--probe-local-numpy`, `--python-probe-bin`) to separate environment-missing (`NOT_FOUND`) from runtime ABI/substrate failures.
   - direct shared-object imports now fall back from `pyrs_extension_init_v1` to `PyInit_<module>` when CPython-style symbols are present.

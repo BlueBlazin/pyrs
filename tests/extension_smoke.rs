@@ -8234,6 +8234,197 @@ PyInit_cpython_api_batch56_probe(void) {
 }
 
 #[test]
+fn cpython_compat_unicode_abi_batch57_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch57 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch57 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch57");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch57_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static int
+utf8_equals(PyObject *value, const char *expected) {
+    const char *text = value ? PyUnicode_AsUTF8(value) : 0;
+    return (text && strcmp(text, expected) == 0) ? 1 : 0;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    int default_encoding_ok = 0;
+    const char *encoding = PyUnicode_GetDefaultEncoding();
+    if (encoding && strcmp(encoding, "utf-8") == 0) {
+        default_encoding_ok = 1;
+    }
+
+    PyObject *ordinal = PyUnicode_FromOrdinal(65);
+    int ordinal_ok = utf8_equals(ordinal, "A");
+    Py_XDECREF(ordinal);
+
+    PyObject *source = PyUnicode_FromString("hello");
+    PyObject *from_object = source ? PyUnicode_FromObject(source) : 0;
+    int from_object_ok = utf8_equals(from_object, "hello");
+    Py_XDECREF(from_object);
+    Py_XDECREF(source);
+
+    PyObject *bad = PyLong_FromLong(5);
+    PyObject *bad_convert = bad ? PyUnicode_FromObject(bad) : 0;
+    int from_object_error_ok = (bad_convert == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    Py_XDECREF(bad_convert);
+    PyErr_Clear();
+    Py_XDECREF(bad);
+
+    PyObject *eq_left = PyUnicode_FromString("same");
+    PyObject *eq_right = PyUnicode_FromString("same");
+    int equal_ok = (eq_left && eq_right && PyUnicode_Equal(eq_left, eq_right) == 1) ? 1 : 0;
+    int equal_utf8_ok = (eq_left &&
+                         PyUnicode_EqualToUTF8(eq_left, "same") == 1 &&
+                         PyUnicode_EqualToUTF8AndSize(eq_left, "same", 4) == 1 &&
+                         PyUnicode_EqualToUTF8(eq_left, "nope") == 0) ? 1 : 0;
+    Py_XDECREF(eq_right);
+    Py_XDECREF(eq_left);
+
+    PyObject *text = PyUnicode_FromString("alpha beta alpha\nline2");
+    PyObject *needle = PyUnicode_FromString("alpha");
+    long long find_forward = (text && needle) ? PyUnicode_Find(text, needle, 0, 100, 1) : -2;
+    long long find_reverse = (text && needle) ? PyUnicode_Find(text, needle, 0, 100, -1) : -2;
+    long long count = (text && needle) ? PyUnicode_Count(text, needle, 0, 100) : -1;
+    long long find_char = text ? PyUnicode_FindChar(text, 'b', 0, 100, 1) : -1;
+    uint32_t read_char = text ? PyUnicode_ReadChar(text, 6) : (uint32_t)-1;
+    int find_count_read_ok =
+        (find_forward == 0 &&
+         find_reverse == 11 &&
+         count == 2 &&
+         find_char == 6 &&
+         read_char == (uint32_t)'b') ? 1 : 0;
+
+    PyObject *space = PyUnicode_FromString(" ");
+    PyObject *split = (text && space) ? PyUnicode_Split(text, space, 1) : 0;
+    PyObject *rsplit = (text && space) ? PyUnicode_RSplit(text, space, 1) : 0;
+    PyObject *lines = text ? PyUnicode_Splitlines(text, 0) : 0;
+    int split_ok = (split && rsplit && lines &&
+                    PyList_Size(split) == 2 &&
+                    PyList_Size(rsplit) == 2 &&
+                    PyList_Size(lines) == 2) ? 1 : 0;
+    Py_XDECREF(lines);
+    Py_XDECREF(rsplit);
+    Py_XDECREF(split);
+    Py_XDECREF(space);
+    Py_XDECREF(needle);
+
+    PyObject *part_text = PyUnicode_FromString("alpha beta alpha");
+    PyObject *part_sep = PyUnicode_FromString(" beta ");
+    PyObject *part = (part_text && part_sep) ? PyUnicode_Partition(part_text, part_sep) : 0;
+    PyObject *rpart = (part_text && part_sep) ? PyUnicode_RPartition(part_text, part_sep) : 0;
+    int partition_ok = 0;
+    if (part && rpart && PyTuple_Size(part) == 3 && PyTuple_Size(rpart) == 3) {
+        PyObject *part_mid = PyTuple_GetItem(part, 1);
+        PyObject *rpart_mid = PyTuple_GetItem(rpart, 1);
+        partition_ok = utf8_equals(part_mid, " beta ") && utf8_equals(rpart_mid, " beta ") ? 1 : 0;
+    }
+    Py_XDECREF(rpart);
+    Py_XDECREF(part);
+    Py_XDECREF(part_sep);
+    Py_XDECREF(part_text);
+
+    PyObject *join_sep = PyUnicode_FromString("-");
+    PyObject *join_items = PyList_New(2);
+    if (join_items) {
+        PyList_SetItem(join_items, 0, PyUnicode_FromString("a"));
+        PyList_SetItem(join_items, 1, PyUnicode_FromString("b"));
+    }
+    PyObject *joined = (join_sep && join_items) ? PyUnicode_Join(join_sep, join_items) : 0;
+    int join_ok = utf8_equals(joined, "a-b");
+    Py_XDECREF(joined);
+    Py_XDECREF(join_items);
+    Py_XDECREF(join_sep);
+
+    PyObject *id_yes = PyUnicode_FromString("alpha_1");
+    PyObject *id_no = PyUnicode_FromString("1alpha");
+    int identifier_ok = (id_yes && id_no &&
+                         PyUnicode_IsIdentifier(id_yes) == 1 &&
+                         PyUnicode_IsIdentifier(id_no) == 0) ? 1 : 0;
+    Py_XDECREF(id_no);
+    Py_XDECREF(id_yes);
+    Py_XDECREF(text);
+
+    return Py_BuildValue(
+        "(iiiiiiiii)",
+        default_encoding_ok,
+        ordinal_ok,
+        from_object_ok,
+        from_object_error_ok,
+        equal_ok,
+        equal_utf8_ok,
+        find_count_read_ok,
+        split_ok && partition_ok && join_ok ? 1 : 0,
+        identifier_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe unicode ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch57_probe",
+    "cpython api batch57 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch57_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch57_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch57 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch57_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch57 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
