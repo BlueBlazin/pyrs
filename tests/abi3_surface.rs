@@ -287,6 +287,29 @@ fn exports_abi3_batch8_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch9_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyBuffer_IsContiguous",
+        "PyBuffer_GetPointer",
+        "PyBuffer_SizeFromFormat",
+        "PyBuffer_FromContiguous",
+        "PyBuffer_ToContiguous",
+        "PyBuffer_FillContiguousStrides",
+        "PyBuffer_FillInfo",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch9 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

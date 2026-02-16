@@ -12638,6 +12638,416 @@ pub unsafe extern "C" fn PyObject_GetBuffer(
     })
 }
 
+fn cpython_buffer_is_c_contiguous(view: &CpythonBuffer) -> bool {
+    if view.len == 0 {
+        return true;
+    }
+    if view.strides.is_null() {
+        return true;
+    }
+    if view.ndim <= 0 || view.shape.is_null() {
+        return false;
+    }
+    let mut stride = view.itemsize;
+    for dim in (0..(view.ndim as usize)).rev() {
+        // SAFETY: shape/strides are validated as non-null and indexed by ndim.
+        let size = unsafe { *view.shape.add(dim) };
+        // SAFETY: shape/strides are validated as non-null and indexed by ndim.
+        let actual = unsafe { *view.strides.add(dim) };
+        if size > 1 && actual != stride {
+            return false;
+        }
+        stride = stride.saturating_mul(size);
+    }
+    true
+}
+
+fn cpython_buffer_is_f_contiguous(view: &CpythonBuffer) -> bool {
+    if view.len == 0 {
+        return true;
+    }
+    if view.strides.is_null() {
+        if view.ndim <= 1 {
+            return true;
+        }
+        if view.shape.is_null() {
+            return false;
+        }
+        let mut gt_one = 0;
+        for dim in 0..(view.ndim as usize) {
+            // SAFETY: shape is validated as non-null and indexed by ndim.
+            if unsafe { *view.shape.add(dim) } > 1 {
+                gt_one += 1;
+            }
+        }
+        return gt_one <= 1;
+    }
+    if view.ndim <= 0 || view.shape.is_null() {
+        return false;
+    }
+    let mut stride = view.itemsize;
+    for dim in 0..(view.ndim as usize) {
+        // SAFETY: shape/strides are validated as non-null and indexed by ndim.
+        let size = unsafe { *view.shape.add(dim) };
+        // SAFETY: shape/strides are validated as non-null and indexed by ndim.
+        let actual = unsafe { *view.strides.add(dim) };
+        if size > 1 && actual != stride {
+            return false;
+        }
+        stride = stride.saturating_mul(size);
+    }
+    true
+}
+
+fn cpython_buffer_add_one_index_c(index: &mut [isize], shape: &[isize]) {
+    for pos in (0..index.len()).rev() {
+        if index[pos] < shape[pos].saturating_sub(1) {
+            index[pos] += 1;
+            break;
+        }
+        index[pos] = 0;
+    }
+}
+
+fn cpython_buffer_add_one_index_f(index: &mut [isize], shape: &[isize]) {
+    for pos in 0..index.len() {
+        if index[pos] < shape[pos].saturating_sub(1) {
+            index[pos] += 1;
+            break;
+        }
+        index[pos] = 0;
+    }
+}
+
+fn cpython_buffer_itemsize_from_format_char(ch: char) -> Option<isize> {
+    let size = match ch {
+        'x' | 'c' | 'b' | 'B' | '?' => 1,
+        'h' | 'H' | 'e' => 2,
+        'i' | 'I' | 'l' | 'L' | 'f' | 'n' | 'N' => 4,
+        'q' | 'Q' | 'd' | 'P' => 8,
+        _ => return None,
+    };
+    Some(size)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBuffer_IsContiguous(view: *const CpythonBuffer, order: c_char) -> i32 {
+    if view.is_null() {
+        return 0;
+    }
+    // SAFETY: caller provided a valid Py_buffer pointer.
+    let view = unsafe { &*view };
+    if !view.suboffsets.is_null() {
+        return 0;
+    }
+    let order = order as u8 as char;
+    let contiguous = match order {
+        'C' => cpython_buffer_is_c_contiguous(view),
+        'F' => cpython_buffer_is_f_contiguous(view),
+        'A' => cpython_buffer_is_c_contiguous(view) || cpython_buffer_is_f_contiguous(view),
+        _ => false,
+    };
+    if contiguous { 1 } else { 0 }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBuffer_GetPointer(
+    view: *const CpythonBuffer,
+    indices: *const isize,
+) -> *mut c_void {
+    if view.is_null() || indices.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller provided pointers are valid per C-API contract.
+    let view = unsafe { &*view };
+    let mut pointer = view.buf.cast::<u8>();
+    let ndim = view.ndim.max(0) as usize;
+    for dim in 0..ndim {
+        let stride = if view.strides.is_null() {
+            if view.shape.is_null() {
+                view.itemsize
+            } else {
+                let mut computed = view.itemsize;
+                for next in ((dim + 1)..ndim).rev() {
+                    // SAFETY: shape is valid for ndim entries.
+                    computed = computed.saturating_mul(unsafe { *view.shape.add(next) });
+                }
+                computed
+            }
+        } else {
+            // SAFETY: strides is valid for ndim entries.
+            unsafe { *view.strides.add(dim) }
+        };
+        // SAFETY: pointers are valid for ndim entries.
+        let index = unsafe { *indices.add(dim) };
+        // SAFETY: pointer arithmetic follows caller-provided buffer bounds contract.
+        pointer = unsafe { pointer.offset(stride.saturating_mul(index)) };
+        if !view.suboffsets.is_null() {
+            // SAFETY: suboffsets is valid for ndim entries.
+            let suboffset = unsafe { *view.suboffsets.add(dim) };
+            if suboffset >= 0 {
+                // SAFETY: pointer currently addresses a valid pointer-sized slot.
+                let indirect = unsafe { *(pointer.cast::<*mut u8>()) };
+                // SAFETY: pointer arithmetic follows caller-provided buffer bounds contract.
+                pointer = unsafe { indirect.offset(suboffset) };
+            }
+        }
+    }
+    pointer.cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBuffer_SizeFromFormat(format: *const c_char) -> isize {
+    if format.is_null() {
+        return 1;
+    }
+    let text = match unsafe { c_name_to_string(format) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let mut chars = text.chars();
+    let mut first = chars.next().unwrap_or('B');
+    if matches!(first, '@' | '=' | '<' | '>' | '!') {
+        first = chars.next().unwrap_or('B');
+    }
+    match cpython_buffer_itemsize_from_format_char(first) {
+        Some(size) => size,
+        None => {
+            cpython_set_error("PyBuffer_SizeFromFormat unsupported format");
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBuffer_FillContiguousStrides(
+    ndim: i32,
+    shape: *const isize,
+    strides: *mut isize,
+    itemsize: i32,
+    fort: c_char,
+) {
+    if ndim <= 0 || shape.is_null() || strides.is_null() {
+        return;
+    }
+    let mut stride = itemsize as isize;
+    let fort = fort as u8 as char;
+    if fort == 'F' {
+        for dim in 0..(ndim as usize) {
+            // SAFETY: caller provided valid shape/strides arrays.
+            unsafe { *strides.add(dim) = stride };
+            // SAFETY: caller provided valid shape array.
+            stride = stride.saturating_mul(unsafe { *shape.add(dim) });
+        }
+    } else {
+        for dim in (0..(ndim as usize)).rev() {
+            // SAFETY: caller provided valid shape/strides arrays.
+            unsafe { *strides.add(dim) = stride };
+            // SAFETY: caller provided valid shape array.
+            stride = stride.saturating_mul(unsafe { *shape.add(dim) });
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBuffer_FillInfo(
+    view: *mut CpythonBuffer,
+    object: *mut c_void,
+    buf: *mut c_void,
+    len: isize,
+    readonly: i32,
+    flags: i32,
+) -> i32 {
+    const PYBUF_SIMPLE: i32 = 0;
+    const PYBUF_WRITABLE: i32 = 0x0001;
+    const PYBUF_FORMAT: i32 = 0x0004;
+    const PYBUF_ND: i32 = 0x0008;
+    const PYBUF_STRIDES: i32 = 0x0010 | PYBUF_ND;
+    const PYBUF_READ: i32 = 0x0100;
+    const PYBUF_WRITE: i32 = 0x0200;
+
+    if view.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_BufferError },
+            "PyBuffer_FillInfo: view==NULL argument is obsolete",
+        );
+        return -1;
+    }
+    if flags != PYBUF_SIMPLE {
+        if flags == PYBUF_READ || flags == PYBUF_WRITE {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        }
+        if (flags & PYBUF_WRITABLE) == PYBUF_WRITABLE && readonly == 1 {
+            cpython_set_typed_error(unsafe { PyExc_BufferError }, "Object is not writable.");
+            return -1;
+        }
+    }
+    // SAFETY: caller passed a valid writable Py_buffer pointer.
+    unsafe {
+        (*view).obj = object;
+        Py_XIncRef(object);
+        (*view).buf = buf;
+        (*view).len = len;
+        (*view).readonly = readonly;
+        (*view).itemsize = 1;
+        (*view).format = std::ptr::null_mut();
+        if (flags & PYBUF_FORMAT) == PYBUF_FORMAT {
+            (*view).format = c"B".as_ptr().cast_mut();
+        }
+        (*view).ndim = 1;
+        (*view).shape = std::ptr::null_mut();
+        if (flags & PYBUF_ND) == PYBUF_ND {
+            (*view).shape = std::ptr::addr_of_mut!((*view).len);
+        }
+        (*view).strides = std::ptr::null_mut();
+        if (flags & PYBUF_STRIDES) == PYBUF_STRIDES {
+            (*view).strides = std::ptr::addr_of_mut!((*view).itemsize);
+        }
+        (*view).suboffsets = std::ptr::null_mut();
+        (*view).internal = std::ptr::null_mut();
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBuffer_FromContiguous(
+    view: *const CpythonBuffer,
+    buf: *const c_void,
+    mut len: isize,
+    fort: c_char,
+) -> i32 {
+    if view.is_null() || buf.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    // SAFETY: caller provided valid pointers.
+    let view = unsafe { &*view };
+    if len > view.len {
+        len = view.len;
+    }
+    if len <= 0 {
+        return 0;
+    }
+    let itemsize = view.itemsize.max(1);
+    if unsafe { PyBuffer_IsContiguous(view, fort) } != 0 {
+        // SAFETY: caller-provided source/destination are valid for `len` bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(buf.cast::<u8>(), view.buf.cast::<u8>(), len as usize)
+        };
+        return 0;
+    }
+    if view.ndim <= 0 || view.shape.is_null() || view.strides.is_null() {
+        cpython_set_error("PyBuffer_FromContiguous requires shape/strides for non-contiguous view");
+        return -1;
+    }
+    let ndim = view.ndim as usize;
+    let mut indices = vec![0isize; ndim];
+    let shape: Vec<isize> = (0..ndim)
+        .map(|idx| {
+            // SAFETY: shape pointer is valid for `ndim` entries.
+            unsafe { *view.shape.add(idx) }
+        })
+        .collect();
+    let mut src_offset = 0usize;
+    let elements = (len / itemsize).max(0) as usize;
+    let src = buf.cast::<u8>();
+    let use_fortran = (fort as u8 as char) == 'F';
+    for _ in 0..elements {
+        let dst = unsafe { PyBuffer_GetPointer(view, indices.as_ptr()) };
+        if dst.is_null() {
+            return -1;
+        }
+        // SAFETY: source and destination each have `itemsize` bytes for this element.
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.add(src_offset), dst.cast::<u8>(), itemsize as usize)
+        };
+        src_offset += itemsize as usize;
+        if use_fortran {
+            cpython_buffer_add_one_index_f(&mut indices, &shape);
+        } else {
+            cpython_buffer_add_one_index_c(&mut indices, &shape);
+        }
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBuffer_ToContiguous(
+    buf: *mut c_void,
+    src: *const CpythonBuffer,
+    len: isize,
+    order: c_char,
+) -> i32 {
+    if buf.is_null() || src.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    // SAFETY: caller provided valid pointers.
+    let src = unsafe { &*src };
+    if len != src.len {
+        cpython_set_typed_error(unsafe { PyExc_ValueError }, "PyBuffer_ToContiguous: len != view->len");
+        return -1;
+    }
+    if len <= 0 {
+        return 0;
+    }
+    let requested_order = order as u8 as char;
+    if unsafe { PyBuffer_IsContiguous(src, order) } != 0 {
+        // SAFETY: destination and source are valid for `len` bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.buf.cast::<u8>(), buf.cast::<u8>(), len as usize);
+        }
+        return 0;
+    }
+    if src.ndim <= 0 || src.shape.is_null() || src.strides.is_null() {
+        cpython_set_error("PyBuffer_ToContiguous requires shape/strides for non-contiguous source");
+        return -1;
+    }
+    let use_fortran = if requested_order == 'F' {
+        true
+    } else if requested_order == 'A' {
+        cpython_buffer_is_f_contiguous(src) && !cpython_buffer_is_c_contiguous(src)
+    } else {
+        false
+    };
+    let ndim = src.ndim as usize;
+    let shape: Vec<isize> = (0..ndim)
+        .map(|idx| {
+            // SAFETY: shape pointer is valid for `ndim` entries.
+            unsafe { *src.shape.add(idx) }
+        })
+        .collect();
+    let mut indices = vec![0isize; ndim];
+    let itemsize = src.itemsize.max(1);
+    let elements = (len / itemsize).max(0) as usize;
+    let mut dst_offset = 0usize;
+    for _ in 0..elements {
+        let source_ptr = unsafe { PyBuffer_GetPointer(src, indices.as_ptr()) };
+        if source_ptr.is_null() {
+            return -1;
+        }
+        // SAFETY: source and destination each have `itemsize` bytes for this element.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                source_ptr.cast::<u8>(),
+                buf.cast::<u8>().add(dst_offset),
+                itemsize as usize,
+            )
+        };
+        dst_offset += itemsize as usize;
+        if use_fortran {
+            cpython_buffer_add_one_index_f(&mut indices, &shape);
+        } else {
+            cpython_buffer_add_one_index_c(&mut indices, &shape);
+        }
+    }
+    0
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Print(
     object: *mut c_void,
@@ -16022,6 +16432,46 @@ static KEEP2_PYMEMORYVIEW_FROMOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut 
 #[used]
 static KEEP2_PYOBJECT_GETBUFFER: unsafe extern "C" fn(*mut c_void, *mut CpythonBuffer, i32) -> i32 =
     PyObject_GetBuffer;
+#[used]
+static KEEP2_PYBUFFER_ISCONTIGUOUS: unsafe extern "C" fn(*const CpythonBuffer, c_char) -> i32 =
+    PyBuffer_IsContiguous;
+#[used]
+static KEEP2_PYBUFFER_GETPOINTER: unsafe extern "C" fn(*const CpythonBuffer, *const isize) -> *mut c_void =
+    PyBuffer_GetPointer;
+#[used]
+static KEEP2_PYBUFFER_SIZEFROMFORMAT: unsafe extern "C" fn(*const c_char) -> isize =
+    PyBuffer_SizeFromFormat;
+#[used]
+static KEEP2_PYBUFFER_FROMCONTIGUOUS: unsafe extern "C" fn(
+    *const CpythonBuffer,
+    *const c_void,
+    isize,
+    c_char,
+) -> i32 = PyBuffer_FromContiguous;
+#[used]
+static KEEP2_PYBUFFER_TOCONTIGUOUS: unsafe extern "C" fn(
+    *mut c_void,
+    *const CpythonBuffer,
+    isize,
+    c_char,
+) -> i32 = PyBuffer_ToContiguous;
+#[used]
+static KEEP2_PYBUFFER_FILLCONTIGUOUSSTRIDES: unsafe extern "C" fn(
+    i32,
+    *const isize,
+    *mut isize,
+    i32,
+    c_char,
+) = PyBuffer_FillContiguousStrides;
+#[used]
+static KEEP2_PYBUFFER_FILLINFO: unsafe extern "C" fn(
+    *mut CpythonBuffer,
+    *mut c_void,
+    *mut c_void,
+    isize,
+    i32,
+    i32,
+) -> i32 = PyBuffer_FillInfo;
 #[used]
 static KEEP2_PYOBJECT_PRINT: unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> i32 =
     PyObject_Print;

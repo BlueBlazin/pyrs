@@ -2002,6 +2002,143 @@ PyInit_cpython_api_batch8_probe(void) {
 }
 
 #[test]
+fn cpython_compat_buffer_abi_batch9_helpers_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch9 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch9 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch9");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch9_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch9_probe",
+    "cpython api batch9 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch9_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    long long shape[2] = {2, 3};
+    long long c_strides[2] = {0, 0};
+    long long f_strides[2] = {0, 0};
+    PyBuffer_FillContiguousStrides(2, shape, c_strides, 1, 'C');
+    PyBuffer_FillContiguousStrides(2, shape, f_strides, 1, 'F');
+    int fill_strides_ok = (c_strides[0] == 3 && c_strides[1] == 1 &&
+                           f_strides[0] == 1 && f_strides[1] == 2) ? 1 : 0;
+
+    unsigned char storage[6] = {0, 0, 0, 0, 0, 0};
+    Py_buffer info_view;
+    int fill_info_status = PyBuffer_FillInfo(
+        &info_view, 0, storage, 6, 0, PyBUF_FORMAT | PyBUF_ND | PyBUF_STRIDES
+    );
+    int fill_info_ok = (fill_info_status == 0 &&
+                        info_view.ndim == 1 &&
+                        info_view.shape && *(info_view.shape) == 6 &&
+                        info_view.strides && *(info_view.strides) == 1 &&
+                        info_view.format && info_view.format[0] == 'B') ? 1 : 0;
+    PyBuffer_Release(&info_view);
+
+    unsigned char contiguous_storage[6] = {0, 1, 2, 3, 4, 5};
+    Py_buffer view_c = {0};
+    view_c.buf = contiguous_storage;
+    view_c.len = 6;
+    view_c.itemsize = 1;
+    view_c.ndim = 2;
+    view_c.shape = shape;
+    view_c.strides = c_strides;
+    int is_c_ok = PyBuffer_IsContiguous(&view_c, 'C') == 1 ? 1 : 0;
+    int is_f_ok = PyBuffer_IsContiguous(&view_c, 'F') == 0 ? 1 : 0;
+    int is_a_ok = PyBuffer_IsContiguous(&view_c, 'A') == 1 ? 1 : 0;
+
+    long long idx[2] = {1, 2};
+    unsigned char *ptr = (unsigned char *)PyBuffer_GetPointer(&view_c, idx);
+    int get_pointer_ok = (ptr == contiguous_storage + 5) ? 1 : 0;
+
+    unsigned char noncontig_storage[6] = {0, 0, 0, 0, 0, 0};
+    Py_buffer noncontig = {0};
+    noncontig.buf = noncontig_storage;
+    noncontig.len = 6;
+    noncontig.itemsize = 1;
+    noncontig.ndim = 2;
+    noncontig.shape = shape;
+    noncontig.strides = f_strides; /* force non-C layout */
+
+    const unsigned char src[6] = {'A', 'B', 'C', 'D', 'E', 'F'};
+    int from_contiguous_ok = PyBuffer_FromContiguous(&noncontig, src, 6, 'C') == 0 ? 1 : 0;
+    int storage_layout_ok = (noncontig_storage[0] == 'A' &&
+                             noncontig_storage[1] == 'D' &&
+                             noncontig_storage[2] == 'B' &&
+                             noncontig_storage[3] == 'E' &&
+                             noncontig_storage[4] == 'C' &&
+                             noncontig_storage[5] == 'F') ? 1 : 0;
+
+    unsigned char roundtrip[6] = {0, 0, 0, 0, 0, 0};
+    int to_contiguous_ok = PyBuffer_ToContiguous(roundtrip, &noncontig, 6, 'C') == 0 ? 1 : 0;
+    int roundtrip_ok = (memcmp(roundtrip, src, 6) == 0) ? 1 : 0;
+
+    int size_from_format_ok = (PyBuffer_SizeFromFormat("B") == 1 &&
+                               PyBuffer_SizeFromFormat("I") == 4) ? 1 : 0;
+
+    if (PyModule_AddIntConstant(module, "FILL_STRIDES_OK", fill_strides_ok) != 0 ||
+        PyModule_AddIntConstant(module, "FILL_INFO_OK", fill_info_ok) != 0 ||
+        PyModule_AddIntConstant(module, "IS_C_OK", is_c_ok) != 0 ||
+        PyModule_AddIntConstant(module, "IS_F_OK", is_f_ok) != 0 ||
+        PyModule_AddIntConstant(module, "IS_A_OK", is_a_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GET_POINTER_OK", get_pointer_ok) != 0 ||
+        PyModule_AddIntConstant(module, "FROM_CONTIGUOUS_OK", from_contiguous_ok) != 0 ||
+        PyModule_AddIntConstant(module, "STORAGE_LAYOUT_OK", storage_layout_ok) != 0 ||
+        PyModule_AddIntConstant(module, "TO_CONTIGUOUS_OK", to_contiguous_ok) != 0 ||
+        PyModule_AddIntConstant(module, "ROUNDTRIP_OK", roundtrip_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SIZE_FROM_FORMAT_OK", size_from_format_ok) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch9_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch9 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch9_probe as m\nassert m.FILL_STRIDES_OK == 1\nassert m.FILL_INFO_OK == 1\nassert m.IS_C_OK == 1\nassert m.IS_F_OK == 1\nassert m.IS_A_OK == 1\nassert m.GET_POINTER_OK == 1\nassert m.FROM_CONTIGUOUS_OK == 1\nassert m.STORAGE_LAYOUT_OK == 1\nassert m.TO_CONTIGUOUS_OK == 1\nassert m.ROUNDTRIP_OK == 1\nassert m.SIZE_FROM_FORMAT_OK == 1",
+    )
+    .expect("cpython api batch9 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

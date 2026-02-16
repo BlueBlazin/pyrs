@@ -47,6 +47,28 @@ typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 #define Py_ASNATIVEBYTES_ALLOW_INDEX 16
 #endif
 
+#ifndef PyBUF_SIMPLE
+#define PyBUF_SIMPLE 0
+#define PyBUF_WRITABLE 0x0001
+#define PyBUF_FORMAT 0x0004
+#define PyBUF_ND 0x0008
+#define PyBUF_STRIDES (0x0010 | PyBUF_ND)
+#define PyBUF_C_CONTIGUOUS (0x0020 | PyBUF_STRIDES)
+#define PyBUF_F_CONTIGUOUS (0x0040 | PyBUF_STRIDES)
+#define PyBUF_ANY_CONTIGUOUS (0x0080 | PyBUF_STRIDES)
+#define PyBUF_INDIRECT (0x0100 | PyBUF_STRIDES)
+#define PyBUF_CONTIG (PyBUF_ND | PyBUF_WRITABLE)
+#define PyBUF_CONTIG_RO (PyBUF_ND)
+#define PyBUF_STRIDED (PyBUF_STRIDES | PyBUF_WRITABLE)
+#define PyBUF_STRIDED_RO (PyBUF_STRIDES)
+#define PyBUF_RECORDS (PyBUF_STRIDES | PyBUF_WRITABLE | PyBUF_FORMAT)
+#define PyBUF_RECORDS_RO (PyBUF_STRIDES | PyBUF_FORMAT)
+#define PyBUF_FULL (PyBUF_INDIRECT | PyBUF_WRITABLE | PyBUF_FORMAT)
+#define PyBUF_FULL_RO (PyBUF_INDIRECT | PyBUF_FORMAT)
+#define PyBUF_READ 0x0100
+#define PyBUF_WRITE 0x0200
+#endif
+
 typedef struct PyModuleDef_Base {
     unsigned long _ob_refcnt;
     void *_ob_type;
@@ -204,6 +226,26 @@ PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 int PyObject_IsTrue(PyObject *object);
 int PyObject_IsInstance(PyObject *object, PyObject *class_obj);
 int PyObject_GetBuffer(PyObject *object, Py_buffer *view, int flags);
+int PyBuffer_IsContiguous(const Py_buffer *view, char order);
+void *PyBuffer_GetPointer(const Py_buffer *view, const long long *indices);
+long long PyBuffer_SizeFromFormat(const char *format);
+int PyBuffer_FromContiguous(const Py_buffer *view, const void *buf, long long len, char order);
+int PyBuffer_ToContiguous(void *buf, const Py_buffer *src, long long len, char order);
+void PyBuffer_FillContiguousStrides(
+    int ndim,
+    const long long *shape,
+    long long *strides,
+    int itemsize,
+    char fort
+);
+int PyBuffer_FillInfo(
+    Py_buffer *view,
+    PyObject *object,
+    void *buf,
+    long long len,
+    int readonly,
+    int flags
+);
 void PyBuffer_Release(Py_buffer *view);
 
 PyObject *PyDict_Keys(PyObject *dict);
