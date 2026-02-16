@@ -412,6 +412,7 @@ double PyFloat_GetMin(void);
 PyObject *PyFloat_GetInfo(void);
 PyObject *PyUnicode_FromString(const char *value);
 PyObject *PyUnicode_FromStringAndSize(const char *value, long long len);
+PyObject *PyUnicode_FromWideChar(const wchar_t *value, long long len);
 PyObject *PyUnicode_FromEncodedObject(PyObject *object, const char *encoding, const char *errors);
 PyObject *PyUnicode_FromKindAndData(int kind, const void *buffer, long long size);
 PyObject *PyUnicode_FromObject(PyObject *object);
@@ -422,6 +423,8 @@ const char *PyUnicode_AsUTF8AndSize(PyObject *object, long long *size);
 PyObject *PyUnicode_AsUTF8String(PyObject *object);
 PyObject *PyUnicode_AsASCIIString(PyObject *object);
 PyObject *PyUnicode_AsLatin1String(PyObject *object);
+long long PyUnicode_AsWideChar(PyObject *unicode, wchar_t *value, long long size);
+wchar_t *PyUnicode_AsWideCharString(PyObject *unicode, long long *size);
 PyObject *PyUnicode_AsEncodedString(
     PyObject *object,
     const char *encoding,
@@ -472,6 +475,7 @@ void PyUnicode_InternImmortal(PyObject **unicode);
 void PyUnicode_Append(PyObject **left, PyObject *right);
 void PyUnicode_AppendAndDel(PyObject **left, PyObject *right);
 PyObject *PyUnicode_RichCompare(PyObject *left, PyObject *right, int op);
+int PyUnicode_WriteChar(PyObject *unicode, long long index, uint32_t character);
 PyObject *PyUnicode_Replace(
     PyObject *str,
     PyObject *substr,
@@ -807,6 +811,14 @@ void *PyObject_Malloc(size_t size);
 void *PyObject_Calloc(size_t nelem, size_t elsize);
 void *PyObject_Realloc(void *ptr, size_t new_size);
 void PyObject_Free(void *ptr);
+void *PyMem_RawMalloc(size_t size);
+void *PyMem_RawCalloc(size_t nelem, size_t elsize);
+void *PyMem_RawRealloc(void *ptr, size_t new_size);
+void PyMem_RawFree(void *ptr);
+void *PyMem_Malloc(size_t size);
+void *PyMem_Calloc(size_t nelem, size_t elsize);
+void *PyMem_Realloc(void *ptr, size_t new_size);
+void PyMem_Free(void *ptr);
 int PyIter_Check(PyObject *object);
 PyObject *PyIter_Next(PyObject *iter);
 int PyIter_NextItem(PyObject *iter, PyObject **item);

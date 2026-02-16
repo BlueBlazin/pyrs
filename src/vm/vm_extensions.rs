@@ -7562,6 +7562,124 @@ pub unsafe extern "C" fn PyUnicode_FromStringAndSize(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_FromWideChar(value: *const Cwchar, len: isize) -> *mut c_void {
+    let text = match unsafe { cpython_wide_ptr_to_string(value, len, "PyUnicode_FromWideChar") } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    cpython_new_ptr_for_value(Value::Str(text))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsWideCharString(
+    unicode: *mut c_void,
+    size: *mut isize,
+) -> *mut Cwchar {
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(unicode) else {
+            context.set_error("PyUnicode_AsWideCharString received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(text) = cpython_unicode_text_from_value(&value) else {
+            context.set_error("PyUnicode_AsWideCharString expected str object");
+            return std::ptr::null_mut();
+        };
+        if size.is_null() && text.chars().any(|ch| ch == '\0') {
+            cpython_set_typed_error(unsafe { PyExc_ValueError }, "embedded null character");
+            return std::ptr::null_mut();
+        }
+        let units = cpython_string_to_wide_units(&text);
+        if !size.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe {
+                *size = units.len() as isize;
+            }
+        }
+        let Some(byte_len) = units
+            .len()
+            .checked_add(1)
+            .and_then(|count| count.checked_mul(std::mem::size_of::<Cwchar>()))
+        else {
+            context.set_error("PyUnicode_AsWideCharString size overflow");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: allocated by CPython-compatible allocator and owned by caller.
+        let raw = unsafe { PyMem_Malloc(byte_len) }.cast::<Cwchar>();
+        if raw.is_null() {
+            unsafe { PyErr_NoMemory() };
+            return std::ptr::null_mut();
+        }
+        if !units.is_empty() {
+            // SAFETY: destination has capacity for `units.len()` elements.
+            unsafe {
+                std::ptr::copy_nonoverlapping(units.as_ptr(), raw, units.len());
+            }
+        }
+        // SAFETY: destination has at least one trailing slot for NUL terminator.
+        unsafe {
+            *raw.add(units.len()) = 0;
+        }
+        raw
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsWideChar(
+    unicode: *mut c_void,
+    value: *mut Cwchar,
+    size: isize,
+) -> isize {
+    if size < 0 {
+        cpython_set_error("PyUnicode_AsWideChar received negative size");
+        return -1;
+    }
+    with_active_cpython_context_mut(|context| {
+        let Some(unicode_value) = context.cpython_value_from_ptr(unicode) else {
+            context.set_error("PyUnicode_AsWideChar received unknown object pointer");
+            return -1;
+        };
+        let Some(text) = cpython_unicode_text_from_value(&unicode_value) else {
+            context.set_error("PyUnicode_AsWideChar expected str object");
+            return -1;
+        };
+        let units = cpython_string_to_wide_units(&text);
+        if value.is_null() {
+            if size == 0 {
+                return units.len() as isize;
+            }
+            context.set_error("PyUnicode_AsWideChar requires non-null output buffer");
+            return -1;
+        }
+        let write_cap = size as usize;
+        let write_len = write_cap.min(units.len());
+        if write_len > 0 {
+            // SAFETY: caller-provided output buffer has `write_cap` writable elements.
+            unsafe {
+                std::ptr::copy_nonoverlapping(units.as_ptr(), value, write_len);
+            }
+        }
+        if write_len < write_cap {
+            // SAFETY: `write_len < write_cap` guarantees valid trailing slot.
+            unsafe {
+                *value.add(write_len) = 0;
+            }
+        }
+        write_len as isize
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_FromEncodedObject(
     object: *mut c_void,
     _encoding: *const c_char,
@@ -8617,6 +8735,50 @@ pub unsafe extern "C" fn PyUnicode_RichCompare(
     .unwrap_or_else(|err| {
         cpython_set_error(err);
         std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_WriteChar(
+    unicode: *mut c_void,
+    index: isize,
+    character: c_uint,
+) -> c_int {
+    if index < 0 {
+        cpython_set_typed_error(unsafe { PyExc_IndexError }, "string index out of range");
+        return -1;
+    }
+    let Some(ch) = char::from_u32(character) else {
+        cpython_set_typed_error(unsafe { PyExc_ValueError }, "character out of range");
+        return -1;
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(handle) = context.cpython_handle_from_ptr(unicode) else {
+            context.set_error("PyUnicode_WriteChar received unknown object pointer");
+            return -1;
+        };
+        let Some(slot) = context.objects.get_mut(&handle) else {
+            context.set_error("PyUnicode_WriteChar received unknown object handle");
+            return -1;
+        };
+        let Value::Str(text) = &slot.value else {
+            context.set_error("PyUnicode_WriteChar expected str object");
+            return -1;
+        };
+        let mut chars: Vec<char> = text.chars().collect();
+        let idx = index as usize;
+        if idx >= chars.len() {
+            cpython_set_typed_error(unsafe { PyExc_IndexError }, "string index out of range");
+            return -1;
+        }
+        chars[idx] = ch;
+        slot.value = Value::Str(chars.into_iter().collect());
+        context.sync_cpython_storage_from_value(handle);
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
     })
 }
 
@@ -28516,6 +28678,9 @@ static KEEP3_PYUNICODE_FROMSTRINGANDSIZE: unsafe extern "C" fn(
     isize,
 ) -> *mut c_void = PyUnicode_FromStringAndSize;
 #[used]
+static KEEP3_PYUNICODE_FROMWIDECHAR: unsafe extern "C" fn(*const Cwchar, isize) -> *mut c_void =
+    PyUnicode_FromWideChar;
+#[used]
 static KEEP3_PYUNICODE_FROMENCODEDOBJECT: unsafe extern "C" fn(
     *mut c_void,
     *const c_char,
@@ -28550,6 +28715,14 @@ static KEEP3_PYUNICODE_ASENCODEDSTRING: unsafe extern "C" fn(
     *const c_char,
     *const c_char,
 ) -> *mut c_void = PyUnicode_AsEncodedString;
+#[used]
+static KEEP3_PYUNICODE_ASWIDECHARSTRING: unsafe extern "C" fn(
+    *mut c_void,
+    *mut isize,
+) -> *mut Cwchar = PyUnicode_AsWideCharString;
+#[used]
+static KEEP3_PYUNICODE_ASWIDECHAR: unsafe extern "C" fn(*mut c_void, *mut Cwchar, isize) -> isize =
+    PyUnicode_AsWideChar;
 #[used]
 static KEEP3_PYUNICODE_COMPARE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyUnicode_Compare;
@@ -28666,6 +28839,9 @@ static KEEP3_PYUNICODE_RICHCOMPARE: unsafe extern "C" fn(
     *mut c_void,
     c_int,
 ) -> *mut c_void = PyUnicode_RichCompare;
+#[used]
+static KEEP3_PYUNICODE_WRITECHAR: unsafe extern "C" fn(*mut c_void, isize, c_uint) -> c_int =
+    PyUnicode_WriteChar;
 #[used]
 static KEEP3_PYUNICODE_REPLACE: unsafe extern "C" fn(
     *mut c_void,
@@ -29931,33 +30107,77 @@ unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
         .map_err(|_| "received non-utf8 C string".to_string())
 }
 
-unsafe fn c_wide_name_to_string(name: *const Cwchar) -> Result<String, String> {
-    if name.is_null() {
-        return Err("received null wide string pointer".to_string());
-    }
-    let mut code_units: Vec<u32> = Vec::new();
-    let mut cursor = name;
-    loop {
-        // SAFETY: caller guarantees a valid NUL-terminated wide string.
-        let unit = unsafe { *cursor };
-        if unit == 0 {
-            break;
-        }
-        if unit < 0 {
-            return Err("received invalid negative wide char value".to_string());
-        }
-        code_units.push(unit as u32);
-        // SAFETY: advancing over a valid NUL-terminated wide string.
-        cursor = unsafe { cursor.add(1) };
-    }
+#[cfg(windows)]
+fn cpython_wide_units_to_string(code_units: &[Cwchar]) -> Result<String, String> {
+    String::from_utf16(code_units).map_err(|_| "received invalid UTF-16 wide string".to_string())
+}
+
+#[cfg(not(windows))]
+fn cpython_wide_units_to_string(code_units: &[Cwchar]) -> Result<String, String> {
     let mut text = String::new();
     for unit in code_units {
-        let Some(ch) = char::from_u32(unit) else {
+        if *unit < 0 {
+            return Err("received invalid negative wide char value".to_string());
+        }
+        let Some(ch) = char::from_u32(*unit as u32) else {
             return Err("received invalid unicode scalar in wide string".to_string());
         };
         text.push(ch);
     }
     Ok(text)
+}
+
+#[cfg(windows)]
+fn cpython_string_to_wide_units(text: &str) -> Vec<Cwchar> {
+    text.encode_utf16().collect()
+}
+
+#[cfg(not(windows))]
+fn cpython_string_to_wide_units(text: &str) -> Vec<Cwchar> {
+    text.chars().map(|ch| ch as u32 as Cwchar).collect()
+}
+
+unsafe fn cpython_wide_ptr_to_string(
+    value: *const Cwchar,
+    len: isize,
+    api_name: &str,
+) -> Result<String, String> {
+    if len < -1 {
+        return Err(format!("{api_name} received negative length"));
+    }
+    if value.is_null() {
+        if len == 0 {
+            return Ok(String::new());
+        }
+        return Err(format!(
+            "{api_name} received null wide string pointer with non-zero length"
+        ));
+    }
+    let units: Vec<Cwchar> = if len < 0 {
+        let mut collected = Vec::new();
+        let mut cursor = value;
+        loop {
+            // SAFETY: caller guarantees NUL-terminated wide string for `len == -1`.
+            let unit = unsafe { *cursor };
+            if unit == 0 {
+                break;
+            }
+            collected.push(unit);
+            // SAFETY: advancing across caller-provided NUL-terminated wide string.
+            cursor = unsafe { cursor.add(1) };
+        }
+        collected
+    } else if len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: caller guarantees at least `len` wide units at `value`.
+        unsafe { std::slice::from_raw_parts(value, len as usize).to_vec() }
+    };
+    cpython_wide_units_to_string(&units)
+}
+
+unsafe fn c_wide_name_to_string(name: *const Cwchar) -> Result<String, String> {
+    unsafe { cpython_wide_ptr_to_string(name, -1, "wide string decode") }
 }
 
 fn value_to_cpython_marshal_object(value: &Value) -> Result<CpythonMarshalObject, String> {

@@ -8738,6 +8738,138 @@ PyInit_cpython_api_batch59_probe(void) {
 }
 
 #[test]
+fn cpython_compat_unicode_widechar_abi_batch60_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch60 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch60 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch60");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch60_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+#include <wchar.h>
+
+static int
+utf8_equals(PyObject *value, const char *expected) {
+    const char *text = value ? PyUnicode_AsUTF8(value) : 0;
+    return (text && strcmp(text, expected) == 0) ? 1 : 0;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    wchar_t hello[] = {L'h', L'e', L'l', L'l', L'o', 0};
+    PyObject *value = PyUnicode_FromWideChar(hello, 5);
+    int from_wide_ok = utf8_equals(value, "hello");
+
+    PyObject *value_nt = PyUnicode_FromWideChar(hello, -1);
+    int from_wide_nt_ok = utf8_equals(value_nt, "hello");
+
+    long long required = PyUnicode_AsWideChar(value, 0, 0);
+    int required_ok = (required == 5) ? 1 : 0;
+
+    wchar_t stack_buf[8];
+    for (int i = 0; i < 8; i++) {
+        stack_buf[i] = L'!';
+    }
+    long long copied = PyUnicode_AsWideChar(value, stack_buf, 8);
+    int as_wide_ok = (copied == 5 &&
+                      stack_buf[0] == L'h' &&
+                      stack_buf[4] == L'o' &&
+                      stack_buf[5] == 0) ? 1 : 0;
+
+    long long owned_size = -1;
+    wchar_t *owned = PyUnicode_AsWideCharString(value, &owned_size);
+    int as_wide_string_ok = (owned &&
+                             owned_size == 5 &&
+                             owned[0] == L'h' &&
+                             owned[4] == L'o' &&
+                             owned[5] == 0) ? 1 : 0;
+    PyMem_Free(owned);
+
+    int write_ok = (PyUnicode_WriteChar(value, 1, (uint32_t)L'a') == 0 &&
+                    utf8_equals(value, "hallo")) ? 1 : 0;
+
+    int write_fail_ok = (PyUnicode_WriteChar(value, 99, (uint32_t)L'x') == -1 &&
+                         PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(value_nt);
+    Py_XDECREF(value);
+
+    return Py_BuildValue(
+        "(iiiiiii)",
+        from_wide_ok,
+        from_wide_nt_ok,
+        required_ok,
+        as_wide_ok,
+        as_wide_string_ok,
+        write_ok,
+        write_fail_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe unicode wide-char ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch60_probe",
+    "cpython api batch60 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch60_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch60_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch60 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch60_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch60 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

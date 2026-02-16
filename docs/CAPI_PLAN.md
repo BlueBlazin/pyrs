@@ -99,7 +99,7 @@ Acceptance criteria:
 ## Current Baseline Snapshot
 
 From `perf/abi3_manifest_latest.json`:
-- Stable ABI functions implemented/exported: `617 / 782`
+- Stable ABI functions implemented/exported: `685 / 782`
 - Stable ABI data symbols implemented/exported: `143 / 143`
 
 Recent Lane A slice:
@@ -178,6 +178,9 @@ Recent Lane A slice:
 - Added Stable-ABI exports and baseline semantics for Unicode append/intern/compare helpers (`batch59`):
   - `PyUnicode_{Append,AppendAndDel,GetSize,InternInPlace,InternImmortal,RichCompare}`
   - Unicode append/intern/compare behavior is smoke-covered for pointer-update append flows, intern no-crash semantics, removed `GetSize` runtime-error path, and rich-compare bool/notimplemented return baselines.
+- Added Stable-ABI exports and baseline semantics for Unicode wide-char helpers (`batch60`):
+  - `PyUnicode_{FromWideChar,AsWideChar,AsWideCharString,WriteChar}`
+  - Unicode wide-char behavior is smoke-covered for fixed-size and NUL-terminated wide decode, required-size probe, owned wide-string allocation, bounded buffer writes, and in-place character mutation/index-error paths.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`
@@ -259,6 +262,7 @@ Recent Lane A slice:
     - `tests/abi3_surface.rs::exports_abi3_batch57_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch58_symbols`
     - `tests/abi3_surface.rs::exports_abi3_batch59_symbols`
+    - `tests/abi3_surface.rs::exports_abi3_batch60_symbols`
   - behavior gates:
     - `tests/extension_smoke.rs::cpython_compat_list_set_exception_gc_and_float_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_bytes_error_and_cfunction_apis_work`
@@ -318,6 +322,7 @@ Recent Lane A slice:
     - `tests/extension_smoke.rs::cpython_compat_unicode_abi_batch57_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_unicode_codec_abi_batch58_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_unicode_append_compare_abi_batch59_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_unicode_widechar_abi_batch60_apis_work`
 - Added Stable-ABI exports and semantics for error/file APIs:
   - `PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`
   - `PyFile_{GetLine,WriteObject,WriteString}`
