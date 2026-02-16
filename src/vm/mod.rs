@@ -158,7 +158,7 @@ const PURE_STDLIB_RE_MODULES: &[&str] = &[
     "re._casefix",
 ];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
-const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types"];
+const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];
 const MT_N: usize = 624;
 const MT_M: usize = 397;
 const MT_MATRIX_A: u32 = 0x9908_b0df;
@@ -764,6 +764,7 @@ pub struct Vm {
     extension_pinned_cpython_allocations: Vec<*mut c_void>,
     extension_pinned_cpython_allocation_set: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
+    extension_cpython_ptr_values: HashMap<usize, Value>,
     extension_module_def_registry: HashMap<u64, usize>,
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     extension_init_in_progress: HashSet<String>,
@@ -845,6 +846,7 @@ impl Drop for Vm {
         }
         self.extension_pinned_cpython_allocation_set.clear();
         self.extension_pinned_capsule_names.clear();
+        self.extension_cpython_ptr_values.clear();
         // Break reference cycles before field teardown so per-VM object graphs
         // do not accumulate across harness runs.
         self.heap.collect_cycles(&[]);
@@ -937,6 +939,7 @@ impl Vm {
             extension_pinned_cpython_allocations: Vec::new(),
             extension_pinned_cpython_allocation_set: HashSet::new(),
             extension_pinned_capsule_names: HashMap::new(),
+            extension_cpython_ptr_values: HashMap::new(),
             extension_module_def_registry: HashMap::new(),
             extension_module_state_registry: HashMap::new(),
             extension_init_in_progress: HashSet::new(),

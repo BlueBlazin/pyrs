@@ -669,15 +669,16 @@ impl Vm {
                             | BuiltinFunction::Complex
                     ) =>
                 {
-                    if let Some(alias_class) = self.generic_alias_class() {
-                        Ok(self.heap.alloc_instance(InstanceObject::new(alias_class)))
+                    if self.generic_alias_class().is_some() {
+                        Ok(self.alloc_generic_alias_instance(Value::Builtin(builtin), index))
                     } else {
                         Ok(Value::Builtin(builtin))
                     }
                 }
                 Value::Class(class) => {
-                    if let Some(alias_class) = self.generic_alias_class() {
-                        Ok(self.heap.alloc_instance(InstanceObject::new(alias_class)))
+                    if self.generic_alias_class().is_some() {
+                        let origin = Value::Class(class.clone());
+                        Ok(self.alloc_generic_alias_instance(origin, index))
                     } else {
                         Ok(Value::Class(class))
                     }
@@ -710,6 +711,26 @@ impl Vm {
             Some(Value::Class(class)) => Some(class.clone()),
             _ => None,
         }
+    }
+
+    pub(super) fn alloc_generic_alias_instance(&mut self, origin: Value, index: Value) -> Value {
+        let Some(alias_class) = self.generic_alias_class() else {
+            return origin;
+        };
+        let alias = self.heap.alloc_instance(InstanceObject::new(alias_class));
+        if let Value::Instance(instance) = &alias
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+        {
+            instance_data
+                .attrs
+                .insert("__origin__".to_string(), origin.clone());
+            let args = match index {
+                Value::Tuple(tuple_obj) => Value::Tuple(tuple_obj),
+                value => self.heap.alloc_tuple(vec![value]),
+            };
+            instance_data.attrs.insert("__args__".to_string(), args);
+        }
+        alias
     }
 
     pub(super) fn collect_iterable_values(
@@ -1670,10 +1691,31 @@ impl Vm {
     pub(super) fn class_from_base_value(&mut self, base: Value) -> Result<ObjRef, RuntimeError> {
         match base {
             Value::Class(class) => Ok(class),
+            Value::Instance(instance) => {
+                // CPython-extension proxy types can flow through class creation as proxy
+                // instances when metatype detection is incomplete. Treat those as class-like
+                // bases so stdlib/native class statements do not fail at compile/runtime.
+                if let Object::Instance(instance_data) = &*instance.kind()
+                    && let Object::Class(class_data) = &*instance_data.class.kind()
+                {
+                    if matches!(
+                        class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                        Some(Value::Bool(true))
+                    ) {
+                        return Ok(instance_data.class.clone());
+                    }
+                    if class_data.name == "GenericAlias"
+                        && let Some(origin) = instance_data.attrs.get("__origin__").cloned()
+                    {
+                        return self.class_from_base_value(origin);
+                    }
+                }
+                Err(RuntimeError::new("class base must be a class object"))
+            }
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_exception_class(&name)),
-            Value::Builtin(BuiltinFunction::Type) => self
+            Value::Builtin(BuiltinFunction::Type) => Ok(self
                 .default_type_metaclass()
-                .ok_or_else(|| RuntimeError::new("class base must be a class object")),
+                .unwrap_or_else(|| self.alloc_synthetic_class("type"))),
             Value::Builtin(BuiltinFunction::Bool) => Ok(self.alloc_synthetic_class("bool")),
             Value::Builtin(BuiltinFunction::Int) => {
                 Ok(self.alloc_synthetic_reprenum_data_class("int"))
@@ -1756,7 +1798,10 @@ impl Vm {
             Value::Builtin(BuiltinFunction::CollectionsDefaultDict) => {
                 Ok(self.alloc_synthetic_class("defaultdict"))
             }
-            _ => Err(RuntimeError::new("class base must be a class object")),
+            other => {
+                let _ = other;
+                Err(RuntimeError::new("class base must be a class object"))
+            }
         }
     }
 }

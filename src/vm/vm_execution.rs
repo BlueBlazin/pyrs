@@ -3601,8 +3601,44 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("class bases must be a tuple")),
                 };
-                let mut base_classes = Vec::new();
+                let orig_bases_tuple = self.heap.alloc_tuple(bases.clone());
+                let mut resolved_bases = Vec::new();
                 for base in bases {
+                    let maybe_mro_entries = match &base {
+                        Value::Instance(instance) => match self
+                            .load_attr_instance(instance, "__mro_entries__")
+                        {
+                            Ok(AttrAccessOutcome::Value(callable)) => Some(callable),
+                            Ok(AttrAccessOutcome::ExceptionHandled) => return Ok(None),
+                            Err(err) if classify_runtime_error(&err.message) == "AttributeError" => {
+                                None
+                            }
+                            Err(err) => return Err(err),
+                        },
+                        _ => None,
+                    };
+                    if let Some(mro_entries) = maybe_mro_entries {
+                        let entries = match self.call_internal(
+                            mro_entries,
+                            vec![orig_bases_tuple.clone()],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => return Ok(None),
+                        };
+                        let Value::Tuple(entries_tuple) = entries else {
+                            return Err(RuntimeError::new("__mro_entries__ must return a tuple"));
+                        };
+                        let Object::Tuple(items) = &*entries_tuple.kind() else {
+                            return Err(RuntimeError::new("__mro_entries__ must return a tuple"));
+                        };
+                        resolved_bases.extend(items.iter().cloned());
+                    } else {
+                        resolved_bases.push(base);
+                    }
+                }
+                let mut base_classes = Vec::new();
+                for base in resolved_bases {
                     base_classes.push(self.class_from_base_value(base)?);
                 }
 
@@ -9478,6 +9514,9 @@ impl Vm {
     }
 
     pub(super) fn default_type_metaclass(&self) -> Option<ObjRef> {
+        if let Some(Value::Class(type_class)) = self.builtins.get("type") {
+            return Some(type_class.clone());
+        }
         let Value::Class(object_class) = self.builtins.get("object")? else {
             return None;
         };

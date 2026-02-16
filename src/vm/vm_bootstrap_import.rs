@@ -3938,6 +3938,7 @@ impl Vm {
                 ("getmodule", BuiltinFunction::InspectGetModule),
                 ("getfile", BuiltinFunction::InspectGetFile),
                 ("getsourcefile", BuiltinFunction::InspectGetSourceFile),
+                ("cleandoc", BuiltinFunction::InspectCleanDoc),
                 ("isfunction", BuiltinFunction::InspectIsFunction),
                 ("ismethod", BuiltinFunction::InspectIsMethod),
                 ("isroutine", BuiltinFunction::InspectIsRoutine),
@@ -6186,13 +6187,7 @@ impl Vm {
         self.register_module(name, module.clone());
         self.link_module_chain(name, module.clone());
         if let Err(err) = self.exec_module_for_loader(&module, name, loader_name, &source_info) {
-            self.unregister_module(name);
-            if let Some((parent, child)) = name.rsplit_once('.')
-                && let Some(parent_module) = self.modules.get(parent)
-                && let Object::Module(parent_data) = &mut *parent_module.kind_mut()
-            {
-                parent_data.globals.remove(child);
-            }
+            self.remove_module_entry_and_parent_binding(name);
             return Err(err);
         }
         Ok(module)
@@ -7007,7 +7002,13 @@ impl Vm {
             }
         }
         match self.load_module(name) {
-            Ok(module) => self.return_imported_module(module, caller_depth),
+            Ok(module) => match self.return_imported_module(module, caller_depth) {
+                Ok(module) => Ok(module),
+                Err(err) => {
+                    self.cleanup_failed_import(name, &existing_modules);
+                    Err(err)
+                }
+            },
             Err(load_err) => {
                 if let Some((parent, _)) = name.rsplit_once('.') {
                     let _ = self.import_module_object(parent)?;
@@ -7043,7 +7044,7 @@ impl Vm {
                         }
                     }
                 }
-                self.cleanup_partial_modules(&existing_modules);
+                self.cleanup_failed_import(name, &existing_modules);
                 Err(load_err)
             }
         }
@@ -7086,6 +7087,42 @@ impl Vm {
         }
     }
 
+    pub(super) fn remove_module_entry_and_parent_binding(&mut self, name: &str) {
+        self.unregister_module(name);
+        if let Some((parent, child)) = name.rsplit_once('.')
+            && let Some(parent_module) = self.modules.get(parent)
+            && let Object::Module(parent_data) = &mut *parent_module.kind_mut()
+        {
+            parent_data.globals.remove(child);
+        }
+    }
+
+    pub(super) fn cleanup_failed_import(
+        &mut self,
+        failed_name: &str,
+        existing_modules: &HashSet<String>,
+    ) {
+        let failed_prefix = format!("{failed_name}.");
+        let failed_new_modules: Vec<String> = self
+            .modules
+            .keys()
+            .filter_map(|name| {
+                if existing_modules.contains(name) {
+                    return None;
+                }
+                if name == failed_name || name.starts_with(&failed_prefix) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for name in failed_new_modules {
+            self.remove_module_entry_and_parent_binding(&name);
+        }
+        self.cleanup_partial_modules(existing_modules);
+    }
+
     pub(super) fn cleanup_partial_modules(&mut self, existing_modules: &HashSet<String>) {
         let added: Vec<String> = self
             .modules
@@ -7102,16 +7139,7 @@ impl Vm {
             if !should_remove {
                 continue;
             }
-            self.modules.remove(&name);
-            if let Some(modules_dict) = self.sys_dict_obj("modules") {
-                let _ = dict_remove_value(&modules_dict, &Value::Str(name.clone()));
-            }
-            if let Some((parent, child)) = name.rsplit_once('.')
-                && let Some(parent_module) = self.modules.get(parent)
-                && let Object::Module(parent_data) = &mut *parent_module.kind_mut()
-            {
-                parent_data.globals.remove(child);
-            }
+            self.remove_module_entry_and_parent_binding(&name);
         }
     }
 
@@ -7160,7 +7188,7 @@ impl Vm {
         );
         let is_decimal_stack = name == "decimal";
         let is_functools_stack = name == "functools";
-        let is_types_stack = name == "types";
+        let is_types_stack = matches!(name, "types" | "typing");
         if !is_json_stack
             && !is_pickle_stack
             && !is_re_stack

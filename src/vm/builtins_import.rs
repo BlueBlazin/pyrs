@@ -207,10 +207,11 @@ impl Vm {
         module: ObjRef,
         caller_depth: usize,
     ) -> Result<ObjRef, RuntimeError> {
-        // Only force immediate module execution for host-side imports
-        // (no active Python frame). In-frame imports are executed by the
-        // main VM loop and should not recurse into `run()`.
-        if caller_depth == 0 {
+        // Ensure queued module frames are executed before returning an import
+        // result. CPython import semantics require a fully initialized module
+        // unless this is a genuine re-entrant cycle returning an already
+        // registered in-progress module.
+        if self.frames.len() > caller_depth {
             self.run_pending_import_frames(caller_depth)?;
         }
         let module_name = match &*module.kind() {

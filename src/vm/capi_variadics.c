@@ -1437,7 +1437,6 @@ static int parse_args_and_keywords_va(
             }
             if (output != NULL) {
                 *output = value;
-                Py_IncRef(value);
             }
             token_index++;
             continue;
@@ -1503,7 +1502,6 @@ static int parse_args_and_keywords_va(
             }
             if (output != NULL) {
                 *output = value;
-                Py_IncRef(value);
             }
             token_index++;
             continue;

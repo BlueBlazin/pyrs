@@ -2304,6 +2304,8 @@ pub enum BuiltinFunction {
     Callable,
     IsInstance,
     IsSubclass,
+    TypeInstanceCheck,
+    TypeSubclassCheck,
     Reversed,
     Super,
     BuildClass,
@@ -2824,6 +2826,7 @@ pub enum BuiltinFunction {
     InspectGetModule,
     InspectGetFile,
     InspectGetSourceFile,
+    InspectCleanDoc,
     InspectIsClass,
     InspectIsModule,
     InspectIsGenerator,
@@ -5270,6 +5273,8 @@ impl BuiltinFunction {
             | BuiltinFunction::Callable
             | BuiltinFunction::IsInstance
             | BuiltinFunction::IsSubclass
+            | BuiltinFunction::TypeInstanceCheck
+            | BuiltinFunction::TypeSubclassCheck
             | BuiltinFunction::Reversed
             | BuiltinFunction::Zip
             | BuiltinFunction::Iter
@@ -5584,6 +5589,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectGetModule
             | BuiltinFunction::InspectGetFile
             | BuiltinFunction::InspectGetSourceFile
+            | BuiltinFunction::InspectCleanDoc
             | BuiltinFunction::InspectIsClass
             | BuiltinFunction::InspectIsModule
             | BuiltinFunction::InspectIsGenerator
@@ -7483,6 +7489,8 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::Callable => "callable".to_string(),
         BuiltinFunction::IsInstance => "isinstance".to_string(),
         BuiltinFunction::IsSubclass => "issubclass".to_string(),
+        BuiltinFunction::TypeInstanceCheck => "__instancecheck__".to_string(),
+        BuiltinFunction::TypeSubclassCheck => "__subclasscheck__".to_string(),
         BuiltinFunction::GetAttr => "getattr".to_string(),
         BuiltinFunction::SetAttr => "setattr".to_string(),
         BuiltinFunction::DelAttr => "delattr".to_string(),

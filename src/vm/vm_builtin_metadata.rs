@@ -977,6 +977,20 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrTranslate, receiver))
             }
+            "__instancecheck__" if self.builtin_is_type_object(builtin) => Ok(
+                self.alloc_builtin_unbound_method(
+                    "__builtin_unbound_method__",
+                    Value::Builtin(builtin),
+                    BuiltinFunction::TypeInstanceCheck,
+                ),
+            ),
+            "__subclasscheck__" if self.builtin_is_type_object(builtin) => Ok(
+                self.alloc_builtin_unbound_method(
+                    "__builtin_unbound_method__",
+                    Value::Builtin(builtin),
+                    BuiltinFunction::TypeSubclassCheck,
+                ),
+            ),
             _ => Err(RuntimeError::new(format!(
                 "builtin has no attribute '{}'",
                 attr_name
@@ -3378,6 +3392,20 @@ impl Vm {
             } else if let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name) {
                 proxy_attr
             } else {
+                if std::env::var_os("PYRS_TRACE_PROXY_CLASS_ATTR_MISS").is_some() {
+                    let class_kind = class.kind();
+                    if let Object::Class(class_data) = &*class_kind {
+                        let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
+                        keys.sort();
+                        let raw_ptr_present = class_data
+                            .attrs
+                            .contains_key("__pyrs_cpython_proxy_ptr__");
+                        eprintln!(
+                            "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}",
+                            class_name, attr_name, raw_ptr_present
+                        );
+                    }
+                }
                 return Err(RuntimeError::new(format!(
                     "class '{}' has no attribute '{}'",
                     class_name, attr_name
@@ -3386,6 +3414,20 @@ impl Vm {
         } else if let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name) {
             proxy_attr
         } else {
+            if std::env::var_os("PYRS_TRACE_PROXY_CLASS_ATTR_MISS").is_some() {
+                let class_kind = class.kind();
+                if let Object::Class(class_data) = &*class_kind {
+                    let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
+                    keys.sort();
+                    let raw_ptr_present = class_data
+                        .attrs
+                        .contains_key("__pyrs_cpython_proxy_ptr__");
+                    eprintln!(
+                        "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}",
+                        class_name, attr_name, raw_ptr_present
+                    );
+                }
+            }
             return Err(RuntimeError::new(format!(
                 "class '{}' has no attribute '{}'",
                 class_name, attr_name

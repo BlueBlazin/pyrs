@@ -1011,6 +1011,17 @@ fn exposes_inspect_private_mro_helpers() {
 }
 
 #[test]
+fn inspect_cleandoc_normalizes_indentation() {
+    let source = "import inspect\ndoc = \"\\n\\talpha\\n\\t    beta\\n\"\ncleaned = inspect.cleandoc(doc)\nok = cleaned == 'alpha\\n    beta'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_osx_support_customize_config_vars() {
     let source = "import _osx_support\ncfg = {'x': 1}\nout = _osx_support.customize_config_vars(cfg)\nok = out is cfg\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -7337,6 +7348,62 @@ ok = (swapmod is sys) and (m is sys.modules['swapmod']) and (m is sys)\n";
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 
     let _ = std::fs::remove_file(temp_dir.join("swapmod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn failed_import_removes_partial_target_module_from_sys_modules() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_failed_import_cleanup_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("broken_dep.py"), "value = 7\n").expect("write dependency module");
+    std::fs::write(
+        temp_dir.join("broken.py"),
+        "x = 1\nfrom broken_dep import missing\ny = 2\n",
+    )
+    .expect("write broken module");
+
+    let first = parser::parse_module("import broken\n").expect("parse should succeed");
+    let first_code = compiler::compile_module(&first).expect("compile should succeed");
+    let inspect = parser::parse_module(
+        "import sys\nbroken_present = 'broken' in sys.modules\ndep_present = 'broken_dep' in sys.modules\n",
+    )
+    .expect("parse should succeed");
+    let inspect_code = compiler::compile_module(&inspect).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let first_err = vm.execute(&first_code).expect_err("first import should fail");
+    assert!(
+        first_err.message.contains("cannot import name 'missing'"),
+        "expected broken import error, got: {}",
+        first_err.message
+    );
+
+    let value = vm
+        .execute(&inspect_code)
+        .expect("inspection should succeed after failed import");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("broken_present"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("dep_present"), Some(Value::Bool(true)));
+
+    let second_err = vm.execute(&first_code).expect_err("second import should fail");
+    assert!(
+        second_err.message.contains("cannot import name 'missing'"),
+        "expected repeated broken import error, got: {}",
+        second_err.message
+    );
+    let value = vm
+        .execute(&inspect_code)
+        .expect("inspection should still succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("broken_present"), Some(Value::Bool(false)));
+    assert_eq!(vm.get_global("dep_present"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("broken.py"));
+    let _ = std::fs::remove_file(temp_dir.join("broken_dep.py"));
     let _ = std::fs::remove_dir(&temp_dir);
 }
 

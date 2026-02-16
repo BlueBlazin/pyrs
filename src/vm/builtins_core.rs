@@ -3479,6 +3479,21 @@ impl Vm {
         Ok(Value::Bool(self.value_is_instance_of(&value, &classinfo)?))
     }
 
+    pub(super) fn builtin_type_instancecheck(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "__instancecheck__() expects one argument",
+            ));
+        }
+        let classinfo = args.remove(0);
+        let value = args.remove(0);
+        Ok(Value::Bool(self.value_is_instance_of(&value, &classinfo)?))
+    }
+
     pub(super) fn builtin_issubclass(
         &self,
         mut args: Vec<Value>,
@@ -3489,6 +3504,23 @@ impl Vm {
         }
         let candidate = args.remove(0);
         let classinfo = args.remove(0);
+        Ok(Value::Bool(
+            self.class_value_is_subclass_of(&candidate, &classinfo)?,
+        ))
+    }
+
+    pub(super) fn builtin_type_subclasscheck(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new(
+                "__subclasscheck__() expects one argument",
+            ));
+        }
+        let classinfo = args.remove(0);
+        let candidate = args.remove(0);
         Ok(Value::Bool(
             self.class_value_is_subclass_of(&candidate, &classinfo)?,
         ))
@@ -7241,7 +7273,21 @@ impl Vm {
         };
         let object_ref = self.receiver_from_value(&object_value)?;
         let object_type = match &object_value {
-            Value::Class(class) => class.clone(),
+            Value::Class(class) => {
+                let class_mro = self.class_mro_entries(class);
+                if class_mro.iter().any(|entry| entry.id() == start_class.id()) {
+                    class.clone()
+                } else if let Some(meta_class) = self.class_of_value(&object_value) {
+                    let meta_mro = self.class_mro_entries(&meta_class);
+                    if meta_mro.iter().any(|entry| entry.id() == start_class.id()) {
+                        meta_class
+                    } else {
+                        class.clone()
+                    }
+                } else {
+                    class.clone()
+                }
+            }
             _ => self.class_of_value(&object_value).ok_or_else(|| {
                 RuntimeError::new("super() second argument must be an instance or subclass")
             })?,

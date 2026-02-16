@@ -2486,6 +2486,97 @@ impl Vm {
         }
     }
 
+    fn inspect_cleandoc_text(doc: &str) -> String {
+        let mut expanded = String::with_capacity(doc.len());
+        let mut column = 0usize;
+        for ch in doc.chars() {
+            match ch {
+                '\t' => {
+                    let spaces = 8 - (column % 8);
+                    for _ in 0..spaces {
+                        expanded.push(' ');
+                    }
+                    column += spaces;
+                }
+                '\n' => {
+                    expanded.push('\n');
+                    column = 0;
+                }
+                _ => {
+                    expanded.push(ch);
+                    column += 1;
+                }
+            }
+        }
+
+        let mut lines = expanded
+            .split('\n')
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>();
+        let mut margin: Option<usize> = None;
+        for line in lines.iter().skip(1) {
+            let stripped = line.trim_start_matches(' ');
+            if stripped.is_empty() {
+                continue;
+            }
+            let indent = line.len().saturating_sub(stripped.len());
+            margin = Some(margin.map_or(indent, |current| current.min(indent)));
+        }
+
+        if let Some(first) = lines.first_mut() {
+            *first = first.trim_start_matches(' ').to_string();
+        }
+        if let Some(indent) = margin {
+            for line in lines.iter_mut().skip(1) {
+                if line.len() >= indent {
+                    *line = line[indent..].to_string();
+                } else {
+                    line.clear();
+                }
+            }
+        }
+
+        let mut start = 0usize;
+        let mut end = lines.len();
+        while start < end && lines[start].is_empty() {
+            start += 1;
+        }
+        while end > start && lines[end - 1].is_empty() {
+            end -= 1;
+        }
+        lines[start..end].join("\n")
+    }
+
+    pub(super) fn builtin_inspect_cleandoc(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("cleandoc() expects one argument"));
+        }
+        let mut doc_value = args.remove(0);
+        if !matches!(doc_value, Value::Str(_) | Value::None) {
+            doc_value = match self.builtin_getattr(
+                vec![
+                    doc_value,
+                    Value::Str("__doc__".to_string()),
+                    Value::None,
+                ],
+                HashMap::new(),
+            ) {
+                Ok(value) => value,
+                Err(err) if is_missing_attribute_error(&err) => Value::None,
+                Err(err) => return Err(err),
+            };
+        }
+        match doc_value {
+            Value::None => Ok(Value::None),
+            Value::Str(doc) => Ok(Value::Str(Self::inspect_cleandoc_text(&doc))),
+            _ => Ok(Value::None),
+        }
+    }
+
     pub(super) fn builtin_inspect_signature(
         &mut self,
         mut args: Vec<Value>,

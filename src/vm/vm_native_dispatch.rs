@@ -5892,6 +5892,8 @@ impl Vm {
             BuiltinFunction::Type => self.builtin_type(args, kwargs),
             BuiltinFunction::IsInstance => self.builtin_isinstance(args, kwargs),
             BuiltinFunction::IsSubclass => self.builtin_issubclass(args, kwargs),
+            BuiltinFunction::TypeInstanceCheck => self.builtin_type_instancecheck(args, kwargs),
+            BuiltinFunction::TypeSubclassCheck => self.builtin_type_subclasscheck(args, kwargs),
             BuiltinFunction::Property => self.builtin_property(args, kwargs),
             BuiltinFunction::ObjectNew => self.builtin_object_new(args, kwargs),
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
@@ -6670,6 +6672,7 @@ impl Vm {
             BuiltinFunction::InspectGetSourceFile => {
                 self.builtin_inspect_getsourcefile(args, kwargs)
             }
+            BuiltinFunction::InspectCleanDoc => self.builtin_inspect_cleandoc(args, kwargs),
             BuiltinFunction::InspectIsFunction => self.builtin_inspect_isfunction(args, kwargs),
             BuiltinFunction::InspectIsMethod => self.builtin_inspect_ismethod(args, kwargs),
             BuiltinFunction::InspectIsRoutine => self.builtin_inspect_isroutine(args, kwargs),
