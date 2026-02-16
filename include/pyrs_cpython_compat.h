@@ -24,6 +24,12 @@ typedef struct PyMethodDef {
 
 typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 
+typedef enum {
+    PYGEN_RETURN = 0,
+    PYGEN_ERROR = -1,
+    PYGEN_NEXT = 1
+} PySendResult;
+
 #ifndef METH_VARARGS
 #define METH_VARARGS 0x0001
 #define METH_KEYWORDS 0x0002
@@ -267,11 +273,21 @@ PyObject *PyObject_GetAttrString(PyObject *object, const char *name);
 PyObject *PyObject_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *format, ...);
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
+PyObject *PySeqIter_New(PyObject *object);
 PyObject *PyObject_GetItem(PyObject *object, PyObject *key);
 int PyObject_SetItem(PyObject *object, PyObject *key, PyObject *value);
 int PyObject_DelItem(PyObject *object, PyObject *key);
 int PyObject_IsTrue(PyObject *object);
 int PyObject_IsInstance(PyObject *object, PyObject *class_obj);
+int PyIter_Check(PyObject *object);
+PyObject *PyIter_Next(PyObject *iter);
+int PyIter_NextItem(PyObject *iter, PyObject **item);
+PySendResult PyIter_Send(PyObject *iter, PyObject *arg, PyObject **result);
+int PyObject_CheckBuffer(PyObject *object);
+PyObject *PyMemoryView_FromObject(PyObject *object);
+PyObject *PyMemoryView_FromMemory(char *mem, long long size, int flags);
+PyObject *PyMemoryView_FromBuffer(const Py_buffer *view);
+PyObject *PyMemoryView_GetContiguous(PyObject *object, int buffertype, char order);
 int PyObject_GetBuffer(PyObject *object, Py_buffer *view, int flags);
 int PyBuffer_IsContiguous(const Py_buffer *view, char order);
 void *PyBuffer_GetPointer(const Py_buffer *view, const long long *indices);
@@ -371,6 +387,7 @@ extern PyObject *PyExc_RuntimeError;
 extern PyObject *PyExc_TypeError;
 extern PyObject *PyExc_ValueError;
 extern PyObject *PyExc_EOFError;
+extern PyObject *PyExc_BufferError;
 extern void *PyByteArray_Type;
 
 #define PyMODINIT_FUNC PyObject *

@@ -2385,6 +2385,204 @@ PyInit_cpython_api_batch11_probe(void) {
 }
 
 #[test]
+fn cpython_compat_iter_and_memoryview_abi_batch12_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch12 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch12 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch12");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch12_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch12_probe",
+    "cpython api batch12 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch12_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *seq = PyList_New(2);
+    if (!seq) {
+        return 0;
+    }
+    PyList_SetItem(seq, 0, PyLong_FromLong(10));
+    PyList_SetItem(seq, 1, PyLong_FromLong(20));
+
+    PyObject *iter = PySeqIter_New(seq);
+    if (!iter) {
+        return 0;
+    }
+    int iter_check_ok = (PyIter_Check(iter) == 1 && PyIter_Check(seq) == 0) ? 1 : 0;
+
+    PyObject *item = 0;
+    int next_item_1 = PyIter_NextItem(iter, &item);
+    int next_item_1_ok = (next_item_1 == 1 && item && PyLong_AsInt(item) == 10) ? 1 : 0;
+    Py_XDECREF(item);
+    item = 0;
+    int next_item_2 = PyIter_NextItem(iter, &item);
+    int next_item_2_ok = (next_item_2 == 1 && item && PyLong_AsInt(item) == 20) ? 1 : 0;
+    Py_XDECREF(item);
+    item = 0;
+    int next_item_end = PyIter_NextItem(iter, &item);
+    int next_item_end_ok = (next_item_end == 0 && item == 0 && PyErr_Occurred() == 0) ? 1 : 0;
+    Py_DECREF(iter);
+
+    PyObject *iter_send = PySeqIter_New(seq);
+    if (!iter_send) {
+        return 0;
+    }
+    PyObject *none_arg = Py_BuildValue("");
+    if (!none_arg) {
+        return 0;
+    }
+    PyObject *send_result = 0;
+    int send_status_1 = PyIter_Send(iter_send, none_arg, &send_result);
+    int send_next_1_ok = (send_status_1 == PYGEN_NEXT && send_result && PyLong_AsInt(send_result) == 10) ? 1 : 0;
+    Py_XDECREF(send_result);
+    send_result = 0;
+    int send_status_2 = PyIter_Send(iter_send, none_arg, &send_result);
+    int send_next_2_ok = (send_status_2 == PYGEN_NEXT && send_result && PyLong_AsInt(send_result) == 20) ? 1 : 0;
+    Py_XDECREF(send_result);
+    send_result = 0;
+    int send_status_3 = PyIter_Send(iter_send, none_arg, &send_result);
+    int send_return_ok = (send_status_3 == PYGEN_RETURN && send_result != 0) ? 1 : 0;
+    Py_XDECREF(send_result);
+    Py_DECREF(none_arg);
+    Py_DECREF(iter_send);
+
+    PyObject *bytearray_obj = PyByteArray_FromStringAndSize("abcd", 4);
+    if (!bytearray_obj) {
+        return 0;
+    }
+    PyObject *number_obj = PyLong_FromLong(7);
+    int check_buffer_ok = (PyObject_CheckBuffer(bytearray_obj) == 1 && PyObject_CheckBuffer(number_obj) == 0) ? 1 : 0;
+    Py_XDECREF(number_obj);
+
+    PyObject *mv_from_object = PyMemoryView_FromObject(bytearray_obj);
+    Py_buffer mv_from_object_buf = {0};
+    int from_object_ok = 0;
+    if (mv_from_object && PyObject_GetBuffer(mv_from_object, &mv_from_object_buf, PyBUF_SIMPLE) == 0) {
+        from_object_ok = (mv_from_object_buf.len == 4) ? 1 : 0;
+        PyBuffer_Release(&mv_from_object_buf);
+    }
+    Py_XDECREF(mv_from_object);
+
+    char ro_mem[3] = {'x', 'y', 'z'};
+    PyObject *mv_from_memory_ro = PyMemoryView_FromMemory(ro_mem, 3, PyBUF_READ);
+    Py_buffer ro_buf = {0};
+    int from_memory_ro_ok = 0;
+    if (mv_from_memory_ro && PyObject_GetBuffer(mv_from_memory_ro, &ro_buf, PyBUF_SIMPLE) == 0) {
+        from_memory_ro_ok = (ro_buf.len == 3 && ro_buf.readonly == 1) ? 1 : 0;
+        PyBuffer_Release(&ro_buf);
+    }
+    Py_XDECREF(mv_from_memory_ro);
+
+    char rw_mem[2] = {'m', 'n'};
+    PyObject *mv_from_memory_rw = PyMemoryView_FromMemory(rw_mem, 2, PyBUF_WRITE);
+    Py_buffer rw_buf = {0};
+    int from_memory_rw_ok = 0;
+    if (mv_from_memory_rw && PyObject_GetBuffer(mv_from_memory_rw, &rw_buf, PyBUF_SIMPLE) == 0) {
+        from_memory_rw_ok = (rw_buf.len == 2 && rw_buf.readonly == 0) ? 1 : 0;
+        PyBuffer_Release(&rw_buf);
+    }
+    Py_XDECREF(mv_from_memory_rw);
+
+    unsigned char source[4] = {1, 2, 3, 4};
+    Py_buffer source_info = {0};
+    source_info.buf = source;
+    source_info.len = 4;
+    source_info.itemsize = 1;
+    source_info.readonly = 1;
+    PyObject *mv_from_buffer = PyMemoryView_FromBuffer(&source_info);
+    Py_buffer from_buffer_buf = {0};
+    int from_buffer_ok = 0;
+    if (mv_from_buffer && PyObject_GetBuffer(mv_from_buffer, &from_buffer_buf, PyBUF_SIMPLE) == 0) {
+        from_buffer_ok = (from_buffer_buf.len == 4 && from_buffer_buf.readonly == 1) ? 1 : 0;
+        PyBuffer_Release(&from_buffer_buf);
+    }
+    Py_XDECREF(mv_from_buffer);
+
+    PyObject *contiguous_ro = PyMemoryView_GetContiguous(bytearray_obj, PyBUF_READ, 'C');
+    Py_buffer contiguous_ro_buf = {0};
+    int get_contiguous_ro_ok = 0;
+    if (contiguous_ro && PyObject_GetBuffer(contiguous_ro, &contiguous_ro_buf, PyBUF_SIMPLE) == 0) {
+        get_contiguous_ro_ok = (contiguous_ro_buf.len == 4) ? 1 : 0;
+        PyBuffer_Release(&contiguous_ro_buf);
+    }
+    Py_XDECREF(contiguous_ro);
+
+    PyObject *bytes_obj = PyBytes_FromStringAndSize("xy", 2);
+    PyObject *contiguous_rw = PyMemoryView_GetContiguous(bytes_obj, PyBUF_WRITE, 'C');
+    int get_contiguous_rw_error_ok = (contiguous_rw == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+    Py_XDECREF(contiguous_rw);
+    Py_XDECREF(bytes_obj);
+    Py_XDECREF(bytearray_obj);
+    Py_XDECREF(seq);
+
+    if (PyModule_AddIntConstant(module, "ITER_CHECK_OK", iter_check_ok) != 0 ||
+        PyModule_AddIntConstant(module, "NEXT_ITEM_1_OK", next_item_1_ok) != 0 ||
+        PyModule_AddIntConstant(module, "NEXT_ITEM_2_OK", next_item_2_ok) != 0 ||
+        PyModule_AddIntConstant(module, "NEXT_ITEM_END_OK", next_item_end_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SEND_NEXT_1_OK", send_next_1_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SEND_NEXT_2_OK", send_next_2_ok) != 0 ||
+        PyModule_AddIntConstant(module, "SEND_RETURN_OK", send_return_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CHECK_BUFFER_OK", check_buffer_ok) != 0 ||
+        PyModule_AddIntConstant(module, "FROM_OBJECT_OK", from_object_ok) != 0 ||
+        PyModule_AddIntConstant(module, "FROM_MEMORY_RO_OK", from_memory_ro_ok) != 0 ||
+        PyModule_AddIntConstant(module, "FROM_MEMORY_RW_OK", from_memory_rw_ok) != 0 ||
+        PyModule_AddIntConstant(module, "FROM_BUFFER_OK", from_buffer_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GET_CONTIGUOUS_RO_OK", get_contiguous_ro_ok) != 0 ||
+        PyModule_AddIntConstant(module, "GET_CONTIGUOUS_RW_ERROR_OK", get_contiguous_rw_error_ok) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch12_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch12 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch12_probe as m\nassert m.ITER_CHECK_OK == 1\nassert m.NEXT_ITEM_1_OK == 1\nassert m.NEXT_ITEM_2_OK == 1\nassert m.NEXT_ITEM_END_OK == 1\nassert m.SEND_NEXT_1_OK == 1\nassert m.SEND_NEXT_2_OK == 1\nassert m.SEND_RETURN_OK == 1\nassert m.CHECK_BUFFER_OK == 1\nassert m.FROM_OBJECT_OK == 1\nassert m.FROM_MEMORY_RO_OK == 1\nassert m.FROM_MEMORY_RW_OK == 1\nassert m.FROM_BUFFER_OK == 1\nassert m.GET_CONTIGUOUS_RO_OK == 1\nassert m.GET_CONTIGUOUS_RW_ERROR_OK == 1",
+    )
+    .expect("cpython api batch12 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

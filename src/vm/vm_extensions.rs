@@ -22,11 +22,11 @@ use crate::runtime::{
 };
 
 use super::{
-    ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome, NativeCallResult, ObjRef,
-    Vm, add_values, and_values, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value_checked, div_values, floor_div_values, invert_value, is_truthy, lshift_values,
-    memoryview_bounds, mod_values, mul_values, neg_value, or_values, pos_value, pow_values,
-    rshift_values, sub_values, value_to_int, xor_values,
+    ExtensionCallableKind, GeneratorResumeKind, GeneratorResumeOutcome, InternalCallOutcome,
+    NativeCallResult, ObjRef, Vm, add_values, and_values, dict_contains_key_checked,
+    dict_get_value, dict_remove_value, dict_set_value_checked, div_values, floor_div_values,
+    invert_value, is_truthy, lshift_values, memoryview_bounds, mod_values, mul_values, neg_value,
+    or_values, pos_value, pow_values, rshift_values, sub_values, value_to_int, xor_values,
 };
 
 struct CapiObjectSlot {
@@ -8487,11 +8487,222 @@ pub unsafe extern "C" fn PyEval_GetBuiltins() -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyIter_Check(object: *mut c_void) -> i32 {
-    match cpython_value_from_ptr(object) {
-        Ok(Value::Iterator(_) | Value::Generator(_)) => 1,
-        Ok(_) => 0,
-        Err(_) => 0,
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return 0;
+        }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            return 0;
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match cpython_value_is_iterator_for_capi(vm, &value) {
+            Ok(true) => 1,
+            Ok(false) | Err(_) => 0,
+        }
+    })
+    .unwrap_or(0)
+}
+
+fn cpython_exception_value_attr(value: &Value) -> Option<Value> {
+    match value {
+        Value::Instance(instance) => match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.attrs.get("value").cloned(),
+            _ => None,
+        },
+        Value::Exception(exception) => exception.attrs.borrow().get("value").cloned(),
+        _ => None,
     }
+}
+
+fn cpython_value_is_stop_iteration(vm: &Vm, value: &Value) -> bool {
+    match value {
+        Value::Exception(exception) => exception.name == "StopIteration",
+        Value::ExceptionType(name) => name == "StopIteration",
+        Value::Instance(instance) => vm
+            .exception_class_name_for_instance(instance)
+            .is_some_and(|name| name == "StopIteration"),
+        _ => false,
+    }
+}
+
+fn cpython_stop_iteration_value_from_active_exception(vm: &Vm) -> Option<Value> {
+    let active = vm
+        .frames
+        .last()
+        .and_then(|frame| frame.active_exception.clone())?;
+    if !cpython_value_is_stop_iteration(vm, &active) {
+        return None;
+    }
+    Some(cpython_exception_value_attr(&active).unwrap_or(Value::None))
+}
+
+fn cpython_value_is_iterator_for_capi(vm: &mut Vm, value: &Value) -> Result<bool, RuntimeError> {
+    match value {
+        Value::Iterator(_) => Ok(true),
+        Value::Generator(_) => vm.ensure_sync_iterator_target(value).map(|_| true),
+        Value::Instance(_) => Ok(vm.lookup_bound_special_method(value, "__next__")?.is_some()),
+        _ => Ok(false),
+    }
+}
+
+fn cpython_iter_next_for_capi(vm: &mut Vm, iter: &Value) -> Result<Option<Value>, RuntimeError> {
+    if !cpython_value_is_iterator_for_capi(vm, iter)? {
+        return Err(RuntimeError::new("expected an iterator"));
+    }
+    match vm.next_from_iterator_value(iter)? {
+        GeneratorResumeOutcome::Yield(value) => Ok(Some(value)),
+        GeneratorResumeOutcome::Complete(_) => Ok(None),
+        GeneratorResumeOutcome::PropagatedException => {
+            if cpython_stop_iteration_value_from_active_exception(vm).is_some() {
+                Ok(None)
+            } else {
+                Err(vm.runtime_error_from_active_exception("iteration failed"))
+            }
+        }
+    }
+}
+
+fn cpython_iter_send_for_capi(
+    vm: &mut Vm,
+    iter: Value,
+    arg: Value,
+) -> Result<(i32, Value), RuntimeError> {
+    if let Value::Generator(generator) = &iter {
+        vm.ensure_sync_iterator_target(&iter)?;
+        let sent = if arg == Value::None { None } else { Some(arg) };
+        return match vm.resume_generator(generator, sent, None, GeneratorResumeKind::Next)? {
+            GeneratorResumeOutcome::Yield(value) => Ok((1, value)),
+            GeneratorResumeOutcome::Complete(value) => Ok((0, value)),
+            GeneratorResumeOutcome::PropagatedException => {
+                if let Some(value) = cpython_stop_iteration_value_from_active_exception(vm) {
+                    Ok((0, value))
+                } else {
+                    Err(vm.runtime_error_from_active_exception("PyIter_Send failed"))
+                }
+            }
+        };
+    }
+
+    if arg == Value::None && cpython_value_is_iterator_for_capi(vm, &iter)? {
+        return match cpython_iter_next_for_capi(vm, &iter)? {
+            Some(value) => Ok((1, value)),
+            None => Ok((0, Value::None)),
+        };
+    }
+
+    let send_method =
+        vm.builtin_getattr(vec![iter, Value::Str("send".to_string())], HashMap::new())?;
+    match vm.call_internal(send_method, vec![arg], HashMap::new()) {
+        Ok(InternalCallOutcome::Value(value)) => Ok((1, value)),
+        Ok(InternalCallOutcome::CallerExceptionHandled) => {
+            if let Some(value) = cpython_stop_iteration_value_from_active_exception(vm) {
+                Ok((0, value))
+            } else {
+                Err(vm.runtime_error_from_active_exception("PyIter_Send failed"))
+            }
+        }
+        Err(err) => {
+            if let Some(value) = cpython_stop_iteration_value_from_active_exception(vm) {
+                Ok((0, value))
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyIter_NextItem(object: *mut c_void, item: *mut *mut c_void) -> i32 {
+    if item.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { *item = std::ptr::null_mut() };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyIter_NextItem missing VM context");
+            return -1;
+        }
+        let Some(iter) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyIter_NextItem unknown iterator pointer");
+            return -1;
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        if !cpython_value_is_iterator_for_capi(vm, &iter).unwrap_or(false) {
+            let message = format!(
+                "expected an iterator, got '{}'",
+                vm.value_type_name_for_error(&iter)
+            );
+            let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
+            context.set_error_state(
+                unsafe { PyExc_TypeError },
+                pvalue,
+                std::ptr::null_mut(),
+                message,
+            );
+            return -1;
+        }
+        match cpython_iter_next_for_capi(vm, &iter) {
+            Ok(Some(next)) => {
+                unsafe { *item = context.alloc_cpython_ptr_for_value(next) };
+                1
+            }
+            Ok(None) => 0,
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyIter_Send(
+    iter: *mut c_void,
+    arg: *mut c_void,
+    result: *mut *mut c_void,
+) -> i32 {
+    if arg.is_null() || result.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyIter_Send missing VM context");
+            return -1;
+        }
+        let Some(iter_value) = context.cpython_value_from_ptr_or_proxy(iter) else {
+            context.set_error("PyIter_Send unknown iterator pointer");
+            return -1;
+        };
+        let Some(arg_value) = context.cpython_value_from_ptr_or_proxy(arg) else {
+            context.set_error("PyIter_Send unknown argument pointer");
+            return -1;
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match cpython_iter_send_for_capi(vm, iter_value, arg_value) {
+            Ok((status, value)) => {
+                unsafe { *result = context.alloc_cpython_ptr_for_value(value) };
+                status
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -8501,20 +8712,13 @@ pub unsafe extern "C" fn PyIter_Next(object: *mut c_void) -> *mut c_void {
             context.set_error("PyIter_Next missing VM context");
             return std::ptr::null_mut();
         }
-        let Some(value) = context.cpython_value_from_ptr(object) else {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
             context.set_error("PyIter_Next unknown iterator pointer");
             return std::ptr::null_mut();
         };
-        let iterator_ref = match value {
-            Value::Iterator(iterator) => iterator,
-            _ => {
-                context.set_error("PyIter_Next expected iterator object");
-                return std::ptr::null_mut();
-            }
-        };
         // SAFETY: VM pointer is valid for context lifetime.
         let vm = unsafe { &mut *context.vm };
-        let next = match vm.iterator_next_value(&iterator_ref) {
+        let next = match cpython_iter_next_for_capi(vm, &value) {
             Ok(Some(next)) => next,
             Ok(None) => return std::ptr::null_mut(),
             Err(err) => {
@@ -13304,6 +13508,96 @@ pub unsafe extern "C" fn PyObject_CheckBuffer(object: *mut c_void) -> i32 {
     }
 }
 
+fn cpython_buffer_layout_from_view(
+    view: &CpythonBuffer,
+) -> (
+    usize,
+    Option<String>,
+    Option<Vec<isize>>,
+    Option<Vec<isize>>,
+    bool,
+) {
+    let itemsize = view.itemsize.max(1) as usize;
+    let format = if view.format.is_null() {
+        None
+    } else {
+        unsafe { c_name_to_string(view.format.cast_const()) }.ok()
+    };
+    let ndim = view.ndim.max(0) as usize;
+    let shape = if ndim == 0 || view.shape.is_null() {
+        None
+    } else {
+        Some(
+            (0..ndim)
+                .map(|idx| {
+                    // SAFETY: `shape` is valid for `ndim` entries by C-API contract.
+                    unsafe { *view.shape.add(idx) }
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let strides = if ndim == 0 || view.strides.is_null() {
+        None
+    } else {
+        Some(
+            (0..ndim)
+                .map(|idx| {
+                    // SAFETY: `strides` is valid for `ndim` entries by C-API contract.
+                    unsafe { *view.strides.add(idx) }
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+    let contiguous =
+        unsafe { PyBuffer_IsContiguous(view as *const CpythonBuffer, b'A' as c_char) } != 0;
+    (itemsize, format, shape, strides, contiguous)
+}
+
+fn cpython_alloc_memoryview_with_layout(
+    context: &mut ModuleCapiContext,
+    bytes: Vec<u8>,
+    writable: bool,
+    itemsize: usize,
+    format: Option<String>,
+    shape: Option<Vec<isize>>,
+    strides: Option<Vec<isize>>,
+    contiguous: bool,
+) -> *mut c_void {
+    if context.vm.is_null() {
+        context.set_error("memoryview allocation missing VM context");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: VM pointer is valid for context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    let source = if writable {
+        vm.heap.alloc_bytearray(bytes.clone())
+    } else {
+        vm.heap.alloc_bytes(bytes.clone())
+    };
+    let source_obj = match &source {
+        Value::Bytes(obj) | Value::ByteArray(obj) => obj.clone(),
+        _ => {
+            context.set_error("memoryview allocation expected bytes-like source");
+            return std::ptr::null_mut();
+        }
+    };
+    let value = vm
+        .heap
+        .alloc_memoryview_with(source_obj, itemsize.max(1), format.clone());
+    if let Value::MemoryView(view_obj) = &value
+        && let Object::MemoryView(view_data) = &mut *view_obj.kind_mut()
+    {
+        view_data.shape = shape;
+        view_data.strides = strides;
+        view_data.contiguous = contiguous;
+        view_data.length = Some(bytes.len());
+        view_data.start = 0;
+        view_data.released = false;
+        view_data.format = format;
+    }
+    context.alloc_cpython_ptr_for_value(value)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyMemoryView_FromObject(object: *mut c_void) -> *mut c_void {
     let value = match cpython_value_from_ptr(object) {
@@ -13320,6 +13614,187 @@ pub unsafe extern "C" fn PyMemoryView_FromObject(object: *mut c_void) -> *mut c_
             std::ptr::null_mut()
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMemoryView_FromMemory(
+    mem: *mut c_char,
+    size: isize,
+    flags: i32,
+) -> *mut c_void {
+    if mem.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "PyMemoryView_FromMemory(): mem must not be NULL",
+        );
+        return std::ptr::null_mut();
+    }
+    if size < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "PyMemoryView_FromMemory(): size must be >= 0",
+        );
+        return std::ptr::null_mut();
+    }
+    if flags != 0x0100 && flags != 0x0200 {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller promises `mem` points to at least `size` bytes.
+    let payload = unsafe { std::slice::from_raw_parts(mem.cast::<u8>(), size as usize) }.to_vec();
+    let writable = flags == 0x0200;
+    with_active_cpython_context_mut(|context| {
+        cpython_alloc_memoryview_with_layout(
+            context,
+            payload,
+            writable,
+            1,
+            Some("B".to_string()),
+            None,
+            None,
+            true,
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMemoryView_FromBuffer(info: *const CpythonBuffer) -> *mut c_void {
+    if info.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller passed a valid `Py_buffer`.
+    let view = unsafe { &*info };
+    if view.buf.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "PyMemoryView_FromBuffer(): info->buf must not be NULL",
+        );
+        return std::ptr::null_mut();
+    }
+    if view.len < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "PyMemoryView_FromBuffer(): info->len must be >= 0",
+        );
+        return std::ptr::null_mut();
+    }
+    let len = view.len as usize;
+    // SAFETY: caller promises `buf` points to at least `len` bytes.
+    let payload = unsafe { std::slice::from_raw_parts(view.buf.cast::<u8>(), len) }.to_vec();
+    let writable = view.readonly == 0;
+    let (itemsize, format, shape, strides, contiguous) = cpython_buffer_layout_from_view(view);
+    with_active_cpython_context_mut(|context| {
+        cpython_alloc_memoryview_with_layout(
+            context, payload, writable, itemsize, format, shape, strides, contiguous,
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMemoryView_GetContiguous(
+    object: *mut c_void,
+    buffertype: i32,
+    order: c_char,
+) -> *mut c_void {
+    if buffertype != 0x0100 && buffertype != 0x0200 {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let order_char = order as u8 as char;
+    if !matches!(order_char, 'C' | 'F' | 'A') {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+
+    let mut view = CpythonBuffer {
+        buf: std::ptr::null_mut(),
+        obj: std::ptr::null_mut(),
+        len: 0,
+        itemsize: 0,
+        readonly: 1,
+        ndim: 0,
+        format: std::ptr::null_mut(),
+        shape: std::ptr::null_mut(),
+        strides: std::ptr::null_mut(),
+        suboffsets: std::ptr::null_mut(),
+        internal: std::ptr::null_mut(),
+    };
+    if unsafe { PyObject_GetBuffer(object, &mut view, 0) } != 0 {
+        return std::ptr::null_mut();
+    }
+
+    if buffertype == 0x0200 && view.readonly != 0 {
+        unsafe { PyBuffer_Release((&mut view as *mut CpythonBuffer).cast()) };
+        cpython_set_typed_error(
+            unsafe { PyExc_BufferError },
+            "underlying buffer is not writable",
+        );
+        return std::ptr::null_mut();
+    }
+
+    if unsafe { PyBuffer_IsContiguous(&view, order) } != 0 {
+        unsafe { PyBuffer_Release((&mut view as *mut CpythonBuffer).cast()) };
+        return unsafe { PyMemoryView_FromObject(object) };
+    }
+
+    if buffertype == 0x0200 {
+        unsafe { PyBuffer_Release((&mut view as *mut CpythonBuffer).cast()) };
+        cpython_set_typed_error(
+            unsafe { PyExc_BufferError },
+            "writable contiguous buffer requested for a non-contiguous object.",
+        );
+        return std::ptr::null_mut();
+    }
+
+    let len = view.len.max(0) as usize;
+    let mut contiguous = vec![0u8; len];
+    let copy_status =
+        unsafe { PyBuffer_ToContiguous(contiguous.as_mut_ptr().cast(), &view, view.len, order) };
+    if copy_status != 0 {
+        unsafe { PyBuffer_Release((&mut view as *mut CpythonBuffer).cast()) };
+        return std::ptr::null_mut();
+    }
+
+    let (itemsize, format, shape, _strides, _contiguous) = cpython_buffer_layout_from_view(&view);
+    let mut strides = None;
+    if let Some(shape_values) = shape.clone()
+        && !shape_values.is_empty()
+    {
+        let mut computed = vec![0isize; shape_values.len()];
+        unsafe {
+            PyBuffer_FillContiguousStrides(
+                shape_values.len() as i32,
+                shape_values.as_ptr(),
+                computed.as_mut_ptr(),
+                itemsize as i32,
+                if order_char == 'F' {
+                    b'F' as c_char
+                } else {
+                    b'C' as c_char
+                },
+            );
+        }
+        strides = Some(computed);
+    }
+    unsafe { PyBuffer_Release((&mut view as *mut CpythonBuffer).cast()) };
+    with_active_cpython_context_mut(|context| {
+        cpython_alloc_memoryview_with_layout(
+            context, contiguous, false, itemsize, format, shape, strides, true,
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -17286,6 +17761,18 @@ static KEEP2_PYOBJECT_CHECKBUFFER: unsafe extern "C" fn(*mut c_void) -> i32 = Py
 static KEEP2_PYMEMORYVIEW_FROMOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyMemoryView_FromObject;
 #[used]
+static KEEP2_PYMEMORYVIEW_FROMMEMORY: unsafe extern "C" fn(*mut c_char, isize, i32) -> *mut c_void =
+    PyMemoryView_FromMemory;
+#[used]
+static KEEP2_PYMEMORYVIEW_FROMBUFFER: unsafe extern "C" fn(*const CpythonBuffer) -> *mut c_void =
+    PyMemoryView_FromBuffer;
+#[used]
+static KEEP2_PYMEMORYVIEW_GETCONTIGUOUS: unsafe extern "C" fn(
+    *mut c_void,
+    i32,
+    c_char,
+) -> *mut c_void = PyMemoryView_GetContiguous;
+#[used]
 static KEEP2_PYOBJECT_GETBUFFER: unsafe extern "C" fn(*mut c_void, *mut CpythonBuffer, i32) -> i32 =
     PyObject_GetBuffer;
 #[used]
@@ -18013,6 +18500,12 @@ static KEEP_PYIMPORT_RELOAD_MODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_
 static KEEP_PYEVAL_GET_BUILTINS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetBuiltins;
 #[used]
 static KEEP_PYITER_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PyIter_Check;
+#[used]
+static KEEP_PYITER_NEXTITEM: unsafe extern "C" fn(*mut c_void, *mut *mut c_void) -> i32 =
+    PyIter_NextItem;
+#[used]
+static KEEP_PYITER_SEND: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *mut c_void) -> i32 =
+    PyIter_Send;
 #[used]
 static KEEP_PYITER_NEXT: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyIter_Next;
 #[used]
