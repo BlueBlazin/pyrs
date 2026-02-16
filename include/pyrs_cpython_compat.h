@@ -423,6 +423,10 @@ const char *PyUnicode_AsUTF8AndSize(PyObject *object, long long *size);
 PyObject *PyUnicode_AsUTF8String(PyObject *object);
 PyObject *PyUnicode_AsASCIIString(PyObject *object);
 PyObject *PyUnicode_AsLatin1String(PyObject *object);
+PyObject *PyUnicode_AsRawUnicodeEscapeString(PyObject *object);
+PyObject *PyUnicode_AsUnicodeEscapeString(PyObject *object);
+PyObject *PyUnicode_AsUTF16String(PyObject *object);
+PyObject *PyUnicode_AsUTF32String(PyObject *object);
 long long PyUnicode_AsWideChar(PyObject *unicode, wchar_t *value, long long size);
 wchar_t *PyUnicode_AsWideCharString(PyObject *unicode, long long *size);
 PyObject *PyUnicode_AsEncodedString(
@@ -505,6 +509,38 @@ PyObject *PyUnicode_DecodeUTF8Stateful(
     const char *str,
     long long size,
     const char *errors,
+    long long *consumed
+);
+PyObject *PyUnicode_DecodeRawUnicodeEscape(
+    const char *str,
+    long long size,
+    const char *errors
+);
+PyObject *PyUnicode_DecodeUnicodeEscape(const char *str, long long size, const char *errors);
+PyObject *PyUnicode_DecodeUTF16(
+    const char *str,
+    long long size,
+    const char *errors,
+    int *byteorder
+);
+PyObject *PyUnicode_DecodeUTF16Stateful(
+    const char *str,
+    long long size,
+    const char *errors,
+    int *byteorder,
+    long long *consumed
+);
+PyObject *PyUnicode_DecodeUTF32(
+    const char *str,
+    long long size,
+    const char *errors,
+    int *byteorder
+);
+PyObject *PyUnicode_DecodeUTF32Stateful(
+    const char *str,
+    long long size,
+    const char *errors,
+    int *byteorder,
     long long *consumed
 );
 PyObject *PyUnicode_DecodeFSDefault(const char *str);

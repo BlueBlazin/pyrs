@@ -7829,6 +7829,26 @@ pub unsafe extern "C" fn PyUnicode_AsLatin1String(object: *mut c_void) -> *mut c
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsRawUnicodeEscapeString(object: *mut c_void) -> *mut c_void {
+    unsafe { PyUnicode_AsEncodedObject(object, c"raw_unicode_escape".as_ptr(), std::ptr::null()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsUnicodeEscapeString(object: *mut c_void) -> *mut c_void {
+    unsafe { PyUnicode_AsEncodedObject(object, c"unicode_escape".as_ptr(), std::ptr::null()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsUTF16String(object: *mut c_void) -> *mut c_void {
+    unsafe { PyUnicode_AsEncodedObject(object, c"utf-16".as_ptr(), std::ptr::null()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_AsUTF32String(object: *mut c_void) -> *mut c_void {
+    unsafe { PyUnicode_AsEncodedObject(object, c"utf-32".as_ptr(), std::ptr::null()) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_AsEncodedString(
     object: *mut c_void,
     _encoding: *const c_char,
@@ -8929,6 +8949,122 @@ pub unsafe extern "C" fn PyUnicode_DecodeUTF8Stateful(
     if !result.is_null() && !consumed.is_null() {
         // SAFETY: caller provided writable pointer for consumed output.
         unsafe { *consumed = size };
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeRawUnicodeEscape(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+) -> *mut c_void {
+    cpython_unicode_decode_common(
+        bytes_ptr,
+        size,
+        c"raw_unicode_escape".as_ptr(),
+        errors,
+        "raw_unicode_escape",
+        "PyUnicode_DecodeRawUnicodeEscape",
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeUnicodeEscape(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+) -> *mut c_void {
+    cpython_unicode_decode_common(
+        bytes_ptr,
+        size,
+        c"unicode_escape".as_ptr(),
+        errors,
+        "unicode_escape",
+        "PyUnicode_DecodeUnicodeEscape",
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeUTF16(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+    byteorder: *mut c_int,
+) -> *mut c_void {
+    let result = cpython_unicode_decode_common(
+        bytes_ptr,
+        size,
+        c"utf-16".as_ptr(),
+        errors,
+        "utf-16",
+        "PyUnicode_DecodeUTF16",
+    );
+    if !result.is_null() && !byteorder.is_null() {
+        // SAFETY: caller provided writable byteorder output pointer.
+        unsafe {
+            *byteorder = 0;
+        }
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeUTF16Stateful(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+    byteorder: *mut c_int,
+    consumed: *mut isize,
+) -> *mut c_void {
+    let result = unsafe { PyUnicode_DecodeUTF16(bytes_ptr, size, errors, byteorder) };
+    if !result.is_null() && !consumed.is_null() {
+        // SAFETY: caller provided writable consumed output pointer.
+        unsafe {
+            *consumed = size;
+        }
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeUTF32(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+    byteorder: *mut c_int,
+) -> *mut c_void {
+    let result = cpython_unicode_decode_common(
+        bytes_ptr,
+        size,
+        c"utf-32".as_ptr(),
+        errors,
+        "utf-32",
+        "PyUnicode_DecodeUTF32",
+    );
+    if !result.is_null() && !byteorder.is_null() {
+        // SAFETY: caller provided writable byteorder output pointer.
+        unsafe {
+            *byteorder = 0;
+        }
+    }
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_DecodeUTF32Stateful(
+    bytes_ptr: *const c_char,
+    size: isize,
+    errors: *const c_char,
+    byteorder: *mut c_int,
+    consumed: *mut isize,
+) -> *mut c_void {
+    let result = unsafe { PyUnicode_DecodeUTF32(bytes_ptr, size, errors, byteorder) };
+    if !result.is_null() && !consumed.is_null() {
+        // SAFETY: caller provided writable consumed output pointer.
+        unsafe {
+            *consumed = size;
+        }
     }
     result
 }
@@ -28710,6 +28846,18 @@ static KEEP3_PYUNICODE_ASASCIISTRING: unsafe extern "C" fn(*mut c_void) -> *mut 
 static KEEP3_PYUNICODE_ASLATIN1STRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyUnicode_AsLatin1String;
 #[used]
+static KEEP3_PYUNICODE_ASRAWUNICODEESCAPESTRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicode_AsRawUnicodeEscapeString;
+#[used]
+static KEEP3_PYUNICODE_ASUNICODEESCAPESTRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicode_AsUnicodeEscapeString;
+#[used]
+static KEEP3_PYUNICODE_ASUTF16STRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicode_AsUTF16String;
+#[used]
+static KEEP3_PYUNICODE_ASUTF32STRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyUnicode_AsUTF32String;
+#[used]
 static KEEP3_PYUNICODE_ASENCODEDSTRING: unsafe extern "C" fn(
     *mut c_void,
     *const c_char,
@@ -28898,6 +29046,48 @@ static KEEP3_PYUNICODE_DECODEUTF8STATEFUL: unsafe extern "C" fn(
     *const c_char,
     *mut isize,
 ) -> *mut c_void = PyUnicode_DecodeUTF8Stateful;
+#[used]
+static KEEP3_PYUNICODE_DECODERAWUNICODEESCAPE: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+) -> *mut c_void = PyUnicode_DecodeRawUnicodeEscape;
+#[used]
+static KEEP3_PYUNICODE_DECODEUNICODEESCAPE: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+) -> *mut c_void = PyUnicode_DecodeUnicodeEscape;
+#[used]
+static KEEP3_PYUNICODE_DECODEUTF16: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+    *mut c_int,
+) -> *mut c_void = PyUnicode_DecodeUTF16;
+#[used]
+static KEEP3_PYUNICODE_DECODEUTF16STATEFUL: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+    *mut c_int,
+    *mut isize,
+) -> *mut c_void = PyUnicode_DecodeUTF16Stateful;
+#[used]
+static KEEP3_PYUNICODE_DECODEUTF32: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+    *mut c_int,
+) -> *mut c_void = PyUnicode_DecodeUTF32;
+#[used]
+static KEEP3_PYUNICODE_DECODEUTF32STATEFUL: unsafe extern "C" fn(
+    *const c_char,
+    isize,
+    *const c_char,
+    *mut c_int,
+    *mut isize,
+) -> *mut c_void = PyUnicode_DecodeUTF32Stateful;
 #[used]
 static KEEP3_PYUNICODE_DECODEFSDEFAULT: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyUnicode_DecodeFSDefault;

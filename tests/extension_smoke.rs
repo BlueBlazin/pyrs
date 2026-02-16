@@ -8870,6 +8870,152 @@ PyInit_cpython_api_batch60_probe(void) {
 }
 
 #[test]
+fn cpython_compat_unicode_codec_abi_batch61_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch61 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch61 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch61");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch61_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static int
+utf8_equals(PyObject *value, const char *expected) {
+    const char *text = value ? PyUnicode_AsUTF8(value) : 0;
+    return (text && strcmp(text, expected) == 0) ? 1 : 0;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *text = PyUnicode_FromString("A\xE2\x98\x83");
+    PyObject *raw = PyUnicode_AsRawUnicodeEscapeString(text);
+    PyObject *uni = PyUnicode_AsUnicodeEscapeString(text);
+    PyObject *u16 = PyUnicode_AsUTF16String(text);
+    PyObject *u32 = PyUnicode_AsUTF32String(text);
+    int encode_ok = (raw && uni && u16 && u32) ? 1 : 0;
+
+    const char *escaped = "A\\u2603";
+    PyObject *dec_raw = PyUnicode_DecodeRawUnicodeEscape(escaped, 7, 0);
+    PyObject *dec_uni = PyUnicode_DecodeUnicodeEscape(escaped, 7, 0);
+    int dec_raw_ok = utf8_equals(dec_raw, "A\xE2\x98\x83");
+    int dec_uni_ok = utf8_equals(dec_uni, "A\xE2\x98\x83");
+
+    char *u16_buf = 0;
+    long long u16_len = 0;
+    int u16_extract_ok = (PyBytes_AsStringAndSize(u16, &u16_buf, &u16_len) == 0) ? 1 : 0;
+    int byteorder16 = 101;
+    int byteorder16_stateful = 202;
+    long long consumed16 = -1;
+    PyObject *dec16 = u16_extract_ok ? PyUnicode_DecodeUTF16(u16_buf, u16_len, 0, &byteorder16) : 0;
+    PyObject *dec16s = u16_extract_ok
+        ? PyUnicode_DecodeUTF16Stateful(u16_buf, u16_len, 0, &byteorder16_stateful, &consumed16)
+        : 0;
+    int dec16_ok = utf8_equals(dec16, "A\xE2\x98\x83");
+    int dec16_stateful_ok = utf8_equals(dec16s, "A\xE2\x98\x83") && consumed16 == u16_len;
+    int byteorder16_ok = (byteorder16 == 0 && byteorder16_stateful == 0) ? 1 : 0;
+
+    char *u32_buf = 0;
+    long long u32_len = 0;
+    int u32_extract_ok = (PyBytes_AsStringAndSize(u32, &u32_buf, &u32_len) == 0) ? 1 : 0;
+    int byteorder32 = 303;
+    int byteorder32_stateful = 404;
+    long long consumed32 = -1;
+    PyObject *dec32 = u32_extract_ok ? PyUnicode_DecodeUTF32(u32_buf, u32_len, 0, &byteorder32) : 0;
+    PyObject *dec32s = u32_extract_ok
+        ? PyUnicode_DecodeUTF32Stateful(u32_buf, u32_len, 0, &byteorder32_stateful, &consumed32)
+        : 0;
+    int dec32_ok = utf8_equals(dec32, "A\xE2\x98\x83");
+    int dec32_stateful_ok = utf8_equals(dec32s, "A\xE2\x98\x83") && consumed32 == u32_len;
+    int byteorder32_ok = (byteorder32 == 0 && byteorder32_stateful == 0) ? 1 : 0;
+
+    Py_XDECREF(dec32s);
+    Py_XDECREF(dec32);
+    Py_XDECREF(dec16s);
+    Py_XDECREF(dec16);
+    Py_XDECREF(dec_uni);
+    Py_XDECREF(dec_raw);
+    Py_XDECREF(u32);
+    Py_XDECREF(u16);
+    Py_XDECREF(uni);
+    Py_XDECREF(raw);
+    Py_XDECREF(text);
+
+    return Py_BuildValue(
+        "(iiiiiiii)",
+        encode_ok,
+        dec_raw_ok,
+        dec_uni_ok,
+        dec16_ok,
+        dec16_stateful_ok,
+        dec32_ok,
+        dec32_stateful_ok,
+        (byteorder16_ok && byteorder32_ok) ? 1 : 0);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe unicode codec ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch61_probe",
+    "cpython api batch61 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch61_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch61_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch61 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch61_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch61 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

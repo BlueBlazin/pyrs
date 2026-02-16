@@ -1524,6 +1524,32 @@ fn exports_abi3_batch60_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch61_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyUnicode_AsRawUnicodeEscapeString",
+        "PyUnicode_AsUTF16String",
+        "PyUnicode_AsUTF32String",
+        "PyUnicode_AsUnicodeEscapeString",
+        "PyUnicode_DecodeRawUnicodeEscape",
+        "PyUnicode_DecodeUTF16",
+        "PyUnicode_DecodeUTF16Stateful",
+        "PyUnicode_DecodeUTF32",
+        "PyUnicode_DecodeUTF32Stateful",
+        "PyUnicode_DecodeUnicodeEscape",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch61 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
