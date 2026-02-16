@@ -82,6 +82,21 @@ static void *build_none(void)
     return none;
 }
 
+static int object_is_instance_of_type(void *value, void *type_obj)
+{
+    if (value == NULL || type_obj == NULL) {
+        return 0;
+    }
+    PyObjectHeadCompat *head = (PyObjectHeadCompat *)value;
+    if (head->ob_type == type_obj) {
+        return 1;
+    }
+    if (head->ob_type == NULL) {
+        return 0;
+    }
+    return PyType_IsSubtype(head->ob_type, type_obj);
+}
+
 static Py_ssize_t countformat(const char *format, char endchar)
 {
     Py_ssize_t count = 0;
@@ -752,6 +767,34 @@ static int parse_args_and_keywords_va(
             }
         }
 
+        if (token == 'O' && p[1] == '!') {
+            p++;
+            void *expected_type = va_arg(*ap, void *);
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (!object_is_instance_of_type(value, expected_type)) {
+                free(spec);
+                pyrs_capi_set_error_message(
+                    "PyArg_ParseTupleAndKeywords argument has incorrect type"
+                );
+                return 0;
+            }
+            if (output != NULL) {
+                *output = value;
+                Py_IncRef(value);
+            }
+            token_index++;
+            continue;
+        }
+
         if (token == 'O' && p[1] == '&') {
             p++;
             arg_converter_fn converter = va_arg(*ap, arg_converter_fn);
@@ -818,8 +861,18 @@ static int parse_args_and_keywords_va(
             continue;
         }
 
-        free(spec);
-        pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords token is not implemented");
+        {
+            char message[160];
+            snprintf(
+                message,
+                sizeof(message),
+                "PyArg_ParseTupleAndKeywords token '%c' is not implemented (spec=\"%s\")",
+                token,
+                spec
+            );
+            free(spec);
+            pyrs_capi_set_error_message(message);
+        }
         return 0;
     }
 

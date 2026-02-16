@@ -7057,7 +7057,13 @@ impl Vm {
             "re" | "re._compiler" | "re._constants" | "re._parser" | "re._casefix"
         );
         let is_decimal_stack = name == "decimal";
-        if !is_json_stack && !is_pickle_stack && !is_re_stack && !is_decimal_stack {
+        let is_functools_stack = name == "functools";
+        if !is_json_stack
+            && !is_pickle_stack
+            && !is_re_stack
+            && !is_decimal_stack
+            && !is_functools_stack
+        {
             return false;
         }
         if is_json_stack && !self.prefer_pure_json_when_available {

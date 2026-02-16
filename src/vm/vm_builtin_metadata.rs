@@ -846,7 +846,19 @@ impl Vm {
             "append" if builtin == BuiltinFunction::List => {
                 Ok(Value::Builtin(BuiltinFunction::ListAppendDescriptor))
             }
-            "__len__" if builtin == BuiltinFunction::List => {
+            "__len__"
+                if matches!(
+                    builtin,
+                    BuiltinFunction::List
+                        | BuiltinFunction::Tuple
+                        | BuiltinFunction::Dict
+                        | BuiltinFunction::Set
+                        | BuiltinFunction::FrozenSet
+                        | BuiltinFunction::Str
+                        | BuiltinFunction::Bytes
+                        | BuiltinFunction::ByteArray
+                ) =>
+            {
                 Ok(Value::Builtin(BuiltinFunction::Len))
             }
             "maketrans" if builtin == BuiltinFunction::Bytes => Ok(self
@@ -1599,6 +1611,9 @@ impl Vm {
         owner: Option<Value>,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if attr_name == "__len__" {
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, dict));
+        }
         if attr_name == "__contains__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorContains, dict));
         }
@@ -1906,6 +1921,7 @@ impl Vm {
             Function,
             Module,
             Class,
+            NativeMethod(NativeMethodKind),
             Unsupported,
         }
         let function_kind = {
@@ -1914,6 +1930,9 @@ impl Vm {
                 Object::Function(_) => BoundFunctionKind::Function,
                 Object::Module(_) => BoundFunctionKind::Module,
                 Object::Class(_) => BoundFunctionKind::Class,
+                Object::NativeMethod(native_method) => {
+                    BoundFunctionKind::NativeMethod(native_method.kind)
+                }
                 _ => BoundFunctionKind::Unsupported,
             }
         };
@@ -1921,7 +1940,42 @@ impl Vm {
             BoundFunctionKind::Function => Some(Value::Function(obj.clone())),
             BoundFunctionKind::Module => Some(Value::Module(obj.clone())),
             BoundFunctionKind::Class => Some(Value::Class(obj.clone())),
+            BoundFunctionKind::NativeMethod(_) => None,
             BoundFunctionKind::Unsupported => None,
+        };
+        if matches!(attr_name, "__name__" | "__qualname__" | "__module__" | "__doc__")
+            && let Some(overrides) = self.callable_attr_overrides.get(&function.id())
+            && let Some(value) = overrides.get(attr_name)
+        {
+            return Ok(value.clone());
+        }
+        let native_method_default_name = |kind: &NativeMethodKind| -> String {
+            match kind {
+                NativeMethodKind::ExtensionFunctionCall(function_id) => self
+                    .extension_callable_registry
+                    .get(function_id)
+                    .map(|entry| entry.name.clone())
+                    .unwrap_or_else(|| "method".to_string()),
+                _ => "method".to_string(),
+            }
+        };
+        let native_method_default_module = |kind: &NativeMethodKind| -> Value {
+            if let NativeMethodKind::ExtensionFunctionCall(function_id) = kind
+                && let Some(entry) = self.extension_callable_registry.get(function_id)
+                && let Object::Module(module_data) = &*entry.module.kind()
+            {
+                return Value::Str(module_data.name.clone());
+            }
+            match self.receiver_value(&receiver) {
+                Ok(Value::Module(module)) => {
+                    if let Object::Module(module_data) = &*module.kind() {
+                        Value::Str(module_data.name.clone())
+                    } else {
+                        Value::None
+                    }
+                }
+                _ => Value::None,
+            }
         };
         match attr_name {
             "__call__" => Ok(Value::BoundMethod(method.clone())),
@@ -1944,6 +1998,16 @@ impl Vm {
             "__func__" => as_value(&function_kind, &function)
                 .ok_or_else(|| RuntimeError::new("attribute access unsupported type")),
             "__name__" | "__qualname__" | "__module__" | "__doc__" => {
+                if let BoundFunctionKind::NativeMethod(kind) = &function_kind {
+                    return match attr_name {
+                        "__name__" | "__qualname__" => {
+                            Ok(Value::Str(native_method_default_name(kind)))
+                        }
+                        "__module__" => Ok(native_method_default_module(kind)),
+                        "__doc__" => Ok(Value::None),
+                        _ => unreachable!(),
+                    };
+                }
                 let function_value = as_value(&function_kind, &function)
                     .ok_or_else(|| RuntimeError::new("attribute access unsupported type"))?;
                 self.builtin_getattr(
@@ -1955,6 +2019,42 @@ impl Vm {
                 "method has no attribute '{}'",
                 attr_name
             ))),
+        }
+    }
+
+    pub(super) fn store_attr_bound_method(
+        &mut self,
+        method: &ObjRef,
+        attr_name: &str,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        let function = {
+            let method_ref = method.kind();
+            let Object::BoundMethod(method_data) = &*method_ref else {
+                return Err(RuntimeError::new("attribute assignment unsupported type"));
+            };
+            method_data.function.clone()
+        };
+        match attr_name {
+            "__name__" | "__qualname__" | "__module__" | "__doc__" => {}
+            _ => {
+                return Err(RuntimeError::new(format!(
+                    "method has no writable attribute '{}'",
+                    attr_name
+                )));
+            }
+        }
+        let function_kind = function.kind();
+        match &*function_kind {
+            Object::Function(_) => self.store_attr_function(&function, attr_name.to_string(), value),
+            Object::NativeMethod(_) => {
+                self.callable_attr_overrides
+                    .entry(function.id())
+                    .or_default()
+                    .insert(attr_name.to_string(), value);
+                Ok(())
+            }
+            _ => Err(RuntimeError::new("attribute assignment unsupported type")),
         }
     }
 
@@ -2666,6 +2766,11 @@ impl Vm {
                 return self.call_internal(call_target, args, kwargs);
             }
             Value::Class(class) => {
+                let proxy_value = Value::Class(class.clone());
+                if Self::cpython_proxy_raw_ptr_from_value(&proxy_value).is_some() {
+                    let value = self.call_cpython_proxy_object(&proxy_value, args, kwargs)?;
+                    return Ok(InternalCallOutcome::Value(value));
+                }
                 if let Some(call_target) = self.resolve_metaclass_call_target(&class)? {
                     return self.call_internal(call_target, args, kwargs);
                 }
@@ -3005,6 +3110,42 @@ impl Vm {
                                     ));
                                 }
                             } else if !kwargs.is_empty() || !args.is_empty() {
+                                if std::env::var_os("PYRS_TRACE_CLASS_CTOR_NOARGS").is_some() {
+                                    let class_name = match &*class.kind() {
+                                        Object::Class(data) => data.name.clone(),
+                                        _ => "<non-class>".to_string(),
+                                    };
+                                    let (filename, function_name, line, column) = self
+                                        .frames
+                                        .last()
+                                        .map(|frame| {
+                                            let location = frame.code.locations.get(frame.last_ip);
+                                            (
+                                                frame.code.filename.clone(),
+                                                frame.code.name.clone(),
+                                                location.map(|loc| loc.line).unwrap_or(0),
+                                                location.map(|loc| loc.column).unwrap_or(0),
+                                            )
+                                        })
+                                        .unwrap_or_else(|| {
+                                            (
+                                                "<no-frame>".to_string(),
+                                                "<no-function>".to_string(),
+                                                0,
+                                                0,
+                                            )
+                                        });
+                                    eprintln!(
+                                        "[class-ctor-noargs] class={} args_len={} kwargs_len={} at {}:{}:{} in {}",
+                                        class_name,
+                                        args.len(),
+                                        kwargs.len(),
+                                        filename,
+                                        line,
+                                        column,
+                                        function_name
+                                    );
+                                }
                                 return Err(RuntimeError::new(
                                     "class constructor takes no arguments",
                                 ));
@@ -3227,12 +3368,16 @@ impl Vm {
             if let Some(meta_attr) = class_attr_lookup(&meta, attr_name) {
                 descriptor_owner = Some(meta);
                 meta_attr
+            } else if let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name) {
+                proxy_attr
             } else {
                 return Err(RuntimeError::new(format!(
                     "class '{}' has no attribute '{}'",
                     class_name, attr_name
                 )));
             }
+        } else if let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name) {
+            proxy_attr
         } else {
             return Err(RuntimeError::new(format!(
                 "class '{}' has no attribute '{}'",
@@ -4073,6 +4218,11 @@ impl Vm {
         }
         if attr_name == "__doc__" {
             return Ok(AttrAccessOutcome::Value(Value::None));
+        }
+        if let Some(proxy_attr) =
+            self.load_cpython_proxy_attr_for_value(&Value::Instance(instance.clone()), attr_name)
+        {
+            return Ok(AttrAccessOutcome::Value(proxy_attr));
         }
 
         let class_name = match &*class_ref.kind() {

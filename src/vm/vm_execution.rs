@@ -422,6 +422,28 @@ impl Vm {
             };
 
             if should_return {
+                if let Some(filter) = std::env::var_os("PYRS_TRACE_MODULE_RETURN_IP")
+                    && let Some(filter) = filter.to_str()
+                    && let Some(frame) = self.frames.last()
+                    && frame.is_module
+                    && frame.code.filename.contains(filter)
+                {
+                    eprintln!(
+                        "[module-return] file={} ip={} instr_len={} active_exc={} blocks={}",
+                        frame.code.filename,
+                        frame.ip,
+                        frame.code.instructions.len(),
+                        frame.active_exception.is_some(),
+                        frame.blocks.len()
+                    );
+                }
+                if let Some(frame) = self.frames.last_mut()
+                    && frame.is_module
+                    && let Some(exc) = frame.active_exception.take()
+                {
+                    self.unwind_exception(exc)?;
+                    continue;
+                }
                 let mut frame = self.frames.pop().expect("frame exists");
                 if let Some(module_dict) = frame.module_locals_dict.take() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
@@ -1813,11 +1835,21 @@ impl Vm {
                         self.touch_class_attr_version(&class);
                     }
                     Value::Function(func) => self.store_attr_function(&func, attr_name, value)?,
+                    Value::BoundMethod(method) => {
+                        self.store_attr_bound_method(&method, &attr_name, value)?
+                    }
                     Value::Cell(cell) => self.store_attr_cell(&cell, &attr_name, value)?,
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
                     }
                     _ => {
+                        if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
+                            eprintln!(
+                                "[store-attr] unsupported target={} attr={}",
+                                self.value_type_name_for_error(&target),
+                                attr_name
+                            );
+                        }
                         return Err(RuntimeError::new("attribute assignment unsupported type"));
                     }
                 }
@@ -1859,11 +1891,21 @@ impl Vm {
                         self.touch_class_attr_version(&class);
                     }
                     Value::Function(func) => self.store_attr_function(&func, attr_name, value)?,
+                    Value::BoundMethod(method) => {
+                        self.store_attr_bound_method(&method, &attr_name, value)?
+                    }
                     Value::Cell(cell) => self.store_attr_cell(&cell, &attr_name, value)?,
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
                     }
                     _ => {
+                        if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
+                            eprintln!(
+                                "[store-attr-cpython] unsupported target={} attr={}",
+                                self.value_type_name_for_error(&target),
+                                attr_name
+                            );
+                        }
                         return Err(RuntimeError::new("attribute assignment unsupported type"));
                     }
                 }
@@ -4648,7 +4690,6 @@ impl Vm {
             }
             Opcode::ImportName => {
                 let caller_idx = self.frames.len().saturating_sub(1);
-                let caller_depth = self.frames.len();
                 let idx = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing import argument"))?
@@ -4664,7 +4705,6 @@ impl Vm {
                     }
                 };
                 let module = self.import_module_object(&name)?;
-                self.run_pending_import_frames(caller_depth)?;
                 let module = self.canonical_imported_module_for_name(&name, module);
                 let result_module = self.module_for_plain_import(&name, module);
                 self.push_value_to_caller_frame(caller_idx, Value::Module(result_module))?;
@@ -4692,8 +4732,11 @@ impl Vm {
                     return Err(RuntimeError::new("negative import level"));
                 }
                 let resolved_name = self.resolve_import_name(&name, level as usize)?;
+                let depth_before_import = self.frames.len();
                 let module = self.import_module_object(&resolved_name)?;
-                self.run_pending_import_frames(caller_depth)?;
+                if self.frames.len() > depth_before_import {
+                    self.run_pending_import_frames(caller_depth)?;
+                }
                 let module = self.canonical_imported_module_for_name(&resolved_name, module);
                 let result_module = if self.fromlist_requested(&fromlist) {
                     module
@@ -4932,13 +4975,50 @@ impl Vm {
                                     .and_then(|frame| frame.active_exception.as_ref())
                                     .is_some()
                                 {
-                                    return Ok(None);
+                                    return Err(self.runtime_error_from_active_exception(
+                                        "iterator __next__ failed",
+                                    ));
                                 }
                                 return Err(RuntimeError::new("iterator __next__ failed"));
                             }
                         }
                     }
-                    _ => return Err(RuntimeError::new("FOR_ITER expects iterator")),
+                    _ => {
+                        if std::env::var_os("PYRS_TRACE_FOR_ITER_FAIL").is_some() {
+                            let (filename, function_name, line, column, ip) = self
+                                .frames
+                                .last()
+                                .map(|frame| {
+                                    let location = frame.code.locations.get(frame.last_ip);
+                                    (
+                                        frame.code.filename.clone(),
+                                        frame.code.name.clone(),
+                                        location.map(|loc| loc.line).unwrap_or(0),
+                                        location.map(|loc| loc.column).unwrap_or(0),
+                                        frame.last_ip,
+                                    )
+                                })
+                                .unwrap_or_else(|| {
+                                    (
+                                        "<no-frame>".to_string(),
+                                        "<no-function>".to_string(),
+                                        0,
+                                        0,
+                                        0,
+                                    )
+                                });
+                            eprintln!(
+                                "[for-iter-fail] value_type={} at {}:{}:{} ip={} fn={}",
+                                self.value_type_name_for_error(&iterator_value),
+                                filename,
+                                line,
+                                column,
+                                ip,
+                                function_name
+                            );
+                        }
+                        return Err(RuntimeError::new("FOR_ITER expects iterator"));
+                    }
                 }
             }
             Opcode::YieldValue => {
@@ -5170,6 +5250,32 @@ impl Vm {
                     .frames
                     .last()
                     .and_then(|frame| frame.active_exception.clone());
+                let mut stack_recovered_exception: Option<Value> = None;
+                if !self.value_is_exception_like(&exception)
+                    && active_exception
+                        .as_ref()
+                        .is_none_or(|value| !self.value_is_exception_like(value))
+                    && let Some(frame) = self.frames.last()
+                {
+                    for candidate in frame.stack.iter().rev() {
+                        if self.value_is_exception_like(candidate) {
+                            stack_recovered_exception = Some(candidate.clone());
+                            break;
+                        }
+                    }
+                }
+                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                    let active_tag = active_exception
+                        .as_ref()
+                        .map(|value| self.value_type_name_for_error(value))
+                        .unwrap_or_else(|| "None".to_string());
+                    eprintln!(
+                        "[match-exc-enter] exception={} handler={} active={}",
+                        self.value_type_name_for_error(&exception),
+                        self.value_type_name_for_error(&handler_type),
+                        active_tag
+                    );
+                }
                 if !self.value_is_exception_like(&exception)
                     && let Some(active) = active_exception
                     && self.value_is_exception_like(&active)
@@ -5198,12 +5304,108 @@ impl Vm {
                         }
                     }
                 }
+                if !self.value_is_exception_like(&exception)
+                    && let Some(recovered) = stack_recovered_exception
+                {
+                    exception = recovered;
+                }
+                let replace_stack_top_exception = if self.value_is_exception_like(&exception) {
+                    self.frames
+                        .last()
+                        .and_then(|frame| frame.stack.last())
+                        .is_some_and(|top| !self.value_is_exception_like(top))
+                } else {
+                    false
+                };
+                if replace_stack_top_exception
+                    && let Some(frame) = self.frames.last_mut()
+                    && let Some(top) = frame.stack.last_mut()
+                {
+                    *top = exception.clone();
+                }
+                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                    eprintln!(
+                        "[match-exc-before] exception={} handler={}",
+                        self.value_type_name_for_error(&exception),
+                        self.value_type_name_for_error(&handler_type)
+                    );
+                }
                 let matches = self.exception_matches(&exception, &handler_type)?;
                 self.push_value(Value::Bool(matches));
             }
             Opcode::CheckExcMatch => {
                 let handler_type = self.pop_value()?;
-                let exception = self.pop_value()?;
+                let mut exception = self.pop_value()?;
+                let active_exception = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.active_exception.clone());
+                let mut stack_recovered_exception: Option<Value> = None;
+                if !self.value_is_exception_like(&exception)
+                    && active_exception
+                        .as_ref()
+                        .is_none_or(|value| !self.value_is_exception_like(value))
+                    && let Some(frame) = self.frames.last()
+                {
+                    for candidate in frame.stack.iter().rev() {
+                        if self.value_is_exception_like(candidate) {
+                            stack_recovered_exception = Some(candidate.clone());
+                            break;
+                        }
+                    }
+                }
+                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                    let active_tag = active_exception
+                        .as_ref()
+                        .map(|value| self.value_type_name_for_error(value))
+                        .unwrap_or_else(|| "None".to_string());
+                    eprintln!(
+                        "[check-exc-enter] exception={} handler={} active={}",
+                        self.value_type_name_for_error(&exception),
+                        self.value_type_name_for_error(&handler_type),
+                        active_tag
+                    );
+                }
+                if !self.value_is_exception_like(&exception)
+                    && let Some(active) = active_exception
+                    && self.value_is_exception_like(&active)
+                {
+                    exception = active;
+                    if let Some(frame) = self.frames.last_mut() {
+                        let top_is_exceptionish = frame
+                            .stack
+                            .last()
+                            .map(|value| {
+                                matches!(value, Value::Exception(_) | Value::ExceptionType(_))
+                            })
+                            .unwrap_or(false);
+                        let second_is_exceptionish = frame
+                            .stack
+                            .get(frame.stack.len().saturating_sub(2))
+                            .map(|value| {
+                                matches!(value, Value::Exception(_) | Value::ExceptionType(_))
+                            })
+                            .unwrap_or(false);
+                        let should_drop_junk = frame.stack.len() >= 2
+                            && !top_is_exceptionish
+                            && second_is_exceptionish;
+                        if should_drop_junk {
+                            frame.stack.pop();
+                        }
+                    }
+                }
+                if !self.value_is_exception_like(&exception)
+                    && let Some(recovered) = stack_recovered_exception
+                {
+                    exception = recovered;
+                }
+                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                    eprintln!(
+                        "[check-exc-before-match] exception={} handler={}",
+                        self.value_type_name_for_error(&exception),
+                        self.value_type_name_for_error(&handler_type)
+                    );
+                }
                 let matches = self.exception_matches(&exception, &handler_type)?;
                 if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
                     eprintln!(
@@ -5484,6 +5686,20 @@ impl Vm {
                     frame.stack.pop().unwrap_or(Value::None)
                 };
                 let mut frame = self.frames.pop().expect("frame exists");
+                if let Some(filter) = std::env::var_os("PYRS_TRACE_MODULE_RETURN_IP")
+                    && let Some(filter) = filter.to_str()
+                    && frame.is_module
+                    && frame.code.filename.contains(filter)
+                {
+                    eprintln!(
+                        "[module-return-op] file={} last_ip={} instr_len={} active_exc={} blocks={}",
+                        frame.code.filename,
+                        frame.last_ip,
+                        frame.code.instructions.len(),
+                        frame.active_exception.is_some(),
+                        frame.blocks.len()
+                    );
+                }
                 if let Some(module_dict) = frame.module_locals_dict.take() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
                 }
@@ -5578,6 +5794,22 @@ impl Vm {
             traceback.push(Self::frame_trace(frame));
 
             if let Some(block) = frame.blocks.pop() {
+                if let Some(filter) = std::env::var_os("PYRS_TRACE_UNWIND")
+                    && let Some(filter) = filter.to_str()
+                    && frame.code.filename.contains(filter)
+                {
+                    let location = frame.code.locations.get(frame.last_ip);
+                    eprintln!(
+                        "[unwind-block] file={} fn={} line={} col={} ip={} handler={} exc={:?}",
+                        frame.code.filename,
+                        frame.code.name,
+                        location.map(|loc| loc.line).unwrap_or(0),
+                        location.map(|loc| loc.column).unwrap_or(0),
+                        frame.last_ip,
+                        block.handler,
+                        exc
+                    );
+                }
                 frame.stack.truncate(block.stack_len);
                 frame.stack.push(exc.clone());
                 frame.ip = block.handler;
@@ -5608,6 +5840,7 @@ impl Vm {
                     frame.stack.push(Value::Int(lasti_to_push as i64));
                 }
                 frame.stack.push(exc.clone());
+                frame.active_exception = Some(exc.clone());
                 frame.ip = target;
                 return Ok(());
             }

@@ -179,11 +179,27 @@ impl Vm {
         if self.frames.len() <= caller_depth {
             return Ok(());
         }
+        let caller_active_exception_before = if caller_depth == 0 {
+            None
+        } else {
+            self.frames
+                .get(caller_depth.saturating_sub(1))
+                .and_then(|frame| frame.active_exception.clone())
+        };
         let previous_stop = self.run_stop_depth;
         self.run_stop_depth = Some(caller_depth);
         let run_result = self.run();
         self.run_stop_depth = previous_stop;
         run_result?;
+        if caller_depth > 0
+            && self
+                .frames
+                .get(caller_depth.saturating_sub(1))
+                .map(|frame| frame.active_exception.clone())
+                != Some(caller_active_exception_before)
+        {
+            return Err(self.runtime_error_from_active_exception("import raised exception"));
+        }
         Ok(())
     }
 
