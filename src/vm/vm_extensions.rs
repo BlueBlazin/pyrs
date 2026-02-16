@@ -764,6 +764,128 @@ fn cpython_bigint_low_u64(value: &BigInt) -> u64 {
     acc
 }
 
+fn cpython_bigint_from_value(value: Value) -> Result<BigInt, String> {
+    match value {
+        Value::Int(v) => Ok(BigInt::from_i64(v)),
+        Value::Bool(v) => Ok(BigInt::from_i64(if v { 1 } else { 0 })),
+        Value::BigInt(v) => Ok(*v),
+        _ => Err("expect int".to_string()),
+    }
+}
+
+fn cpython_bigint_is_power_of_two(value: &BigInt) -> bool {
+    if value.is_zero() || value.is_negative() {
+        return false;
+    }
+    let one = BigInt::one();
+    let minus_one = value.sub(&one);
+    value.bitand(&minus_one).is_zero()
+}
+
+fn cpython_required_signed_bytes_for_bigint(value: &BigInt) -> usize {
+    if value.is_zero() {
+        return 1;
+    }
+    if !value.is_negative() {
+        let bits = value.bit_length();
+        return (bits + 1).div_ceil(8).max(1);
+    }
+    let abs = value.abs();
+    let bits = abs.bit_length();
+    if cpython_bigint_is_power_of_two(&abs) {
+        bits.div_ceil(8).max(1)
+    } else {
+        (bits + 1).div_ceil(8).max(1)
+    }
+}
+
+fn cpython_required_unsigned_bytes_for_bigint(value: &BigInt) -> usize {
+    if value.is_zero() {
+        1
+    } else {
+        value.bit_length().div_ceil(8).max(1)
+    }
+}
+
+fn cpython_bigint_to_unsigned_le_bytes(value: &BigInt) -> Vec<u8> {
+    let abs = value.abs();
+    abs.to_abs_le_bytes()
+}
+
+fn cpython_bigint_to_twos_complement_le(value: &BigInt, n_bytes: usize) -> Vec<u8> {
+    if n_bytes == 0 {
+        return Vec::new();
+    }
+    if !value.is_negative() {
+        let raw = cpython_bigint_to_unsigned_le_bytes(value);
+        let mut out = vec![0u8; n_bytes];
+        let copy_len = std::cmp::min(n_bytes, raw.len());
+        out[..copy_len].copy_from_slice(&raw[..copy_len]);
+        return out;
+    }
+    let raw = cpython_bigint_to_unsigned_le_bytes(value);
+    let mut out = vec![0u8; n_bytes];
+    let copy_len = std::cmp::min(n_bytes, raw.len());
+    out[..copy_len].copy_from_slice(&raw[..copy_len]);
+    for byte in &mut out {
+        *byte = !*byte;
+    }
+    let mut carry = 1u16;
+    for byte in &mut out {
+        let sum = *byte as u16 + carry;
+        *byte = sum as u8;
+        carry = sum >> 8;
+        if carry == 0 {
+            break;
+        }
+    }
+    out
+}
+
+fn cpython_bigint_from_unsigned_le_bytes(bytes: &[u8]) -> BigInt {
+    let mut out = BigInt::zero();
+    for byte in bytes.iter().rev() {
+        out = out.mul_small(256);
+        out = out.add_small(*byte as u32);
+    }
+    out
+}
+
+fn cpython_bigint_from_twos_complement_le(bytes: &[u8], signed: bool) -> BigInt {
+    if bytes.is_empty() {
+        return BigInt::zero();
+    }
+    if !signed {
+        return cpython_bigint_from_unsigned_le_bytes(bytes);
+    }
+    let sign_set = (bytes[bytes.len() - 1] & 0x80) != 0;
+    if !sign_set {
+        return cpython_bigint_from_unsigned_le_bytes(bytes);
+    }
+    let mut mag = bytes.to_vec();
+    for byte in &mut mag {
+        *byte = !*byte;
+    }
+    let mut carry = 1u16;
+    for byte in &mut mag {
+        let sum = *byte as u16 + carry;
+        *byte = sum as u8;
+        carry = sum >> 8;
+        if carry == 0 {
+            break;
+        }
+    }
+    cpython_bigint_from_unsigned_le_bytes(&mag).negated()
+}
+
+fn cpython_asnativebytes_resolve_endian(flags: i32) -> i32 {
+    if flags == -1 || (flags & 0x2) != 0 {
+        if cfg!(target_endian = "little") { 1 } else { 0 }
+    } else {
+        flags & 0x1
+    }
+}
+
 fn cpython_type_for_value(value: &Value) -> *mut c_void {
     match value {
         Value::None => std::ptr::addr_of_mut!(PyNone_Type).cast(),
@@ -5527,6 +5649,160 @@ pub unsafe extern "C" fn PyLong_GetInfo() -> *mut c_void {
         cpython_set_error(err);
         std::ptr::null_mut()
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsNativeBytes(
+    object: *mut c_void,
+    buffer: *mut c_void,
+    n_bytes: isize,
+    flags: i32,
+) -> isize {
+    const PY_ASNATIVEBYTES_UNSIGNED_BUFFER: i32 = 0x4;
+    const PY_ASNATIVEBYTES_REJECT_NEGATIVE: i32 = 0x8;
+    const PY_ASNATIVEBYTES_ALLOW_INDEX: i32 = 0x10;
+
+    if object.is_null() || n_bytes < 0 {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if n_bytes > 0 && buffer.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let little_endian = cpython_asnativebytes_resolve_endian(flags);
+    with_active_cpython_context_mut(|context| {
+        let mut value = match context.cpython_value_from_ptr_or_proxy(object) {
+            Some(value) => value,
+            None => {
+                context.set_error("PyLong_AsNativeBytes received unknown object pointer");
+                return -1;
+            }
+        };
+        if !matches!(value, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)) {
+            if flags != -1 && (flags & PY_ASNATIVEBYTES_ALLOW_INDEX) != 0 {
+                let indexed = unsafe { PyNumber_Index(object) };
+                if indexed.is_null() {
+                    return -1;
+                }
+                let next = match context.cpython_value_from_ptr_or_proxy(indexed) {
+                    Some(value) => value,
+                    None => {
+                        unsafe { Py_DecRef(indexed) };
+                        context.set_error("PyLong_AsNativeBytes index conversion failed");
+                        return -1;
+                    }
+                };
+                unsafe { Py_DecRef(indexed) };
+                value = next;
+            } else {
+                context.set_error("expect int");
+                return -1;
+            }
+        }
+        let bigint = match cpython_bigint_from_value(value) {
+            Ok(bigint) => bigint,
+            Err(err) => {
+                context.set_error(err);
+                return -1;
+            }
+        };
+        if flags != -1
+            && (flags & PY_ASNATIVEBYTES_REJECT_NEGATIVE) != 0
+            && bigint.is_negative()
+        {
+            cpython_set_typed_error(unsafe { PyExc_ValueError }, "Cannot convert negative int");
+            return -1;
+        }
+        let required = if !bigint.is_negative()
+            && (flags == -1 || (flags & PY_ASNATIVEBYTES_UNSIGNED_BUFFER) != 0)
+        {
+            cpython_required_unsigned_bytes_for_bigint(&bigint)
+        } else {
+            cpython_required_signed_bytes_for_bigint(&bigint)
+        };
+        if n_bytes == 0 {
+            return required as isize;
+        }
+        let n = n_bytes as usize;
+        let encoded_le = cpython_bigint_to_twos_complement_le(&bigint, n);
+        if little_endian != 0 {
+            // SAFETY: caller provided writable output buffer of `n` bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(encoded_le.as_ptr(), buffer.cast::<u8>(), n);
+            }
+        } else {
+            for (idx, byte) in encoded_le.iter().enumerate() {
+                // SAFETY: caller provided writable output buffer of `n` bytes.
+                unsafe {
+                    *buffer.cast::<u8>().add(n - idx - 1) = *byte;
+                }
+            }
+        }
+        required as isize
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromNativeBytes(
+    buffer: *const c_void,
+    n_bytes: usize,
+    flags: i32,
+) -> *mut c_void {
+    const PY_ASNATIVEBYTES_UNSIGNED_BUFFER: i32 = 0x4;
+    if buffer.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let little_endian = cpython_asnativebytes_resolve_endian(flags);
+    let signed = flags == -1 || (flags & PY_ASNATIVEBYTES_UNSIGNED_BUFFER) == 0;
+    let raw = if n_bytes == 0 {
+        &[][..]
+    } else {
+        // SAFETY: caller guarantees readable `n_bytes` bytes at `buffer`.
+        unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), n_bytes) }
+    };
+    let mut le = raw.to_vec();
+    if little_endian == 0 {
+        le.reverse();
+    }
+    let bigint = cpython_bigint_from_twos_complement_le(&le, signed);
+    match bigint.to_i64() {
+        Some(value) => cpython_new_ptr_for_value(Value::Int(value)),
+        None => cpython_new_ptr_for_value(Value::BigInt(Box::new(bigint))),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromUnsignedNativeBytes(
+    buffer: *const c_void,
+    n_bytes: usize,
+    flags: i32,
+) -> *mut c_void {
+    if buffer.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let little_endian = cpython_asnativebytes_resolve_endian(flags);
+    let raw = if n_bytes == 0 {
+        &[][..]
+    } else {
+        // SAFETY: caller guarantees readable `n_bytes` bytes at `buffer`.
+        unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), n_bytes) }
+    };
+    let mut le = raw.to_vec();
+    if little_endian == 0 {
+        le.reverse();
+    }
+    let bigint = cpython_bigint_from_twos_complement_le(&le, false);
+    match bigint.to_i64() {
+        Some(value) => cpython_new_ptr_for_value(Value::Int(value)),
+        None => cpython_new_ptr_for_value(Value::BigInt(Box::new(bigint))),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -16320,6 +16596,18 @@ static KEEP_PYLONG_AS_UNSIGNED_LONG_MASK: unsafe extern "C" fn(*mut c_void) -> u
 #[used]
 static KEEP_PYLONG_AS_UNSIGNED_LONGLONG_MASK: unsafe extern "C" fn(*mut c_void) -> u64 =
     PyLong_AsUnsignedLongLongMask;
+#[used]
+static KEEP_PYLONG_AS_NATIVE_BYTES: unsafe extern "C" fn(*mut c_void, *mut c_void, isize, i32) -> isize =
+    PyLong_AsNativeBytes;
+#[used]
+static KEEP_PYLONG_FROM_NATIVE_BYTES: unsafe extern "C" fn(*const c_void, usize, i32) -> *mut c_void =
+    PyLong_FromNativeBytes;
+#[used]
+static KEEP_PYLONG_FROM_UNSIGNED_NATIVE_BYTES: unsafe extern "C" fn(
+    *const c_void,
+    usize,
+    i32,
+) -> *mut c_void = PyLong_FromUnsignedNativeBytes;
 #[used]
 static KEEP_PYLONG_AS_VOID_PTR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyLong_AsVoidPtr;
 #[used]

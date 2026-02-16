@@ -37,6 +37,16 @@ typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 #define Py_PRINT_RAW 0x0001
 #endif
 
+#ifndef Py_ASNATIVEBYTES_DEFAULTS
+#define Py_ASNATIVEBYTES_DEFAULTS -1
+#define Py_ASNATIVEBYTES_BIG_ENDIAN 0
+#define Py_ASNATIVEBYTES_LITTLE_ENDIAN 1
+#define Py_ASNATIVEBYTES_NATIVE_ENDIAN 3
+#define Py_ASNATIVEBYTES_UNSIGNED_BUFFER 4
+#define Py_ASNATIVEBYTES_REJECT_NEGATIVE 8
+#define Py_ASNATIVEBYTES_ALLOW_INDEX 16
+#endif
+
 typedef struct PyModuleDef_Base {
     unsigned long _ob_refcnt;
     void *_ob_type;
@@ -131,6 +141,9 @@ size_t PyLong_AsSize_t(PyObject *object);
 double PyLong_AsDouble(PyObject *object);
 unsigned long long PyLong_AsUnsignedLongMask(PyObject *object);
 unsigned long long PyLong_AsUnsignedLongLongMask(PyObject *object);
+long long PyLong_AsNativeBytes(PyObject *object, void *buffer, long long n_bytes, int flags);
+PyObject *PyLong_FromNativeBytes(const void *buffer, size_t n_bytes, int flags);
+PyObject *PyLong_FromUnsignedNativeBytes(const void *buffer, size_t n_bytes, int flags);
 PyObject *PyBool_FromLong(long long value);
 PyObject *PyFloat_FromDouble(double value);
 double PyFloat_AsDouble(PyObject *object);
