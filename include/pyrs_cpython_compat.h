@@ -121,6 +121,14 @@ PyObject *PyModuleDef_Init(PyModuleDef *module);
 PyObject *PyModule_Create2(PyModuleDef *module, int apiver);
 #define PyModule_Create(module) PyModule_Create2((module), PYTHON_API_VERSION)
 
+PyObject *PyModule_NewObject(PyObject *name);
+PyObject *PyModule_New(const char *name);
+PyObject *PyModule_GetNameObject(PyObject *module);
+const char *PyModule_GetName(PyObject *module);
+PyObject *PyModule_GetFilenameObject(PyObject *module);
+const char *PyModule_GetFilename(PyObject *module);
+int PyModule_SetDocString(PyObject *module, const char *doc);
+int PyModule_Add(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddObjectRef(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddObject(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddIntConstant(PyObject *module, const char *name, long long value);

@@ -5308,6 +5308,60 @@ pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> 
     }
 }
 
+fn cpython_new_module_data(name: String) -> ModuleObject {
+    let mut module = ModuleObject::new(name.clone());
+    module
+        .globals
+        .insert("__name__".to_string(), Value::Str(name));
+    module.globals.insert("__doc__".to_string(), Value::None);
+    module.globals.insert("__package__".to_string(), Value::None);
+    module.globals.insert("__loader__".to_string(), Value::None);
+    module.globals.insert("__spec__".to_string(), Value::None);
+    module.touch_globals_version();
+    module
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_NewObject(name: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyModule_NewObject missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(name_value) = context.cpython_value_from_ptr_or_proxy(name) else {
+            let _ = unsafe { PyErr_BadArgument() };
+            return std::ptr::null_mut();
+        };
+        let Value::Str(module_name) = name_value else {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, "module name must be str");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let module_value = vm.heap.alloc_module(cpython_new_module_data(module_name));
+        context.alloc_cpython_ptr_for_value(module_value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_New(name: *const c_char) -> *mut c_void {
+    if name.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let name_obj = unsafe { PyUnicode_FromString(name) };
+    if name_obj.is_null() {
+        return std::ptr::null_mut();
+    }
+    let module = unsafe { PyModule_NewObject(name_obj) };
+    unsafe { Py_DecRef(name_obj) };
+    module
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModule_AddObjectRef(
     module: *mut c_void,
@@ -5383,6 +5437,17 @@ pub unsafe extern "C" fn PyModule_AddObject(
             let _ = context.decref(handle);
         }
     });
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_Add(
+    module: *mut c_void,
+    name: *const c_char,
+    value: *mut c_void,
+) -> i32 {
+    let status = unsafe { PyModule_AddObjectRef(module, name, value) };
+    unsafe { Py_XDecRef(value) };
     status
 }
 
@@ -5564,6 +5629,99 @@ pub unsafe extern "C" fn PyLong_FromUnicodeObject(object: *mut c_void, base: i32
             std::ptr::null_mut()
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_SetDocString(module: *mut c_void, doc: *const c_char) -> i32 {
+    let value = if doc.is_null() {
+        cpython_new_ptr_for_value(Value::None)
+    } else {
+        unsafe { PyUnicode_FromString(doc) }
+    };
+    if value.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_SetAttrString(module, c"__doc__".as_ptr(), value) };
+    unsafe { Py_DecRef(value) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_GetNameObject(module: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let module_obj = match context.cpython_module_obj_from_ptr(module) {
+            Ok(module_obj) => module_obj,
+            Err(_) => {
+                let _ = unsafe { PyErr_BadArgument() };
+                return std::ptr::null_mut();
+            }
+        };
+        let module_name = match &*module_obj.kind() {
+            Object::Module(module_data) => module_data.globals.get("__name__").cloned(),
+            _ => None,
+        };
+        match module_name {
+            Some(Value::Str(name)) => context.alloc_cpython_ptr_for_value(Value::Str(name)),
+            _ => {
+                cpython_set_typed_error(unsafe { PyExc_SystemError }, "nameless module");
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_GetName(module: *mut c_void) -> *const c_char {
+    let name_obj = unsafe { PyModule_GetNameObject(module) };
+    if name_obj.is_null() {
+        return std::ptr::null();
+    }
+    let utf8 = unsafe { PyUnicode_AsUTF8(name_obj) };
+    unsafe { Py_DecRef(name_obj) };
+    utf8
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_GetFilenameObject(module: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let module_obj = match context.cpython_module_obj_from_ptr(module) {
+            Ok(module_obj) => module_obj,
+            Err(_) => {
+                let _ = unsafe { PyErr_BadArgument() };
+                return std::ptr::null_mut();
+            }
+        };
+        let file_value = match &*module_obj.kind() {
+            Object::Module(module_data) => module_data.globals.get("__file__").cloned(),
+            _ => None,
+        };
+        match file_value {
+            Some(Value::Str(path)) => context.alloc_cpython_ptr_for_value(Value::Str(path)),
+            _ => {
+                cpython_set_typed_error(unsafe { PyExc_SystemError }, "module filename missing");
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyModule_GetFilename(module: *mut c_void) -> *const c_char {
+    let filename_obj = unsafe { PyModule_GetFilenameObject(module) };
+    if filename_obj.is_null() {
+        return std::ptr::null();
+    }
+    let utf8 = unsafe { PyUnicode_AsUTF8(filename_obj) };
+    unsafe { Py_DecRef(filename_obj) };
+    utf8
 }
 
 #[unsafe(no_mangle)]
@@ -18534,6 +18692,29 @@ static KEEP2_PYLONG_FROMSTRING: unsafe extern "C" fn(
 static KEEP2_PYLONG_GETINFO: unsafe extern "C" fn() -> *mut c_void = PyLong_GetInfo;
 #[used]
 static KEEP2_PYMODULE_GETDICT: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyModule_GetDict;
+#[used]
+static KEEP2_PYMODULE_NEWOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyModule_NewObject;
+#[used]
+static KEEP2_PYMODULE_NEW: unsafe extern "C" fn(*const c_char) -> *mut c_void = PyModule_New;
+#[used]
+static KEEP2_PYMODULE_GETNAMEOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyModule_GetNameObject;
+#[used]
+static KEEP2_PYMODULE_GETNAME: unsafe extern "C" fn(*mut c_void) -> *const c_char =
+    PyModule_GetName;
+#[used]
+static KEEP2_PYMODULE_GETFILENAMEOBJECT: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyModule_GetFilenameObject;
+#[used]
+static KEEP2_PYMODULE_GETFILENAME: unsafe extern "C" fn(*mut c_void) -> *const c_char =
+    PyModule_GetFilename;
+#[used]
+static KEEP2_PYMODULE_SETDOCSTRING: unsafe extern "C" fn(*mut c_void, *const c_char) -> i32 =
+    PyModule_SetDocString;
+#[used]
+static KEEP2_PYMODULE_ADD: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> i32 =
+    PyModule_Add;
 #[used]
 static KEEP2_PYTUPLE_NEW: unsafe extern "C" fn(isize) -> *mut c_void = PyTuple_New;
 #[used]
