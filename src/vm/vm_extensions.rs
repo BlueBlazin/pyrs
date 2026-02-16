@@ -23756,6 +23756,43 @@ pub unsafe extern "C" fn PyFile_WriteString(text: *const c_char, file: *mut c_vo
     status
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyTraceBack_Here(frame: *mut c_void) -> c_int {
+    if frame.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyTraceBack_Print(tb: *mut c_void, file: *mut c_void) -> c_int {
+    if file.is_null() {
+        if unsafe { PyErr_Occurred() }.is_null() {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                "null file for PyTraceBack_Print",
+            );
+        }
+        return -1;
+    }
+    if tb.is_null() {
+        return 0;
+    }
+    let rendered = unsafe { PyObject_Str(tb) };
+    if rendered.is_null() {
+        return -1;
+    }
+    let text = unsafe { PyUnicode_AsUTF8(rendered) };
+    if text.is_null() {
+        unsafe { Py_DecRef(rendered) };
+        return -1;
+    }
+    let status = unsafe { PyFile_WriteString(text, file) };
+    unsafe { Py_DecRef(rendered) };
+    status
+}
+
 fn cpython_is_exception_instance(context: &ModuleCapiContext, instance: &ObjRef) -> bool {
     if context.vm.is_null() {
         return false;
@@ -26200,6 +26237,11 @@ static KEEP3_PYERR_RESOURCEWARNING: unsafe extern "C" fn(*mut c_void, isize, *co
     PyErr_ResourceWarning;
 #[used]
 static KEEP3_PYERR_WRITEUNRAISABLE: unsafe extern "C" fn(*mut c_void) = PyErr_WriteUnraisable;
+#[used]
+static KEEP3_PYTRACEBACK_HERE: unsafe extern "C" fn(*mut c_void) -> c_int = PyTraceBack_Here;
+#[used]
+static KEEP3_PYTRACEBACK_PRINT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    PyTraceBack_Print;
 #[used]
 static KEEP3_PYEXCEPTION_GETTRACEBACK: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyException_GetTraceback;

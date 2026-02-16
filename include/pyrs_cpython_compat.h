@@ -848,6 +848,8 @@ PyObject *PyFile_FromFd(
 PyObject *PyFile_GetLine(PyObject *f, int n);
 int PyFile_WriteObject(PyObject *v, PyObject *f, int flags);
 int PyFile_WriteString(const char *s, PyObject *f);
+int PyTraceBack_Here(PyObject *frame);
+int PyTraceBack_Print(PyObject *tb, PyObject *f);
 void PyOS_BeforeFork(void);
 void PyOS_AfterFork_Parent(void);
 void PyOS_AfterFork_Child(void);
