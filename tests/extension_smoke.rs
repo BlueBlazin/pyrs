@@ -1766,6 +1766,110 @@ PyInit_cpython_api_batch6_probe(void) {
 }
 
 #[test]
+fn cpython_compat_long_abi_batch7_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch7 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch7 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch7");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch7_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <stdint.h>
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch7_probe",
+    "cpython api batch7 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch7_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *neg_one = PyLong_FromInt64(-1);
+    PyObject *five = PyLong_FromInt64(5);
+    PyObject *huge = PyLong_FromString("18446744073709551617", 0, 10);
+    if (!neg_one || !five || !huge) {
+        return 0;
+    }
+
+    int mask_neg_ok = (PyLong_AsUnsignedLongMask(neg_one) == UINT64_MAX) ? 1 : 0;
+    int mask_pos_ok = (PyLong_AsUnsignedLongLongMask(five) == 5ULL) ? 1 : 0;
+    int mask_huge_ok = (PyLong_AsUnsignedLongLongMask(huge) == 1ULL) ? 1 : 0;
+
+    char *end_ok = 0;
+    PyObject *parsed_hex = PyLong_FromString("0x10", &end_ok, 0);
+    int parsed_hex_ok = (parsed_hex && PyLong_AsInt(parsed_hex) == 16 && end_ok && *end_ok == '\0') ? 1 : 0;
+
+    char *end_bad = 0;
+    PyObject *parsed_bad = PyLong_FromString("zz", &end_bad, 10);
+    int parsed_bad_error = (!parsed_bad && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+
+    PyObject *info = PyLong_GetInfo();
+    int info_ok = info ? 1 : 0;
+    int info_bits_ok = 0;
+    if (info) {
+        PyObject *bits = PyObject_GetAttrString(info, "bits_per_digit");
+        if (bits) {
+            int bits_value = PyLong_AsInt(bits);
+            info_bits_ok = (!PyErr_Occurred() && bits_value > 0) ? 1 : 0;
+            PyErr_Clear();
+        }
+    }
+
+    if (PyModule_AddIntConstant(module, "MASK_NEG_OK", mask_neg_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MASK_POS_OK", mask_pos_ok) != 0 ||
+        PyModule_AddIntConstant(module, "MASK_HUGE_OK", mask_huge_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PARSED_HEX_OK", parsed_hex_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PARSED_BAD_ERROR", parsed_bad_error) != 0 ||
+        PyModule_AddIntConstant(module, "INFO_OK", info_ok) != 0 ||
+        PyModule_AddIntConstant(module, "INFO_BITS_OK", info_bits_ok) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch7_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch7 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch7_probe as m\nassert m.MASK_NEG_OK == 1\nassert m.MASK_POS_OK == 1\nassert m.MASK_HUGE_OK == 1\nassert m.PARSED_HEX_OK == 1\nassert m.PARSED_BAD_ERROR == 1\nassert m.INFO_OK == 1\nassert m.INFO_BITS_OK == 1",
+    )
+    .expect("cpython api batch7 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

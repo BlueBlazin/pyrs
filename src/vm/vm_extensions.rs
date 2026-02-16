@@ -17,7 +17,8 @@ use crate::extensions::{
     path_is_shared_library,
 };
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, NativeMethodKind,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, ModuleObject,
+    NativeMethodKind,
     NativeMethodObject, Object, RuntimeError, Value,
 };
 
@@ -752,6 +753,15 @@ fn cpython_bigint_to_u64(value: &BigInt) -> Option<u64> {
         acc |= (*byte as u64) << (idx * 8);
     }
     Some(acc)
+}
+
+fn cpython_bigint_low_u64(value: &BigInt) -> u64 {
+    let bytes = value.to_abs_le_bytes();
+    let mut acc = 0u64;
+    for (idx, byte) in bytes.iter().take(std::mem::size_of::<u64>()).enumerate() {
+        acc |= (*byte as u64) << (idx * 8);
+    }
+    acc
 }
 
 fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -5428,6 +5438,98 @@ pub unsafe extern "C" fn PyLong_FromUnicodeObject(object: *mut c_void, base: i32
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromString(
+    value: *const c_char,
+    pend: *mut *mut c_char,
+    base: i32,
+) -> *mut c_void {
+    if value.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        if !pend.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *pend = std::ptr::null_mut() };
+        }
+        return std::ptr::null_mut();
+    }
+    if !(base == 0 || (2..=36).contains(&base)) {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "int() base must be >= 2 and <= 36, or 0",
+        );
+        if !pend.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *pend = value as *mut c_char };
+        }
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `value` points to a NUL-terminated C string per API contract.
+    let source = unsafe { CStr::from_ptr(value) };
+    let source_text = source.to_string_lossy().into_owned();
+    let mut args = vec![Value::Str(source_text)];
+    if base != 10 {
+        args.push(Value::Int(base as i64));
+    }
+    let parsed = match cpython_call_builtin(BuiltinFunction::Int, args) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            cpython_set_typed_error(unsafe { PyExc_ValueError }, &err);
+            if !pend.is_null() {
+                // SAFETY: caller provided writable output pointer.
+                unsafe { *pend = value as *mut c_char };
+            }
+            return std::ptr::null_mut();
+        }
+    };
+    if !pend.is_null() {
+        // SAFETY: `value` points to a NUL-terminated string; advancing by `to_bytes().len()`
+        // lands on the trailing NUL, matching CPython's full-consume success path.
+        unsafe { *pend = value.add(source.to_bytes().len()) as *mut c_char };
+    }
+    cpython_new_ptr_for_value(parsed)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_GetInfo() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyLong_GetInfo missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some(sys_module) = vm.modules.get("sys").cloned() else {
+            context.set_error("PyLong_GetInfo missing sys module");
+            return std::ptr::null_mut();
+        };
+        let int_info = match &*sys_module.kind() {
+            Object::Module(module_data) => module_data.globals.get("int_info").cloned(),
+            _ => None,
+        };
+        let int_info = int_info.unwrap_or_else(|| {
+            let mut synthetic = ModuleObject::new("<int_info>");
+            synthetic
+                .globals
+                .insert("bits_per_digit".to_string(), Value::Int(30));
+            synthetic
+                .globals
+                .insert("sizeof_digit".to_string(), Value::Int(4));
+            synthetic
+                .globals
+                .insert("default_max_str_digits".to_string(), Value::Int(0));
+            synthetic
+                .globals
+                .insert("str_digits_check_threshold".to_string(), Value::Int(0));
+            vm.heap.alloc_module(synthetic)
+        });
+        context.alloc_cpython_ptr_for_value(int_info)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyBool_FromLong(value: i64) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         context.alloc_cpython_ptr_for_value(Value::Bool(value != 0))
@@ -6950,6 +7052,54 @@ pub unsafe extern "C" fn PyLong_AsUnsignedLong(object: *mut c_void) -> u64 {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsUnsignedLongLong(object: *mut c_void) -> u64 {
     unsafe { PyLong_AsUnsignedLong(object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsUnsignedLongMask(object: *mut c_void) -> u64 {
+    let value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            if let Some(compact) = unsafe { cpython_foreign_long_to_i64(object) } {
+                return compact as u64;
+            }
+            cpython_set_error(err);
+            return u64::MAX;
+        }
+    };
+    let normalized = match value {
+        Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value,
+        other => match cpython_call_builtin(BuiltinFunction::Int, vec![other]) {
+            Ok(value) => value,
+            Err(err) => {
+                cpython_set_error(err);
+                return u64::MAX;
+            }
+        },
+    };
+    match normalized {
+        Value::Bool(flag) => {
+            if flag {
+                1
+            } else {
+                0
+            }
+        }
+        Value::Int(compact) => compact as u64,
+        Value::BigInt(bigint) => {
+            let lower = cpython_bigint_low_u64(&bigint);
+            if bigint.is_negative() {
+                (0u64).wrapping_sub(lower)
+            } else {
+                lower
+            }
+        }
+        _ => u64::MAX,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsUnsignedLongLongMask(object: *mut c_void) -> u64 {
+    unsafe { PyLong_AsUnsignedLongMask(object) }
 }
 
 #[unsafe(no_mangle)]
@@ -15487,6 +15637,14 @@ static KEEP2_PYLONG_FROMVOIDPTR: unsafe extern "C" fn(*mut c_void) -> *mut c_voi
 static KEEP2_PYLONG_FROMUNICODEOBJECT: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
     PyLong_FromUnicodeObject;
 #[used]
+static KEEP2_PYLONG_FROMSTRING: unsafe extern "C" fn(
+    *const c_char,
+    *mut *mut c_char,
+    i32,
+) -> *mut c_void = PyLong_FromString;
+#[used]
+static KEEP2_PYLONG_GETINFO: unsafe extern "C" fn() -> *mut c_void = PyLong_GetInfo;
+#[used]
 static KEEP2_PYMODULE_GETDICT: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyModule_GetDict;
 #[used]
 static KEEP2_PYTUPLE_NEW: unsafe extern "C" fn(isize) -> *mut c_void = PyTuple_New;
@@ -16156,6 +16314,12 @@ static KEEP_PYLONG_AS_UNSIGNED_LONG: unsafe extern "C" fn(*mut c_void) -> u64 =
 #[used]
 static KEEP_PYLONG_AS_UNSIGNED_LONGLONG: unsafe extern "C" fn(*mut c_void) -> u64 =
     PyLong_AsUnsignedLongLong;
+#[used]
+static KEEP_PYLONG_AS_UNSIGNED_LONG_MASK: unsafe extern "C" fn(*mut c_void) -> u64 =
+    PyLong_AsUnsignedLongMask;
+#[used]
+static KEEP_PYLONG_AS_UNSIGNED_LONGLONG_MASK: unsafe extern "C" fn(*mut c_void) -> u64 =
+    PyLong_AsUnsignedLongLongMask;
 #[used]
 static KEEP_PYLONG_AS_VOID_PTR: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyLong_AsVoidPtr;
 #[used]
