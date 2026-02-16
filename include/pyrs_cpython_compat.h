@@ -378,6 +378,8 @@ PyObject *PyObject_CallNoArgs(PyObject *callable);
 PyObject *PyEval_CallObjectWithKeywords(PyObject *callable, PyObject *args, PyObject *kwargs);
 PyObject *PyEval_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *PyEval_CallMethod(PyObject *object, const char *name, const char *format, ...);
+PyObject *PyEval_GetGlobals(void);
+PyObject *PyEval_GetLocals(void);
 int PyGILState_Ensure(void);
 void *PyGILState_GetThisThreadState(void);
 void PyGILState_Release(int state);

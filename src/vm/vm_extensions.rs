@@ -9290,6 +9290,52 @@ pub unsafe extern "C" fn PyEval_GetBuiltins() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetGlobals() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_globals(Vec::new(), HashMap::new()) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) if err.message == "no frame" => std::ptr::null_mut(),
+            Err(err) => {
+                context.set_error(format!("PyEval_GetGlobals failed: {}", err.message));
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetLocals() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_locals(Vec::new(), HashMap::new()) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) if err.message == "no frame" => std::ptr::null_mut(),
+            Err(err) => {
+                context.set_error(format!("PyEval_GetLocals failed: {}", err.message));
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyIter_Check(object: *mut c_void) -> i32 {
     with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
@@ -21300,6 +21346,10 @@ static KEEP_PYIMPORT_RELOAD_MODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_
     PyImport_ReloadModule;
 #[used]
 static KEEP_PYEVAL_GET_BUILTINS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetBuiltins;
+#[used]
+static KEEP_PYEVAL_GET_GLOBALS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetGlobals;
+#[used]
+static KEEP_PYEVAL_GET_LOCALS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetLocals;
 #[used]
 static KEEP_PYITER_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PyIter_Check;
 #[used]

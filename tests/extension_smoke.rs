@@ -4824,6 +4824,106 @@ PyInit_cpython_api_batch30_probe(void) {
 }
 
 #[test]
+fn cpython_compat_eval_frame_maps_abi_batch31_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch31 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch31 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch31");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch31_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+probe(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *globals = PyEval_GetGlobals();
+    PyObject *locals = PyEval_GetLocals();
+    int globals_ok = globals != 0 ? 1 : 0;
+    int locals_ok = locals != 0 ? 1 : 0;
+    int globals_has_name = 0;
+    int locals_len_ok = 0;
+
+    if (globals) {
+        PyObject *key = PyUnicode_FromString("__name__");
+        PyObject *name = key ? PyObject_GetItem(globals, key) : 0;
+        globals_has_name = name != 0 ? 1 : 0;
+        Py_XDECREF(name);
+        Py_XDECREF(key);
+        PyErr_Clear();
+    }
+    if (locals) {
+        long long locals_len = PyObject_Length(locals);
+        locals_len_ok = locals_len >= 0 ? 1 : 0;
+        PyErr_Clear();
+    }
+
+    Py_XDECREF(globals);
+    Py_XDECREF(locals);
+    return Py_BuildValue("(iiii)", globals_ok, locals_ok, globals_has_name, locals_len_ok);
+}
+
+static PyMethodDef module_methods[] = {
+    {"probe", probe, METH_NOARGS, "probe PyEval_GetGlobals/GetLocals"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch31_probe",
+    "cpython api batch31 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch31_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch31_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch31 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch31_probe as m\nok_g, ok_l, has_name, locals_len_ok = m.probe()\nassert ok_g == 1\nassert ok_l == 1\nassert has_name == 1\nassert locals_len_ok == 1",
+    )
+    .expect("cpython api batch31 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
