@@ -33,6 +33,7 @@ extern void *PyFloat_FromDouble(double value);
 extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
+extern void *PyObject_Call(void *callable, void *args, void *kwargs);
 extern void *PyObject_CallObject(void *callable, void *args);
 extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
@@ -624,6 +625,33 @@ void *_PyObject_CallMethod_SizeT(void *object, const char *name, const char *for
 {
     if (object == NULL || name == NULL) {
         pyrs_capi_set_error_message("_PyObject_CallMethod_SizeT received null object/name");
+        return NULL;
+    }
+    void *callable = PyObject_GetAttrString(object, name);
+    if (callable == NULL) {
+        return NULL;
+    }
+    va_list ap;
+    va_start(ap, format);
+    void *result = callfunction_va(callable, format, &ap);
+    va_end(ap);
+    Py_DecRef(callable);
+    return result;
+}
+
+void *PyEval_CallFunction(void *callable, const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    void *result = callfunction_va(callable, format, &ap);
+    va_end(ap);
+    return result;
+}
+
+void *PyEval_CallMethod(void *object, const char *name, const char *format, ...)
+{
+    if (object == NULL || name == NULL) {
+        pyrs_capi_set_error_message("PyEval_CallMethod received null object/name");
         return NULL;
     }
     void *callable = PyObject_GetAttrString(object, name);

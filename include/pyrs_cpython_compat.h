@@ -365,6 +365,15 @@ PyObject *PyObject_CallMethod(PyObject *object, const char *name, const char *fo
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 PyObject *PyObject_CallMethodObjArgs(PyObject *object, PyObject *name, ...);
 PyObject *PyObject_CallNoArgs(PyObject *callable);
+PyObject *PyEval_CallObjectWithKeywords(PyObject *callable, PyObject *args, PyObject *kwargs);
+PyObject *PyEval_CallFunction(PyObject *callable, const char *format, ...);
+PyObject *PyEval_CallMethod(PyObject *object, const char *name, const char *format, ...);
+void PyEval_AcquireLock(void);
+void PyEval_ReleaseLock(void);
+void PyEval_AcquireThread(void *state);
+void PyEval_ReleaseThread(void *state);
+void PyEval_InitThreads(void);
+int PyEval_ThreadsInitialized(void);
 int PyAIter_Check(PyObject *object);
 PyObject *PyObject_GetAIter(PyObject *object);
 PyObject *PySeqIter_New(PyObject *object);

@@ -4334,6 +4334,135 @@ PyInit_cpython_api_batch26_probe(void) {
 }
 
 #[test]
+fn cpython_compat_eval_abi_batch27_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch27 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch27 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch27");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch27_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+adder(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *left_obj = 0;
+    PyObject *right_obj = 0;
+    if (!PyArg_ParseTuple(args, "OO", &left_obj, &right_obj)) {
+        return 0;
+    }
+    long long left = PyLong_AsLong(left_obj);
+    long long right = PyLong_AsLong(right_obj);
+    return PyLong_FromLong(left + right);
+}
+
+static PyMethodDef module_methods[] = {
+    {"adder", adder, METH_VARARGS, "add two ints"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch27_probe",
+    "cpython api batch27 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch27_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+
+    PyObject *adder_fn = PyObject_GetAttrString(module, "adder");
+    if (!adder_fn) {
+        return 0;
+    }
+
+    PyObject *adder_args = Py_BuildValue("(ii)", 20, 22);
+    if (!adder_args) {
+        return 0;
+    }
+    PyObject *call_obj = PyEval_CallObjectWithKeywords(adder_fn, adder_args, 0);
+    long long call_obj_value = call_obj ? PyLong_AsLong(call_obj) : -1;
+
+    PyObject *call_fn = PyEval_CallFunction(adder_fn, "(ii)", 10, 33);
+    long long call_fn_value = call_fn ? PyLong_AsLong(call_fn) : -1;
+
+    PyObject *sample = PyUnicode_FromString("abc");
+    if (!sample) {
+        return 0;
+    }
+    PyObject *method_result = PyEval_CallMethod(sample, "startswith", "s", "a");
+    int method_true = method_result ? PyObject_IsTrue(method_result) : 0;
+
+    PyEval_InitThreads();
+    int threads_initialized = PyEval_ThreadsInitialized();
+    PyEval_AcquireLock();
+    PyEval_ReleaseLock();
+    PyEval_AcquireThread(0);
+    PyEval_ReleaseThread(0);
+
+    Py_XDECREF(method_result);
+    Py_XDECREF(sample);
+    Py_XDECREF(call_fn);
+    Py_XDECREF(call_obj);
+    Py_XDECREF(adder_args);
+    Py_XDECREF(adder_fn);
+
+    int call_object_ok = (call_obj_value == 42) ? 1 : 0;
+    int call_function_ok = (call_fn_value == 43) ? 1 : 0;
+    int call_method_ok = (method_true == 1) ? 1 : 0;
+
+    if (PyModule_AddIntConstant(module, "CALL_OBJECT_OK", call_object_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CALL_FUNCTION_OK", call_function_ok) != 0 ||
+        PyModule_AddIntConstant(module, "CALL_METHOD_OK", call_method_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREADS_INIT_OK", threads_initialized == 1 ? 1 : 0) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch27_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch27 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch27_probe as m\nassert m.CALL_OBJECT_OK == 1\nassert m.CALL_FUNCTION_OK == 1\nassert m.CALL_METHOD_OK == 1\nassert m.THREADS_INIT_OK == 1",
+    )
+    .expect("cpython api batch27 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

@@ -19430,6 +19430,35 @@ pub unsafe extern "C" fn PyGILState_Ensure() -> i32 {
 pub unsafe extern "C" fn PyGILState_Release(_state: i32) {}
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_AcquireLock() {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_ReleaseLock() {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_AcquireThread(_state: *mut c_void) {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_ReleaseThread(_state: *mut c_void) {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_InitThreads() {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_ThreadsInitialized() -> i32 {
+    1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_CallObjectWithKeywords(
+    callable: *mut c_void,
+    args: *mut c_void,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyObject_Call(callable, args, kwargs) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyEval_SaveThread() -> *mut c_void {
     std::ptr::null_mut()
 }
@@ -19909,6 +19938,13 @@ unsafe extern "C" {
     fn PyObject_CallFunction(callable: *mut c_void, format: *const c_char, ...) -> *mut c_void;
     fn PyObject_CallFunctionObjArgs(callable: *mut c_void, ...) -> *mut c_void;
     fn PyObject_CallMethod(
+        object: *mut c_void,
+        method: *const c_char,
+        format: *const c_char,
+        ...
+    ) -> *mut c_void;
+    fn PyEval_CallFunction(callable: *mut c_void, format: *const c_char, ...) -> *mut c_void;
+    fn PyEval_CallMethod(
         object: *mut c_void,
         method: *const c_char,
         format: *const c_char,
@@ -20409,6 +20445,16 @@ static KEEP3_PYOBJECT_CALLMETHOD: unsafe extern "C" fn(
     *const c_char,
     ...
 ) -> *mut c_void = PyObject_CallMethod;
+#[used]
+static KEEP3_PYEVAL_CALLFUNCTION: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> *mut c_void =
+    PyEval_CallFunction;
+#[used]
+static KEEP3_PYEVAL_CALLMETHOD: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *const c_char,
+    ...
+) -> *mut c_void = PyEval_CallMethod;
 #[used]
 static KEEP3_PYARG_PARSE: unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> i32 =
     PyArg_Parse;
@@ -21406,6 +21452,24 @@ static KEEP_PYERR_CHECK_SIGNALS: unsafe extern "C" fn() -> i32 = PyErr_CheckSign
 static KEEP_PYGILSTATE_ENSURE: unsafe extern "C" fn() -> i32 = PyGILState_Ensure;
 #[used]
 static KEEP_PYGILSTATE_RELEASE: unsafe extern "C" fn(i32) = PyGILState_Release;
+#[used]
+static KEEP_PYEVAL_ACQUIRE_LOCK: unsafe extern "C" fn() = PyEval_AcquireLock;
+#[used]
+static KEEP_PYEVAL_RELEASE_LOCK: unsafe extern "C" fn() = PyEval_ReleaseLock;
+#[used]
+static KEEP_PYEVAL_ACQUIRE_THREAD: unsafe extern "C" fn(*mut c_void) = PyEval_AcquireThread;
+#[used]
+static KEEP_PYEVAL_RELEASE_THREAD: unsafe extern "C" fn(*mut c_void) = PyEval_ReleaseThread;
+#[used]
+static KEEP_PYEVAL_INIT_THREADS: unsafe extern "C" fn() = PyEval_InitThreads;
+#[used]
+static KEEP_PYEVAL_THREADS_INITIALIZED: unsafe extern "C" fn() -> i32 = PyEval_ThreadsInitialized;
+#[used]
+static KEEP_PYEVAL_CALL_OBJECT_WITH_KEYWORDS: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyEval_CallObjectWithKeywords;
 #[used]
 static KEEP_PYEVAL_SAVE_THREAD: unsafe extern "C" fn() -> *mut c_void = PyEval_SaveThread;
 #[used]
