@@ -4,6 +4,10 @@ Status: active (Milestone 15).
 
 Purpose: track direct native-extension execution gates for NumPy and the scientific stack.
 
+Execution model: see `docs/CAPI_PLAN.md`.
+- Lane A: Stable ABI (`abi3`) closure.
+- Lane B: explicit non-abi3 surfaces required by NumPy/scientific stack.
+
 ## Gate Definitions
 
 1. `numpy_import`
@@ -94,6 +98,7 @@ If a probed local module is not installed, its dependent cases are recorded as `
 ## Current Expected State
 
 - CPython ABI bridge mode has been removed; probes run in direct mode only.
+- Lane B remains required even with Lane A progress; local NumPy artifacts are currently `cp314-cp314` wheels (not abi3-only wheels).
 - Import-probe and source-build modes both produce actionable failure diagnostics in JSON.
 - Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
 - Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.

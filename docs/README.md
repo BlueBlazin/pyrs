@@ -11,6 +11,7 @@ Use this file to find canonical ownership quickly.
 - `docs/EXTENSION_CAPABILITY_MATRIX.md`: source-of-truth status table for extension API/loader surfaces.
 - `docs/EXTENSION_PACKAGING_CONTRACT.md`: extension build/package contract (`pyrs314` mode first).
 - `docs/EXTENSION_CAPI_V1.md`: first shipped C-API header/symbol slice for compiled-extension bring-up.
+- `docs/CAPI_PLAN.md`: two-lane C-API execution plan (Stable ABI closure + NumPy-required non-abi3 closure).
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
