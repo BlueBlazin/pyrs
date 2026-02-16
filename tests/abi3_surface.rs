@@ -980,6 +980,21 @@ fn exports_abi3_batch42_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch43_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyMarshal_ReadObjectFromString", "PyMarshal_WriteObjectToString"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch43 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

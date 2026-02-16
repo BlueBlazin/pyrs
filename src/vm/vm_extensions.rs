@@ -8,6 +8,9 @@ use std::sync::{Mutex, Once, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::bytecode::CodeObject;
+use crate::bytecode::cpython::{
+    PyObject as CpythonMarshalObject, marshal_dump_object, marshal_load_object,
+};
 use crate::extensions::{
     CpythonExtensionInit, ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
@@ -21,7 +24,7 @@ use crate::extensions::{
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, IteratorKind,
     IteratorObject, ModuleObject, NativeMethodKind, NativeMethodObject, Object, RuntimeError,
-    Value,
+    SliceValue, Value,
 };
 
 use super::{
@@ -21302,6 +21305,92 @@ pub unsafe extern "C" fn PyOS_snprintf(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMarshal_WriteObjectToString(
+    object: *mut c_void,
+    _version: i32,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyMarshal_WriteObjectToString missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyMarshal_WriteObjectToString received unknown object");
+            return std::ptr::null_mut();
+        };
+        let marshal_object = match value_to_cpython_marshal_object(&value) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(format!("PyMarshal_WriteObjectToString {err}"));
+                return std::ptr::null_mut();
+            }
+        };
+        let encoded = match marshal_dump_object(&marshal_object) {
+            Ok(encoded) => encoded,
+            Err(err) => {
+                context.set_error(format!(
+                    "PyMarshal_WriteObjectToString failed to encode object: {}",
+                    err.message
+                ));
+                return std::ptr::null_mut();
+            }
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let encoded_value = unsafe { (&mut *context.vm).heap.alloc_bytes(encoded) };
+        context.alloc_cpython_ptr_for_value(encoded_value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMarshal_ReadObjectFromString(
+    data: *const c_char,
+    len: isize,
+) -> *mut c_void {
+    if data.is_null() || len < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_ValueError },
+            "PyMarshal_ReadObjectFromString requires non-null data and non-negative length",
+        );
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyMarshal_ReadObjectFromString missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: caller guarantees `data` points to at least `len` bytes.
+        let payload = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len as usize) };
+        let decoded = match marshal_load_object(payload, true) {
+            Ok(decoded) => decoded,
+            Err(err) => {
+                context.set_error(format!(
+                    "PyMarshal_ReadObjectFromString failed to decode payload: {}",
+                    err.message
+                ));
+                return std::ptr::null_mut();
+            }
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match cpython_marshal_object_to_value(&decoded, vm) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(format!("PyMarshal_ReadObjectFromString {err}"));
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyMem_RawMalloc(size: usize) -> *mut c_void {
     // SAFETY: forwarded directly to C allocator.
     unsafe { malloc(size) }
@@ -23571,6 +23660,12 @@ static KEEP_PYMEM_RAW_REALLOC: unsafe extern "C" fn(*mut c_void, usize) -> *mut 
 #[used]
 static KEEP_PYMEM_RAW_FREE: unsafe extern "C" fn(*mut c_void) = PyMem_RawFree;
 #[used]
+static KEEP_PYMARSHAL_READ_OBJECT_FROM_STRING: unsafe extern "C" fn(*const c_char, isize) -> *mut c_void =
+    PyMarshal_ReadObjectFromString;
+#[used]
+static KEEP_PYMARSHAL_WRITE_OBJECT_TO_STRING: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void =
+    PyMarshal_WriteObjectToString;
+#[used]
 static KEEP_PYMEM_MALLOC: unsafe extern "C" fn(usize) -> *mut c_void = PyMem_Malloc;
 #[used]
 static KEEP_PYMEM_CALLOC: unsafe extern "C" fn(usize, usize) -> *mut c_void = PyMem_Calloc;
@@ -23618,6 +23713,151 @@ unsafe fn c_wide_name_to_string(name: *const Cwchar) -> Result<String, String> {
         text.push(ch);
     }
     Ok(text)
+}
+
+fn value_to_cpython_marshal_object(value: &Value) -> Result<CpythonMarshalObject, String> {
+    match value {
+        Value::None => Ok(CpythonMarshalObject::None),
+        Value::Bool(value) => Ok(CpythonMarshalObject::Bool(*value)),
+        Value::Int(value) => Ok(CpythonMarshalObject::Int(*value)),
+        Value::BigInt(value) => value
+            .to_i64()
+            .map(CpythonMarshalObject::Int)
+            .ok_or_else(|| "cannot marshal bigint values outside i64 range".to_string()),
+        Value::Float(value) => Ok(CpythonMarshalObject::Float(*value)),
+        Value::Complex { real, imag } => Ok(CpythonMarshalObject::Complex {
+            real: *real,
+            imag: *imag,
+        }),
+        Value::Str(value) => Ok(CpythonMarshalObject::Str(value.clone())),
+        Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+            Object::Bytes(payload) => Ok(CpythonMarshalObject::Bytes(payload.clone())),
+            _ => Err("invalid bytes object storage".to_string()),
+        },
+        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+            Object::Tuple(items) => items
+                .iter()
+                .map(value_to_cpython_marshal_object)
+                .collect::<Result<Vec<_>, _>>()
+                .map(CpythonMarshalObject::Tuple),
+            _ => Err("invalid tuple object storage".to_string()),
+        },
+        Value::List(list_obj) => match &*list_obj.kind() {
+            Object::List(items) => items
+                .iter()
+                .map(value_to_cpython_marshal_object)
+                .collect::<Result<Vec<_>, _>>()
+                .map(CpythonMarshalObject::List),
+            _ => Err("invalid list object storage".to_string()),
+        },
+        Value::Dict(dict_obj) => match &*dict_obj.kind() {
+            Object::Dict(entries) => entries
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        value_to_cpython_marshal_object(key)?,
+                        value_to_cpython_marshal_object(value)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()
+                .map(CpythonMarshalObject::Dict),
+            _ => Err("invalid dict object storage".to_string()),
+        },
+        Value::Set(set_obj) => match &*set_obj.kind() {
+            Object::Set(entries) => entries
+                .iter()
+                .map(value_to_cpython_marshal_object)
+                .collect::<Result<Vec<_>, _>>()
+                .map(CpythonMarshalObject::Set),
+            _ => Err("invalid set object storage".to_string()),
+        },
+        Value::FrozenSet(set_obj) => match &*set_obj.kind() {
+            Object::FrozenSet(entries) => entries
+                .iter()
+                .map(value_to_cpython_marshal_object)
+                .collect::<Result<Vec<_>, _>>()
+                .map(CpythonMarshalObject::FrozenSet),
+            _ => Err("invalid frozenset object storage".to_string()),
+        },
+        Value::Slice(slice) => Ok(CpythonMarshalObject::Slice {
+            lower: slice
+                .lower
+                .map(|value| Box::new(CpythonMarshalObject::Int(value))),
+            upper: slice
+                .upper
+                .map(|value| Box::new(CpythonMarshalObject::Int(value))),
+            step: slice
+                .step
+                .map(|value| Box::new(CpythonMarshalObject::Int(value))),
+        }),
+        _ => Err("marshal unsupported value type".to_string()),
+    }
+}
+
+fn cpython_marshal_object_to_value(
+    object: &CpythonMarshalObject,
+    vm: &mut Vm,
+) -> Result<Value, String> {
+    match object {
+        CpythonMarshalObject::Null => Ok(Value::None),
+        CpythonMarshalObject::None => Ok(Value::None),
+        CpythonMarshalObject::Bool(value) => Ok(Value::Bool(*value)),
+        CpythonMarshalObject::Int(value) => Ok(Value::Int(*value)),
+        CpythonMarshalObject::Float(value) => Ok(Value::Float(*value)),
+        CpythonMarshalObject::Complex { real, imag } => Ok(Value::Complex {
+            real: *real,
+            imag: *imag,
+        }),
+        CpythonMarshalObject::Str(value) => Ok(Value::Str(value.clone())),
+        CpythonMarshalObject::Bytes(bytes) => Ok(vm.heap.alloc_bytes(bytes.clone())),
+        CpythonMarshalObject::Tuple(items) => items
+            .iter()
+            .map(|item| cpython_marshal_object_to_value(item, vm))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| vm.heap.alloc_tuple(items)),
+        CpythonMarshalObject::List(items) => items
+            .iter()
+            .map(|item| cpython_marshal_object_to_value(item, vm))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| vm.heap.alloc_list(items)),
+        CpythonMarshalObject::Dict(entries) => entries
+            .iter()
+            .map(|(key, value)| {
+                Ok((
+                    cpython_marshal_object_to_value(key, vm)?,
+                    cpython_marshal_object_to_value(value, vm)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()
+            .map(|entries| vm.heap.alloc_dict(entries)),
+        CpythonMarshalObject::Set(items) => items
+            .iter()
+            .map(|item| cpython_marshal_object_to_value(item, vm))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| vm.heap.alloc_set(items)),
+        CpythonMarshalObject::FrozenSet(items) => items
+            .iter()
+            .map(|item| cpython_marshal_object_to_value(item, vm))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|items| vm.heap.alloc_frozenset(items)),
+        CpythonMarshalObject::Slice { lower, upper, step } => {
+            let parse_int = |value: &Option<Box<CpythonMarshalObject>>| -> Result<Option<i64>, String> {
+                match value {
+                    None => Ok(None),
+                    Some(value) => match value.as_ref() {
+                        CpythonMarshalObject::Int(value) => Ok(Some(*value)),
+                        _ => Err("marshal slice bounds must decode to int".to_string()),
+                    },
+                }
+            };
+            Ok(Value::Slice(Box::new(SliceValue {
+                lower: parse_int(lower)?,
+                upper: parse_int(upper)?,
+                step: parse_int(step)?,
+            })))
+        }
+        CpythonMarshalObject::Code(_) => Err("marshal code objects are not supported in C-API decode".to_string()),
+    }
 }
 
 unsafe fn capi_module_insert_value(

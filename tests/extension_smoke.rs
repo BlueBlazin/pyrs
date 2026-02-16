@@ -6305,6 +6305,120 @@ PyInit_cpython_api_batch42_probe(void) {
 }
 
 #[test]
+fn cpython_compat_marshal_abi_batch43_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch43 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch43 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch43");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch43_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *item_a = PyLong_FromLong(7);
+    PyObject *item_b = PyUnicode_FromString("hi");
+    PyObject *obj = PyTuple_Pack(2, item_a, item_b);
+    PyObject *encoded = obj ? PyMarshal_WriteObjectToString(obj, 4) : 0;
+    int payload_ok = 0;
+    int roundtrip_ok = 0;
+    int invalid_rejected = 0;
+
+    if (encoded) {
+        long long size = PyBytes_Size(encoded);
+        char *raw = PyBytes_AsString(encoded);
+        payload_ok = (size > 0 && raw != 0) ? 1 : 0;
+        PyObject *decoded = payload_ok ? PyMarshal_ReadObjectFromString(raw, size) : 0;
+        if (decoded) {
+            PyObject *obj_repr = PyObject_Repr(obj);
+            PyObject *decoded_repr = PyObject_Repr(decoded);
+            const char *obj_text = obj_repr ? PyUnicode_AsUTF8(obj_repr) : 0;
+            const char *decoded_text = decoded_repr ? PyUnicode_AsUTF8(decoded_repr) : 0;
+            roundtrip_ok = (obj_text && decoded_text && strcmp(obj_text, decoded_text) == 0) ? 1 : 0;
+            Py_XDECREF(obj_repr);
+            Py_XDECREF(decoded_repr);
+            Py_DECREF(decoded);
+        }
+    }
+
+    char bad[1] = {'?'};
+    PyObject *invalid = PyMarshal_ReadObjectFromString(bad, 1);
+    invalid_rejected = (invalid == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+
+    Py_XDECREF(invalid);
+    Py_XDECREF(encoded);
+    Py_XDECREF(obj);
+    Py_XDECREF(item_a);
+    Py_XDECREF(item_b);
+
+    return Py_BuildValue("(iii)", payload_ok, roundtrip_ok, invalid_rejected);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe marshal C-API"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch43_probe",
+    "cpython api batch43 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch43_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch43_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch43 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch43_probe as m\nres = m.run()\nassert res == (1, 1, 1)",
+    )
+    .expect("cpython api batch43 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

@@ -85,6 +85,17 @@ pub fn dump_pyc(code: &CpythonCode, header: &PycHeader) -> Result<Vec<u8>, Cpyth
     Ok(bytes)
 }
 
+pub fn marshal_dump_object(obj: &PyObject) -> Result<Vec<u8>, CpythonError> {
+    let mut writer = MarshalWriter::new();
+    writer.write_object(obj)?;
+    Ok(writer.into_bytes())
+}
+
+pub fn marshal_load_object(bytes: &[u8], allow_code: bool) -> Result<PyObject, CpythonError> {
+    let mut reader = MarshalReader::new(bytes);
+    reader.read_object(allow_code)
+}
+
 pub fn translate_code(code: &CpythonCode, heap: &mut Heap) -> Result<CodeObject, CpythonError> {
     let mut translator = Translator::new(code, heap)?;
     translator.translate()

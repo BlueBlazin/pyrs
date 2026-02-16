@@ -251,6 +251,8 @@ PyObject *PyBytes_FromString(const char *value);
 PyObject *PyBytes_FromStringAndSize(const char *value, long long len);
 PyObject *PyBytes_FromFormat(const char *format, ...);
 PyObject *PyBytes_FromFormatV(const char *format, va_list vargs);
+PyObject *PyMarshal_ReadObjectFromString(const char *data, long long len);
+PyObject *PyMarshal_WriteObjectToString(PyObject *object, int version);
 PyObject *PyBytes_FromObject(PyObject *object);
 long long PyBytes_Size(PyObject *object);
 char *PyBytes_AsString(PyObject *object);
