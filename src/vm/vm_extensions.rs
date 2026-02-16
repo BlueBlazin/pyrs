@@ -1,7 +1,7 @@
 use std::backtrace::Backtrace;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_ulong, c_void};
+use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, c_void};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -33,8 +33,8 @@ use super::{
     NativeCallResult, ObjRef, Vm, add_values, and_values, dict_contains_key_checked,
     dict_get_value, dict_remove_value, dict_set_value_checked, div_values, floor_div_values,
     invert_value, is_truthy, lshift_values, matmul_values, memoryview_bounds, mod_values,
-    mul_values, neg_value, or_values, pos_value, pow_values, rshift_values, sub_values, value_to_int,
-    vm_current_thread_ident, vm_os_thread_ident, xor_values,
+    mul_values, neg_value, or_values, pos_value, pow_values, rshift_values, sub_values,
+    value_to_int, vm_current_thread_ident, vm_os_thread_ident, xor_values,
 };
 
 #[cfg(windows)]
@@ -225,6 +225,21 @@ struct CpythonStructSequenceDesc {
 }
 
 #[repr(C)]
+struct CpythonTypeSlot {
+    slot: c_int,
+    pfunc: *mut c_void,
+}
+
+#[repr(C)]
+struct CpythonTypeSpec {
+    name: *const c_char,
+    basicsize: c_int,
+    itemsize: c_int,
+    flags: c_uint,
+    slots: *mut CpythonTypeSlot,
+}
+
+#[repr(C)]
 struct CpythonModuleDef {
     _m_base: CpythonModuleDefBase,
     m_name: *const c_char,
@@ -412,6 +427,38 @@ const PY_MEMBER_T_PYSSIZET: c_int = 19;
 const PY_MEMBER_T_NONE: c_int = 20;
 const PY_MEMBER_READONLY: c_int = 1;
 const PY_MEMBER_RELATIVE_OFFSET: c_int = 8;
+const PY_TYPE_SLOT_TP_ALLOC: c_int = 47;
+const PY_TYPE_SLOT_TP_BASE: c_int = 48;
+const PY_TYPE_SLOT_TP_BASES: c_int = 49;
+const PY_TYPE_SLOT_TP_CALL: c_int = 50;
+const PY_TYPE_SLOT_TP_CLEAR: c_int = 51;
+const PY_TYPE_SLOT_TP_DEALLOC: c_int = 52;
+const PY_TYPE_SLOT_TP_DEL: c_int = 53;
+const PY_TYPE_SLOT_TP_DESCR_GET: c_int = 54;
+const PY_TYPE_SLOT_TP_DESCR_SET: c_int = 55;
+const PY_TYPE_SLOT_TP_DOC: c_int = 56;
+const PY_TYPE_SLOT_TP_GETATTR: c_int = 57;
+const PY_TYPE_SLOT_TP_GETATTRO: c_int = 58;
+const PY_TYPE_SLOT_TP_HASH: c_int = 59;
+const PY_TYPE_SLOT_TP_INIT: c_int = 60;
+const PY_TYPE_SLOT_TP_IS_GC: c_int = 61;
+const PY_TYPE_SLOT_TP_ITER: c_int = 62;
+const PY_TYPE_SLOT_TP_ITERNEXT: c_int = 63;
+const PY_TYPE_SLOT_TP_METHODS: c_int = 64;
+const PY_TYPE_SLOT_TP_NEW: c_int = 65;
+const PY_TYPE_SLOT_TP_REPR: c_int = 66;
+const PY_TYPE_SLOT_TP_RICHCOMPARE: c_int = 67;
+const PY_TYPE_SLOT_TP_SETATTR: c_int = 68;
+const PY_TYPE_SLOT_TP_SETATTRO: c_int = 69;
+const PY_TYPE_SLOT_TP_STR: c_int = 70;
+const PY_TYPE_SLOT_TP_TRAVERSE: c_int = 71;
+const PY_TYPE_SLOT_TP_MEMBERS: c_int = 72;
+const PY_TYPE_SLOT_TP_GETSET: c_int = 73;
+const PY_TYPE_SLOT_TP_FREE: c_int = 74;
+const PY_TYPE_SLOT_TP_FINALIZE: c_int = 80;
+const PY_TYPE_SLOT_TP_VECTORCALL: c_int = 82;
+const PY_TYPE_SLOT_TP_TOKEN: c_int = 83;
+const PY_TYPE_SLOT_MAX: c_int = 83;
 
 unsafe extern "C" fn datetime_capi_unimplemented() -> *mut c_void {
     cpython_set_error("datetime C-API constructor is not implemented");
@@ -1334,6 +1381,8 @@ static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
     OnceLock::new();
+static CPYTHON_HEAP_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonHeapTypeInfo>>> =
+    OnceLock::new();
 
 struct CpythonThreadLock {
     state: Mutex<bool>,
@@ -1350,6 +1399,17 @@ struct CpythonStructSeqTypeInfo {
     field_count: usize,
     _visible_count: usize,
     _name: CString,
+}
+
+struct CpythonHeapTypeInfo {
+    _owned_name: CString,
+    qualname: String,
+    module_name: String,
+    module_ptr: usize,
+    module_def_ptr: usize,
+    token: usize,
+    type_data_size: isize,
+    slots: HashMap<c_int, usize>,
 }
 
 fn cpython_main_thread_state_ptr() -> usize {
@@ -1390,6 +1450,10 @@ fn cpython_interpreter_state_allocations() -> &'static Mutex<HashSet<usize>> {
 
 fn cpython_structseq_registry() -> &'static Mutex<HashMap<usize, CpythonStructSeqTypeInfo>> {
     CPYTHON_STRUCTSEQ_TYPE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cpython_heap_type_registry() -> &'static Mutex<HashMap<usize, CpythonHeapTypeInfo>> {
+    CPYTHON_HEAP_TYPE_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn cpython_is_known_interpreter_state_ptr(ptr: usize) -> bool {
@@ -19448,6 +19512,707 @@ unsafe extern "C" fn cpython_type_tp_call(
     object
 }
 
+fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    let type_type = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
+    if ptr == type_type {
+        return true;
+    }
+    // SAFETY: `ptr` is assumed to reference a CPython object header.
+    let object_type = unsafe {
+        ptr.cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type)
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if object_type.is_null() {
+        return false;
+    }
+    if object_type == type_type {
+        return true;
+    }
+    // SAFETY: object_type and type_type are validated non-null pointers.
+    unsafe { PyType_IsSubtype(object_type, type_type) != 0 }
+}
+
+fn cpython_type_ptr_from_value(value: &Value) -> Option<*mut CpythonTypeObject> {
+    if let Some(raw) = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(value)
+        && cpython_is_type_object_ptr(raw)
+    {
+        return Some(raw.cast::<CpythonTypeObject>());
+    }
+    match value {
+        Value::Class(class_obj) => {
+            let Object::Class(class_data) = &*class_obj.kind() else {
+                return None;
+            };
+            cpython_builtin_type_ptr_for_class_name(&class_data.name)
+                .filter(|ptr| cpython_is_type_object_ptr(*ptr))
+                .map(|ptr| ptr.cast::<CpythonTypeObject>())
+        }
+        _ => None,
+    }
+}
+
+fn cpython_resolve_type_base_from_arg(
+    bases: *mut c_void,
+) -> Result<*mut CpythonTypeObject, String> {
+    let default = std::ptr::addr_of_mut!(PyBaseObject_Type);
+    if bases.is_null() {
+        return Ok(default);
+    }
+    if cpython_is_type_object_ptr(bases) {
+        return Ok(bases.cast::<CpythonTypeObject>());
+    }
+    let value = cpython_value_from_ptr(bases)?;
+    match value {
+        Value::Tuple(tuple_obj) => {
+            let Object::Tuple(items) = &*tuple_obj.kind() else {
+                return Ok(default);
+            };
+            for item in items {
+                if let Some(base) = cpython_type_ptr_from_value(item) {
+                    return Ok(base);
+                }
+            }
+            Ok(default)
+        }
+        _ => Err("bases must be a type or tuple of types".to_string()),
+    }
+}
+
+fn cpython_split_type_name(full_name: &str) -> (String, String) {
+    if let Some((module_name, qualname)) = full_name.rsplit_once('.')
+        && !module_name.is_empty()
+        && !qualname.is_empty()
+    {
+        return (module_name.to_string(), qualname.to_string());
+    }
+    ("builtins".to_string(), full_name.to_string())
+}
+
+fn cpython_type_name_from_tp_name(type_ptr: *mut CpythonTypeObject) -> String {
+    // SAFETY: `type_ptr` is expected to reference a type object.
+    let full = unsafe { c_name_to_string((*type_ptr).tp_name) }
+        .unwrap_or_else(|_| "<unnamed>".to_string());
+    full.rsplit('.').next().unwrap_or(full.as_str()).to_string()
+}
+
+fn cpython_type_is_heap_type(type_ptr: *mut CpythonTypeObject) -> bool {
+    if type_ptr.is_null() {
+        return false;
+    }
+    // SAFETY: caller ensures a non-null type pointer.
+    unsafe { ((*type_ptr).tp_flags & PY_TPFLAGS_HEAPTYPE) != 0 }
+}
+
+fn cpython_type_qualname_from_tp_name(type_ptr: *mut CpythonTypeObject) -> String {
+    cpython_type_name_from_tp_name(type_ptr)
+}
+
+fn cpython_type_module_name_from_tp_name(type_ptr: *mut CpythonTypeObject) -> String {
+    // SAFETY: `type_ptr` is expected to reference a type object.
+    let full = unsafe { c_name_to_string((*type_ptr).tp_name) }
+        .unwrap_or_else(|_| "<unnamed>".to_string());
+    full.rsplit_once('.')
+        .map(|(module_name, _)| module_name.to_string())
+        .unwrap_or_else(|| "builtins".to_string())
+}
+
+fn cpython_apply_type_slot(
+    ty: &mut CpythonTypeObject,
+    slot: c_int,
+    pfunc: *mut c_void,
+    token: &mut usize,
+) -> Result<(), String> {
+    match slot {
+        PY_TYPE_SLOT_TP_ALLOC => ty.tp_alloc = pfunc,
+        PY_TYPE_SLOT_TP_BASE => ty.tp_base = pfunc.cast::<CpythonTypeObject>(),
+        PY_TYPE_SLOT_TP_BASES => ty.tp_bases = pfunc,
+        PY_TYPE_SLOT_TP_CALL => ty.tp_call = pfunc,
+        PY_TYPE_SLOT_TP_CLEAR => ty.tp_clear = pfunc,
+        PY_TYPE_SLOT_TP_DEALLOC => ty.tp_dealloc = pfunc,
+        PY_TYPE_SLOT_TP_DEL => ty.tp_del = pfunc,
+        PY_TYPE_SLOT_TP_DESCR_GET => ty.tp_descr_get = pfunc,
+        PY_TYPE_SLOT_TP_DESCR_SET => ty.tp_descr_set = pfunc,
+        PY_TYPE_SLOT_TP_DOC => ty.tp_doc = pfunc.cast::<c_char>(),
+        PY_TYPE_SLOT_TP_GETATTR => ty.tp_getattr = pfunc,
+        PY_TYPE_SLOT_TP_GETATTRO => ty.tp_getattro = pfunc,
+        PY_TYPE_SLOT_TP_HASH => ty.tp_hash = pfunc,
+        PY_TYPE_SLOT_TP_INIT => ty.tp_init = pfunc,
+        PY_TYPE_SLOT_TP_IS_GC => ty.tp_is_gc = pfunc,
+        PY_TYPE_SLOT_TP_ITER => ty.tp_iter = pfunc,
+        PY_TYPE_SLOT_TP_ITERNEXT => ty.tp_iternext = pfunc,
+        PY_TYPE_SLOT_TP_METHODS => ty.tp_methods = pfunc,
+        PY_TYPE_SLOT_TP_NEW => ty.tp_new = pfunc,
+        PY_TYPE_SLOT_TP_REPR => ty.tp_repr = pfunc,
+        PY_TYPE_SLOT_TP_RICHCOMPARE => ty.tp_richcompare = pfunc,
+        PY_TYPE_SLOT_TP_SETATTR => ty.tp_setattr = pfunc,
+        PY_TYPE_SLOT_TP_SETATTRO => ty.tp_setattro = pfunc,
+        PY_TYPE_SLOT_TP_STR => ty.tp_str = pfunc,
+        PY_TYPE_SLOT_TP_TRAVERSE => ty.tp_traverse = pfunc,
+        PY_TYPE_SLOT_TP_MEMBERS => ty.tp_members = pfunc,
+        PY_TYPE_SLOT_TP_GETSET => ty.tp_getset = pfunc,
+        PY_TYPE_SLOT_TP_FREE => ty.tp_free = pfunc,
+        PY_TYPE_SLOT_TP_FINALIZE => ty.tp_finalize = pfunc,
+        PY_TYPE_SLOT_TP_VECTORCALL => ty.tp_vectorcall = pfunc,
+        PY_TYPE_SLOT_TP_TOKEN => *token = pfunc as usize,
+        1..=PY_TYPE_SLOT_MAX => {}
+        _ => return Err(format!("invalid type slot id {slot}")),
+    }
+    Ok(())
+}
+
+fn cpython_type_slot_from_type_object(
+    type_ptr: *mut CpythonTypeObject,
+    slot: c_int,
+) -> *mut c_void {
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: caller provides a valid type pointer.
+    let ty = unsafe { &*type_ptr };
+    match slot {
+        PY_TYPE_SLOT_TP_ALLOC => ty.tp_alloc,
+        PY_TYPE_SLOT_TP_BASE => ty.tp_base.cast::<c_void>(),
+        PY_TYPE_SLOT_TP_BASES => ty.tp_bases,
+        PY_TYPE_SLOT_TP_CALL => ty.tp_call,
+        PY_TYPE_SLOT_TP_CLEAR => ty.tp_clear,
+        PY_TYPE_SLOT_TP_DEALLOC => ty.tp_dealloc,
+        PY_TYPE_SLOT_TP_DEL => ty.tp_del,
+        PY_TYPE_SLOT_TP_DESCR_GET => ty.tp_descr_get,
+        PY_TYPE_SLOT_TP_DESCR_SET => ty.tp_descr_set,
+        PY_TYPE_SLOT_TP_DOC => ty.tp_doc as *mut c_void,
+        PY_TYPE_SLOT_TP_GETATTR => ty.tp_getattr,
+        PY_TYPE_SLOT_TP_GETATTRO => ty.tp_getattro,
+        PY_TYPE_SLOT_TP_HASH => ty.tp_hash,
+        PY_TYPE_SLOT_TP_INIT => ty.tp_init,
+        PY_TYPE_SLOT_TP_IS_GC => ty.tp_is_gc,
+        PY_TYPE_SLOT_TP_ITER => ty.tp_iter,
+        PY_TYPE_SLOT_TP_ITERNEXT => ty.tp_iternext,
+        PY_TYPE_SLOT_TP_METHODS => ty.tp_methods,
+        PY_TYPE_SLOT_TP_NEW => ty.tp_new,
+        PY_TYPE_SLOT_TP_REPR => ty.tp_repr,
+        PY_TYPE_SLOT_TP_RICHCOMPARE => ty.tp_richcompare,
+        PY_TYPE_SLOT_TP_SETATTR => ty.tp_setattr,
+        PY_TYPE_SLOT_TP_SETATTRO => ty.tp_setattro,
+        PY_TYPE_SLOT_TP_STR => ty.tp_str,
+        PY_TYPE_SLOT_TP_TRAVERSE => ty.tp_traverse,
+        PY_TYPE_SLOT_TP_MEMBERS => ty.tp_members,
+        PY_TYPE_SLOT_TP_GETSET => ty.tp_getset,
+        PY_TYPE_SLOT_TP_FREE => ty.tp_free,
+        PY_TYPE_SLOT_TP_FINALIZE => ty.tp_finalize,
+        PY_TYPE_SLOT_TP_VECTORCALL => ty.tp_vectorcall,
+        _ => std::ptr::null_mut(),
+    }
+}
+
+fn cpython_module_name_and_def_for_type_creation(
+    module_ptr: *mut c_void,
+    fallback_module_name: String,
+) -> Result<(String, usize), String> {
+    if module_ptr.is_null() {
+        return Ok((fallback_module_name, 0));
+    }
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(module_ptr) else {
+            return Err("invalid module object".to_string());
+        };
+        let Value::Module(module_obj) = value else {
+            return Err("module argument must be a module object".to_string());
+        };
+        let module_name = match &*module_obj.kind() {
+            Object::Module(module_data) => module_data.name.clone(),
+            _ => fallback_module_name,
+        };
+        let mut module_def_ptr = 0usize;
+        if !context.vm.is_null() {
+            // SAFETY: VM pointer is valid for active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            module_def_ptr = vm
+                .extension_module_def_registry
+                .get(&module_obj.id())
+                .copied()
+                .unwrap_or(0);
+        }
+        Ok((module_name, module_def_ptr))
+    })
+    .unwrap_or_else(|err| Err(err.to_string()))
+}
+
+fn cpython_type_from_spec_impl(
+    metaclass: *mut c_void,
+    module: *mut c_void,
+    spec: *mut c_void,
+    bases: *mut c_void,
+) -> *mut c_void {
+    if spec.is_null() {
+        cpython_set_typed_error(unsafe { PyExc_SystemError }, "type spec cannot be NULL");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: pointer is validated non-null above.
+    let spec = unsafe { &*(spec.cast::<CpythonTypeSpec>()) };
+    if spec.name.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "type spec name cannot be NULL",
+        );
+        return std::ptr::null_mut();
+    }
+    let full_name = match unsafe { c_name_to_string(spec.name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(format!("invalid type spec name: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let metaclass_ptr = if metaclass.is_null() {
+        std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>()
+    } else if cpython_is_type_object_ptr(metaclass) {
+        metaclass
+    } else {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "metaclass must be a type object",
+        );
+        return std::ptr::null_mut();
+    };
+    let base = match cpython_resolve_type_base_from_arg(bases) {
+        Ok(base) => base,
+        Err(err) => {
+            cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+            return std::ptr::null_mut();
+        }
+    };
+    let (default_module_name, qualname) = cpython_split_type_name(&full_name);
+    let (module_name, module_def_ptr) =
+        match cpython_module_name_and_def_for_type_creation(module, default_module_name) {
+            Ok(parts) => parts,
+            Err(err) => {
+                cpython_set_typed_error(unsafe { PyExc_TypeError }, err);
+                return std::ptr::null_mut();
+            }
+        };
+    let owned_name = match CString::new(full_name.clone()) {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(format!("invalid type spec name: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    // SAFETY: base pointer is validated and can be copied by value as a template.
+    let mut type_value = unsafe { std::ptr::read(base) };
+    type_value.ob_refcnt = 1;
+    type_value.ob_type = metaclass_ptr;
+    type_value.ob_size = 0;
+    type_value.tp_name = owned_name.as_ptr();
+    if spec.basicsize > 0 {
+        type_value.tp_basicsize = spec.basicsize as isize;
+    }
+    if spec.itemsize >= 0 {
+        type_value.tp_itemsize = spec.itemsize as isize;
+    }
+    type_value.tp_base = base;
+    type_value.tp_dict = std::ptr::null_mut();
+    type_value.tp_flags |= PY_TPFLAGS_HEAPTYPE | PY_TPFLAGS_BASETYPE;
+    type_value.tp_flags |= spec.flags as usize;
+    type_value.tp_flags &= !PY_TPFLAGS_READY;
+
+    let mut token = 0usize;
+    let mut slot_map: HashMap<c_int, usize> = HashMap::new();
+    if !spec.slots.is_null() {
+        let mut slot = spec.slots;
+        let mut guard = 0usize;
+        while guard < 8192 {
+            // SAFETY: slots is a contiguous slot table terminated by slot==0.
+            let slot_entry = unsafe { &*slot };
+            if slot_entry.slot == 0 {
+                break;
+            }
+            let slot_pfunc =
+                if slot_entry.slot == PY_TYPE_SLOT_TP_TOKEN && slot_entry.pfunc.is_null() {
+                    spec as *const CpythonTypeSpec as *mut c_void
+                } else {
+                    slot_entry.pfunc
+                };
+            slot_map.insert(slot_entry.slot, slot_pfunc as usize);
+            if let Err(err) =
+                cpython_apply_type_slot(&mut type_value, slot_entry.slot, slot_pfunc, &mut token)
+            {
+                cpython_set_typed_error(unsafe { PyExc_SystemError }, err);
+                return std::ptr::null_mut();
+            }
+            // SAFETY: move to next entry in contiguous table.
+            slot = unsafe { slot.add(1) };
+            guard += 1;
+        }
+        if guard == 8192 {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                "type slot table is not terminated",
+            );
+            return std::ptr::null_mut();
+        }
+    }
+
+    let type_data_size = (type_value.tp_basicsize - unsafe { (*base).tp_basicsize }).max(0);
+    let type_ptr = Box::into_raw(Box::new(type_value));
+    if unsafe { PyType_Ready(type_ptr.cast::<c_void>()) } != 0 {
+        // SAFETY: type pointer allocated above and not published on failure.
+        unsafe {
+            let _ = Box::from_raw(type_ptr);
+        }
+        return std::ptr::null_mut();
+    }
+    let type_key = type_ptr as usize;
+    match cpython_heap_type_registry().lock() {
+        Ok(mut registry) => {
+            registry.insert(
+                type_key,
+                CpythonHeapTypeInfo {
+                    _owned_name: owned_name,
+                    qualname,
+                    module_name,
+                    module_ptr: module as usize,
+                    module_def_ptr,
+                    token,
+                    type_data_size,
+                    slots: slot_map,
+                },
+            );
+        }
+        Err(_) => {
+            std::mem::forget(owned_name);
+        }
+    }
+    type_ptr.cast::<c_void>()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_FromMetaclass(
+    metaclass: *mut c_void,
+    module: *mut c_void,
+    spec: *mut c_void,
+    bases: *mut c_void,
+) -> *mut c_void {
+    cpython_type_from_spec_impl(metaclass, module, spec, bases)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_FromModuleAndSpec(
+    module: *mut c_void,
+    spec: *mut c_void,
+    bases: *mut c_void,
+) -> *mut c_void {
+    cpython_type_from_spec_impl(std::ptr::null_mut(), module, spec, bases)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_FromSpecWithBases(
+    spec: *mut c_void,
+    bases: *mut c_void,
+) -> *mut c_void {
+    cpython_type_from_spec_impl(std::ptr::null_mut(), std::ptr::null_mut(), spec, bases)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_FromSpec(spec: *mut c_void) -> *mut c_void {
+    cpython_type_from_spec_impl(
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        spec,
+        std::ptr::null_mut(),
+    )
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetName(ty: *mut c_void) -> *mut c_void {
+    if ty.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    cpython_new_ptr_for_value(Value::Str(cpython_type_name_from_tp_name(
+        ty.cast::<CpythonTypeObject>(),
+    )))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetQualName(ty: *mut c_void) -> *mut c_void {
+    if ty.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let type_key = ty as usize;
+    let qualname = cpython_heap_type_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&type_key).map(|info| info.qualname.clone()))
+        .unwrap_or_else(|| cpython_type_qualname_from_tp_name(ty.cast::<CpythonTypeObject>()));
+    cpython_new_ptr_for_value(Value::Str(qualname))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetModuleName(ty: *mut c_void) -> *mut c_void {
+    if ty.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let type_key = ty as usize;
+    let module_name = cpython_heap_type_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.get(&type_key).map(|info| info.module_name.clone()))
+        .unwrap_or_else(|| cpython_type_module_name_from_tp_name(ty.cast::<CpythonTypeObject>()));
+    cpython_new_ptr_for_value(Value::Str(module_name))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetFullyQualifiedName(ty: *mut c_void) -> *mut c_void {
+    if ty.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let type_ptr = ty.cast::<CpythonTypeObject>();
+    if !cpython_type_is_heap_type(type_ptr) {
+        let full = unsafe { c_name_to_string((*type_ptr).tp_name) }
+            .unwrap_or_else(|_| "<unnamed>".to_string());
+        return cpython_new_ptr_for_value(Value::Str(full));
+    }
+    let type_key = ty as usize;
+    let (module_name, qualname) = cpython_heap_type_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| {
+            registry.get(&type_key).map(|info| {
+                let module = info.module_name.clone();
+                let qual = info.qualname.clone();
+                (module, qual)
+            })
+        })
+        .unwrap_or_else(|| {
+            (
+                cpython_type_module_name_from_tp_name(ty.cast::<CpythonTypeObject>()),
+                cpython_type_qualname_from_tp_name(ty.cast::<CpythonTypeObject>()),
+            )
+        });
+    let full_name =
+        if module_name.is_empty() || module_name == "builtins" || module_name == "__main__" {
+            qualname
+        } else {
+            format!("{module_name}.{qualname}")
+        };
+    cpython_new_ptr_for_value(Value::Str(full_name))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetSlot(ty: *mut c_void, slot: c_int) -> *mut c_void {
+    if ty.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if !(1..=PY_TYPE_SLOT_MAX).contains(&slot) {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let type_ptr = ty.cast::<CpythonTypeObject>();
+    let type_key = type_ptr as usize;
+    if let Ok(registry) = cpython_heap_type_registry().lock()
+        && let Some(info) = registry.get(&type_key)
+    {
+        if slot == PY_TYPE_SLOT_TP_TOKEN {
+            return info.token as *mut c_void;
+        }
+        if let Some(raw) = info.slots.get(&slot)
+            && *raw != 0
+        {
+            return *raw as *mut c_void;
+        }
+    }
+    if slot == PY_TYPE_SLOT_TP_TOKEN {
+        return std::ptr::null_mut();
+    }
+    cpython_type_slot_from_type_object(type_ptr, slot)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
+    if ty.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let type_ptr = ty.cast::<CpythonTypeObject>();
+    let type_key = type_ptr as usize;
+    let Some((module_ptr, type_name)) =
+        cpython_heap_type_registry()
+            .lock()
+            .ok()
+            .and_then(|registry| {
+                registry
+                    .get(&type_key)
+                    .map(|info| (info.module_ptr, cpython_type_name_from_tp_name(type_ptr)))
+            })
+    else {
+        let type_name = unsafe { c_name_to_string((*type_ptr).tp_name) }
+            .unwrap_or_else(|_| "<unnamed>".to_string());
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            format!("PyType_GetModule: Type '{type_name}' is not a heap type"),
+        );
+        return std::ptr::null_mut();
+    };
+    if module_ptr == 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            format!(
+                "PyType_GetModule: Type '{}' has no associated module",
+                type_name
+            ),
+        );
+        return std::ptr::null_mut();
+    }
+    module_ptr as *mut c_void
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetModuleState(ty: *mut c_void) -> *mut c_void {
+    let module = unsafe { PyType_GetModule(ty) };
+    if module.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { PyModule_GetState(module) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetModuleByDef(
+    ty: *mut c_void,
+    module_def: *mut c_void,
+) -> *mut c_void {
+    if ty.is_null() || module_def.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    if !cpython_is_type_object_ptr(ty) {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "expected type object");
+        return std::ptr::null_mut();
+    }
+    let mut current = ty.cast::<CpythonTypeObject>();
+    while !current.is_null() {
+        let key = current as usize;
+        if let Ok(registry) = cpython_heap_type_registry().lock()
+            && let Some(info) = registry.get(&key)
+            && info.module_ptr != 0
+            && info.module_def_ptr != 0
+            && info.module_def_ptr == module_def as usize
+        {
+            return info.module_ptr as *mut c_void;
+        }
+        // SAFETY: current pointer is valid in MRO walk.
+        current = unsafe { (*current).tp_base };
+    }
+    // SAFETY: `ty` is non-null and expected to be a type object.
+    let type_name = unsafe { c_name_to_string((*ty.cast::<CpythonTypeObject>()).tp_name) }
+        .unwrap_or_else(|_| "<unnamed>".to_string());
+    cpython_set_typed_error(
+        unsafe { PyExc_TypeError },
+        format!("PyType_GetModuleByDef: No superclass of '{type_name}' has the given module"),
+    );
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetTypeDataSize(ty: *mut c_void) -> isize {
+    if ty.is_null() {
+        return 0;
+    }
+    let key = ty as usize;
+    if let Ok(registry) = cpython_heap_type_registry().lock()
+        && let Some(info) = registry.get(&key)
+    {
+        return info.type_data_size.max(0);
+    }
+    // SAFETY: caller provided type pointer.
+    let ty = ty.cast::<CpythonTypeObject>();
+    // SAFETY: pointer validated non-null above.
+    let base = unsafe { (*ty).tp_base };
+    if base.is_null() {
+        return 0;
+    }
+    // SAFETY: type and base pointers are valid for read.
+    let delta = unsafe { (*ty).tp_basicsize - (*base).tp_basicsize };
+    delta.max(0)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_GetBaseByToken(
+    ty: *mut c_void,
+    token: *mut c_void,
+    result: *mut *mut c_void,
+) -> c_int {
+    if !result.is_null() {
+        // SAFETY: output pointer is caller-provided and writable.
+        unsafe { *result = std::ptr::null_mut() };
+    }
+    if token.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyType_GetBaseByToken called with token=NULL",
+        );
+        return -1;
+    }
+    if ty.is_null() || !cpython_is_type_object_ptr(ty) {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "expected a type object");
+        return -1;
+    }
+    let token_key = token as usize;
+    let mut current = ty.cast::<CpythonTypeObject>();
+    while !current.is_null() {
+        let key = current as usize;
+        if let Ok(registry) = cpython_heap_type_registry().lock()
+            && let Some(info) = registry.get(&key)
+            && info.token == token_key
+        {
+            if !result.is_null() {
+                // SAFETY: output pointer is caller-provided and writable.
+                unsafe { *result = current.cast::<c_void>() };
+                // SAFETY: result pointer holds a type object pointer that must be returned as new reference.
+                unsafe { Py_IncRef(*result) };
+            }
+            return 1;
+        }
+        // SAFETY: current pointer is valid in MRO walk.
+        current = unsafe { (*current).tp_base };
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_ClearCache() -> c_uint {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_Modified(_ty: *mut c_void) {}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyType_Freeze(ty: *mut c_void) -> c_int {
+    if ty.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    if !cpython_is_type_object_ptr(ty) {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "expected type object");
+        return -1;
+    }
+    // SAFETY: pointer is validated above.
+    unsafe {
+        (*ty.cast::<CpythonTypeObject>()).tp_flags |= PY_TPFLAGS_IMMUTABLETYPE;
+    }
+    unsafe { PyType_Modified(ty) };
+    0
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_GetFlags(ty: *mut c_void) -> usize {
     if ty.is_null() {
@@ -24032,6 +24797,8 @@ pub static mut _Py_RefTotal: isize = 0;
 pub static _Py_SwappedOp: [c_int; 6] = [4, 5, 2, 3, 0, 1];
 
 const EMPTY_TYPE_FLAGS: usize = 0;
+const PY_TPFLAGS_IMMUTABLETYPE: usize = 1usize << 8;
+const PY_TPFLAGS_HEAPTYPE: usize = 1usize << 9;
 const PY_TPFLAGS_BASETYPE: usize = 1usize << 10;
 const PY_TPFLAGS_READY: usize = 1usize << 12;
 const PY_TPFLAGS_LONG_SUBCLASS: usize = 1usize << 24;
@@ -24843,6 +25610,63 @@ static KEEP2_PYTYPE_GENERICNEW: unsafe extern "C" fn(
     *mut c_void,
 ) -> *mut c_void = PyType_GenericNew;
 #[used]
+static KEEP2_PYTYPE_FROMMETACLASS: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyType_FromMetaclass;
+#[used]
+static KEEP2_PYTYPE_FROMMODULEANDSPEC: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyType_FromModuleAndSpec;
+#[used]
+static KEEP2_PYTYPE_FROMSPECWITHBASES: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyType_FromSpecWithBases;
+#[used]
+static KEEP2_PYTYPE_FROMSPEC: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyType_FromSpec;
+#[used]
+static KEEP2_PYTYPE_GETNAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyType_GetName;
+#[used]
+static KEEP2_PYTYPE_GETQUALNAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyType_GetQualName;
+#[used]
+static KEEP2_PYTYPE_GETMODULENAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyType_GetModuleName;
+#[used]
+static KEEP2_PYTYPE_GETFULLYQUALIFIEDNAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyType_GetFullyQualifiedName;
+#[used]
+static KEEP2_PYTYPE_GETSLOT: unsafe extern "C" fn(*mut c_void, c_int) -> *mut c_void =
+    PyType_GetSlot;
+#[used]
+static KEEP2_PYTYPE_GETMODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyType_GetModule;
+#[used]
+static KEEP2_PYTYPE_GETMODULESTATE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyType_GetModuleState;
+#[used]
+static KEEP2_PYTYPE_GETMODULEBYDEF: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyType_GetModuleByDef;
+#[used]
+static KEEP2_PYTYPE_GETTYPEDATASIZE: unsafe extern "C" fn(*mut c_void) -> isize =
+    PyType_GetTypeDataSize;
+#[used]
+static KEEP2_PYTYPE_GETBASEBYTOKEN: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut *mut c_void,
+) -> c_int = PyType_GetBaseByToken;
+#[used]
+static KEEP2_PYTYPE_CLEARCACHE: unsafe extern "C" fn() -> c_uint = PyType_ClearCache;
+#[used]
+static KEEP2_PYTYPE_MODIFIED: unsafe extern "C" fn(*mut c_void) = PyType_Modified;
+#[used]
+static KEEP2_PYTYPE_FREEZE: unsafe extern "C" fn(*mut c_void) -> c_int = PyType_Freeze;
+#[used]
 static KEEP2_PYOBJECT_MALLOC: unsafe extern "C" fn(usize) -> *mut c_void = PyObject_Malloc;
 #[used]
 static KEEP2_PYOBJECT_CALLOC: unsafe extern "C" fn(usize, usize) -> *mut c_void = PyObject_Calloc;
@@ -24962,8 +25786,7 @@ static KEEP2_PYTHREAD_GET_THREAD_IDENT: unsafe extern "C" fn() -> c_ulong =
 static KEEP2_PYTHREAD_GET_THREAD_NATIVE_ID: unsafe extern "C" fn() -> c_ulong =
     PyThread_get_thread_native_id;
 #[used]
-static KEEP2_PYTHREAD_ALLOCATE_LOCK: unsafe extern "C" fn() -> *mut c_void =
-    PyThread_allocate_lock;
+static KEEP2_PYTHREAD_ALLOCATE_LOCK: unsafe extern "C" fn() -> *mut c_void = PyThread_allocate_lock;
 #[used]
 static KEEP2_PYTHREAD_FREE_LOCK: unsafe extern "C" fn(*mut c_void) = PyThread_free_lock;
 #[used]
@@ -25002,8 +25825,7 @@ static KEEP2_PYTHREAD_TSS_FREE: unsafe extern "C" fn(*mut c_void) = PyThread_tss
 static KEEP2_PYTHREAD_TSS_IS_CREATED: unsafe extern "C" fn(*mut c_void) -> c_int =
     PyThread_tss_is_created;
 #[used]
-static KEEP2_PYTHREAD_TSS_CREATE: unsafe extern "C" fn(*mut c_void) -> c_int =
-    PyThread_tss_create;
+static KEEP2_PYTHREAD_TSS_CREATE: unsafe extern "C" fn(*mut c_void) -> c_int = PyThread_tss_create;
 #[used]
 static KEEP2_PYTHREAD_TSS_DELETE: unsafe extern "C" fn(*mut c_void) = PyThread_tss_delete;
 #[used]

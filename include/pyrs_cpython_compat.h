@@ -53,6 +53,19 @@ typedef struct PyStructSequence_Desc {
     int n_in_sequence;
 } PyStructSequence_Desc;
 
+typedef struct {
+    int slot;
+    void *pfunc;
+} PyType_Slot;
+
+typedef struct {
+    const char *name;
+    int basicsize;
+    int itemsize;
+    unsigned int flags;
+    PyType_Slot *slots;
+} PyType_Spec;
+
 typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
 typedef void (*PyOS_sighandler_t)(int);
 
@@ -97,6 +110,44 @@ typedef enum {
 #ifndef WAIT_LOCK
 #define WAIT_LOCK 1
 #define NOWAIT_LOCK 0
+#endif
+
+#ifndef Py_tp_alloc
+#define Py_tp_alloc 47
+#define Py_tp_base 48
+#define Py_tp_bases 49
+#define Py_tp_call 50
+#define Py_tp_clear 51
+#define Py_tp_dealloc 52
+#define Py_tp_del 53
+#define Py_tp_descr_get 54
+#define Py_tp_descr_set 55
+#define Py_tp_doc 56
+#define Py_tp_getattr 57
+#define Py_tp_getattro 58
+#define Py_tp_hash 59
+#define Py_tp_init 60
+#define Py_tp_is_gc 61
+#define Py_tp_iter 62
+#define Py_tp_iternext 63
+#define Py_tp_methods 64
+#define Py_tp_new 65
+#define Py_tp_repr 66
+#define Py_tp_richcompare 67
+#define Py_tp_setattr 68
+#define Py_tp_setattro 69
+#define Py_tp_str 70
+#define Py_tp_traverse 71
+#define Py_tp_members 72
+#define Py_tp_getset 73
+#define Py_tp_free 74
+#define Py_tp_finalize 80
+#define Py_tp_vectorcall 82
+#define Py_tp_token 83
+#endif
+
+#ifndef Py_TP_USE_SPEC
+#define Py_TP_USE_SPEC NULL
 #endif
 
 typedef long long PY_TIMEOUT_T;
@@ -229,6 +280,24 @@ int PyModule_AddObjectRef(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddObject(PyObject *module, const char *name, PyObject *value);
 int PyModule_AddIntConstant(PyObject *module, const char *name, long long value);
 int PyModule_AddStringConstant(PyObject *module, const char *name, const char *value);
+
+PyObject *PyType_FromSpec(PyType_Spec *spec);
+PyObject *PyType_FromSpecWithBases(PyType_Spec *spec, PyObject *bases);
+void *PyType_GetSlot(PyTypeObject *type, int slot);
+PyObject *PyType_FromModuleAndSpec(PyObject *module, PyType_Spec *spec, PyObject *bases);
+PyObject *PyType_FromMetaclass(PyTypeObject *metaclass, PyObject *module, PyType_Spec *spec, PyObject *bases);
+PyObject *PyType_GetName(PyTypeObject *type);
+PyObject *PyType_GetQualName(PyTypeObject *type);
+PyObject *PyType_GetModuleName(PyTypeObject *type);
+PyObject *PyType_GetFullyQualifiedName(PyTypeObject *type);
+PyObject *PyType_GetModule(PyTypeObject *type);
+void *PyType_GetModuleState(PyTypeObject *type);
+PyObject *PyType_GetModuleByDef(PyTypeObject *type, PyModuleDef *def);
+long long PyType_GetTypeDataSize(PyTypeObject *type);
+int PyType_GetBaseByToken(PyTypeObject *type, void *token, PyTypeObject **result);
+unsigned int PyType_ClearCache(void);
+void PyType_Modified(PyTypeObject *type);
+int PyType_Freeze(PyTypeObject *type);
 
 PyObject *PySys_GetObject(const char *name);
 int PySys_SetObject(const char *name, PyObject *value);

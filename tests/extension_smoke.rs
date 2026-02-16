@@ -7715,6 +7715,175 @@ PyInit_cpython_api_batch53_probe(void) {
 }
 
 #[test]
+fn cpython_compat_type_abi_batch54_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch54 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch54 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch54");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch54_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static struct PyModuleDef module_def;
+
+static PyType_Slot probe_slots[] = {
+    {Py_tp_token, Py_TP_USE_SPEC},
+    {0, 0}
+};
+
+static PyType_Spec probe_spec = {
+    "cpython_api_batch54_probe.ProbeType",
+    128,
+    0,
+    0,
+    probe_slots
+};
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)args;
+
+    PyObject *type_obj = PyType_FromModuleAndSpec(self, &probe_spec, 0);
+    if (!type_obj) {
+        return 0;
+    }
+
+    int name_ok = 0;
+    int qualname_ok = 0;
+    int module_name_ok = 0;
+    int fq_name_ok = 0;
+    int module_ok = 0;
+    int module_by_def_ok = 0;
+    int slot_ok = 0;
+    int token_lookup_ok = 0;
+    int data_size_ok = 0;
+    int freeze_ok = 0;
+    int clear_cache_ok = 0;
+
+    PyObject *name = PyType_GetName((PyTypeObject *)type_obj);
+    PyObject *qualname = PyType_GetQualName((PyTypeObject *)type_obj);
+    PyObject *module_name = PyType_GetModuleName((PyTypeObject *)type_obj);
+    PyObject *fq_name = PyType_GetFullyQualifiedName((PyTypeObject *)type_obj);
+    if (name && qualname && module_name && fq_name) {
+        const char *name_s = PyUnicode_AsUTF8(name);
+        const char *qualname_s = PyUnicode_AsUTF8(qualname);
+        const char *module_name_s = PyUnicode_AsUTF8(module_name);
+        const char *fq_name_s = PyUnicode_AsUTF8(fq_name);
+        name_ok = (name_s && strcmp(name_s, "ProbeType") == 0) ? 1 : 0;
+        qualname_ok = (qualname_s && strcmp(qualname_s, "ProbeType") == 0) ? 1 : 0;
+        module_name_ok = (module_name_s && strcmp(module_name_s, "cpython_api_batch54_probe") == 0) ? 1 : 0;
+        fq_name_ok = (fq_name_s && strcmp(fq_name_s, "cpython_api_batch54_probe.ProbeType") == 0) ? 1 : 0;
+    }
+    Py_XDECREF(name);
+    Py_XDECREF(qualname);
+    Py_XDECREF(module_name);
+    Py_XDECREF(fq_name);
+
+    PyObject *module_obj = PyType_GetModule((PyTypeObject *)type_obj);
+    module_ok = (module_obj == self) ? 1 : 0;
+
+    PyObject *module_by_def = PyType_GetModuleByDef((PyTypeObject *)type_obj, &module_def);
+    module_by_def_ok = (module_by_def == self) ? 1 : 0;
+
+    void *new_slot = PyType_GetSlot((PyTypeObject *)type_obj, Py_tp_new);
+    void *token = PyType_GetSlot((PyTypeObject *)type_obj, Py_tp_token);
+    slot_ok = (new_slot != 0 && token == (void *)&probe_spec) ? 1 : 0;
+
+    PyObject *found_base = 0;
+    int token_res = PyType_GetBaseByToken(
+        (PyTypeObject *)type_obj,
+        token,
+        (PyTypeObject **)&found_base
+    );
+    token_lookup_ok = (token_res == 1 && found_base == type_obj) ? 1 : 0;
+    Py_XDECREF(found_base);
+
+    long long data_size = PyType_GetTypeDataSize((PyTypeObject *)type_obj);
+    data_size_ok = (data_size > 0) ? 1 : 0;
+
+    freeze_ok = (PyType_Freeze((PyTypeObject *)type_obj) == 0) ? 1 : 0;
+    PyType_Modified((PyTypeObject *)type_obj);
+    clear_cache_ok = (PyType_ClearCache() == 0) ? 1 : 0;
+
+    Py_DECREF(type_obj);
+
+    return Py_BuildValue(
+        "(iiiiiiiiiii)",
+        name_ok,
+        qualname_ok,
+        module_name_ok,
+        fq_name_ok,
+        module_ok,
+        module_by_def_ok,
+        slot_ok,
+        token_lookup_ok,
+        data_size_ok,
+        freeze_ok,
+        clear_cache_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe type ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch54_probe",
+    "cpython api batch54 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch54_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch54_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch54 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch54_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch54 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

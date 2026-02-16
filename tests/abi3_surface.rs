@@ -1328,6 +1328,39 @@ fn exports_abi3_batch53_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch54_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyType_ClearCache",
+        "PyType_Freeze",
+        "PyType_FromMetaclass",
+        "PyType_FromModuleAndSpec",
+        "PyType_FromSpec",
+        "PyType_FromSpecWithBases",
+        "PyType_GetBaseByToken",
+        "PyType_GetFullyQualifiedName",
+        "PyType_GetModule",
+        "PyType_GetModuleByDef",
+        "PyType_GetModuleName",
+        "PyType_GetModuleState",
+        "PyType_GetName",
+        "PyType_GetQualName",
+        "PyType_GetSlot",
+        "PyType_GetTypeDataSize",
+        "PyType_Modified",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch54 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
