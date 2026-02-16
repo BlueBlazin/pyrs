@@ -885,6 +885,21 @@ fn exports_abi3_batch37_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch38_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = ["PyFile_FromFd"];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch38 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

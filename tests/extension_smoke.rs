@@ -5723,6 +5723,118 @@ PyInit_cpython_api_batch37_probe(void) {
 }
 
 #[test]
+fn cpython_compat_file_fromfd_abi_batch38_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch38 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch38 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch38");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch38_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *fd_obj = 0;
+    if (!PyArg_ParseTuple(args, "O", &fd_obj)) {
+        return 0;
+    }
+    int fd = (int)PyLong_AsLong(fd_obj);
+    if (PyErr_Occurred()) {
+        return 0;
+    }
+
+    PyObject *file = PyFile_FromFd(
+        fd,
+        "<batch38>",
+        "r",
+        -1,
+        0,
+        0,
+        0,
+        0
+    );
+    int read_ok = 0;
+    if (file) {
+        PyObject *text = PyObject_CallMethod(file, "read", "");
+        if (text) {
+            const char *raw = PyUnicode_AsUTF8(text);
+            read_ok = (raw && strcmp(raw, "batch38-data") == 0) ? 1 : 0;
+        }
+        PyErr_Clear();
+        Py_XDECREF(text);
+    }
+    Py_XDECREF(file);
+
+    PyObject *bad = PyFile_FromFd(-1, "<batch38>", "r", -1, 0, 0, 0, 1);
+    int invalid_rejected = (bad == 0 && PyErr_Occurred() != 0) ? 1 : 0;
+    PyErr_Clear();
+    Py_XDECREF(bad);
+
+    return Py_BuildValue("(ii)", read_ok, invalid_rejected);
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_VARARGS, "probe PyFile_FromFd"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch38_probe",
+    "cpython api batch38 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch38_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch38_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch38 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import os, tempfile\nimport cpython_api_batch38_probe as m\nfd, path = tempfile.mkstemp()\nos.write(fd, b'batch38-data')\nos.lseek(fd, 0, 0)\nres = m.run(fd)\nos.close(fd)\nos.unlink(path)\nassert res == (1, 1)",
+    )
+    .expect("cpython api batch38 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

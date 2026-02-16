@@ -19599,6 +19599,107 @@ pub unsafe extern "C" fn PyErr_DisplayException(exc: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFile_FromFd(
+    fd: i32,
+    _name: *const c_char,
+    mode: *const c_char,
+    buffering: i32,
+    encoding: *const c_char,
+    errors: *const c_char,
+    newline: *const c_char,
+    closefd: i32,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyFile_FromFd missing VM context");
+            return std::ptr::null_mut();
+        }
+        let mode_value = if mode.is_null() {
+            Value::Str("r".to_string())
+        } else {
+            match unsafe { c_name_to_string(mode) } {
+                Ok(text) => Value::Str(text),
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        let encoding_value = if encoding.is_null() {
+            None
+        } else {
+            match unsafe { c_name_to_string(encoding) } {
+                Ok(text) => Some(Value::Str(text)),
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        let errors_value = if errors.is_null() {
+            None
+        } else {
+            match unsafe { c_name_to_string(errors) } {
+                Ok(text) => Some(Value::Str(text)),
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        let newline_value = if newline.is_null() {
+            None
+        } else {
+            match unsafe { c_name_to_string(newline) } {
+                Ok(text) => Some(Value::Str(text)),
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        let mut kwargs = HashMap::new();
+        kwargs.insert("mode".to_string(), mode_value);
+        if buffering >= 0 {
+            kwargs.insert("buffering".to_string(), Value::Int(buffering as i64));
+        }
+        kwargs.insert("closefd".to_string(), Value::Bool(closefd != 0));
+        if let Some(value) = encoding_value {
+            kwargs.insert("encoding".to_string(), value);
+        }
+        if let Some(value) = errors_value {
+            kwargs.insert("errors".to_string(), value);
+        }
+        if let Some(value) = newline_value {
+            kwargs.insert("newline".to_string(), value);
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_internal(
+            Value::Builtin(BuiltinFunction::IoOpen),
+            vec![Value::Int(fd as i64)],
+            kwargs,
+        ) {
+            Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                context.set_error(
+                    vm.runtime_error_from_active_exception("PyFile_FromFd failed").message,
+                );
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyFile_GetLine(file: *mut c_void, n: i32) -> *mut c_void {
     if file.is_null() {
         unsafe { PyErr_BadInternalCall() };
@@ -21956,6 +22057,17 @@ static KEEP_PYERR_SET_IMPORT_ERROR_SUBCLASS: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
 ) -> *mut c_void = PyErr_SetImportErrorSubclass;
+#[used]
+static KEEP_PYFILE_FROM_FD: unsafe extern "C" fn(
+    i32,
+    *const c_char,
+    *const c_char,
+    i32,
+    *const c_char,
+    *const c_char,
+    *const c_char,
+    i32,
+) -> *mut c_void = PyFile_FromFd;
 #[used]
 static KEEP_PYFILE_GET_LINE: unsafe extern "C" fn(*mut c_void, i32) -> *mut c_void = PyFile_GetLine;
 #[used]

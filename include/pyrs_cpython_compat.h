@@ -613,6 +613,16 @@ int PyGC_IsEnabled(void);
 int PyObject_GC_IsTracked(PyObject *object);
 int PyObject_GC_IsFinalized(PyObject *object);
 
+PyObject *PyFile_FromFd(
+    int fd,
+    const char *name,
+    const char *mode,
+    int buffering,
+    const char *encoding,
+    const char *errors,
+    const char *newline,
+    int closefd
+);
 PyObject *PyFile_GetLine(PyObject *f, int n);
 int PyFile_WriteObject(PyObject *v, PyObject *f, int flags);
 int PyFile_WriteString(const char *s, PyObject *f);
