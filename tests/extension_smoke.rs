@@ -5233,6 +5233,137 @@ PyInit_cpython_api_batch33_probe(void) {
 }
 
 #[test]
+fn cpython_compat_eval_frame_abi_batch34_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch34 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch34 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch34");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch34_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static PyObject *
+probe(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *callable = 0;
+    if (!PyArg_ParseTuple(args, "O", &callable)) {
+        return 0;
+    }
+
+    const char *name = PyEval_GetFuncName(callable);
+    const char *desc = PyEval_GetFuncDesc(callable);
+    PyObject *frame = PyEval_GetFrame();
+    PyObject *builtins = PyEval_GetFrameBuiltins();
+    PyObject *globals = PyEval_GetFrameGlobals();
+    PyObject *locals = PyEval_GetFrameLocals();
+
+    int name_ok = (name && strcmp(name, "sample") == 0) ? 1 : 0;
+    int desc_ok = (desc && strcmp(desc, "()") == 0) ? 1 : 0;
+    int frame_ok = frame != 0 ? 1 : 0;
+
+    int globals_ok = 0;
+    int locals_ok = 0;
+    int builtins_ok = 0;
+
+    if (globals) {
+        PyObject *key = PyUnicode_FromString("__name__");
+        PyObject *value = key ? PyObject_GetItem(globals, key) : 0;
+        globals_ok = value != 0 ? 1 : 0;
+        Py_XDECREF(value);
+        Py_XDECREF(key);
+        PyErr_Clear();
+    }
+    if (locals) {
+        long long n = PyObject_Length(locals);
+        locals_ok = n >= 0 ? 1 : 0;
+        PyErr_Clear();
+    }
+    if (builtins) {
+        PyObject *key = PyUnicode_FromString("len");
+        PyObject *value = key ? PyObject_GetItem(builtins, key) : 0;
+        builtins_ok = value != 0 ? 1 : 0;
+        Py_XDECREF(value);
+        Py_XDECREF(key);
+        PyErr_Clear();
+    }
+
+    Py_XDECREF(frame);
+    Py_XDECREF(builtins);
+    Py_XDECREF(globals);
+    Py_XDECREF(locals);
+
+    return Py_BuildValue(
+        "(iiiiii)",
+        name_ok,
+        desc_ok,
+        frame_ok,
+        globals_ok,
+        locals_ok,
+        builtins_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"probe", probe, METH_VARARGS, "probe eval/frame helper APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch34_probe",
+    "cpython api batch34 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch34_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch34_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch34 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch34_probe as m\n\ndef sample():\n    return 1\nres = m.probe(sample)\nassert res == (1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch34 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

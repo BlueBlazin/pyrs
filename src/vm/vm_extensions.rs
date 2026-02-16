@@ -9576,6 +9576,25 @@ pub unsafe extern "C" fn PyEval_GetBuiltins() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetFrame() -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        if vm.frames.is_empty() {
+            return std::ptr::null_mut();
+        }
+        unsafe { PyThreadState_Get() }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyEval_GetGlobals() -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
@@ -9619,6 +9638,97 @@ pub unsafe extern "C" fn PyEval_GetLocals() -> *mut c_void {
         cpython_set_error(err);
         std::ptr::null_mut()
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetFrameBuiltins() -> *mut c_void {
+    unsafe { PyEval_GetBuiltins() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetFrameGlobals() -> *mut c_void {
+    unsafe { PyEval_GetGlobals() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetFrameLocals() -> *mut c_void {
+    unsafe { PyEval_GetLocals() }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetFuncName(func: *mut c_void) -> *const c_char {
+    with_active_cpython_context_mut(|context| {
+        if func.is_null() {
+            return c"<unknown>".as_ptr();
+        }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(func) else {
+            return c"<unknown>".as_ptr();
+        };
+        let name = match value {
+            Value::Function(function_obj) => match &*function_obj.kind() {
+                Object::Function(function_data) => function_data.code.name.clone(),
+                _ => "<function>".to_string(),
+            },
+            Value::BoundMethod(bound_obj) => match &*bound_obj.kind() {
+                Object::BoundMethod(bound_data) => match &*bound_data.function.kind() {
+                    Object::Function(function_data) => function_data.code.name.clone(),
+                    Object::NativeMethod(_) => "<built-in>".to_string(),
+                    _ => "<bound method>".to_string(),
+                },
+                _ => "<bound method>".to_string(),
+            },
+            Value::Builtin(_) => "<built-in>".to_string(),
+            Value::Class(class_obj) => match &*class_obj.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "type".to_string(),
+            },
+            other => {
+                if context.vm.is_null() {
+                    "<object>".to_string()
+                } else {
+                    // SAFETY: VM pointer is valid for active context lifetime.
+                    let vm = unsafe { &mut *context.vm };
+                    vm.value_type_name_for_error(&other)
+                }
+            }
+        };
+        context
+            .scratch_c_string_ptr(&name)
+            .unwrap_or(c"<unknown>".as_ptr())
+    })
+    .unwrap_or(c"<unknown>".as_ptr())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyEval_GetFuncDesc(func: *mut c_void) -> *const c_char {
+    with_active_cpython_context_mut(|context| {
+        if func.is_null() {
+            return c" object".as_ptr();
+        }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(func) else {
+            return c" object".as_ptr();
+        };
+        match value {
+            Value::Class(_) => c" constructor".as_ptr(),
+            Value::Function(_) | Value::BoundMethod(_) | Value::Builtin(_) => {
+                c"()".as_ptr()
+            }
+            other => {
+                if context.vm.is_null() {
+                    c" object".as_ptr()
+                } else {
+                    // SAFETY: VM pointer is valid for active context lifetime.
+                    let vm = unsafe { &mut *context.vm };
+                    if vm.is_callable_value(&other) {
+                        c"()".as_ptr()
+                    } else {
+                        c" object".as_ptr()
+                    }
+                }
+            }
+        }
+    })
+    .unwrap_or(c" object".as_ptr())
 }
 
 #[unsafe(no_mangle)]
@@ -21720,11 +21830,28 @@ static KEEP_PYIMPORT_IMPORT_MODULE_LEVEL: unsafe extern "C" fn(
 static KEEP_PYIMPORT_RELOAD_MODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyImport_ReloadModule;
 #[used]
+static KEEP_PYEVAL_GET_FRAME: unsafe extern "C" fn() -> *mut c_void = PyEval_GetFrame;
+#[used]
 static KEEP_PYEVAL_GET_BUILTINS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetBuiltins;
 #[used]
 static KEEP_PYEVAL_GET_GLOBALS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetGlobals;
 #[used]
 static KEEP_PYEVAL_GET_LOCALS: unsafe extern "C" fn() -> *mut c_void = PyEval_GetLocals;
+#[used]
+static KEEP_PYEVAL_GET_FRAME_BUILTINS: unsafe extern "C" fn() -> *mut c_void =
+    PyEval_GetFrameBuiltins;
+#[used]
+static KEEP_PYEVAL_GET_FRAME_GLOBALS: unsafe extern "C" fn() -> *mut c_void =
+    PyEval_GetFrameGlobals;
+#[used]
+static KEEP_PYEVAL_GET_FRAME_LOCALS: unsafe extern "C" fn() -> *mut c_void =
+    PyEval_GetFrameLocals;
+#[used]
+static KEEP_PYEVAL_GET_FUNC_NAME: unsafe extern "C" fn(*mut c_void) -> *const c_char =
+    PyEval_GetFuncName;
+#[used]
+static KEEP_PYEVAL_GET_FUNC_DESC: unsafe extern "C" fn(*mut c_void) -> *const c_char =
+    PyEval_GetFuncDesc;
 #[used]
 static KEEP_PYITER_CHECK: unsafe extern "C" fn(*mut c_void) -> i32 = PyIter_Check;
 #[used]
