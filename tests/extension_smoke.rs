@@ -7201,6 +7201,153 @@ PyInit_cpython_api_batch49_probe(void) {
 }
 
 #[test]
+fn cpython_compat_pyos_abi_batch50_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch50 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch50 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch50");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch50_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <signal.h>
+#include <stdarg.h>
+#include <string.h>
+
+static void noop_signal_handler(int sig) { (void)sig; }
+
+static int call_vsnprintf(char *out, size_t size, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int rc = PyOS_vsnprintf(out, size, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyOS_BeforeFork();
+    PyOS_AfterFork_Parent();
+    PyOS_AfterFork_Child();
+    PyOS_AfterFork();
+
+    int checkstack_ok = PyOS_CheckStack() == 0 ? 1 : 0;
+    int interrupt_ok = PyOS_InterruptOccurred() == 0 ? 1 : 0;
+    int cmp_ok = (PyOS_mystricmp("Insert", "insert") == 0 &&
+                  PyOS_mystrnicmp("insect", "insert", 3) == 0) ? 1 : 0;
+
+    char out[32];
+    memset(out, 0, sizeof(out));
+    int rc = call_vsnprintf(out, sizeof(out), "%s-%d", "xy", 7);
+    int vsnprintf_ok = (rc >= 0 && strcmp(out, "xy-7") == 0) ? 1 : 0;
+
+    int dtype = -1;
+    char *rendered = PyOS_double_to_string(3.5, 'r', 0, Py_DTSF_ADD_DOT_0, &dtype);
+    int dtoa_ok = (rendered && strstr(rendered, "3.5") != 0 && dtype == Py_DTST_FINITE) ? 1 : 0;
+    PyObject_Free(rendered);
+
+    PyOS_sighandler_t previous = PyOS_getsig(SIGINT);
+    int getsig_ok = previous != SIG_ERR ? 1 : 0;
+    int setsig_ok = 0;
+    if (getsig_ok) {
+        PyOS_sighandler_t replaced = PyOS_setsig(SIGINT, noop_signal_handler);
+        setsig_ok = replaced != SIG_ERR ? 1 : 0;
+        if (setsig_ok) {
+            PyOS_setsig(SIGINT, replaced);
+        }
+    }
+
+    PyObject *text = PyUnicode_FromString("abc");
+    PyObject *text_out = text ? PyOS_FSPath(text) : 0;
+    int fspath_text_ok = (text_out && strcmp(PyUnicode_AsUTF8(text_out), "abc") == 0) ? 1 : 0;
+
+    const char payload[] = {'a', 'b'};
+    PyObject *bytes = PyBytes_FromStringAndSize(payload, 2);
+    PyObject *bytes_out = bytes ? PyOS_FSPath(bytes) : 0;
+    int fspath_bytes_ok = (bytes_out && PyBytes_Size(bytes_out) == 2 &&
+                           memcmp(PyBytes_AsString(bytes_out), payload, 2) == 0) ? 1 : 0;
+
+    Py_XDECREF(bytes_out);
+    Py_XDECREF(bytes);
+    Py_XDECREF(text_out);
+    Py_XDECREF(text);
+
+    return Py_BuildValue(
+        "(iiiiiiiii)",
+        checkstack_ok,
+        interrupt_ok,
+        cmp_ok,
+        vsnprintf_ok,
+        dtoa_ok,
+        getsig_ok,
+        setsig_ok,
+        fspath_text_ok,
+        fspath_bytes_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe pyos ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch50_probe",
+    "cpython api batch50 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch50_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch50_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch50 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch50_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch50 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

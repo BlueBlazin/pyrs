@@ -1136,6 +1136,35 @@ fn exports_abi3_batch49_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch50_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyOS_BeforeFork",
+        "PyOS_AfterFork_Parent",
+        "PyOS_AfterFork_Child",
+        "PyOS_AfterFork",
+        "PyOS_CheckStack",
+        "PyOS_FSPath",
+        "PyOS_InterruptOccurred",
+        "PyOS_double_to_string",
+        "PyOS_getsig",
+        "PyOS_setsig",
+        "PyOS_mystricmp",
+        "PyOS_mystrnicmp",
+        "PyOS_vsnprintf",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch50 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

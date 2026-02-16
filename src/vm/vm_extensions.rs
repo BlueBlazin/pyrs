@@ -23801,6 +23801,30 @@ unsafe extern "C" {
         format: *const c_char,
         vargs: *mut c_void,
     ) -> *mut c_void;
+    fn PyOS_BeforeFork();
+    fn PyOS_AfterFork_Parent();
+    fn PyOS_AfterFork_Child();
+    fn PyOS_AfterFork();
+    fn PyOS_CheckStack() -> c_int;
+    fn PyOS_FSPath(path: *mut c_void) -> *mut c_void;
+    fn PyOS_InterruptOccurred() -> c_int;
+    fn PyOS_double_to_string(
+        value: c_double,
+        format_code: c_char,
+        precision: c_int,
+        flags: c_int,
+        out_type: *mut c_int,
+    ) -> *mut c_char;
+    fn PyOS_getsig(sig: c_int) -> *mut c_void;
+    fn PyOS_setsig(sig: c_int, handler: *mut c_void) -> *mut c_void;
+    fn PyOS_mystricmp(left: *const c_char, right: *const c_char) -> c_int;
+    fn PyOS_mystrnicmp(left: *const c_char, right: *const c_char, size: isize) -> c_int;
+    fn PyOS_vsnprintf(
+        buffer: *mut c_char,
+        size: usize,
+        format: *const c_char,
+        vargs: *mut c_void,
+    ) -> c_int;
     fn PySys_WriteStdout(format: *const c_char, ...);
     fn PySys_WriteStderr(format: *const c_char, ...);
     fn PySys_FormatStdout(format: *const c_char, ...);
@@ -24486,6 +24510,45 @@ static KEEP3_PYOS_STRTOL: unsafe extern "C" fn(*const c_char, *mut *mut c_char, 
 #[used]
 static KEEP3_PYOS_STRTOUL: unsafe extern "C" fn(*const c_char, *mut *mut c_char, i32) -> c_ulong =
     PyOS_strtoul;
+#[used]
+static KEEP3_PYOS_BEFOREFORK: unsafe extern "C" fn() = PyOS_BeforeFork;
+#[used]
+static KEEP3_PYOS_AFTERFORK_PARENT: unsafe extern "C" fn() = PyOS_AfterFork_Parent;
+#[used]
+static KEEP3_PYOS_AFTERFORK_CHILD: unsafe extern "C" fn() = PyOS_AfterFork_Child;
+#[used]
+static KEEP3_PYOS_AFTERFORK: unsafe extern "C" fn() = PyOS_AfterFork;
+#[used]
+static KEEP3_PYOS_CHECKSTACK: unsafe extern "C" fn() -> c_int = PyOS_CheckStack;
+#[used]
+static KEEP3_PYOS_FSPATH: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyOS_FSPath;
+#[used]
+static KEEP3_PYOS_INTERRUPTOCCURRED: unsafe extern "C" fn() -> c_int = PyOS_InterruptOccurred;
+#[used]
+static KEEP3_PYOS_DOUBLE_TO_STRING: unsafe extern "C" fn(
+    c_double,
+    c_char,
+    c_int,
+    c_int,
+    *mut c_int,
+) -> *mut c_char = PyOS_double_to_string;
+#[used]
+static KEEP3_PYOS_GETSIG: unsafe extern "C" fn(c_int) -> *mut c_void = PyOS_getsig;
+#[used]
+static KEEP3_PYOS_SETSIG: unsafe extern "C" fn(c_int, *mut c_void) -> *mut c_void = PyOS_setsig;
+#[used]
+static KEEP3_PYOS_MYSTRICMP: unsafe extern "C" fn(*const c_char, *const c_char) -> c_int =
+    PyOS_mystricmp;
+#[used]
+static KEEP3_PYOS_MYSTRNICMP: unsafe extern "C" fn(*const c_char, *const c_char, isize) -> c_int =
+    PyOS_mystrnicmp;
+#[used]
+static KEEP3_PYOS_VSNPRINTF: unsafe extern "C" fn(
+    *mut c_char,
+    usize,
+    *const c_char,
+    *mut c_void,
+) -> c_int = PyOS_vsnprintf;
 #[used]
 static KEEP3_PYERR_EXCEPTIONMATCHES: unsafe extern "C" fn(*mut c_void) -> i32 =
     PyErr_ExceptionMatches;

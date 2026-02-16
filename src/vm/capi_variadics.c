@@ -5,8 +5,11 @@
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <math.h>
+#include <signal.h>
 
 typedef intptr_t Py_ssize_t;
+typedef void (*PyOS_sighandler_t)(int);
 
 extern void *pyrs_capi_tuple_pack_from_array(Py_ssize_t n, void *const *items);
 extern void pyrs_capi_set_error_message(const char *message);
@@ -51,6 +54,7 @@ extern char _Py_NoneStruct;
 extern char PyDict_Type;
 extern char PyTuple_Type;
 extern char PyUnicode_Type;
+extern char PyBytes_Type;
 
 static void pyrs_sys_vwrite(void (*sink)(const char *), const char *format, va_list ap)
 {
@@ -176,6 +180,177 @@ static int object_is_instance_of_type(void *value, void *type_obj)
         return 0;
     }
     return PyType_IsSubtype(head->ob_type, type_obj);
+}
+
+void PyOS_BeforeFork(void)
+{
+}
+
+void PyOS_AfterFork_Parent(void)
+{
+}
+
+void PyOS_AfterFork_Child(void)
+{
+}
+
+void PyOS_AfterFork(void)
+{
+    PyOS_AfterFork_Child();
+}
+
+int PyOS_CheckStack(void)
+{
+    return 0;
+}
+
+void *PyOS_FSPath(void *path)
+{
+    if (path == NULL) {
+        pyrs_capi_set_error_message("expected str, bytes or os.PathLike object");
+        return NULL;
+    }
+    if (object_is_instance_of_type(path, (void *)&PyUnicode_Type) ||
+        object_is_instance_of_type(path, (void *)&PyBytes_Type)) {
+        Py_IncRef(path);
+        return path;
+    }
+
+    void *fspath = PyObject_GetAttrString(path, "__fspath__");
+    if (fspath == NULL) {
+        pyrs_capi_set_error_message("expected str, bytes or os.PathLike object");
+        return NULL;
+    }
+    void *args = PyTuple_New(0);
+    if (args == NULL) {
+        Py_DecRef(fspath);
+        return NULL;
+    }
+    void *out = PyObject_CallObject(fspath, args);
+    Py_DecRef(args);
+    Py_DecRef(fspath);
+    if (out == NULL) {
+        return NULL;
+    }
+    if (!object_is_instance_of_type(out, (void *)&PyUnicode_Type) &&
+        !object_is_instance_of_type(out, (void *)&PyBytes_Type)) {
+        Py_DecRef(out);
+        pyrs_capi_set_error_message("__fspath__() must return str or bytes");
+        return NULL;
+    }
+    return out;
+}
+
+int PyOS_InterruptOccurred(void)
+{
+    return 0;
+}
+
+char *PyOS_double_to_string(double val, char format_code, int precision, int flags, int *type)
+{
+    if (type != NULL) {
+        if (isnan(val)) {
+            *type = 2;
+        }
+        else if (isinf(val)) {
+            *type = 1;
+        }
+        else {
+            *type = 0;
+        }
+    }
+
+    if ((flags & 0x08) && val == 0.0) {
+        val = 0.0;
+    }
+
+    char text_buf[256];
+    if (isnan(val)) {
+        snprintf(text_buf, sizeof(text_buf), "nan");
+    }
+    else if (isinf(val)) {
+        snprintf(text_buf, sizeof(text_buf), "%sinf", val < 0 ? "-" : "");
+    }
+    else {
+        int p = precision >= 0 ? precision : 6;
+        int with_sign = (flags & 0x01) != 0;
+        char code = (char)tolower((unsigned char)format_code);
+        if (code == 'r') {
+            code = 'g';
+            p = 17;
+        }
+        if (code != 'e' && code != 'f' && code != 'g') {
+            code = 'g';
+        }
+        char fmt[24];
+        snprintf(fmt, sizeof(fmt), with_sign ? "%%+.%d%c" : "%%.%d%c", p, code);
+        snprintf(text_buf, sizeof(text_buf), fmt, val);
+        if ((flags & 0x02) && strchr(text_buf, '.') == NULL &&
+            strchr(text_buf, 'e') == NULL && strchr(text_buf, 'E') == NULL) {
+            size_t used = strlen(text_buf);
+            if (used + 2 < sizeof(text_buf)) {
+                text_buf[used] = '.';
+                text_buf[used + 1] = '0';
+                text_buf[used + 2] = '\0';
+            }
+        }
+    }
+
+    size_t n = strlen(text_buf);
+    char *out = (char *)malloc(n + 1);
+    if (out == NULL) {
+        pyrs_capi_set_error_message("PyOS_double_to_string failed allocating output");
+        return NULL;
+    }
+    memcpy(out, text_buf, n + 1);
+    return out;
+}
+
+PyOS_sighandler_t PyOS_getsig(int sig)
+{
+    PyOS_sighandler_t old = signal(sig, SIG_IGN);
+    if (old != SIG_ERR) {
+        signal(sig, old);
+    }
+    return old;
+}
+
+PyOS_sighandler_t PyOS_setsig(int sig, PyOS_sighandler_t handler)
+{
+    return signal(sig, handler);
+}
+
+int PyOS_mystrnicmp(const char *s1, const char *s2, Py_ssize_t size)
+{
+    const unsigned char *p1, *p2;
+    if (size == 0) {
+        return 0;
+    }
+    p1 = (const unsigned char *)s1;
+    p2 = (const unsigned char *)s2;
+    for (; (--size > 0) && *p1 && *p2 &&
+           (tolower(*p1) == tolower(*p2)); p1++, p2++) {
+    }
+    return tolower(*p1) - tolower(*p2);
+}
+
+int PyOS_mystricmp(const char *s1, const char *s2)
+{
+    const unsigned char *p1 = (const unsigned char *)s1;
+    const unsigned char *p2 = (const unsigned char *)s2;
+    for (; *p1 && *p2 && (tolower(*p1) == tolower(*p2)); p1++, p2++) {
+    }
+    return tolower(*p1) - tolower(*p2);
+}
+
+int PyOS_vsnprintf(char *str, size_t size, const char *format, va_list va)
+{
+    if (str == NULL || size == 0) {
+        return 0;
+    }
+    int rc = vsnprintf(str, size, format ? format : "", va);
+    str[size - 1] = '\0';
+    return rc;
 }
 
 typedef struct {

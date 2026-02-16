@@ -54,6 +54,7 @@ typedef struct PyStructSequence_Desc {
 } PyStructSequence_Desc;
 
 typedef PyObject *(*PyCFunction)(PyObject *, PyObject *);
+typedef void (*PyOS_sighandler_t)(int);
 
 typedef enum {
     PYGEN_RETURN = 0,
@@ -72,6 +73,19 @@ typedef enum {
 
 #ifndef Py_PRINT_RAW
 #define Py_PRINT_RAW 0x0001
+#endif
+
+#ifndef Py_DTSF_SIGN
+#define Py_DTSF_SIGN 0x01
+#define Py_DTSF_ADD_DOT_0 0x02
+#define Py_DTSF_ALT 0x04
+#define Py_DTSF_NO_NEG_0 0x08
+#endif
+
+#ifndef Py_DTST_FINITE
+#define Py_DTST_FINITE 0
+#define Py_DTST_INFINITE 1
+#define Py_DTST_NAN 2
 #endif
 
 #ifndef Py_RELATIVE_OFFSET
@@ -726,6 +740,19 @@ PyObject *PyFile_FromFd(
 PyObject *PyFile_GetLine(PyObject *f, int n);
 int PyFile_WriteObject(PyObject *v, PyObject *f, int flags);
 int PyFile_WriteString(const char *s, PyObject *f);
+void PyOS_BeforeFork(void);
+void PyOS_AfterFork_Parent(void);
+void PyOS_AfterFork_Child(void);
+void PyOS_AfterFork(void);
+int PyOS_CheckStack(void);
+PyObject *PyOS_FSPath(PyObject *path);
+int PyOS_InterruptOccurred(void);
+char *PyOS_double_to_string(double val, char format_code, int precision, int flags, int *type);
+PyOS_sighandler_t PyOS_getsig(int sig);
+PyOS_sighandler_t PyOS_setsig(int sig, PyOS_sighandler_t handler);
+int PyOS_mystricmp(const char *str1, const char *str2);
+int PyOS_mystrnicmp(const char *str1, const char *str2, long long size);
+int PyOS_vsnprintf(char *str, size_t size, const char *format, va_list va);
 
 PyObject *PyCFunction_Call(PyObject *callable, PyObject *args, PyObject *kwargs);
 PyObject *PyCFunction_New(PyMethodDef *ml, PyObject *self);
