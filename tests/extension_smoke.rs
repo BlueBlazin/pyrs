@@ -5064,6 +5064,175 @@ PyInit_cpython_api_batch32_probe(void) {
 }
 
 #[test]
+fn cpython_compat_import_exec_abi_batch33_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch33 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch33 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch33");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch33_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <string.h>
+
+static int
+module_value_is(PyObject *module, long expected) {
+    if (!module) {
+        return 0;
+    }
+    PyObject *value = PyObject_GetAttrString(module, "VALUE");
+    if (!value) {
+        PyErr_Clear();
+        return 0;
+    }
+    long got = PyLong_AsLong(value);
+    Py_DECREF(value);
+    if (PyErr_Occurred()) {
+        PyErr_Clear();
+        return 0;
+    }
+    return got == expected ? 1 : 0;
+}
+
+static int
+module_file_matches(PyObject *module, const char *path) {
+    if (!module || !path) {
+        return 0;
+    }
+    PyObject *file = PyObject_GetAttrString(module, "__file__");
+    if (!file) {
+        PyErr_Clear();
+        return 0;
+    }
+    const char *text = PyUnicode_AsUTF8(file);
+    int ok = (text && strcmp(text, path) == 0) ? 1 : 0;
+    Py_DECREF(file);
+    if (PyErr_Occurred()) {
+        PyErr_Clear();
+        return 0;
+    }
+    return ok;
+}
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    PyObject *code = 0;
+    if (!PyArg_ParseTuple(args, "O", &code)) {
+        return 0;
+    }
+
+    const char *path2 = "/tmp/cpython_api_batch33_mod2.py";
+    const char *path3 = "/tmp/cpython_api_batch33_mod3.py";
+    const char *path4 = "/tmp/cpython_api_batch33_mod4.py";
+
+    PyObject *m1 = PyImport_ExecCodeModule("cpython_api_batch33_mod1", code);
+    PyObject *m2 = PyImport_ExecCodeModuleEx("cpython_api_batch33_mod2", code, path2);
+    PyObject *m3 = PyImport_ExecCodeModuleWithPathnames(
+        "cpython_api_batch33_mod3",
+        code,
+        path3,
+        path3
+    );
+    PyObject *name4 = PyUnicode_FromString("cpython_api_batch33_mod4");
+    PyObject *path4_obj = PyUnicode_FromString(path4);
+    PyObject *m4 = name4 && path4_obj
+        ? PyImport_ExecCodeModuleObject(name4, code, path4_obj, path4_obj)
+        : 0;
+    Py_XDECREF(name4);
+    Py_XDECREF(path4_obj);
+
+    int ok1 = module_value_is(m1, 7);
+    int ok2 = module_value_is(m2, 7);
+    int ok3 = module_value_is(m3, 7);
+    int ok4 = module_value_is(m4, 7);
+    int file2_ok = module_file_matches(m2, path2);
+    int file3_ok = module_file_matches(m3, path3);
+    int file4_ok = module_file_matches(m4, path4);
+
+    PyObject *importer_path = PyUnicode_FromString(".");
+    PyObject *importer = importer_path ? PyImport_GetImporter(importer_path) : 0;
+    int importer_ok = importer != 0 ? 1 : 0;
+    Py_XDECREF(importer);
+    Py_XDECREF(importer_path);
+
+    Py_XDECREF(m1);
+    Py_XDECREF(m2);
+    Py_XDECREF(m3);
+    Py_XDECREF(m4);
+
+    return Py_BuildValue(
+        "(iiiiiiii)",
+        ok1,
+        ok2,
+        ok3,
+        ok4,
+        file2_ok,
+        file3_ok,
+        file4_ok,
+        importer_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_VARARGS, "probe import exec and importer APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch33_probe",
+    "cpython api batch33 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch33_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch33_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch33 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch33_probe as m\ncode = compile('VALUE = 7', '<batch33>', 'exec')\nres = m.run(code)\nassert res == (1, 1, 1, 1, 1, 1, 1, 1)",
+    )
+    .expect("cpython api batch33 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

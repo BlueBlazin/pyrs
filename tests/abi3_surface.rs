@@ -793,6 +793,27 @@ fn exports_abi3_batch32_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch33_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyImport_ExecCodeModule",
+        "PyImport_ExecCodeModuleEx",
+        "PyImport_ExecCodeModuleObject",
+        "PyImport_ExecCodeModuleWithPathnames",
+        "PyImport_GetImporter",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch33 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

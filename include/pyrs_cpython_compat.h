@@ -166,8 +166,23 @@ PyObject *PyImport_GetModuleDict(void);
 PyObject *PyImport_AddModuleRef(const char *name);
 PyObject *PyImport_AddModuleObject(PyObject *name);
 PyObject *PyImport_AddModule(const char *name);
+PyObject *PyImport_ExecCodeModule(const char *name, PyObject *co);
+PyObject *PyImport_ExecCodeModuleEx(const char *name, PyObject *co, const char *pathname);
+PyObject *PyImport_ExecCodeModuleObject(
+    PyObject *name,
+    PyObject *co,
+    PyObject *pathname,
+    PyObject *cpathname
+);
+PyObject *PyImport_ExecCodeModuleWithPathnames(
+    const char *name,
+    PyObject *co,
+    const char *pathname,
+    const char *cpathname
+);
 PyObject *PyImport_GetModule(PyObject *name);
 PyObject *PyImport_ImportModuleNoBlock(const char *name);
+PyObject *PyImport_GetImporter(PyObject *path);
 PyObject *PyImport_ImportModuleLevelObject(
     PyObject *name,
     PyObject *globals,

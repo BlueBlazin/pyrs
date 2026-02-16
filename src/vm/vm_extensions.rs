@@ -3,9 +3,11 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_ulong, c_void};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Once;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::bytecode::CodeObject;
 use crate::extensions::{
     CpythonExtensionInit, ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES,
@@ -8826,6 +8828,45 @@ fn cpython_import_add_module_by_name(
     Ok(module)
 }
 
+fn cpython_import_exec_code_in_module(
+    context: &mut ModuleCapiContext,
+    module_name: &str,
+    code: Rc<CodeObject>,
+    pathname: Option<Value>,
+) -> Result<Value, String> {
+    let module = cpython_import_add_module_by_name(context, module_name)?;
+    if let Some(path_value) = pathname
+        && path_value != Value::None
+        && let Object::Module(module_data) = &mut *module.kind_mut()
+    {
+        module_data
+            .globals
+            .insert("__file__".to_string(), path_value);
+    }
+    if context.vm.is_null() {
+        return Err("PyImport_ExecCodeModule* missing VM context".to_string());
+    }
+    // SAFETY: VM pointer is valid for active context lifetime.
+    let vm = unsafe { &mut *context.vm };
+    match vm.builtin_exec(
+        vec![
+            Value::Code(code),
+            Value::Module(module.clone()),
+            Value::Module(module.clone()),
+        ],
+        HashMap::new(),
+    ) {
+        Ok(_) => Ok(Value::Module(module)),
+        Err(err) => {
+            vm.modules.remove(module_name);
+            if let Some(modules_dict) = vm.sys_dict_obj("modules") {
+                let _ = dict_remove_value(&modules_dict, &Value::Str(module_name.to_string()));
+            }
+            Err(err.message)
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_Import(name: *mut c_void) -> *mut c_void {
     let module_name = match cpython_value_from_ptr(name) {
@@ -8926,6 +8967,146 @@ pub unsafe extern "C" fn PyImport_AddModule(name: *const c_char) -> *mut c_void 
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ExecCodeModule(name: *const c_char, code: *mut c_void) -> *mut c_void {
+    let module_name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(code_value) = context.cpython_value_from_ptr_or_proxy(code) else {
+            context.set_error("PyImport_ExecCodeModule received unknown code pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::Code(code_obj) = code_value else {
+            context.set_error("PyImport_ExecCodeModule expected code object");
+            return std::ptr::null_mut();
+        };
+        match cpython_import_exec_code_in_module(context, &module_name, code_obj, None) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ExecCodeModuleEx(
+    name: *const c_char,
+    code: *mut c_void,
+    pathname: *const c_char,
+) -> *mut c_void {
+    let module_name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let pathname_value = if pathname.is_null() {
+        None
+    } else {
+        match unsafe { c_name_to_string(pathname) } {
+            Ok(path) => Some(Value::Str(path)),
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        }
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(code_value) = context.cpython_value_from_ptr_or_proxy(code) else {
+            context.set_error("PyImport_ExecCodeModuleEx received unknown code pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::Code(code_obj) = code_value else {
+            context.set_error("PyImport_ExecCodeModuleEx expected code object");
+            return std::ptr::null_mut();
+        };
+        match cpython_import_exec_code_in_module(context, &module_name, code_obj, pathname_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ExecCodeModuleObject(
+    name: *mut c_void,
+    code: *mut c_void,
+    pathname: *mut c_void,
+    _cpathname: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let module_name =
+            match cpython_module_name_from_object(context, name, "PyImport_ExecCodeModuleObject") {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
+        let Some(code_value) = context.cpython_value_from_ptr_or_proxy(code) else {
+            context.set_error("PyImport_ExecCodeModuleObject received unknown code pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::Code(code_obj) = code_value else {
+            context.set_error("PyImport_ExecCodeModuleObject expected code object");
+            return std::ptr::null_mut();
+        };
+        let pathname_value = if pathname.is_null() {
+            None
+        } else {
+            match context.cpython_value_from_ptr_or_proxy(pathname) {
+                Some(value) => Some(value),
+                None => {
+                    context.set_error(
+                        "PyImport_ExecCodeModuleObject received unknown pathname pointer",
+                    );
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        match cpython_import_exec_code_in_module(context, &module_name, code_obj, pathname_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_ExecCodeModuleWithPathnames(
+    name: *const c_char,
+    code: *mut c_void,
+    pathname: *const c_char,
+    _cpathname: *const c_char,
+) -> *mut c_void {
+    unsafe { PyImport_ExecCodeModuleEx(name, code, pathname) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_GetModule(name: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         let module_name = match cpython_module_name_from_object(context, name, "PyImport_GetModule")
@@ -8972,6 +9153,71 @@ pub unsafe extern "C" fn PyImport_ImportModuleNoBlock(name: *const c_char) -> *m
         return std::ptr::null_mut();
     }
     unsafe { PyImport_ImportModule(name) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyImport_GetImporter(path: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyImport_GetImporter missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(path_value) = context.cpython_value_from_ptr_or_proxy(path) else {
+            context.set_error("PyImport_GetImporter received unknown path pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let pkgutil = match vm.builtin_import_module(
+            vec![Value::Str("pkgutil".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                vm.clear_active_exception();
+                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                    eprintln!("[cpy-api] PyImport_GetImporter fallback (pkgutil import failed): {}", err.message);
+                }
+                return context.alloc_cpython_ptr_for_value(Value::None);
+            }
+        };
+        let get_importer = match vm.call_internal(
+            Value::Builtin(BuiltinFunction::GetAttr),
+            vec![pkgutil, Value::Str("get_importer".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(InternalCallOutcome::Value(value)) => value,
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                vm.clear_active_exception();
+                return context.alloc_cpython_ptr_for_value(Value::None);
+            }
+            Err(err) => {
+                vm.clear_active_exception();
+                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                    eprintln!("[cpy-api] PyImport_GetImporter fallback (getattr failed): {}", err.message);
+                }
+                return context.alloc_cpython_ptr_for_value(Value::None);
+            }
+        };
+        match vm.call_internal(get_importer, vec![path_value], HashMap::new()) {
+            Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                vm.clear_active_exception();
+                context.alloc_cpython_ptr_for_value(Value::None)
+            }
+            Err(err) => {
+                vm.clear_active_exception();
+                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                    eprintln!("[cpy-api] PyImport_GetImporter fallback (call failed): {}", err.message);
+                }
+                context.alloc_cpython_ptr_for_value(Value::None)
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -21423,11 +21669,37 @@ static KEEP_PYIMPORT_ADD_MODULE_OBJECT: unsafe extern "C" fn(*mut c_void) -> *mu
 static KEEP_PYIMPORT_ADD_MODULE: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyImport_AddModule;
 #[used]
+static KEEP_PYIMPORT_EXECCODEMODULE: unsafe extern "C" fn(*const c_char, *mut c_void) -> *mut c_void =
+    PyImport_ExecCodeModule;
+#[used]
+static KEEP_PYIMPORT_EXECCODEMODULE_EX: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = PyImport_ExecCodeModuleEx;
+#[used]
+static KEEP_PYIMPORT_EXECCODEMODULE_OBJECT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyImport_ExecCodeModuleObject;
+#[used]
+static KEEP_PYIMPORT_EXECCODEMODULE_WITH_PATHNAMES: unsafe extern "C" fn(
+    *const c_char,
+    *mut c_void,
+    *const c_char,
+    *const c_char,
+) -> *mut c_void = PyImport_ExecCodeModuleWithPathnames;
+#[used]
 static KEEP_PYIMPORT_GET_MODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyImport_GetModule;
 #[used]
 static KEEP_PYIMPORT_IMPORT_MODULE_NO_BLOCK: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyImport_ImportModuleNoBlock;
+#[used]
+static KEEP_PYIMPORT_GET_IMPORTER: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyImport_GetImporter;
 #[used]
 static KEEP_PYIMPORT_IMPORT_MODULE_LEVEL_OBJECT: unsafe extern "C" fn(
     *mut c_void,
