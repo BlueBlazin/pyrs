@@ -220,6 +220,34 @@ fn exports_abi3_batch5_symbols() {
 }
 
 #[test]
+fn exports_abi3_batch6_symbols() {
+    let symbols = exported_symbols(&pyrs_bin());
+    let required = [
+        "PyLong_FromSize_t",
+        "PyLong_FromInt32",
+        "PyLong_FromUInt32",
+        "PyLong_FromInt64",
+        "PyLong_FromUInt64",
+        "PyLong_AsInt",
+        "PyLong_AsInt32",
+        "PyLong_AsUInt32",
+        "PyLong_AsInt64",
+        "PyLong_AsUInt64",
+        "PyLong_AsSize_t",
+        "PyLong_AsDouble",
+    ];
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|name| !symbols.contains(*name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing ABI batch6 symbols: {missing:?}"
+    );
+}
+
+#[test]
 fn generates_abi3_manifest_snapshot() {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

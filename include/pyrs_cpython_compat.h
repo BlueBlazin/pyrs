@@ -1,6 +1,9 @@
 #ifndef PYRS_CPYTHON_COMPAT_H
 #define PYRS_CPYTHON_COMPAT_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -111,7 +114,19 @@ PyObject *PyImport_ReloadModule(PyObject *module);
 
 PyObject *PyLong_FromLong(long long value);
 PyObject *PyLong_FromLongLong(long long value);
+PyObject *PyLong_FromSize_t(size_t value);
+PyObject *PyLong_FromInt32(int32_t value);
+PyObject *PyLong_FromUInt32(uint32_t value);
+PyObject *PyLong_FromInt64(int64_t value);
+PyObject *PyLong_FromUInt64(uint64_t value);
 long long PyLong_AsLongLong(PyObject *object);
+int PyLong_AsInt(PyObject *object);
+int PyLong_AsInt32(PyObject *object, int32_t *value);
+int PyLong_AsUInt32(PyObject *object, uint32_t *value);
+int PyLong_AsInt64(PyObject *object, int64_t *value);
+int PyLong_AsUInt64(PyObject *object, uint64_t *value);
+size_t PyLong_AsSize_t(PyObject *object);
+double PyLong_AsDouble(PyObject *object);
 PyObject *PyBool_FromLong(long long value);
 PyObject *PyFloat_FromDouble(double value);
 double PyFloat_AsDouble(PyObject *object);

@@ -1652,6 +1652,120 @@ PyInit_cpython_api_batch5_probe(void) {
 }
 
 #[test]
+fn cpython_compat_long_abi_batch6_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch6 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch6 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch6");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch6_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <stdint.h>
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch6_probe",
+    "cpython api batch6 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch6_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *signed32 = PyLong_FromInt32(-1234);
+    PyObject *unsigned32 = PyLong_FromUInt32(123U);
+    PyObject *signed64 = PyLong_FromInt64(-9876543210LL);
+    PyObject *unsigned64 = PyLong_FromUInt64(UINT64_MAX);
+    PyObject *from_size = PyLong_FromSize_t((size_t)7);
+    if (!signed32 || !unsigned32 || !signed64 || !unsigned64 || !from_size) {
+        return 0;
+    }
+
+    int as_int_ok = (PyLong_AsInt(signed32) == -1234) ? 1 : 0;
+    int32_t out_i32 = 0;
+    int as_int32_ok = (PyLong_AsInt32(signed32, &out_i32) == 0 && out_i32 == -1234) ? 1 : 0;
+
+    int64_t out_i64 = 0;
+    int as_int64_ok = (PyLong_AsInt64(signed64, &out_i64) == 0 && out_i64 == -9876543210LL) ? 1 : 0;
+
+    uint32_t out_u32 = 0;
+    int as_uint32_ok = (PyLong_AsUInt32(unsigned32, &out_u32) == 0 && out_u32 == 123U) ? 1 : 0;
+
+    uint64_t out_u64 = 0;
+    int as_uint64_ok = (PyLong_AsUInt64(unsigned64, &out_u64) == 0 && out_u64 == UINT64_MAX) ? 1 : 0;
+
+    size_t out_size = PyLong_AsSize_t(from_size);
+    int as_size_ok = (!PyErr_Occurred() && out_size == (size_t)7) ? 1 : 0;
+
+    double out_double = PyLong_AsDouble(signed32);
+    int as_double_ok = (!PyErr_Occurred() && out_double == -1234.0) ? 1 : 0;
+
+    int64_t overflow_i64 = 0;
+    int overflow_i64_error = (PyLong_AsInt64(unsigned64, &overflow_i64) == -1 && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+
+    int overflow_int_error = (PyLong_AsInt(unsigned64) == -1 && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+
+    uint64_t negative_u64 = 0;
+    int negative_uint_error = (PyLong_AsUInt64(signed32, &negative_u64) == -1 && PyErr_Occurred()) ? 1 : 0;
+    PyErr_Clear();
+
+    if (PyModule_AddIntConstant(module, "AS_INT_OK", as_int_ok) != 0 ||
+        PyModule_AddIntConstant(module, "AS_INT32_OK", as_int32_ok) != 0 ||
+        PyModule_AddIntConstant(module, "AS_INT64_OK", as_int64_ok) != 0 ||
+        PyModule_AddIntConstant(module, "AS_UINT32_OK", as_uint32_ok) != 0 ||
+        PyModule_AddIntConstant(module, "AS_UINT64_OK", as_uint64_ok) != 0 ||
+        PyModule_AddIntConstant(module, "AS_SIZE_OK", as_size_ok) != 0 ||
+        PyModule_AddIntConstant(module, "AS_DOUBLE_OK", as_double_ok) != 0 ||
+        PyModule_AddIntConstant(module, "OVERFLOW_INT64_ERROR", overflow_i64_error) != 0 ||
+        PyModule_AddIntConstant(module, "OVERFLOW_INT_ERROR", overflow_int_error) != 0 ||
+        PyModule_AddIntConstant(module, "NEGATIVE_UINT_ERROR", negative_uint_error) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch6_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch6 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch6_probe as m\nassert m.AS_INT_OK == 1\nassert m.AS_INT32_OK == 1\nassert m.AS_INT64_OK == 1\nassert m.AS_UINT32_OK == 1\nassert m.AS_UINT64_OK == 1\nassert m.AS_SIZE_OK == 1\nassert m.AS_DOUBLE_OK == 1\nassert m.OVERFLOW_INT64_ERROR == 1\nassert m.OVERFLOW_INT_ERROR == 1\nassert m.NEGATIVE_UINT_ERROR == 1",
+    )
+    .expect("cpython api batch6 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

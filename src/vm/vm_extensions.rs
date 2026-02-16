@@ -688,6 +688,72 @@ unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
     i64::try_from(signed).ok()
 }
 
+unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
+    if object.is_null() {
+        return None;
+    }
+    // SAFETY: caller provides a foreign PyObject*.
+    let head = unsafe { object.cast::<CpythonObjectHead>().as_ref() }?;
+    let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+    if type_ptr.is_null() {
+        return None;
+    }
+    let is_long = type_ptr == std::ptr::addr_of_mut!(PyLong_Type)
+        // SAFETY: type pointers are valid for subtype checks.
+        || unsafe {
+            PyType_IsSubtype(
+                type_ptr.cast::<c_void>(),
+                std::ptr::addr_of_mut!(PyLong_Type).cast::<c_void>(),
+            ) != 0
+        };
+    if !is_long {
+        return None;
+    }
+    // CPython 3.14 long layout uses lv_tag low bits for sign and high bits for ndigits.
+    let raw = object.cast::<CpythonForeignLongObject>();
+    // SAFETY: layout matches CPython long object memory representation.
+    let lv_tag = unsafe { (*raw).long_value.lv_tag };
+    let sign_bits = lv_tag & 0x3;
+    if sign_bits == 1 {
+        return Some(0);
+    }
+    if sign_bits == 2 {
+        return None;
+    }
+    let ndigits = lv_tag >> 3;
+    if ndigits == 0 {
+        return Some(0);
+    }
+    // SAFETY: CPython allocates at least `ndigits` digits for normalized longs.
+    let digits = unsafe { (*raw).long_value.ob_digit.as_ptr() };
+    let mut acc: u128 = 0;
+    for idx in 0..ndigits {
+        // SAFETY: `idx < ndigits` within normalized digit buffer.
+        let digit = unsafe { *digits.add(idx) } as u128;
+        let shift = 30usize.saturating_mul(idx);
+        if shift >= 128 {
+            return None;
+        }
+        acc = acc.checked_add(digit.checked_shl(shift as u32)?)?;
+    }
+    u64::try_from(acc).ok()
+}
+
+fn cpython_bigint_to_u64(value: &BigInt) -> Option<u64> {
+    if value.is_negative() {
+        return None;
+    }
+    let bytes = value.to_abs_le_bytes();
+    if bytes.len() > std::mem::size_of::<u64>() {
+        return None;
+    }
+    let mut acc = 0u64;
+    for (idx, byte) in bytes.iter().enumerate() {
+        acc |= (*byte as u64) << (idx * 8);
+    }
+    Some(acc)
+}
+
 fn cpython_type_for_value(value: &Value) -> *mut c_void {
     match value {
         Value::None => std::ptr::addr_of_mut!(PyNone_Type).cast(),
@@ -5280,6 +5346,34 @@ pub unsafe extern "C" fn PyLong_FromSsize_t(value: isize) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromSize_t(value: usize) -> *mut c_void {
+    if i64::try_from(value).is_ok() {
+        return cpython_new_ptr_for_value(Value::Int(value as i64));
+    }
+    cpython_new_ptr_for_value(Value::BigInt(Box::new(BigInt::from_u64(value as u64))))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromInt32(value: i32) -> *mut c_void {
+    unsafe { PyLong_FromLong(value as i64) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromUInt32(value: u32) -> *mut c_void {
+    unsafe { PyLong_FromUnsignedLong(value as u64) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromInt64(value: i64) -> *mut c_void {
+    unsafe { PyLong_FromLongLong(value) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_FromUInt64(value: u64) -> *mut c_void {
+    unsafe { PyLong_FromUnsignedLongLong(value) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_FromUnsignedLong(value: u64) -> *mut c_void {
     if i64::try_from(value).is_ok() {
         return cpython_new_ptr_for_value(Value::Int(value as i64));
@@ -6790,17 +6884,178 @@ pub unsafe extern "C" fn PyLong_AsSsize_t(object: *mut c_void) -> isize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsUnsignedLong(object: *mut c_void) -> u64 {
-    let value = unsafe { PyLong_AsLongLong(object) };
-    if value < 0 {
-        cpython_set_error("PyLong_AsUnsignedLong requires non-negative integer");
-        return u64::MAX;
+    match cpython_value_from_ptr(object) {
+        Ok(Value::Bool(value)) => {
+            if value {
+                1
+            } else {
+                0
+            }
+        }
+        Ok(Value::Int(value)) => {
+            if value < 0 {
+                cpython_set_typed_error(
+                    unsafe { PyExc_OverflowError },
+                    "can't convert negative value to unsigned int",
+                );
+                return u64::MAX;
+            }
+            value as u64
+        }
+        Ok(Value::BigInt(value)) => {
+            if value.is_negative() {
+                cpython_set_typed_error(
+                    unsafe { PyExc_OverflowError },
+                    "can't convert negative value to unsigned int",
+                );
+                return u64::MAX;
+            }
+            match cpython_bigint_to_u64(&value) {
+                Some(compact) => compact,
+                None => {
+                    cpython_set_typed_error(
+                        unsafe { PyExc_OverflowError },
+                        "Python int too large to convert to C unsigned long",
+                    );
+                    u64::MAX
+                }
+            }
+        }
+        Ok(value) => match value_to_int(value) {
+            Ok(compact) => {
+                if compact < 0 {
+                    cpython_set_typed_error(
+                        unsafe { PyExc_OverflowError },
+                        "can't convert negative value to unsigned int",
+                    );
+                    return u64::MAX;
+                }
+                compact as u64
+            }
+            Err(err) => {
+                cpython_set_error(err.message);
+                u64::MAX
+            }
+        },
+        Err(err) => {
+            if let Some(compact) = unsafe { cpython_foreign_long_to_u64(object) } {
+                return compact;
+            }
+            cpython_set_error(err);
+            u64::MAX
+        }
     }
-    value as u64
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_AsUnsignedLongLong(object: *mut c_void) -> u64 {
     unsafe { PyLong_AsUnsignedLong(object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsSize_t(object: *mut c_void) -> usize {
+    let value = unsafe { PyLong_AsUnsignedLongLong(object) };
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        return usize::MAX;
+    }
+    if value > usize::MAX as u64 {
+        cpython_set_typed_error(
+            unsafe { PyExc_OverflowError },
+            "Python int too large to convert to C size_t",
+        );
+        return usize::MAX;
+    }
+    value as usize
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsInt(object: *mut c_void) -> i32 {
+    let value = unsafe { PyLong_AsLong(object) };
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        return -1;
+    }
+    if value < i32::MIN as i64 || value > i32::MAX as i64 {
+        cpython_set_typed_error(
+            unsafe { PyExc_OverflowError },
+            "Python int too large to convert to C int",
+        );
+        return -1;
+    }
+    value as i32
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsInt32(object: *mut c_void, out: *mut i32) -> i32 {
+    if out.is_null() {
+        cpython_set_error("PyLong_AsInt32 requires non-null output pointer");
+        return -1;
+    }
+    let value = unsafe { PyLong_AsLongLong(object) };
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        return -1;
+    }
+    if value < i32::MIN as i64 || value > i32::MAX as i64 {
+        cpython_set_typed_error(
+            unsafe { PyExc_OverflowError },
+            "Python int too large to convert to C int32_t",
+        );
+        return -1;
+    }
+    // SAFETY: caller provided writable output pointer.
+    unsafe { *out = value as i32 };
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsInt64(object: *mut c_void, out: *mut i64) -> i32 {
+    if out.is_null() {
+        cpython_set_error("PyLong_AsInt64 requires non-null output pointer");
+        return -1;
+    }
+    let value = unsafe { PyLong_AsLongLong(object) };
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        return -1;
+    }
+    // SAFETY: caller provided writable output pointer.
+    unsafe { *out = value };
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsUInt32(object: *mut c_void, out: *mut u32) -> i32 {
+    if out.is_null() {
+        cpython_set_error("PyLong_AsUInt32 requires non-null output pointer");
+        return -1;
+    }
+    let value = unsafe { PyLong_AsUnsignedLongLong(object) };
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        return -1;
+    }
+    if value > u32::MAX as u64 {
+        cpython_set_typed_error(
+            unsafe { PyExc_OverflowError },
+            "Python int too large to convert to C uint32_t",
+        );
+        return -1;
+    }
+    // SAFETY: caller provided writable output pointer.
+    unsafe { *out = value as u32 };
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsUInt64(object: *mut c_void, out: *mut u64) -> i32 {
+    if out.is_null() {
+        cpython_set_error("PyLong_AsUInt64 requires non-null output pointer");
+        return -1;
+    }
+    let value = unsafe { PyLong_AsUnsignedLongLong(object) };
+    if !unsafe { PyErr_Occurred() }.is_null() {
+        return -1;
+    }
+    // SAFETY: caller provided writable output pointer.
+    unsafe { *out = value };
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -6846,6 +7101,45 @@ pub unsafe extern "C" fn PyLong_AsLongLongAndOverflow(
     overflow: *mut i32,
 ) -> i64 {
     unsafe { PyLong_AsLongAndOverflow(object, overflow) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyLong_AsDouble(object: *mut c_void) -> f64 {
+    match cpython_value_from_ptr(object) {
+        Ok(Value::Bool(value)) => {
+            if value {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        Ok(Value::Int(value)) => value as f64,
+        Ok(Value::BigInt(value)) => {
+            let as_double = value.to_f64();
+            if !as_double.is_finite() {
+                cpython_set_typed_error(
+                    unsafe { PyExc_OverflowError },
+                    "int too large to convert to float",
+                );
+                return -1.0;
+            }
+            as_double
+        }
+        Ok(value) => match value_to_int(value) {
+            Ok(compact) => compact as f64,
+            Err(err) => {
+                cpython_set_error(err.message);
+                -1.0
+            }
+        },
+        Err(err) => {
+            if let Some(compact) = unsafe { cpython_foreign_long_to_i64(object) } {
+                return compact as f64;
+            }
+            cpython_set_error(err);
+            -1.0
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -15171,6 +15465,16 @@ unsafe extern "C" {
 #[used]
 static KEEP2_PYLONG_FROMSSIZE_T: unsafe extern "C" fn(isize) -> *mut c_void = PyLong_FromSsize_t;
 #[used]
+static KEEP2_PYLONG_FROMSIZE_T: unsafe extern "C" fn(usize) -> *mut c_void = PyLong_FromSize_t;
+#[used]
+static KEEP2_PYLONG_FROMINT32: unsafe extern "C" fn(i32) -> *mut c_void = PyLong_FromInt32;
+#[used]
+static KEEP2_PYLONG_FROMUINT32: unsafe extern "C" fn(u32) -> *mut c_void = PyLong_FromUInt32;
+#[used]
+static KEEP2_PYLONG_FROMINT64: unsafe extern "C" fn(i64) -> *mut c_void = PyLong_FromInt64;
+#[used]
+static KEEP2_PYLONG_FROMUINT64: unsafe extern "C" fn(u64) -> *mut c_void = PyLong_FromUInt64;
+#[used]
 static KEEP2_PYLONG_FROMUNSIGNEDLONG: unsafe extern "C" fn(u64) -> *mut c_void =
     PyLong_FromUnsignedLong;
 #[used]
@@ -15831,7 +16135,21 @@ static KEEP_PYLONG_AS_LONG: unsafe extern "C" fn(*mut c_void) -> i64 = PyLong_As
 #[used]
 static KEEP_PYLONG_AS_LONGLONG: unsafe extern "C" fn(*mut c_void) -> i64 = PyLong_AsLongLong;
 #[used]
+static KEEP_PYLONG_AS_INT: unsafe extern "C" fn(*mut c_void) -> i32 = PyLong_AsInt;
+#[used]
+static KEEP_PYLONG_AS_INT32: unsafe extern "C" fn(*mut c_void, *mut i32) -> i32 = PyLong_AsInt32;
+#[used]
+static KEEP_PYLONG_AS_INT64: unsafe extern "C" fn(*mut c_void, *mut i64) -> i32 = PyLong_AsInt64;
+#[used]
+static KEEP_PYLONG_AS_UINT32: unsafe extern "C" fn(*mut c_void, *mut u32) -> i32 =
+    PyLong_AsUInt32;
+#[used]
+static KEEP_PYLONG_AS_UINT64: unsafe extern "C" fn(*mut c_void, *mut u64) -> i32 =
+    PyLong_AsUInt64;
+#[used]
 static KEEP_PYLONG_AS_SSIZE_T: unsafe extern "C" fn(*mut c_void) -> isize = PyLong_AsSsize_t;
+#[used]
+static KEEP_PYLONG_AS_SIZE_T: unsafe extern "C" fn(*mut c_void) -> usize = PyLong_AsSize_t;
 #[used]
 static KEEP_PYLONG_AS_UNSIGNED_LONG: unsafe extern "C" fn(*mut c_void) -> u64 =
     PyLong_AsUnsignedLong;
@@ -15846,6 +16164,8 @@ static KEEP_PYLONG_AS_LONG_AND_OVERFLOW: unsafe extern "C" fn(*mut c_void, *mut 
 #[used]
 static KEEP_PYLONG_AS_LONGLONG_AND_OVERFLOW: unsafe extern "C" fn(*mut c_void, *mut i32) -> i64 =
     PyLong_AsLongLongAndOverflow;
+#[used]
+static KEEP_PYLONG_AS_DOUBLE: unsafe extern "C" fn(*mut c_void) -> f64 = PyLong_AsDouble;
 #[used]
 static KEEP_PYLONG_FROM_DOUBLE: unsafe extern "C" fn(f64) -> *mut c_void = PyLong_FromDouble;
 #[used]
