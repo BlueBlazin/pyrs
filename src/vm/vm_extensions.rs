@@ -58,6 +58,7 @@ mod cpython_module_runtime;
 mod cpython_import_runtime;
 mod cpython_module_name_runtime;
 mod cpython_exception_name_runtime;
+mod cpython_call_runtime;
 
 use self::cpython_args_runtime::{
     cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
@@ -71,6 +72,7 @@ use self::cpython_module_name_runtime::{
 use self::cpython_exception_name_runtime::{
     cpython_exception_name_from_runtime_message, cpython_exception_name_parts,
 };
+use self::cpython_call_runtime::{cpython_call_internal_in_context, cpython_getattr_in_context};
 use self::cpython_import_runtime::{
     CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
     cpython_import_from_inittab, cpython_inittab_registry,
@@ -7650,43 +7652,6 @@ unsafe fn capi_context_mut<'a>(module_ctx: *mut c_void) -> Option<&'a mut Module
     }
     // SAFETY: caller guarantees `module_ctx` points to a valid `ModuleCapiContext`.
     Some(unsafe { &mut *(module_ctx as *mut ModuleCapiContext) })
-}
-
-fn cpython_call_internal_in_context(
-    context: &mut ModuleCapiContext,
-    callable: Value,
-    args: Vec<Value>,
-    kwargs: HashMap<String, Value>,
-) -> Result<Value, String> {
-    if context.vm.is_null() {
-        return Err("missing VM context for call".to_string());
-    }
-    // SAFETY: VM pointer is valid for active context lifetime.
-    let vm = unsafe { &mut *context.vm };
-    match vm.call_internal(callable, args, kwargs) {
-        Ok(InternalCallOutcome::Value(value)) => Ok(value),
-        Ok(InternalCallOutcome::CallerExceptionHandled) => Err(vm
-            .runtime_error_from_active_exception("call failed")
-            .message),
-        Err(err) => Err(err.message),
-    }
-}
-
-fn cpython_getattr_in_context(
-    context: &mut ModuleCapiContext,
-    target: Value,
-    attr_name: &str,
-) -> Result<Value, String> {
-    if context.vm.is_null() {
-        return Err("missing VM context for getattr".to_string());
-    }
-    // SAFETY: VM pointer is valid for active context lifetime.
-    let vm = unsafe { &mut *context.vm };
-    vm.builtin_getattr(
-        vec![target, Value::Str(attr_name.to_string())],
-        HashMap::new(),
-    )
-    .map_err(|err| err.message)
 }
 
 fn cpython_codec_required_name(name: *const c_char, api_name: &str) -> Result<String, String> {

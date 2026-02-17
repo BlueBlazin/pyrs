@@ -71,6 +71,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_exception_name_runtime.rs`
   - CPython exception-name parsing helpers (`runtime-message -> exception name`, `module.class split`)
   - shared normalization logic used by `PyErr_*` creation and error propagation paths
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_call_runtime.rs`
+  - CPython active-context call helpers (`cpython_call_internal_in_context`, `cpython_getattr_in_context`)
+  - shared call/attribute dispatch substrate used by codec and C-API helper flows
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -123,6 +126,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython import helper behavior: `vm_extensions/cpython_import_runtime.rs`.
 - New CPython module-name/value helper behavior: `vm_extensions/cpython_module_name_runtime.rs`.
 - New CPython exception-name helper behavior: `vm_extensions/cpython_exception_name_runtime.rs`.
+- New CPython active-context call helper behavior: `vm_extensions/cpython_call_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
