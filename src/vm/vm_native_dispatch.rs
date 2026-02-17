@@ -5993,13 +5993,8 @@ impl Vm {
                         }
                     }
                 }
-                let Some(getitem) = self.lookup_bound_special_method(&target, "__getitem__")?
-                else {
-                    return Err(RuntimeError::new("object is not iterable"));
-                };
-                let call_result = self.call_internal(getitem, vec![index_value], HashMap::new());
-                match call_result {
-                    Ok(InternalCallOutcome::Value(value)) => {
+                match self.getitem_value(target.clone(), index_value) {
+                    Ok(value) => {
                         {
                             let mut iter = iterator_ref.kind_mut();
                             if let Object::Iterator(state) = &mut *iter
@@ -6009,20 +6004,6 @@ impl Vm {
                             }
                         }
                         Ok(Some(value))
-                    }
-                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                        if self.active_exception_is("IndexError") {
-                            self.clear_active_exception();
-                            return Ok(None);
-                        }
-                        let err =
-                            self.runtime_error_from_active_exception("sequence iteration failed");
-                        if runtime_error_matches_exception(&err.message, "IndexError")
-                            || err.message.contains("index out of range")
-                        {
-                            return Ok(None);
-                        }
-                        Err(err)
                     }
                     Err(err) => {
                         if runtime_error_matches_exception(&err.message, "IndexError")

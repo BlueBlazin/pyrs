@@ -109,6 +109,21 @@ fn cpython_lib_path() -> Option<PathBuf> {
     None
 }
 
+fn run_with_large_stack<F>(name: &str, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let join = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(f)
+        .expect("failed to spawn large-stack test thread");
+    match join.join() {
+        Ok(()) => {}
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 fn pyrs_binary_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
         let candidate = PathBuf::from(path);
@@ -8516,13 +8531,15 @@ fn argparse_parse_args_accepts_explicit_positional_list() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
     };
-    let source = "import argparse\np = argparse.ArgumentParser()\np.add_argument('x')\nns = p.parse_args(['hello'])\nok = (ns.x == 'hello')\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack("vm-argparse-stdlib", move || {
+        let source = "import argparse\np = argparse.ArgumentParser()\np.add_argument('x')\nns = p.parse_args(['hello'])\nok = (ns.x == 'hello')\n";
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -13065,7 +13082,8 @@ fn csv_dictreader_list_exhaustion_stops_cleanly() {
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    let source = r#"import csv
+    run_with_large_stack("vm-csv-dictreader", move || {
+        let source = r#"import csv
 from textwrap import dedent
 data = dedent('''\
     FirstName,LastName
@@ -13081,12 +13099,13 @@ for _ in range(200):
     total += len(rows)
 ok = (total == 800 and rows[0]['FirstName'] == 'Eric' and rows[-1]['LastName'] == 'Cleese')
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]

@@ -2165,6 +2165,10 @@ impl Drop for ModuleCapiContext {
                 if let Some(handle) = self.cpython_objects_by_ptr.get(&(raw as usize)).copied() {
                     escaped_handles.insert(handle);
                     if let Some(value) = self.object_value(handle) {
+                        if let Some(object_id) = Self::identity_object_id(&value) {
+                            vm.extension_cpython_ptr_by_object_id
+                                .insert(object_id, raw as usize);
+                        }
                         vm.extension_cpython_ptr_values.insert(raw as usize, value);
                     }
                 }
@@ -2191,6 +2195,10 @@ impl Drop for ModuleCapiContext {
                         {
                             escaped_handles.insert(handle);
                             if let Some(value) = self.object_value(handle) {
+                                if let Some(object_id) = Self::identity_object_id(&value) {
+                                    vm.extension_cpython_ptr_by_object_id
+                                        .insert(object_id, raw as usize);
+                                }
                                 vm.extension_cpython_ptr_values.insert(raw as usize, value);
                             }
                         }
@@ -2220,6 +2228,10 @@ impl Drop for ModuleCapiContext {
                         {
                             escaped_handles.insert(handle);
                             if let Some(value) = self.object_value(handle) {
+                                if let Some(object_id) = Self::identity_object_id(&value) {
+                                    vm.extension_cpython_ptr_by_object_id
+                                        .insert(object_id, raw as usize);
+                                }
                                 vm.extension_cpython_ptr_values.insert(raw as usize, value);
                             }
                         }
@@ -2234,7 +2246,16 @@ impl Drop for ModuleCapiContext {
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                vm.extension_cpython_ptr_values.remove(&(raw as usize));
+                if let Some(value) = vm.extension_cpython_ptr_values.remove(&(raw as usize))
+                    && let Some(object_id) = Self::identity_object_id(&value)
+                    && vm
+                        .extension_cpython_ptr_by_object_id
+                        .get(&object_id)
+                        .copied()
+                        == Some(raw as usize)
+                {
+                    vm.extension_cpython_ptr_by_object_id.remove(&object_id);
+                }
             }
             // SAFETY: pointers were allocated via C allocator in this context.
             unsafe {
@@ -3220,6 +3241,28 @@ impl ModuleCapiContext {
         }
         if let Some(raw_ptr) = Self::cpython_proxy_raw_ptr_from_value(&value) {
             return raw_ptr;
+        }
+        if !self.vm.is_null()
+            && let Some(object_id) = Self::identity_object_id(&value)
+        {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            if let Some(raw_ptr) = vm
+                .extension_cpython_ptr_by_object_id
+                .get(&object_id)
+                .copied()
+            {
+                if vm
+                    .extension_pinned_cpython_allocation_set
+                    .contains(&raw_ptr)
+                    && vm.extension_cpython_ptr_values.contains_key(&raw_ptr)
+                {
+                    vm.extension_cpython_ptr_values
+                        .insert(raw_ptr, value.clone());
+                    return raw_ptr as *mut c_void;
+                }
+                vm.extension_cpython_ptr_by_object_id.remove(&object_id);
+            }
         }
         if let Value::Class(class_obj) = &value
             && let Object::Class(class_data) = &*class_obj.kind()
@@ -14688,7 +14731,44 @@ pub unsafe extern "C" fn PyNumber_Invert(object: *mut c_void) -> *mut c_void {
 pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         let mapped_value = context.cpython_value_from_ptr(object);
+        let mut slot_object = object;
+        let mut proxy_slot_fallback = false;
         if let Some(value) = mapped_value.clone() {
+            if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some()
+                && let Value::Instance(instance_obj) = &value
+            {
+                let (class_name, has_proxy_marker, has_proxy_attr) =
+                    if let Object::Instance(instance_data) = &*instance_obj.kind() {
+                        if let Object::Class(class_data) = &*instance_data.class.kind() {
+                            (
+                                class_data.name.clone(),
+                                is_cpython_proxy_class(class_data),
+                                instance_data.attrs.contains_key(CPY_PROXY_PTR_ATTR),
+                            )
+                        } else {
+                            (
+                                "<non-class>".to_string(),
+                                false,
+                                instance_data.attrs.contains_key(CPY_PROXY_PTR_ATTR),
+                            )
+                        }
+                    } else {
+                        ("<invalid-instance>".to_string(), false, false)
+                    };
+                eprintln!(
+                    "[cpy-long-map] object={:p} class={} proxy_marker={} proxy_attr={}",
+                    object, class_name, has_proxy_marker, has_proxy_attr
+                );
+                if class_name == "_NoValueType"
+                    && std::env::var_os("PYRS_TRACE_CPY_LONG_BACKTRACE").is_some()
+                {
+                    eprintln!(
+                        "[cpy-long-map-bt] object={:p}\n{}",
+                        object,
+                        Backtrace::capture()
+                    );
+                }
+            }
             if let Ok(int_value) = value_to_int(value.clone()) {
                 return context.alloc_cpython_ptr_for_value(Value::Int(int_value));
             }
@@ -14706,20 +14786,28 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     }
                 };
             }
+            if let Some(proxy_raw_ptr) = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&value)
+            {
+                proxy_slot_fallback = true;
+                if !proxy_raw_ptr.is_null() {
+                    slot_object = proxy_raw_ptr;
+                }
+            }
             if let Err(err) = value_to_int(value)
+                && !proxy_slot_fallback
                 && !err.message.contains("unsupported operand type")
             {
                 context.set_error(err.message);
                 return std::ptr::null_mut();
             }
         }
-        if object.is_null() {
+        if slot_object.is_null() {
             context.set_error("PyNumber_Long expected object");
             return std::ptr::null_mut();
         }
-        // SAFETY: `object` is a foreign PyObject* from extension code.
+        // SAFETY: `slot_object` is a foreign PyObject* from extension code.
         let type_ptr = unsafe {
-            object
+            slot_object
                 .cast::<CpythonObjectHead>()
                 .as_ref()
                 .map(|head| head.ob_type.cast::<CpythonTypeObject>())
@@ -14727,7 +14815,7 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
         };
         if type_ptr.is_null() {
             if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
-                eprintln!("[cpy-unknown-ptr] PyNumber_Long object={:p}", object);
+                eprintln!("[cpy-unknown-ptr] PyNumber_Long object={:p}", slot_object);
             }
             context.set_error("unknown PyObject pointer");
             return std::ptr::null_mut();
@@ -14751,8 +14839,8 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     .map(cpython_value_debug_tag)
                     .unwrap_or_else(|| "<none>".to_string());
                 eprintln!(
-                    "[cpy-long-debug] tp_as_number missing object={:p} mapped={} type_ptr={:p} type_name={}",
-                    object, mapped_tag, type_ptr, type_name
+                    "[cpy-long-debug] tp_as_number missing object={:p} slot_object={:p} mapped={} type_ptr={:p} type_name={}",
+                    object, slot_object, mapped_tag, type_ptr, type_name
                 );
             }
             context.set_error("PyNumber_Long requires int-compatible object");
@@ -14771,15 +14859,15 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     .map(cpython_value_debug_tag)
                     .unwrap_or_else(|| "<none>".to_string());
                 eprintln!(
-                    "[cpy-long-debug] nb_int/index missing object={:p} mapped={} type_ptr={:p} type_name={}",
-                    object, mapped_tag, type_ptr, type_name
+                    "[cpy-long-debug] nb_int/index missing object={:p} slot_object={:p} mapped={} type_ptr={:p} type_name={}",
+                    object, slot_object, mapped_tag, type_ptr, type_name
                 );
             }
             context.set_error("PyNumber_Long requires int-compatible object");
             return std::ptr::null_mut();
         };
         // SAFETY: `converter` is a valid nb_int/nb_index slot for this object type.
-        unsafe { converter(object) }
+        unsafe { converter(slot_object) }
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -40792,6 +40880,85 @@ impl Vm {
             "proxy subtraction failed",
             "proxy subtraction returned unknown object pointer",
         )
+    }
+
+    pub(super) fn cpython_proxy_long(
+        &mut self,
+        value: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        thread_local! {
+            static CPYTHON_PROXY_LONG_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        let already_active = CPYTHON_PROXY_LONG_ACTIVE.with(|active| {
+            if active.get() {
+                true
+            } else {
+                active.set(true);
+                false
+            }
+        });
+        if already_active {
+            return Some(Err(RuntimeError::new("int() unsupported type")));
+        }
+        struct CpythonProxyLongGuard;
+        impl Drop for CpythonProxyLongGuard {
+            fn drop(&mut self) {
+                CPYTHON_PROXY_LONG_ACTIVE.with(|active| active.set(false));
+            }
+        }
+        let _reentry_guard = CpythonProxyLongGuard;
+        let raw_ptr = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(value)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let result = if raw_ptr.is_null() {
+            Err(RuntimeError::new("int() unsupported type"))
+        } else {
+            // SAFETY: `raw_ptr` is a candidate CPython object pointer.
+            let type_ptr = unsafe {
+                raw_ptr
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if !cpython_valid_type_ptr(type_ptr) {
+                Err(RuntimeError::new("int() unsupported type"))
+            } else {
+                // SAFETY: `type_ptr` is validated above.
+                let number_methods = unsafe {
+                    (*type_ptr)
+                        .tp_as_number
+                        .cast::<CpythonNumberMethods>()
+                        .as_ref()
+                };
+                let converter = number_methods
+                    .and_then(|methods| methods.nb_int.or(methods.nb_index));
+                if let Some(converter) = converter {
+                    if (converter as usize) == (PyNumber_Long as usize) {
+                        Err(RuntimeError::new("int() unsupported type"))
+                    } else {
+                        // SAFETY: converter slot comes from validated number methods table.
+                        let result_ptr = unsafe { converter(raw_ptr) };
+                        if result_ptr.is_null() {
+                            Err(RuntimeError::new(
+                                call_ctx
+                                    .last_error
+                                    .clone()
+                                    .unwrap_or_else(|| "int() unsupported type".to_string()),
+                            ))
+                        } else {
+                            call_ctx.cpython_value_from_ptr_or_proxy(result_ptr).ok_or_else(|| {
+                                RuntimeError::new("proxy int conversion returned unknown object pointer")
+                            })
+                        }
+                    }
+                } else {
+                    Err(RuntimeError::new("int() unsupported type"))
+                }
+            }
+        };
+        cpython_set_active_context(previous_context);
+        Some(result)
     }
 
     pub(super) fn cpython_proxy_add(

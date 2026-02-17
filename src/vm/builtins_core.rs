@@ -2163,6 +2163,15 @@ impl Vm {
                                 }
                             };
                         }
+                        if let Some(proxy_result) = self.cpython_proxy_long(&arg) {
+                            let proxy_value = proxy_result?;
+                            return match proxy_value {
+                                Value::Int(_) | Value::BigInt(_) | Value::Bool(_) => {
+                                    BuiltinFunction::Int.call(&self.heap, vec![proxy_value])
+                                }
+                                _ => Err(RuntimeError::new("__int__ returned non-int")),
+                            };
+                        }
                         return Err(err);
                     }
                     Err(err) => return Err(err),

@@ -767,6 +767,7 @@ pub struct Vm {
     extension_pinned_external_cpython_refs: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
     extension_cpython_ptr_values: HashMap<usize, Value>,
+    extension_cpython_ptr_by_object_id: HashMap<u64, usize>,
     extension_module_def_registry: HashMap<u64, usize>,
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     extension_init_in_progress: HashSet<String>,
@@ -859,6 +860,7 @@ impl Drop for Vm {
         }
         self.extension_pinned_capsule_names.clear();
         self.extension_cpython_ptr_values.clear();
+        self.extension_cpython_ptr_by_object_id.clear();
         // Break reference cycles before field teardown so per-VM object graphs
         // do not accumulate across harness runs.
         self.heap.collect_cycles(&[]);
@@ -953,6 +955,7 @@ impl Vm {
             extension_pinned_external_cpython_refs: HashSet::new(),
             extension_pinned_capsule_names: HashMap::new(),
             extension_cpython_ptr_values: HashMap::new(),
+            extension_cpython_ptr_by_object_id: HashMap::new(),
             extension_module_def_registry: HashMap::new(),
             extension_module_state_registry: HashMap::new(),
             extension_init_in_progress: HashSet::new(),
