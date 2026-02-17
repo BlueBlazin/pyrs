@@ -105,8 +105,10 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
 - Latest direct-mode gate status (`perf/numpy_gate_direct_latest.json`):
   - `numpy_import`: `PASS`
-  - `numpy_ndarray_sum`: `FAIL` with `RuntimeError: PyNumber_Long requires int-compatible object`
-  - current blocker is numeric conversion parity for extension-backed scalar return paths in ndarray reduction flows (`a.sum()` -> `int(...)`).
+  - `numpy_ndarray_sum`: `PASS` (`int(np.array([1,2,3]).sum()) == 6`)
+- `PyNumber_Long` reduction-path blocker is closed via:
+  - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and
+  - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.
 - Extension-init failure reporting now preserves the first meaningful per-module `Py_mod_exec` failure across retry attempts, preventing fallback noise like `cannot load module more than once per process` from masking the root blocker.
 - Recent direct-mode bring-up deltas:
   - `_PyType_Lookup` now preserves no-new-error semantics and falls back to runtime MRO lookup when `tp_dict`-only lookup misses.
