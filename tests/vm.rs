@@ -11377,6 +11377,16 @@ fn object_format_uses_str_for_empty_spec_and_rejects_nonempty_spec() {
 }
 
 #[test]
+fn int_format_accepts_sign_flags() {
+    let source = "ok = (format(3, '-1d') == '3' and format(3, '+d') == '+3' and format(3, ' d') == ' 3')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn unittest_subtest_string_render_does_not_raise_repr_error() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping unittest subtest repr test (CPython Lib path not available)");

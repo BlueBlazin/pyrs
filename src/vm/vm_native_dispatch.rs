@@ -7497,7 +7497,7 @@ impl Vm {
             BuiltinFunction::WarningsReleaseLock => {
                 self.builtin_warnings_release_lock(args, kwargs)
             }
-            BuiltinFunction::Range => call_builtin_with_kwargs(&self.heap, builtin, args, kwargs),
+            BuiltinFunction::Range => self.builtin_range(args, kwargs),
             _ => {
                 if kwargs.is_empty() {
                     builtin.call(&self.heap, args)

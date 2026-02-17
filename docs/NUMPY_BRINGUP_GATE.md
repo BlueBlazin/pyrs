@@ -116,11 +116,13 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - NumPy import warning cleanup checkpoint:
   - proxy class `__flags__` now reflects CPython `tp_flags` for extension-backed types (instead of always returning `PY_TPFLAGS_HEAPTYPE`), which removed the prior `_add_newdocs_scalars` warning flood during `import numpy`.
 - Open direct-mode blocker:
-  - invoking real NumPy `ndarray` formatting paths (`ndarray.__repr__`, `numpy.array2string`) is still failing in current runtime; REPL/print currently fall back to generic proxy instance rendering (`<ndarray instance>`) for stability.
-  - root-cause investigation status:
-    - stack-overflow path in proxy attr fallback recursion has been guarded (`load_cpython_proxy_attr_for_value` now blocks same-object/same-attr re-entry around fallback `PyObject_GetAttrString` dispatch).
-    - with recursion guarded, the active blocker is rich-compare closure for mixed proxy-numeric comparisons surfaced by NumPy formatting (`TypeError: '<' not supported between instances of 'int' and 'int'` on `numpy.array2string` / `array_repr` path).
-    - `lookup_type_attr_via_tp_dict` still shows `numpy.ndarray` `tp_dict` external lookup miss for `__repr__`, then base `object` lookup with `tp_dict == NULL`; this indicates our type-ready/slot-wrapper publication substrate remains incomplete for this path.
+  - full NumPy scalar/display parity is still open.
+  - current state:
+    - `numpy.array_repr(np.arange(3))` path is green (subscript/range/format blockers closed).
+    - REPL/print display for `ndarray` now uses a stability fallback (`tolist()`-derived `array([...])`) instead of generic `<ndarray instance>` output.
+    - `np.float64` scalar rendering/formatting remains partial (`repr` placeholder output and non-empty float format-spec gaps), and this still blocks true `arrayprint` parity.
+  - remaining root-cause area:
+    - proxy descriptor/slot publication and numeric-conversion closure for float scalars (`nb_float`/`__format__`/repr path) in direct mode.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
   - `scipy_import`: `FAIL` (current lane-B blocker set includes remaining private CPython symbol closure for scipy extension modules)
   - `pandas_import` / `pandas_series_sum`: `FAIL` (pandas path currently hits deep-import/runtime stack failures after NumPy bootstrap)

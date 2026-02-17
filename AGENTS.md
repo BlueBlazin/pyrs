@@ -237,7 +237,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - pure-stdlib preference logic now includes `typing` (in addition to `types`) when CPython `Lib` sources are available on `sys.path`.
   - direct NumPy gate checkpoint: base direct-mode probes are green (`numpy_import`, `numpy_ndarray_sum`, `numpy_numerictypes_core`) in `perf/numpy_gate_direct_latest.json`.
   - NumPy import warning cleanup checkpoint: proxy class `__flags__` now reads CPython `tp_flags` for extension-backed types, removing prior `_add_newdocs_scalars` warning spam during `import numpy`.
-  - open NumPy direct-mode blocker: real `ndarray` formatting paths (`ndarray.__repr__`, `numpy.array2string`) currently overflow stack; runtime still uses generic proxy rendering (`<ndarray instance>`) for stable REPL/print output.
+  - NumPy display checkpoint: `ndarray` REPL/print no longer crashes and now renders as `array([...])` via a temporary `tolist()`-derived fallback; full `arrayprint` parity (spacing/precision/line-break semantics) remains open.
+  - open NumPy scalar-format blocker: `np.float64` repr/format parity is incomplete (`repr` placeholder output and non-empty float format-spec gaps), and this is still a direct-mode blocker for true NumPy display semantics.
+  - C varargs parser now covers `PyArg_ParseTupleAndKeywords` token `U` (unicode object) in `src/vm/capi_variadics.c`; batch26 extension smoke includes regression coverage for this token.
   - `PyNumber_Long` reduction-path blocker was closed by (a) stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts and (b) `int()` fallback through CPython proxy numeric slots (`nb_int` / `nb_index`) for extension-backed scalars.
   - unary operator runtime now falls back to special methods (`__neg__`, `__pos__`, `__invert__`) and CPython proxy numeric slots, with regression coverage (`tests/vm.rs::unary_operators_fall_back_to_special_methods`).
   - lane-B symbol closure advanced with `_PyByteArray_empty_string` data export and `_PyBytes_Join`/`PyBytes_Join` function exports for scipy extension-loader paths.

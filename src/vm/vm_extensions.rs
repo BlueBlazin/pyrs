@@ -2323,6 +2323,11 @@ impl Drop for ModuleCapiContext {
                 }
             }
             if keep_pinned {
+                if !self.vm.is_null() {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    self.pin_container_children_for_vm(vm, raw);
+                }
                 continue;
             }
             if !self.vm.is_null() {
@@ -2477,6 +2482,61 @@ impl ModuleCapiContext {
                 return false;
             }
             c_name_to_string(tp_name).is_ok()
+        }
+    }
+
+    fn pin_owned_child_pointer_for_vm(&mut self, vm: &mut Vm, child_ptr: *mut c_void) {
+        if child_ptr.is_null() || !self.owns_cpython_allocation_ptr(child_ptr) {
+            return;
+        }
+        if vm
+            .extension_pinned_cpython_allocation_set
+            .insert(child_ptr as usize)
+        {
+            vm.extension_pinned_cpython_allocations
+                .push(child_ptr.cast::<c_void>());
+        }
+        if let Some(handle) = self.cpython_objects_by_ptr.get(&(child_ptr as usize)).copied()
+            && let Some(value) = self.object_value(handle)
+        {
+            vm.extension_cpython_ptr_values
+                .insert(child_ptr as usize, value.clone());
+            if let Some(object_id) = Self::identity_object_id(&value) {
+                vm.extension_cpython_ptr_by_object_id
+                    .insert(object_id, child_ptr as usize);
+            }
+        }
+    }
+
+    fn pin_container_children_for_vm(&mut self, vm: &mut Vm, raw: *mut CpythonCompatObject) {
+        if raw.is_null() {
+            return;
+        }
+        // SAFETY: `raw` points to an owned CPython-compatible allocation.
+        unsafe {
+            let head = raw.cast::<CpythonObjectHead>();
+            let Some(head_ref) = head.as_ref() else {
+                return;
+            };
+            if head_ref.ob_type == std::ptr::addr_of_mut!(PyTuple_Type).cast() {
+                let len = (*raw.cast::<CpythonVarObjectHead>()).ob_size.max(0) as usize;
+                let items_ptr = cpython_tuple_items_ptr(raw.cast());
+                for index in 0..len {
+                    self.pin_owned_child_pointer_for_vm(vm, *items_ptr.add(index));
+                }
+                return;
+            }
+            if head_ref.ob_type == std::ptr::addr_of_mut!(PyList_Type).cast() {
+                let list_ptr = raw.cast::<CpythonListCompatObject>();
+                let len = (*list_ptr).ob_base.ob_size.max(0) as usize;
+                let items_ptr = (*list_ptr).ob_item;
+                if items_ptr.is_null() {
+                    return;
+                }
+                for index in 0..len {
+                    self.pin_owned_child_pointer_for_vm(vm, *items_ptr.add(index));
+                }
+            }
         }
     }
 
@@ -3246,6 +3306,18 @@ impl ModuleCapiContext {
         self.cpython_ptr_by_handle.insert(handle, raw.cast());
         self.cpython_allocations.push(raw);
         self.cpython_owned_ptrs.insert(raw as usize);
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            if let Some(value) = self.object_value(handle) {
+                vm.extension_cpython_ptr_values
+                    .insert(raw as usize, value.clone());
+                if let Some(object_id) = Self::identity_object_id(&value) {
+                    vm.extension_cpython_ptr_by_object_id
+                        .insert(object_id, raw as usize);
+                }
+            }
+        }
         raw.cast()
     }
 
@@ -5758,6 +5830,17 @@ impl ModuleCapiContext {
         match payload {
             Some(SyncPayload::Tuple(item_ptrs)) => {
                 let trace_raw = std::env::var_os("PYRS_TRACE_CPY_TUPLE_RAW").is_some();
+                let existing_values = self
+                    .objects
+                    .get(&handle)
+                    .and_then(|slot| match &slot.value {
+                        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                            Object::Tuple(items) => Some(items.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .unwrap_or_default();
                 let mut values = Vec::with_capacity(item_ptrs.len());
                 for (idx, item_ptr) in item_ptrs.iter().copied().enumerate() {
                     if item_ptr.is_null() {
@@ -5767,7 +5850,7 @@ impl ModuleCapiContext {
                                 handle, ptr, idx
                             );
                         }
-                        values.push(Value::None);
+                        values.push(existing_values.get(idx).cloned().unwrap_or(Value::None));
                         continue;
                     }
                     match self.cpython_value_from_ptr_or_proxy(item_ptr) {
@@ -5791,7 +5874,7 @@ impl ModuleCapiContext {
                                     handle, ptr, idx, item_ptr
                                 );
                             }
-                            values.push(Value::None)
+                            values.push(existing_values.get(idx).cloned().unwrap_or(Value::None))
                         }
                     }
                 }
@@ -5803,15 +5886,26 @@ impl ModuleCapiContext {
                 }
             }
             Some(SyncPayload::List(item_ptrs)) => {
+                let existing_values = self
+                    .objects
+                    .get(&handle)
+                    .and_then(|slot| match &slot.value {
+                        Value::List(list_obj) => match &*list_obj.kind() {
+                            Object::List(items) => Some(items.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .unwrap_or_default();
                 let mut values = Vec::with_capacity(item_ptrs.len());
-                for item_ptr in item_ptrs {
+                for (idx, item_ptr) in item_ptrs.into_iter().enumerate() {
                     if item_ptr.is_null() {
-                        values.push(Value::None);
+                        values.push(existing_values.get(idx).cloned().unwrap_or(Value::None));
                         continue;
                     }
                     match self.cpython_value_from_ptr_or_proxy(item_ptr) {
                         Some(value) => values.push(value),
-                        None => values.push(Value::None),
+                        None => values.push(existing_values.get(idx).cloned().unwrap_or(Value::None)),
                     }
                 }
                 if let Some(slot) = self.objects.get_mut(&handle)
@@ -14034,7 +14128,7 @@ pub unsafe extern "C" fn PyIndex_Check(object: *mut c_void) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
-    match cpython_value_from_ptr(object) {
+    match cpython_value_from_ptr_or_proxy(object) {
         Ok(Value::Float(value)) => value,
         Ok(Value::Int(value)) => value as f64,
         Ok(Value::Bool(value)) => {
@@ -41448,6 +41542,96 @@ impl Vm {
         Some(result)
     }
 
+    pub(super) fn cpython_proxy_float(
+        &mut self,
+        value: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        thread_local! {
+            static CPYTHON_PROXY_FLOAT_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        }
+        let already_active = CPYTHON_PROXY_FLOAT_ACTIVE.with(|active| {
+            if active.get() {
+                true
+            } else {
+                active.set(true);
+                false
+            }
+        });
+        if already_active {
+            return Some(Err(RuntimeError::new("float() unsupported type")));
+        }
+        struct CpythonProxyFloatGuard;
+        impl Drop for CpythonProxyFloatGuard {
+            fn drop(&mut self) {
+                CPYTHON_PROXY_FLOAT_ACTIVE.with(|active| active.set(false));
+            }
+        }
+        let _reentry_guard = CpythonProxyFloatGuard;
+        let raw_ptr = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(value)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let result = if raw_ptr.is_null() {
+            Err(RuntimeError::new("float() unsupported type"))
+        } else {
+            // SAFETY: `raw_ptr` is a candidate CPython object pointer.
+            let type_ptr = unsafe {
+                raw_ptr
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if !cpython_valid_type_ptr(type_ptr) {
+                Err(RuntimeError::new("float() unsupported type"))
+            } else {
+                // SAFETY: `type_ptr` is validated above.
+                let number_methods = unsafe {
+                    (*type_ptr)
+                        .tp_as_number
+                        .cast::<CpythonNumberMethods>()
+                        .as_ref()
+                };
+                let converter =
+                    number_methods.and_then(|methods| (!methods.nb_float.is_null()).then_some(methods.nb_float));
+                if let Some(converter) = converter {
+                    if converter as usize == PyNumber_Float as usize {
+                        Err(RuntimeError::new("float() unsupported type"))
+                    } else {
+                        // SAFETY: converter slot comes from validated number methods table.
+                        let converter: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                            unsafe { std::mem::transmute(converter) };
+                        // SAFETY: slot signature matches CPython nb_float ABI.
+                        let result_ptr = unsafe { converter(raw_ptr) };
+                        if result_ptr.is_null() {
+                            Err(RuntimeError::new(
+                                call_ctx
+                                    .last_error
+                                    .clone()
+                                    .unwrap_or_else(|| "float() unsupported type".to_string()),
+                            ))
+                        } else {
+                            match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+                                Some(Value::Float(value)) => Ok(Value::Float(value)),
+                                Some(Value::Int(value)) => Ok(Value::Float(value as f64)),
+                                Some(Value::Bool(flag)) => {
+                                    Ok(Value::Float(if flag { 1.0 } else { 0.0 }))
+                                }
+                                Some(Value::BigInt(value)) => Ok(Value::Float(value.to_f64())),
+                                Some(_) | None => {
+                                    Err(RuntimeError::new("__float__ returned non-float"))
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Err(RuntimeError::new("float() unsupported type"))
+                }
+            }
+        };
+        cpython_set_active_context(previous_context);
+        Some(result)
+    }
+
     pub(super) fn cpython_proxy_negative(
         &mut self,
         value: &Value,
@@ -41574,13 +41758,201 @@ impl Vm {
         Some(Err(RuntimeError::new(detail)))
     }
 
+    pub(super) fn cpython_proxy_str(
+        &mut self,
+        target: &Value,
+    ) -> Option<Result<String, RuntimeError>> {
+        let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
+        let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__str__", false)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
+        let result_ptr = if target_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: target pointer is a candidate PyObject* for slot reads.
+            let type_ptr = unsafe {
+                target_ptr
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if type_ptr.is_null() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: `type_ptr` is a candidate type object and `tp_str` is read-only.
+                let slot = unsafe { (*type_ptr).tp_str };
+                if slot.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    // SAFETY: `tp_str` follows the CPython unary reprfunc ABI.
+                    let str_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                        unsafe { std::mem::transmute(slot) };
+                    // SAFETY: slot function pointer and target pointer come from CPython object metadata.
+                    unsafe { str_fn(target_ptr) }
+                }
+            }
+        };
+        cpython_set_active_context(previous_context);
+        if target_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy str() failed to materialize operand",
+            )));
+        }
+        if result_ptr.is_null() {
+            return Some(Err(RuntimeError::new("proxy str() slot not available")));
+        }
+        Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+            Some(Value::Str(text)) => Ok(text),
+            Some(_) => Err(RuntimeError::new("proxy str() returned non-string")),
+            None => Err(RuntimeError::new("proxy str() returned unknown object pointer")),
+        })
+    }
+
+    pub(super) fn cpython_proxy_repr(
+        &mut self,
+        target: &Value,
+    ) -> Option<Result<String, RuntimeError>> {
+        let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
+        let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__repr__", false)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
+        let result_ptr = if target_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: target pointer is a candidate PyObject* for slot reads.
+            let type_ptr = unsafe {
+                target_ptr
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if type_ptr.is_null() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: `type_ptr` is a candidate type object and `tp_repr` is read-only.
+                let slot = unsafe { (*type_ptr).tp_repr };
+                if slot.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    // SAFETY: `tp_repr` follows the CPython unary reprfunc ABI.
+                    let repr_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                        unsafe { std::mem::transmute(slot) };
+                    // SAFETY: slot function pointer and target pointer come from CPython object metadata.
+                    unsafe { repr_fn(target_ptr) }
+                }
+            }
+        };
+        cpython_set_active_context(previous_context);
+        if target_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy repr() failed to materialize operand",
+            )));
+        }
+        if result_ptr.is_null() {
+            return Some(Err(RuntimeError::new("proxy repr() slot not available")));
+        }
+        Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+            Some(Value::Str(text)) => Ok(text),
+            Some(_) => Err(RuntimeError::new("proxy repr() returned non-string")),
+            None => Err(RuntimeError::new("proxy repr() returned unknown object pointer")),
+        })
+    }
+
+    pub(super) fn cpython_proxy_format(
+        &mut self,
+        target: &Value,
+        spec: &str,
+    ) -> Option<Result<String, RuntimeError>> {
+        let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
+        let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__format__", false)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
+        let c_format = CString::new("__format__").ok()?;
+        let format_method_ptr = if target_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: pointer was materialized in the active C-API context above.
+            unsafe { PyObject_GetAttrString(target_ptr, c_format.as_ptr()) }
+        };
+        let spec_args_ptr = if call_ctx.vm.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *call_ctx.vm };
+            let spec_args = vm.heap.alloc_tuple(vec![Value::Str(spec.to_string())]);
+            call_ctx.alloc_cpython_ptr_for_value(spec_args)
+        };
+        let result_ptr = if format_method_ptr.is_null() || spec_args_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: pointers were materialized in the active C-API context above.
+            unsafe { PyObject_CallObject(format_method_ptr, spec_args_ptr) }
+        };
+        cpython_set_active_context(previous_context);
+        if target_ptr.is_null() || format_method_ptr.is_null() || spec_args_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy format() failed to materialize operands",
+            )));
+        }
+        if result_ptr.is_null() {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "proxy format() failed".to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+            Some(Value::Str(text)) => Ok(text),
+            Some(_) => Err(RuntimeError::new("proxy format() returned non-string")),
+            None => Err(RuntimeError::new("proxy format() returned unknown object pointer")),
+        })
+    }
+
+    pub(super) fn cpython_proxy_len(
+        &mut self,
+        target: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        Self::cpython_proxy_raw_ptr_from_value(target)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
+        let size = if target_ptr.is_null() {
+            -1
+        } else {
+            // SAFETY: pointer was materialized in the active C-API context above.
+            unsafe { PyObject_Size(target_ptr) }
+        };
+        cpython_set_active_context(previous_context);
+        if target_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy len() failed to materialize operand",
+            )));
+        }
+        if size < 0 {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "proxy len() failed".to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(Ok(Value::Int(size as i64)))
+    }
+
     pub(super) fn cpython_proxy_get_item(
         &mut self,
         target: &Value,
         key: Value,
     ) -> Option<Result<Value, RuntimeError>> {
-        Self::cpython_proxy_raw_ptr_from_value(target)?;
+        let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        if call_ctx.owns_cpython_allocation_ptr(raw_ptr) {
+            return None;
+        }
         let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
         let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
         let key_ptr = call_ctx.alloc_cpython_ptr_for_value(key);
@@ -41836,6 +42208,7 @@ impl Vm {
             }
         }
         if !is_proxy_type_object
+            && std::env::var_os("PYRS_ENABLE_PROXY_TP_DICT_FASTPATH").is_some()
             && !matches!(attr_name, "__repr__" | "__str__")
             && let Some(attr_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
             && !attr_ptr.is_null()

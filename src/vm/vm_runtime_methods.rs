@@ -434,6 +434,12 @@ impl Vm {
                     }
                     Value::Dict(_) => Err(RuntimeError::new("slicing unsupported for dict")),
                     other => {
+                        if let Some(proxy_result) = self.cpython_proxy_get_item(
+                            &other,
+                            Value::Slice(Box::new(SliceValue::new(lower, upper, step))),
+                        ) {
+                            return proxy_result;
+                        }
                         if let Some(getitem) =
                             self.lookup_bound_special_method(&other, "__getitem__")?
                         {
@@ -729,6 +735,11 @@ impl Vm {
                     }
                 }
                 other => {
+                    if let Some(proxy_result) =
+                        self.cpython_proxy_get_item(&other, index.clone())
+                    {
+                        return proxy_result;
+                    }
                     if let Some(getitem) =
                         self.lookup_bound_special_method(&other, "__getitem__")?
                     {

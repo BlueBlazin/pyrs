@@ -1783,6 +1783,31 @@ static int parse_args_and_keywords_va(
             continue;
         }
 
+        if (token == 'U') {
+            void **output = va_arg(*ap, void **);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            if (!object_is_instance_of_type(value, (void *)&PyUnicode_Type)) {
+                free(spec);
+                pyrs_capi_set_error_message(
+                    "PyArg_ParseTupleAndKeywords argument has incorrect type"
+                );
+                return 0;
+            }
+            if (output != NULL) {
+                *output = value;
+            }
+            token_index++;
+            continue;
+        }
+
         {
             char message[160];
             snprintf(

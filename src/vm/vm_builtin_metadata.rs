@@ -3499,15 +3499,15 @@ impl Vm {
             Value::Builtin(BuiltinFunction::ObjectInit)
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)
-        } else if attr_name == "__repr__" {
+        } else if attr_name == "__repr__" && !is_cpython_proxy_class {
             return Ok(AttrAccessOutcome::Value(
                 self.alloc_builtin_bound_method(BuiltinFunction::Repr, class.clone()),
             ));
-        } else if attr_name == "__str__" {
+        } else if attr_name == "__str__" && !is_cpython_proxy_class {
             return Ok(AttrAccessOutcome::Value(
                 self.alloc_builtin_bound_method(BuiltinFunction::Str, class.clone()),
             ));
-        } else if attr_name == "__format__" {
+        } else if attr_name == "__format__" && !is_cpython_proxy_class {
             return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
                 BuiltinFunction::ObjectFormat,
                 class.clone(),
@@ -4200,7 +4200,6 @@ impl Vm {
             return Ok(AttrAccessOutcome::Value(attr));
         }
         if is_cpython_proxy_instance
-            && matches!(attr_name, "__repr__" | "__str__")
             && let Some(proxy_attr) = self
                 .load_cpython_proxy_attr_for_value(&Value::Instance(instance.clone()), attr_name)
         {

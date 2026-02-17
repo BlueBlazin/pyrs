@@ -4263,6 +4263,29 @@ PyInit_cpython_api_batch26_probe(void) {
 
     int parse_noargs_ok = PyArg_Parse(0, "") ? 1 : 0;
 
+    PyObject *unicode_arg = PyUnicode_FromString("hello");
+    if (!unicode_arg) {
+        return 0;
+    }
+    PyObject *unicode_args = PyTuple_New(1);
+    if (!unicode_args) {
+        return 0;
+    }
+    Py_INCREF(unicode_arg);
+    if (PyTuple_SetItem(unicode_args, 0, unicode_arg) != 0) {
+        return 0;
+    }
+    static char *kwlist_u[] = {"text", 0};
+    PyObject *parsed_unicode = 0;
+    int parse_kw_u_ok = PyArg_ParseTupleAndKeywords(
+        unicode_args,
+        0,
+        "U",
+        kwlist_u,
+        &parsed_unicode
+    ) ? 1 : 0;
+    int parse_kw_u_identity_ok = (parse_kw_u_ok && parsed_unicode == unicode_arg) ? 1 : 0;
+
     PyObject *valid_kwargs = PyDict_New();
     PyObject *valid_key = PyUnicode_FromString("alpha");
     if (!valid_kwargs || !valid_key) {
@@ -4295,6 +4318,9 @@ PyInit_cpython_api_batch26_probe(void) {
     Py_XDECREF(parsed_from_va);
     Py_XDECREF(tuple);
     Py_XDECREF(parsed_from_parse);
+    Py_XDECREF(parsed_unicode);
+    Py_XDECREF(unicode_args);
+    Py_XDECREF(unicode_arg);
     Py_XDECREF(forty_two);
 
     if (PyModule_AddIntConstant(module, "PARSE_OK", parse_ok) != 0 ||
@@ -4304,6 +4330,8 @@ PyInit_cpython_api_batch26_probe(void) {
         PyModule_AddIntConstant(module, "VAPARSE_NON_TUPLE_OK", vaparse_non_tuple_ok) != 0 ||
         PyModule_AddIntConstant(module, "PARSE_NEW_FEATURES_OK", parse_new_features_ok) != 0 ||
         PyModule_AddIntConstant(module, "PARSE_NOARGS_OK", parse_noargs_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PARSE_KW_U_OK", parse_kw_u_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PARSE_KW_U_IDENTITY_OK", parse_kw_u_identity_ok) != 0 ||
         PyModule_AddIntConstant(module, "VALIDATE_OK", validate_ok) != 0 ||
         PyModule_AddIntConstant(module, "VALIDATE_NON_STRING_KEY_OK", validate_non_string_key_ok) != 0 ||
         PyModule_AddIntConstant(module, "VALIDATE_NOT_DICT_OK", validate_not_dict_ok) != 0) {
@@ -4324,7 +4352,7 @@ PyInit_cpython_api_batch26_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch26_probe as m\nassert m.PARSE_OK == 1\nassert m.PARSE_IDENTITY_OK == 1\nassert m.VAPARSE_OK == 1\nassert m.VAPARSE_IDENTITY_OK == 1\nassert m.VAPARSE_NON_TUPLE_OK == 1\nassert m.PARSE_NEW_FEATURES_OK == 1\nassert m.PARSE_NOARGS_OK == 1\nassert m.VALIDATE_OK == 1\nassert m.VALIDATE_NON_STRING_KEY_OK == 1\nassert m.VALIDATE_NOT_DICT_OK == 1",
+        "import cpython_api_batch26_probe as m\nassert m.PARSE_OK == 1\nassert m.PARSE_IDENTITY_OK == 1\nassert m.VAPARSE_OK == 1\nassert m.VAPARSE_IDENTITY_OK == 1\nassert m.VAPARSE_NON_TUPLE_OK == 1\nassert m.PARSE_NEW_FEATURES_OK == 1\nassert m.PARSE_NOARGS_OK == 1\nassert m.PARSE_KW_U_OK == 1\nassert m.PARSE_KW_U_IDENTITY_OK == 1\nassert m.VALIDATE_OK == 1\nassert m.VALIDATE_NON_STRING_KEY_OK == 1\nassert m.VALIDATE_NOT_DICT_OK == 1",
     )
     .expect("cpython api batch26 extension import should succeed");
 

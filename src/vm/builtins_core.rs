@@ -305,6 +305,16 @@ impl Vm {
             return Err(RuntimeError::new("repr() expects one argument"));
         }
         let value = args.remove(0);
+        let is_proxy = Self::cpython_proxy_raw_ptr_from_value(&value).is_some();
+        if is_proxy {
+            if let Some(array_repr) = self.numpy_array_repr_via_arrayprint(&value)? {
+                return Ok(Value::Str(array_repr));
+            }
+            match self.cpython_proxy_repr(&value) {
+                Some(Ok(text)) => return Ok(Value::Str(text)),
+                Some(Err(_)) | None => return Ok(Value::Str(format_value(&value))),
+            }
+        }
         if let Value::Instance(instance) = &value
             && let Object::Instance(instance_data) = &*instance.kind()
         {
@@ -1369,6 +1379,10 @@ impl Vm {
             .into_iter()
             .next()
             .ok_or_else(|| RuntimeError::new("len() expects one argument"))?;
+        if let Some(proxy_result) = self.cpython_proxy_len(&receiver) {
+            let raw = proxy_result?;
+            return self.normalize_len_result(raw);
+        }
         match BuiltinFunction::Len.call(&self.heap, vec![receiver.clone()]) {
             Ok(value) => Ok(value),
             Err(err) if err.message == "len() unsupported type" => {
@@ -2196,6 +2210,97 @@ impl Vm {
         call_builtin_with_kwargs(&self.heap, BuiltinFunction::Int, args, kwargs)
     }
 
+    fn coerce_index_bigint_for_range(&mut self, value: Value) -> Result<BigInt, RuntimeError> {
+        match value {
+            Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value_to_bigint(value),
+            other => {
+                if let Some(index_method) = self.lookup_bound_special_method(&other, "__index__")? {
+                    let index_value =
+                        match self.call_internal(index_method, Vec::new(), HashMap::new())? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(self.runtime_error_from_active_exception(
+                                    "range() index conversion failed",
+                                ));
+                            }
+                        };
+                    if matches!(index_value, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)) {
+                        return value_to_bigint(index_value);
+                    }
+                }
+                if let Some(proxy_index) = self.cpython_proxy_long(&other)
+                    && let Ok(index_value) = proxy_index
+                    && matches!(index_value, Value::Int(_) | Value::Bool(_) | Value::BigInt(_))
+                {
+                    return value_to_bigint(index_value);
+                }
+                Err(RuntimeError::new("range() expects integers"))
+            }
+        }
+    }
+
+    pub(super) fn builtin_range(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let mut start = kwargs.remove("start");
+        let mut stop = kwargs.remove("stop");
+        let mut step = kwargs.remove("step");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "range() got an unexpected keyword argument",
+            ));
+        }
+        match args.len() {
+            0 => {}
+            1 => {
+                if stop.is_some() {
+                    return Err(RuntimeError::new("range() got multiple values"));
+                }
+                stop = Some(args.remove(0));
+            }
+            2 => {
+                if start.is_some() || stop.is_some() {
+                    return Err(RuntimeError::new("range() got multiple values"));
+                }
+                start = Some(args.remove(0));
+                stop = Some(args.remove(0));
+            }
+            3 => {
+                if start.is_some() || stop.is_some() || step.is_some() {
+                    return Err(RuntimeError::new("range() got multiple values"));
+                }
+                start = Some(args.remove(0));
+                stop = Some(args.remove(0));
+                step = Some(args.remove(0));
+            }
+            _ => return Err(RuntimeError::new("range() expects 1-3 arguments")),
+        }
+
+        let stop = stop.ok_or_else(|| RuntimeError::new("range() missing stop"))?;
+        let start = start.unwrap_or(Value::Int(0));
+        let step = step.unwrap_or(Value::Int(1));
+
+        let start_big = self.coerce_index_bigint_for_range(start)?;
+        let stop_big = self.coerce_index_bigint_for_range(stop)?;
+        let step_big = self.coerce_index_bigint_for_range(step)?;
+        if step_big.is_zero() {
+            return Err(RuntimeError::new("range() step cannot be zero"));
+        }
+
+        Ok(Value::Iterator(self.heap.alloc(Object::Iterator(
+            IteratorObject {
+                kind: IteratorKind::RangeObject {
+                    start: start_big,
+                    stop: stop_big,
+                    step: step_big,
+                },
+                index: 0,
+            },
+        ))))
+    }
+
     pub(super) fn builtin_float(
         &mut self,
         mut args: Vec<Value>,
@@ -2237,6 +2342,9 @@ impl Vm {
                 && let Some(backing) = self.instance_backing_float(instance)
             {
                 return Ok(Value::Float(backing));
+            }
+            if let Some(proxy_result) = self.cpython_proxy_float(&args[0]) {
+                return proxy_result;
             }
             if let Some(float_method) = self.lookup_bound_special_method(&args[0], "__float__")? {
                 return match self.call_internal(float_method, Vec::new(), HashMap::new())? {
@@ -2350,6 +2458,16 @@ impl Vm {
 
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
+            let is_proxy = Self::cpython_proxy_raw_ptr_from_value(&object).is_some();
+            if is_proxy {
+                if let Some(array_repr) = self.numpy_array_repr_via_arrayprint(&object)? {
+                    return Ok(Value::Str(array_repr));
+                }
+                match self.cpython_proxy_str(&object) {
+                    Some(Ok(text)) => return Ok(Value::Str(text)),
+                    Some(Err(_)) | None => return Ok(Value::Str(format_value(&object))),
+                }
+            }
             if matches!(object, Value::Builtin(_)) {
                 return Ok(Value::Str(format_value(&object)));
             }
@@ -2418,6 +2536,33 @@ impl Vm {
             }
             _ => Err(RuntimeError::new("decoding str is not supported")),
         }
+    }
+
+    fn numpy_array_repr_via_arrayprint(
+        &mut self,
+        value: &Value,
+    ) -> Result<Option<String>, RuntimeError> {
+        if self.value_type_name_for_error(value) != "ndarray" {
+            return Ok(None);
+        }
+        let tolist = match self.builtin_getattr(
+            vec![value.clone(), Value::Str("tolist".to_string())],
+            HashMap::new(),
+        ) {
+            Ok(callable) => callable,
+            Err(_) => return Ok(None),
+        };
+        let list_value = match self.call_internal(tolist, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => value,
+            InternalCallOutcome::CallerExceptionHandled => {
+                return Err(self.runtime_error_from_active_exception("ndarray.tolist() failed"));
+            }
+        };
+        let rendered_list = match self.builtin_repr(vec![list_value], HashMap::new())? {
+            Value::Str(text) => text,
+            _ => return Ok(None),
+        };
+        Ok(Some(format!("array({rendered_list})")))
     }
 
     fn parse_bytes_constructor_args(
@@ -4819,11 +4964,15 @@ impl Vm {
     pub(super) fn parse_int_format_spec(
         &self,
         spec: &str,
-    ) -> Result<(bool, bool, usize, char), RuntimeError> {
+    ) -> Result<(char, bool, bool, usize, char), RuntimeError> {
         if spec.is_empty() {
-            return Ok((false, false, 0, 'd'));
+            return Ok(('-', false, false, 0, 'd'));
         }
         let mut chars = spec.chars().peekable();
+        let mut sign_style = '-';
+        if matches!(chars.peek(), Some('+') | Some('-') | Some(' ')) {
+            sign_style = chars.next().unwrap_or('-');
+        }
         let mut alternate = false;
         while matches!(chars.peek(), Some('#')) {
             alternate = true;
@@ -4851,7 +5000,7 @@ impl Vm {
                 "unsupported format string passed to int.__format__: '{spec}'"
             )));
         }
-        Ok((alternate, zero_pad, width, ty))
+        Ok((sign_style, alternate, zero_pad, width, ty))
     }
 
     pub(super) fn format_bigint_with_spec(
@@ -4859,7 +5008,7 @@ impl Vm {
         value: &BigInt,
         spec: &str,
     ) -> Result<String, RuntimeError> {
-        let (alternate, zero_pad, width, ty) = self.parse_int_format_spec(spec)?;
+        let (sign_style, alternate, zero_pad, width, ty) = self.parse_int_format_spec(spec)?;
         let is_negative = value.is_negative();
         let abs_value = value.abs();
         let mut digits = match ty {
@@ -4878,7 +5027,15 @@ impl Vm {
         if ty == 'X' {
             digits = digits.to_ascii_uppercase();
         }
-        let sign = if is_negative { "-" } else { "" };
+        let sign = if is_negative {
+            "-"
+        } else {
+            match sign_style {
+                '+' => "+",
+                ' ' => " ",
+                _ => "",
+            }
+        };
         let prefix = if alternate {
             match ty {
                 'o' => "0o",
@@ -4919,6 +5076,9 @@ impl Vm {
                 _ => return Err(RuntimeError::new("format() argument 2 must be str")),
             }
         };
+        if let Some(proxy_result) = self.cpython_proxy_format(&value, &spec) {
+            return proxy_result.map(Value::Str);
+        }
 
         let out = match &value {
             Value::Int(number) => {
@@ -5347,25 +5507,52 @@ impl Vm {
                 Self::cpython_proxy_raw_ptr_from_value(&right).unwrap_or(std::ptr::null_mut())
             );
         }
-        if let Some(result) = self.cpython_proxy_richcmp_bool(&left, &right, PY_LT)
-            && result?
-        {
-            return Ok(Some(Ordering::Less));
+        if let Some(ordering) = self.compare_order_via_proxy_numeric_bridge(&left, &right)? {
+            return Ok(Some(ordering));
         }
-        if let Some(result) = self.cpython_proxy_richcmp_bool(&left, &right, PY_GT)
-            && result?
-        {
-            return Ok(Some(Ordering::Greater));
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&left, &right, PY_LT) {
+            match result {
+                Ok(true) => return Ok(Some(Ordering::Less)),
+                Ok(false) => {}
+                Err(err) => {
+                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                        return Err(err);
+                    }
+                }
+            }
         }
-        if let Some(result) = self.cpython_proxy_richcmp_bool(&right, &left, PY_GT)
-            && result?
-        {
-            return Ok(Some(Ordering::Less));
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&left, &right, PY_GT) {
+            match result {
+                Ok(true) => return Ok(Some(Ordering::Greater)),
+                Ok(false) => {}
+                Err(err) => {
+                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                        return Err(err);
+                    }
+                }
+            }
         }
-        if let Some(result) = self.cpython_proxy_richcmp_bool(&right, &left, PY_LT)
-            && result?
-        {
-            return Ok(Some(Ordering::Greater));
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&right, &left, PY_GT) {
+            match result {
+                Ok(true) => return Ok(Some(Ordering::Less)),
+                Ok(false) => {}
+                Err(err) => {
+                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&right, &left, PY_LT) {
+            match result {
+                Ok(true) => return Ok(Some(Ordering::Greater)),
+                Ok(false) => {}
+                Err(err) => {
+                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                        return Err(err);
+                    }
+                }
+            }
         }
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
@@ -5392,6 +5579,70 @@ impl Vm {
             return Ok(Some(Ordering::Greater));
         }
         Ok(None)
+    }
+
+    fn is_runtime_numeric_for_compare(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::Bool(_) | Value::Int(_) | Value::BigInt(_) | Value::Float(_)
+        )
+    }
+
+    fn normalize_proxy_numeric_for_compare(
+        &mut self,
+        value: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if Self::is_runtime_numeric_for_compare(value) {
+            return Ok(Some(value.clone()));
+        }
+        let Some(_) = Self::cpython_proxy_raw_ptr_from_value(value) else {
+            return Ok(None);
+        };
+        match self.builtin_int(vec![value.clone()], HashMap::new()) {
+            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => {
+                return Ok(Some(normalized));
+            }
+            Ok(_) | Err(_) => {}
+        }
+        match self.builtin_float(vec![value.clone()], HashMap::new()) {
+            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => Ok(Some(normalized)),
+            Ok(_) | Err(_) => {
+                if self.value_type_name_for_error(value) == "bool"
+                    && let Ok(normalized) = self.builtin_bool(vec![value.clone()], HashMap::new())
+                    && Self::is_runtime_numeric_for_compare(&normalized)
+                {
+                    return Ok(Some(normalized));
+                }
+                Ok(None)
+            }
+        }
+    }
+
+    fn compare_order_via_proxy_numeric_bridge(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<Ordering>, RuntimeError> {
+        if Self::cpython_proxy_raw_ptr_from_value(left).is_none()
+            && Self::cpython_proxy_raw_ptr_from_value(right).is_none()
+        {
+            return Ok(None);
+        }
+        let Some(left_normalized) = self.normalize_proxy_numeric_for_compare(left)? else {
+            return Ok(None);
+        };
+        let Some(right_normalized) = self.normalize_proxy_numeric_for_compare(right)? else {
+            return Ok(None);
+        };
+        if !Self::is_runtime_numeric_for_compare(&left_normalized)
+            || !Self::is_runtime_numeric_for_compare(&right_normalized)
+        {
+            return Ok(None);
+        }
+        match compare_order(left_normalized, right_normalized) {
+            Ok(ordering) => Ok(Some(ordering)),
+            Err(_) => Ok(None),
+        }
     }
 
     pub(super) fn call_compare_method_bool(
