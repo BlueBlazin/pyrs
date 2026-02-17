@@ -518,14 +518,16 @@ impl Vm {
                     return Err(RuntimeError::new("ContextVar.get() expects 0-1 arguments"));
                 }
                 if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("ContextVar.get() receiver must be contextvar"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.get() receiver must be contextvar",
+                    ));
                 }
-                let marker = dict_get_value(
-                    &receiver,
-                    &Value::Str("__pyrs_contextvar__".to_string()),
-                );
+                let marker =
+                    dict_get_value(&receiver, &Value::Str("__pyrs_contextvar__".to_string()));
                 if !matches!(marker, Some(Value::Bool(true))) {
-                    return Err(RuntimeError::new("ContextVar.get() receiver must be contextvar"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.get() receiver must be contextvar",
+                    ));
                 }
                 if let Some(value) = dict_get_value(&receiver, &Value::Str("value".to_string())) {
                     return Ok(NativeCallResult::Value(value));
@@ -544,22 +546,20 @@ impl Vm {
                     return Err(RuntimeError::new("ContextVar.set() expects one argument"));
                 }
                 if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("ContextVar.set() receiver must be contextvar"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.set() receiver must be contextvar",
+                    ));
                 }
-                let marker = dict_get_value(
-                    &receiver,
-                    &Value::Str("__pyrs_contextvar__".to_string()),
-                );
+                let marker =
+                    dict_get_value(&receiver, &Value::Str("__pyrs_contextvar__".to_string()));
                 if !matches!(marker, Some(Value::Bool(true))) {
-                    return Err(RuntimeError::new("ContextVar.set() receiver must be contextvar"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.set() receiver must be contextvar",
+                    ));
                 }
                 let previous = dict_get_value(&receiver, &Value::Str("value".to_string()));
                 let had_value = previous.is_some();
-                dict_set_value(
-                    &receiver,
-                    Value::Str("value".to_string()),
-                    args[0].clone(),
-                );
+                dict_set_value(&receiver, Value::Str("value".to_string()), args[0].clone());
                 let mut token_entries = vec![
                     (
                         Value::Str("__pyrs_contextvar_token__".to_string()),
@@ -585,39 +585,46 @@ impl Vm {
                         "ContextVar.reset() receiver must be contextvar",
                     ));
                 }
-                let marker = dict_get_value(
-                    &receiver,
-                    &Value::Str("__pyrs_contextvar__".to_string()),
-                );
+                let marker =
+                    dict_get_value(&receiver, &Value::Str("__pyrs_contextvar__".to_string()));
                 if !matches!(marker, Some(Value::Bool(true))) {
                     return Err(RuntimeError::new(
                         "ContextVar.reset() receiver must be contextvar",
                     ));
                 }
                 let Value::Dict(token_dict) = &args[0] else {
-                    return Err(RuntimeError::new("ContextVar.reset() received invalid token"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.reset() received invalid token",
+                    ));
                 };
                 let token_marker = dict_get_value(
                     token_dict,
                     &Value::Str("__pyrs_contextvar_token__".to_string()),
                 );
                 if !matches!(token_marker, Some(Value::Bool(true))) {
-                    return Err(RuntimeError::new("ContextVar.reset() received invalid token"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.reset() received invalid token",
+                    ));
                 }
                 let Some(Value::Dict(token_contextvar)) =
                     dict_get_value(token_dict, &Value::Str("contextvar".to_string()))
                 else {
-                    return Err(RuntimeError::new("ContextVar.reset() received invalid token"));
+                    return Err(RuntimeError::new(
+                        "ContextVar.reset() received invalid token",
+                    ));
                 };
                 if token_contextvar.id() != receiver.id() {
                     return Err(RuntimeError::new(
                         "ContextVar.reset() token was created by a different ContextVar",
                     ));
                 }
-                let had_value =
-                    matches!(dict_get_value(token_dict, &Value::Str("had_value".to_string())), Some(Value::Bool(true)));
+                let had_value = matches!(
+                    dict_get_value(token_dict, &Value::Str("had_value".to_string())),
+                    Some(Value::Bool(true))
+                );
                 if had_value {
-                    if let Some(previous) = dict_get_value(token_dict, &Value::Str("value".to_string()))
+                    if let Some(previous) =
+                        dict_get_value(token_dict, &Value::Str("value".to_string()))
                     {
                         dict_set_value(&receiver, Value::Str("value".to_string()), previous);
                     } else {
@@ -3853,9 +3860,7 @@ impl Vm {
             }
             NativeMethodKind::CodeReplace => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new(
-                        "replace() takes no positional arguments",
-                    ));
+                    return Err(RuntimeError::new("replace() takes no positional arguments"));
                 }
                 let code_obj = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
@@ -3908,9 +3913,7 @@ impl Vm {
                         "co_filename" => match value {
                             Value::Str(text) => replaced.filename = text,
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "replace() co_filename must be str",
-                                ));
+                                return Err(RuntimeError::new("replace() co_filename must be str"));
                             }
                         },
                         "co_name" | "co_qualname" => match value {
@@ -3952,19 +3955,14 @@ impl Vm {
                         "co_flags" => {
                             let flags = value_to_int(value)?;
                             if flags < 0 {
-                                return Err(RuntimeError::new(
-                                    "replace() co_flags must be >= 0",
-                                ));
+                                return Err(RuntimeError::new("replace() co_flags must be >= 0"));
                             }
                             replaced.is_generator = (flags & 0x0020) != 0;
                             replaced.is_coroutine = (flags & 0x0080) != 0;
                             replaced.is_async_generator = (flags & 0x0200) != 0;
                         }
-                        "co_argcount"
-                        | "co_posonlyargcount"
-                        | "co_kwonlyargcount"
-                        | "co_nlocals"
-                        | "co_stacksize" => {
+                        "co_argcount" | "co_posonlyargcount" | "co_kwonlyargcount"
+                        | "co_nlocals" | "co_stacksize" => {
                             let value = value_to_int(value)?;
                             if value < 0 {
                                 return Err(RuntimeError::new(format!(
@@ -4199,7 +4197,8 @@ impl Vm {
                 let Object::Module(module_data) = &*receiver_kind else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
-                let Some(Value::Function(function_obj)) = module_data.globals.get("function").cloned()
+                let Some(Value::Function(function_obj)) =
+                    module_data.globals.get("function").cloned()
                 else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
@@ -4244,7 +4243,9 @@ impl Vm {
                         resolved_entries.push((Value::Str(name.clone()), resolved_value));
                     }
                 }
-                Ok(NativeCallResult::Value(self.heap.alloc_dict(resolved_entries)))
+                Ok(NativeCallResult::Value(
+                    self.heap.alloc_dict(resolved_entries),
+                ))
             }
             NativeMethodKind::ObjectReduceExBound => {
                 let receiver_kind = receiver.kind();

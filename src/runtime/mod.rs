@@ -4371,29 +4371,17 @@ impl BuiltinFunction {
                     Value::Str(value) => value.clone(),
                     _ => return Err(RuntimeError::new("ContextVar() name must be string")),
                 };
-                let default = args.get(1).cloned().unwrap_or(Value::None);
-                let module =
-                    match heap.alloc_module(ModuleObject::new(format!("<ContextVar {name}>"))) {
-                        Value::Module(obj) => obj,
-                        _ => unreachable!(),
-                    };
-                if let Object::Module(module_data) = &mut *module.kind_mut() {
-                    module_data
-                        .globals
-                        .insert("__name__".to_string(), Value::Str(name));
-                    module_data
-                        .globals
-                        .insert("__default__".to_string(), default);
-                    module_data.globals.insert(
-                        "get".to_string(),
-                        Value::Builtin(BuiltinFunction::ContextVarGet),
-                    );
-                    module_data.globals.insert(
-                        "set".to_string(),
-                        Value::Builtin(BuiltinFunction::ContextVarSet),
-                    );
+                let mut entries = vec![
+                    (
+                        Value::Str("__pyrs_contextvar__".to_string()),
+                        Value::Bool(true),
+                    ),
+                    (Value::Str("name".to_string()), Value::Str(name)),
+                ];
+                if let Some(default) = args.get(1).cloned() {
+                    entries.push((Value::Str("default".to_string()), default));
                 }
-                Ok(Value::Module(module))
+                Ok(heap.alloc_dict(entries))
             }
             BuiltinFunction::ContextVarGet => {
                 if args.len() > 1 {
@@ -4729,9 +4717,10 @@ impl BuiltinFunction {
                     class_data
                         .attrs
                         .insert("__name__".to_string(), Value::Str(kind_name.to_string()));
-                    class_data
-                        .attrs
-                        .insert("__qualname__".to_string(), Value::Str(kind_name.to_string()));
+                    class_data.attrs.insert(
+                        "__qualname__".to_string(),
+                        Value::Str(kind_name.to_string()),
+                    );
                     class_data
                         .attrs
                         .insert("__module__".to_string(), Value::Str("_typing".to_string()));
@@ -6395,9 +6384,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     Ok(out)
                 }
                 IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::new("expected iterable")),
-                IteratorKind::CpythonSequence { .. } => {
-                    Err(RuntimeError::new("expected iterable"))
-                }
+                IteratorKind::CpythonSequence { .. } => Err(RuntimeError::new("expected iterable")),
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
                 | IteratorKind::Cycle { .. } => Err(RuntimeError::new("expected iterable")),

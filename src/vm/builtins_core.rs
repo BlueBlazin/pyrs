@@ -11,11 +11,11 @@ use super::{
     compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
     dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
     encode_text_bytes, exception_type_is_subclass, format_float_hex, format_repr, format_value,
-    frame_cell_value, is_import_error_family, is_missing_attribute_error, is_os_error_family,
-    is_runtime_type_name_marker, normalize_codec_encoding, normalize_codec_errors,
-    ordering_from_cmp_value, parse_hex_float_literal, parser, round_float_with_ndigits,
-    runtime_error_matches_exception, sub_values, matmul_values, mul_values, value_from_bigint, value_from_object_ref,
-    or_values, neg_value, pos_value, invert_value,
+    frame_cell_value, invert_value, is_import_error_family, is_missing_attribute_error,
+    is_os_error_family, is_runtime_type_name_marker, matmul_values, mul_values, neg_value,
+    normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
+    parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
+    runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
     with_bytes_like_source,
 };
@@ -589,6 +589,11 @@ impl Vm {
         &mut self,
         value: Value,
     ) -> Result<String, RuntimeError> {
+        if self.frames.is_empty()
+            && let Some(rendered) = self.try_render_numpy_array_display(&value)?
+        {
+            return Ok(rendered);
+        }
         if !self.frames.is_empty() {
             return match self.builtin_repr(vec![value], HashMap::new())? {
                 Value::Str(text) => Ok(text),
@@ -609,6 +614,56 @@ impl Vm {
             match self.execute(&code)? {
                 Value::Str(text) => Ok(text),
                 _ => Err(RuntimeError::new("__repr__ returned non-string")),
+            }
+        })();
+        match previous {
+            Some(value) => self.set_global(TEMP_REPR_NAME, value),
+            None => {
+                self.remove_global(TEMP_REPR_NAME);
+            }
+        }
+        render_result
+    }
+
+    fn try_render_numpy_array_display(
+        &mut self,
+        value: &Value,
+    ) -> Result<Option<String>, RuntimeError> {
+        let Value::Instance(instance) = value else {
+            return Ok(None);
+        };
+        let class_name = match &*instance.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => return Ok(None),
+            },
+            _ => return Ok(None),
+        };
+        if class_name != "ndarray" {
+            return Ok(None);
+        }
+
+        const TEMP_REPR_NAME: &str = "__pyrs_repl_repr_target__";
+        let previous = self.get_global(TEMP_REPR_NAME);
+        self.set_global(TEMP_REPR_NAME, value.clone());
+        let render_result = (|| -> Result<Option<String>, RuntimeError> {
+            let expr = parser::parse_expression(
+                "__import__('numpy').array2string(__pyrs_repl_repr_target__)",
+            )
+            .map_err(|err| {
+                RuntimeError::new(format!("ndarray display parse failed: {}", err.message))
+            })?;
+            let code = compiler::compile_expression_with_filename(&expr, "<repl-ndarray-display>")
+                .map_err(|err| {
+                    RuntimeError::new(format!("ndarray display compile failed: {}", err.message))
+                })?;
+            match self.execute(&code) {
+                Ok(Value::Str(text)) => Ok(Some(text)),
+                Ok(_) => Ok(None),
+                Err(_) => {
+                    self.clear_active_exception();
+                    Ok(None)
+                }
             }
         })();
         match previous {
@@ -1702,7 +1757,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new("sys.is_finalizing() expects no arguments"));
+            return Err(RuntimeError::new(
+                "sys.is_finalizing() expects no arguments",
+            ));
         }
         Ok(Value::Bool(false))
     }
@@ -2912,6 +2969,13 @@ impl Vm {
         }
     }
 
+    fn bound_method_is_python_method(&self, method: &ObjRef) -> bool {
+        let Object::BoundMethod(method_data) = &*method.kind() else {
+            return false;
+        };
+        matches!(&*method_data.function.kind(), Object::Function(_))
+    }
+
     pub(super) fn builtin_is_type_object(&self, builtin: BuiltinFunction) -> bool {
         matches!(
             builtin,
@@ -2975,7 +3039,15 @@ impl Vm {
                     })
                 }
                 Value::Function(_) => self.types_module_class("FunctionType").map(Value::Class),
-                Value::BoundMethod(_) => Some(Value::Builtin(BuiltinFunction::TypesMethodType)),
+                Value::BoundMethod(method) => {
+                    if self.bound_method_is_python_method(method) {
+                        Some(Value::Builtin(BuiltinFunction::TypesMethodType))
+                    } else {
+                        self.types_module_class("BuiltinMethodType")
+                            .or_else(|| self.types_module_class("BuiltinFunctionType"))
+                            .map(Value::Class)
+                    }
+                }
                 Value::Builtin(builtin) => {
                     if self.builtin_is_type_object(*builtin) {
                         Some(Value::Builtin(BuiltinFunction::Type))
@@ -5524,7 +5596,8 @@ impl Vm {
         match self.call_internal(callable, Vec::new(), HashMap::new())? {
             InternalCallOutcome::Value(value) => Ok(Some(value)),
             InternalCallOutcome::CallerExceptionHandled => {
-                Err(self.runtime_error_from_active_exception("unary operator special method raised"))
+                Err(self
+                    .runtime_error_from_active_exception("unary operator special method raised"))
             }
         }
     }
@@ -5614,10 +5687,16 @@ impl Vm {
                     if trace {
                         match &proxy_result {
                             Ok(value) => {
-                                eprintln!("[bin-div] used proxy numeric slot -> {}", format_repr(value))
+                                eprintln!(
+                                    "[bin-div] used proxy numeric slot -> {}",
+                                    format_repr(value)
+                                )
                             }
                             Err(proxy_err) => {
-                                eprintln!("[bin-div] proxy numeric slot error -> {}", proxy_err.message)
+                                eprintln!(
+                                    "[bin-div] proxy numeric slot error -> {}",
+                                    proxy_err.message
+                                )
                             }
                         }
                     }
@@ -5706,10 +5785,16 @@ impl Vm {
                     if trace {
                         match &proxy_result {
                             Ok(value) => {
-                                eprintln!("[bin-mul] used proxy numeric slot -> {}", format_repr(value))
+                                eprintln!(
+                                    "[bin-mul] used proxy numeric slot -> {}",
+                                    format_repr(value)
+                                )
                             }
                             Err(proxy_err) => {
-                                eprintln!("[bin-mul] proxy numeric slot error -> {}", proxy_err.message)
+                                eprintln!(
+                                    "[bin-mul] proxy numeric slot error -> {}",
+                                    proxy_err.message
+                                )
                             }
                         }
                     }
@@ -5797,7 +5882,10 @@ impl Vm {
                     if trace {
                         match &proxy_result {
                             Ok(value) => {
-                                eprintln!("[bin-sub] used proxy numeric slot -> {}", format_repr(value))
+                                eprintln!(
+                                    "[bin-sub] used proxy numeric slot -> {}",
+                                    format_repr(value)
+                                )
                             }
                             Err(err) => {
                                 eprintln!("[bin-sub] proxy numeric slot error -> {}", err.message)
@@ -5843,7 +5931,8 @@ impl Vm {
                 if err.message.contains("unsupported operand type")
                     && err.message.contains("for |") =>
             {
-                if let Some(value) = self.call_binary_special_method(&left, "__or__", right.clone())?
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__or__", right.clone())?
                     && !self.is_not_implemented_singleton(&value)
                 {
                     return Ok(value);
@@ -6687,7 +6776,9 @@ impl Vm {
             BuiltinFunction::Complex => matches!(value, Value::Complex { .. }),
             BuiltinFunction::Slice => matches!(value, Value::Slice { .. }),
             BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
-            BuiltinFunction::TypesMethodType => matches!(value, Value::BoundMethod(_)),
+            BuiltinFunction::TypesMethodType => {
+                matches!(value, Value::BoundMethod(method) if self.bound_method_is_python_method(method))
+            }
             BuiltinFunction::Range => matches!(
                 value,
                 Value::Iterator(obj)
@@ -7599,11 +7690,12 @@ impl Vm {
                     Vm::frame_local_value(frame, name).or_else(|| frame_cell_value(frame, name))
                 })
                 .or_else(|| {
-                    Vm::frame_local_value(frame, "self")
-                        .or_else(|| frame_cell_value(frame, "self"))
+                    Vm::frame_local_value(frame, "self").or_else(|| frame_cell_value(frame, "self"))
                 })
                 .ok_or_else(|| {
-                    RuntimeError::new("super(): unable to determine object for zero-argument super()")
+                    RuntimeError::new(
+                        "super(): unable to determine object for zero-argument super()",
+                    )
                 })?;
 
             let class_from_locals =

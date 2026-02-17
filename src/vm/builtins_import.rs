@@ -1,10 +1,9 @@
 use super::{
     BUILTIN_MODULE_LOADER, HashMap, ModuleObject, NAMESPACE_LOADER, OPCODE_METADATA, ObjRef,
     Object, OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
-    Value, Vm,
-    bytes_like_from_value, cache_path_from_source_path, class_attr_lookup, fs, is_truthy,
-    opcode_flags_contains, source_path_from_cache_path, split_relative_import_name, value_to_int,
-    value_to_path,
+    Value, Vm, bytes_like_from_value, cache_path_from_source_path, class_attr_lookup, fs,
+    is_truthy, opcode_flags_contains, source_path_from_cache_path, split_relative_import_name,
+    value_to_int, value_to_path,
 };
 
 impl Vm {

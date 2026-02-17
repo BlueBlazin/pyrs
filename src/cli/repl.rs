@@ -145,6 +145,13 @@ pub(super) fn run_repl(import_site: bool) -> Result<(), String> {
     run_result.and(shutdown_result)
 }
 
+fn repl_module_updates_completions(module: &Module) -> bool {
+    if module.body.len() != 1 {
+        return true;
+    }
+    !matches!(module.body[0].node, StmtKind::Expr(_))
+}
+
 fn build_vm(import_site: bool, interactive: bool) -> Result<Vm, String> {
     let mut vm = Vm::new();
     super::configure_vm_for_command(&mut vm, import_site)?;
@@ -267,6 +274,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                 pending.push('\n');
                 match parser::parse_module(&pending) {
                     Ok(module) => {
+                        let refresh_completion = repl_module_updates_completions(&module);
                         if let Err(err) = execute_parsed_module_with_timing(
                             vm,
                             &module,
@@ -275,7 +283,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                             timing_enabled,
                         ) {
                             eprintln!("{err}");
-                        } else {
+                        } else if refresh_completion {
                             refresh_completion_state(vm, &completion_state);
                         }
                         pending.clear();
@@ -1854,7 +1862,8 @@ mod tests {
         CompletionState, MetaCommand, PythonHighlighter, ReplCompleter, ReplMagicCommand,
         ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment, format_parse_error,
         is_path_like, parse_colorfgbg_background_code, parse_magic_command, parse_meta_command,
-        parse_repl_theme_mode, repl_input_is_incomplete, repl_palette, resolve_repl_theme,
+        parse_repl_theme_mode, repl_input_is_incomplete, repl_module_updates_completions,
+        repl_palette, resolve_repl_theme,
     };
     use crate::parser;
 
@@ -1937,6 +1946,14 @@ mod tests {
         assert_eq!(parse_repl_theme_mode("Dark"), Some(ReplThemeMode::Dark));
         assert_eq!(parse_repl_theme_mode("LIGHT"), Some(ReplThemeMode::Light));
         assert_eq!(parse_repl_theme_mode("unknown"), None);
+    }
+
+    #[test]
+    fn completion_refresh_skips_single_expression_modules() {
+        let expr_module = parser::parse_module("1 + 1\n").expect("parse expression module");
+        let assign_module = parser::parse_module("x = 1\n").expect("parse assignment module");
+        assert!(!repl_module_updates_completions(&expr_module));
+        assert!(repl_module_updates_completions(&assign_module));
     }
 
     #[test]

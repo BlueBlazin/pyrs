@@ -526,9 +526,10 @@ impl Vm {
             module_data
                 .globals
                 .insert("pattern".to_string(), pattern_value);
-            module_data
-                .globals
-                .insert("__pyrs_compiled_pattern__".to_string(), compiled_pattern_value);
+            module_data.globals.insert(
+                "__pyrs_compiled_pattern__".to_string(),
+                compiled_pattern_value,
+            );
             module_data
                 .globals
                 .insert("flags".to_string(), Value::Int(flags));

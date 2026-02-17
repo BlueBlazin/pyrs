@@ -1005,20 +1005,18 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrTranslate, receiver))
             }
-            "__instancecheck__" if self.builtin_is_type_object(builtin) => Ok(
-                self.alloc_builtin_unbound_method(
+            "__instancecheck__" if self.builtin_is_type_object(builtin) => Ok(self
+                .alloc_builtin_unbound_method(
                     "__builtin_unbound_method__",
                     Value::Builtin(builtin),
                     BuiltinFunction::TypeInstanceCheck,
-                ),
-            ),
-            "__subclasscheck__" if self.builtin_is_type_object(builtin) => Ok(
-                self.alloc_builtin_unbound_method(
+                )),
+            "__subclasscheck__" if self.builtin_is_type_object(builtin) => Ok(self
+                .alloc_builtin_unbound_method(
                     "__builtin_unbound_method__",
                     Value::Builtin(builtin),
                     BuiltinFunction::TypeSubclassCheck,
-                ),
-            ),
+                )),
             _ => Err(RuntimeError::new(format!(
                 "builtin has no attribute '{}'",
                 attr_name
@@ -1668,11 +1666,9 @@ impl Vm {
         if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
         }
-        let is_contextvar_storage = dict_get_value(
-            &dict,
-            &Value::Str("__pyrs_contextvar__".to_string()),
-        )
-        .is_some_and(|value| matches!(value, Value::Bool(true)));
+        let is_contextvar_storage =
+            dict_get_value(&dict, &Value::Str("__pyrs_contextvar__".to_string()))
+                .is_some_and(|value| matches!(value, Value::Bool(true)));
         if is_contextvar_storage {
             let contextvar_kind = match attr_name {
                 "get" => Some(NativeMethodKind::ContextVarGetMethod),
@@ -2870,7 +2866,8 @@ impl Vm {
             }
             Value::Instance(instance) => {
                 let receiver = Value::Instance(instance.clone());
-                if let Some(call_target) = self.lookup_bound_special_method(&receiver, "__call__")?
+                if let Some(call_target) =
+                    self.lookup_bound_special_method(&receiver, "__call__")?
                 {
                     return self.call_internal(call_target, args, kwargs);
                 }
@@ -3490,15 +3487,13 @@ impl Vm {
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)
         } else if attr_name == "__repr__" {
-            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
-                BuiltinFunction::Repr,
-                class.clone(),
-            )));
+            return Ok(AttrAccessOutcome::Value(
+                self.alloc_builtin_bound_method(BuiltinFunction::Repr, class.clone()),
+            ));
         } else if attr_name == "__str__" {
-            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
-                BuiltinFunction::Str,
-                class.clone(),
-            )));
+            return Ok(AttrAccessOutcome::Value(
+                self.alloc_builtin_bound_method(BuiltinFunction::Str, class.clone()),
+            ));
         } else if attr_name == "__format__" {
             return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
                 BuiltinFunction::ObjectFormat,
@@ -3524,9 +3519,8 @@ impl Vm {
                     if let Object::Class(class_data) = &*class_kind {
                         let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
                         keys.sort();
-                        let raw_ptr_present = class_data
-                            .attrs
-                            .contains_key("__pyrs_cpython_proxy_ptr__");
+                        let raw_ptr_present =
+                            class_data.attrs.contains_key("__pyrs_cpython_proxy_ptr__");
                         eprintln!(
                             "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}",
                             class_name, attr_name, raw_ptr_present
@@ -3546,9 +3540,8 @@ impl Vm {
                 if let Object::Class(class_data) = &*class_kind {
                     let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
                     keys.sort();
-                    let raw_ptr_present = class_data
-                        .attrs
-                        .contains_key("__pyrs_cpython_proxy_ptr__");
+                    let raw_ptr_present =
+                        class_data.attrs.contains_key("__pyrs_cpython_proxy_ptr__");
                     eprintln!(
                         "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}",
                         class_name, attr_name, raw_ptr_present
@@ -4415,9 +4408,10 @@ impl Vm {
             && class_name == "__pyrs_cpython_proxy__"
         {
             let raw_ptr = match &*instance.kind() {
-                Object::Instance(instance_data) => {
-                    instance_data.attrs.get("__pyrs_cpython_proxy_ptr__").cloned()
-                }
+                Object::Instance(instance_data) => instance_data
+                    .attrs
+                    .get("__pyrs_cpython_proxy_ptr__")
+                    .cloned(),
                 _ => None,
             };
             eprintln!(

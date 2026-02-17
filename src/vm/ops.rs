@@ -1142,12 +1142,7 @@ fn is_type_union_instance(instance: &crate::runtime::ObjRef) -> bool {
     };
     if matches!(
         class_name.as_str(),
-        "GenericAlias"
-            | "UnionType"
-            | "TypeVar"
-            | "TypeVarTuple"
-            | "ParamSpec"
-            | "TypeAliasType"
+        "GenericAlias" | "UnionType" | "TypeVar" | "TypeVarTuple" | "ParamSpec" | "TypeAliasType"
     ) {
         return true;
     }

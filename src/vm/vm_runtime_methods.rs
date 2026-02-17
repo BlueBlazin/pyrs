@@ -1641,9 +1641,9 @@ impl Vm {
                 )? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self.runtime_error_from_active_exception(
-                            "__mro_entries__ call failed",
-                        ));
+                        return Err(
+                            self.runtime_error_from_active_exception("__mro_entries__ call failed")
+                        );
                     }
                 };
                 let Value::Tuple(entries_tuple) = entries else {

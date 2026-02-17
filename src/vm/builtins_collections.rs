@@ -2558,11 +2558,7 @@ impl Vm {
         let mut doc_value = args.remove(0);
         if !matches!(doc_value, Value::Str(_) | Value::None) {
             doc_value = match self.builtin_getattr(
-                vec![
-                    doc_value,
-                    Value::Str("__doc__".to_string()),
-                    Value::None,
-                ],
+                vec![doc_value, Value::Str("__doc__".to_string()), Value::None],
                 HashMap::new(),
             ) {
                 Ok(value) => value,

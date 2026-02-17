@@ -16,15 +16,14 @@ use super::{
     dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
     extract_import_error_name, extract_os_error_errno, extract_os_error_strerror,
     extract_prefixed_exception_message, extract_runtime_error_exception_name,
-    extract_runtime_error_final_message, floor_div_values, format_value, infer_os_error_errno,
-    format_repr,
-    is_comprehension_code, is_import_error_family, is_os_error_family, lshift_values,
-    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
+    extract_runtime_error_final_message, floor_div_values, format_repr, format_value,
+    infer_os_error_errno, is_comprehension_code, is_import_error_family, is_os_error_family,
+    lshift_values, memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
     memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
     module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, strip_sqlite_exception_metadata, value_from_bigint,
-    value_to_int, value_to_optional_index, xor_values,
+    slot_names_from_value, strip_sqlite_exception_metadata, value_from_bigint, value_to_int,
+    value_to_optional_index, xor_values,
 };
 use crate::runtime::SliceValue;
 
@@ -1117,9 +1116,10 @@ impl Vm {
                         if let Some(left_int) = left_small {
                             match left_int.checked_sub(right_int) {
                                 Some(diff) => Value::Int(diff),
-                                None => {
-                                    self.binary_sub_runtime(Value::Int(left_int), Value::Int(right_int))?
-                                }
+                                None => self.binary_sub_runtime(
+                                    Value::Int(left_int),
+                                    Value::Int(right_int),
+                                )?,
                             }
                         } else {
                             self.fused_fast_local_sub_small_int_arg(
@@ -3686,7 +3686,9 @@ impl Vm {
                             HashMap::new(),
                         ) {
                             Ok(callable) => Some(callable),
-                            Err(err) if classify_runtime_error(&err.message) == "AttributeError" => {
+                            Err(err)
+                                if classify_runtime_error(&err.message) == "AttributeError" =>
+                            {
                                 None
                             }
                             Err(err) => return Err(err),
@@ -4813,12 +4815,12 @@ impl Vm {
                         let call_result = self.call_builtin(builtin, args, kwargs);
                         self.finalize_builtin_opcode_call(caller_depth, caller_ip, call_result)?;
                     }
-                Value::Instance(instance) => {
-                    match self.call_internal(Value::Instance(instance), args, kwargs)? {
-                        InternalCallOutcome::Value(value) => self.push_value(value),
-                        InternalCallOutcome::CallerExceptionHandled => {}
+                    Value::Instance(instance) => {
+                        match self.call_internal(Value::Instance(instance), args, kwargs)? {
+                            InternalCallOutcome::Value(value) => self.push_value(value),
+                            InternalCallOutcome::CallerExceptionHandled => {}
+                        }
                     }
-                }
                     Value::ExceptionType(name) => {
                         let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                         self.push_value(value);
@@ -8169,7 +8171,9 @@ impl Vm {
                 ) {
                     return match left_int.checked_sub(right_int) {
                         Some(diff) => Ok(Value::Int(diff)),
-                        None => self.binary_sub_runtime(Value::Int(left_int), Value::Int(right_int)),
+                        None => {
+                            self.binary_sub_runtime(Value::Int(left_int), Value::Int(right_int))
+                        }
                     };
                 }
             }

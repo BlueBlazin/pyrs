@@ -3446,18 +3446,14 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__qualname__".to_string(), Value::Str(name.to_string()));
-            class_data
-                .attrs
-                .insert("__module__".to_string(), Value::Str(module_name.to_string()));
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str(module_name.to_string()),
+            );
             class_data.attrs.insert(
                 "__bases__".to_string(),
-                self.heap.alloc_tuple(
-                    bases
-                        .iter()
-                        .cloned()
-                        .map(Value::Class)
-                        .collect::<Vec<_>>(),
-                ),
+                self.heap
+                    .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>()),
             );
             class_data.attrs.insert(
                 "__mro__".to_string(),
@@ -3513,13 +3509,13 @@ impl Vm {
                 });
                 if let Object::Class(class_data) = &mut *class.kind_mut() {
                     class_data.bases = bases.clone();
-                    class_data.attrs.insert(
-                        "__name__".to_string(),
-                        Value::Str(class_data.name.clone()),
-                    );
-                    class_data.attrs.entry("__qualname__".to_string()).or_insert_with(|| {
-                        Value::Str(class_data.name.clone())
-                    });
+                    class_data
+                        .attrs
+                        .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
+                    class_data
+                        .attrs
+                        .entry("__qualname__".to_string())
+                        .or_insert_with(|| Value::Str(class_data.name.clone()));
                     class_data
                         .attrs
                         .entry("__module__".to_string())
@@ -3527,11 +3523,7 @@ impl Vm {
                     class_data.attrs.insert(
                         "__bases__".to_string(),
                         self.heap.alloc_tuple(
-                            bases
-                                .iter()
-                                .cloned()
-                                .map(Value::Class)
-                                .collect::<Vec<_>>(),
+                            bases.iter().cloned().map(Value::Class).collect::<Vec<_>>(),
                         ),
                     );
                     class_data.mro = mro.clone();
@@ -3680,7 +3672,10 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         other => {
             if std::env::var_os("PYRS_TRACE_VALUE_TO_INT").is_some() {
                 eprintln!("[value_to_int] unsupported value={}", format_repr(&other));
-                eprintln!("[value_to_int] backtrace:\n{:?}", std::backtrace::Backtrace::force_capture());
+                eprintln!(
+                    "[value_to_int] backtrace:\n{:?}",
+                    std::backtrace::Backtrace::force_capture()
+                );
             }
             Err(RuntimeError::new("unsupported operand type"))
         }
@@ -5809,10 +5804,7 @@ fn parse_simple_regex_sequence(
                 *idx += 1;
                 if *idx < chars.len() && chars[*idx] == ':' {
                     *idx += 1;
-                } else if *idx + 2 < chars.len()
-                    && chars[*idx] == 'P'
-                    && chars[*idx + 1] == '<'
-                {
+                } else if *idx + 2 < chars.len() && chars[*idx] == 'P' && chars[*idx + 1] == '<' {
                     *idx += 2;
                     while *idx < chars.len() && chars[*idx] != '>' {
                         *idx += 1;

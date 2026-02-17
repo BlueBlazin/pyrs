@@ -61,6 +61,13 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- NumPy import warning cleanup (2026-02-17):
+  - fixed `PyInterpreterState_Main`/`PyThreadState_Get()->interp` baseline so NumPy no longer reports the sub-interpreter warning during import.
+  - narrowed `types.MethodType` detection to Python-bound methods (not native bound methods), removing the prior `add_newdoc` warning flood for extension callables.
+  - `_contextvars.ContextVar` now uses dict-backed marker storage compatible with native `get`/`set`/`reset` dispatch, unblocking NumPy print-options contextvar reads.
+- REPL responsiveness (2026-02-17):
+  - completion-state refresh now skips single-expression submissions, reducing post-expression prompt latency after large imports (e.g. NumPy).
+  - REPL display path includes a NumPy ndarray-specific `numpy.array2string(...)` attempt before generic repr fallback.
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:

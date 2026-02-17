@@ -2,13 +2,12 @@ use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
     InstanceObject, LOCAL_SHIM_MODULES, ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef,
-    Object, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_JSON_MODULES,
-    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES,
-    PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
-    SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
-    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
-    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
-    source_path_from_cache_path,
+    Object, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES,
+    PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf,
+    Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM,
+    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
+    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
+    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -3479,26 +3478,11 @@ impl Vm {
                 ("TypeAliasType", BuiltinFunction::TypingTypeAliasType),
             ],
             vec![
-                (
-                    "ParamSpecArgs",
-                    typing_paramspec_args_class,
-                ),
-                (
-                    "ParamSpecKwargs",
-                    typing_paramspec_kwargs_class,
-                ),
-                (
-                    "Generic",
-                    typing_generic_class,
-                ),
-                (
-                    "Union",
-                    typing_union_class,
-                ),
-                (
-                    "NoDefault",
-                    typing_nodefault_class,
-                ),
+                ("ParamSpecArgs", typing_paramspec_args_class),
+                ("ParamSpecKwargs", typing_paramspec_kwargs_class),
+                ("Generic", typing_generic_class),
+                ("Union", typing_union_class),
+                ("NoDefault", typing_nodefault_class),
             ],
         );
         self.install_builtin_module(
@@ -5497,13 +5481,10 @@ impl Vm {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
-        let timezone_class = match self
-            .heap
-            .alloc_class(ClassObject::new(
-                "timezone".to_string(),
-                vec![tzinfo_class.clone()],
-            ))
-        {
+        let timezone_class = match self.heap.alloc_class(ClassObject::new(
+            "timezone".to_string(),
+            vec![tzinfo_class.clone()],
+        )) {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };

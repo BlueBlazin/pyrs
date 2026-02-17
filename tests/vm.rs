@@ -7410,7 +7410,9 @@ fn failed_import_removes_partial_target_module_from_sys_modules() {
     let inspect_code = compiler::compile_module(&inspect).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.add_module_path(&temp_dir);
-    let first_err = vm.execute(&first_code).expect_err("first import should fail");
+    let first_err = vm
+        .execute(&first_code)
+        .expect_err("first import should fail");
     assert!(
         first_err.message.contains("cannot import name 'missing'"),
         "expected broken import error, got: {}",
@@ -7424,7 +7426,9 @@ fn failed_import_removes_partial_target_module_from_sys_modules() {
     assert_eq!(vm.get_global("broken_present"), Some(Value::Bool(false)));
     assert_eq!(vm.get_global("dep_present"), Some(Value::Bool(true)));
 
-    let second_err = vm.execute(&first_code).expect_err("second import should fail");
+    let second_err = vm
+        .execute(&first_code)
+        .expect_err("second import should fail");
     assert!(
         second_err.message.contains("cannot import name 'missing'"),
         "expected repeated broken import error, got: {}",
@@ -11464,6 +11468,26 @@ fn unittest_failed_test_keeps_active_exception_context() {
 #[test]
 fn exposes_types_markers_and_functools_partial() {
     let source = "import functools\nimport types\ndef add(a, b, c=0):\n    return a + b + c\npart = functools.partial(add, 1, c=3)\nok = part(2) == 6 and hasattr(types, 'BuiltinFunctionType') and hasattr(types, 'EllipsisType')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn types_method_type_matches_only_python_bound_methods() {
+    let source = "import types\nclass C:\n    def method(self):\n        return 1\npy_method = C().method\nnative_method = [].append\nok = isinstance(py_method, types.MethodType) and not isinstance(native_method, types.MethodType)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn contextvars_get_set_reset_round_trip() {
+    let source = "import _contextvars as contextvars\nv = contextvars.ContextVar('v')\nmissing = False\ntry:\n    v.get()\nexcept LookupError:\n    missing = True\nw = contextvars.ContextVar('w', default=7)\ndefault_ok = (w.get() == 7)\ntoken = v.set(11)\nset_ok = (v.get() == 11)\nv.reset(token)\nrestored_missing = False\ntry:\n    v.get()\nexcept LookupError:\n    restored_missing = True\nok = missing and default_ok and set_ok and restored_missing\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
