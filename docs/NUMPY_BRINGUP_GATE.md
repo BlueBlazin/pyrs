@@ -116,10 +116,11 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - NumPy import warning cleanup checkpoint:
   - proxy class `__flags__` now reflects CPython `tp_flags` for extension-backed types (instead of always returning `PY_TPFLAGS_HEAPTYPE`), which removed the prior `_add_newdocs_scalars` warning flood during `import numpy`.
 - Open direct-mode blocker:
-  - invoking real NumPy `ndarray` formatting paths (`ndarray.__repr__`, `numpy.array2string`) still overflows the stack in current runtime; REPL/print currently fall back to generic proxy instance rendering (`<ndarray instance>`) for stability.
+  - invoking real NumPy `ndarray` formatting paths (`ndarray.__repr__`, `numpy.array2string`) is still failing in current runtime; REPL/print currently fall back to generic proxy instance rendering (`<ndarray instance>`) for stability.
   - root-cause investigation status:
-    - `PyObject_GetAttrString(..., "__repr__")` for proxied `ndarray` currently falls through native slot/dict lookup and lands on runtime builtin fallback (`<bound method Repr>`), not NumPy slot-wrapper resolution.
-    - `lookup_type_attr_via_tp_dict` shows `numpy.ndarray` `tp_dict` external lookup miss for `__repr__`, then base `object` lookup with `tp_dict == NULL`; this indicates our type-ready/slot-wrapper publication substrate is still incomplete for this path.
+    - stack-overflow path in proxy attr fallback recursion has been guarded (`load_cpython_proxy_attr_for_value` now blocks same-object/same-attr re-entry around fallback `PyObject_GetAttrString` dispatch).
+    - with recursion guarded, the active blocker is rich-compare closure for mixed proxy-numeric comparisons surfaced by NumPy formatting (`TypeError: '<' not supported between instances of 'int' and 'int'` on `numpy.array2string` / `array_repr` path).
+    - `lookup_type_attr_via_tp_dict` still shows `numpy.ndarray` `tp_dict` external lookup miss for `__repr__`, then base `object` lookup with `tp_dict == NULL`; this indicates our type-ready/slot-wrapper publication substrate remains incomplete for this path.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
   - `scipy_import`: `FAIL` (current lane-B blocker set includes remaining private CPython symbol closure for scipy extension modules)
   - `pandas_import` / `pandas_series_sum`: `FAIL` (pandas path currently hits deep-import/runtime stack failures after NumPy bootstrap)
