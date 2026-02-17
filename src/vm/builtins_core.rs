@@ -15,7 +15,7 @@ use super::{
     is_runtime_type_name_marker, normalize_codec_encoding, normalize_codec_errors,
     ordering_from_cmp_value, parse_hex_float_literal, parser, round_float_with_ndigits,
     runtime_error_matches_exception, sub_values, matmul_values, mul_values, value_from_bigint, value_from_object_ref,
-    or_values,
+    or_values, neg_value, pos_value, invert_value,
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
     with_bytes_like_source,
 };
@@ -5513,10 +5513,80 @@ impl Vm {
         }
     }
 
+    pub(super) fn call_unary_special_method(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some(callable) = self.lookup_bound_special_method(receiver, method_name)? else {
+            return Ok(None);
+        };
+        match self.call_internal(callable, Vec::new(), HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(Some(value)),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("unary operator special method raised"))
+            }
+        }
+    }
+
     fn is_not_implemented_singleton(&self, value: &Value) -> bool {
         self.builtins
             .get("NotImplemented")
             .is_some_and(|not_implemented| value == not_implemented)
+    }
+
+    pub(super) fn unary_neg_runtime(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        match neg_value(value.clone()) {
+            Ok(result) => Ok(result),
+            Err(err) if err.message.contains("unsupported operand type") => {
+                if let Some(proxy_result) = self.cpython_proxy_negative(&value) {
+                    return proxy_result;
+                }
+                if let Some(result) = self.call_unary_special_method(&value, "__neg__")?
+                    && !self.is_not_implemented_singleton(&result)
+                {
+                    return Ok(result);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn unary_pos_runtime(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        match pos_value(value.clone()) {
+            Ok(result) => Ok(result),
+            Err(err) if err.message.contains("unsupported operand type") => {
+                if let Some(proxy_result) = self.cpython_proxy_positive(&value) {
+                    return proxy_result;
+                }
+                if let Some(result) = self.call_unary_special_method(&value, "__pos__")?
+                    && !self.is_not_implemented_singleton(&result)
+                {
+                    return Ok(result);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn unary_invert_runtime(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        match invert_value(value.clone()) {
+            Ok(result) => Ok(result),
+            Err(err) if err.message.contains("unsupported operand type") => {
+                if let Some(proxy_result) = self.cpython_proxy_invert(&value) {
+                    return proxy_result;
+                }
+                if let Some(result) = self.call_unary_special_method(&value, "__invert__")?
+                    && !self.is_not_implemented_singleton(&result)
+                {
+                    return Ok(result);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub(super) fn binary_div_runtime(

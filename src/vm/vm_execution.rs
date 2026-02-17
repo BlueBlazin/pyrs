@@ -18,10 +18,10 @@ use super::{
     extract_prefixed_exception_message, extract_runtime_error_exception_name,
     extract_runtime_error_final_message, floor_div_values, format_value, infer_os_error_errno,
     format_repr,
-    invert_value, is_comprehension_code, is_import_error_family, is_os_error_family, lshift_values,
+    is_comprehension_code, is_import_error_family, is_os_error_family, lshift_values,
     memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
     memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
-    module_globals_version, neg_value, pos_value, pow_values, rshift_values,
+    module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
     slot_names_from_value, strip_sqlite_exception_metadata, value_from_bigint,
     value_to_int, value_to_optional_index, xor_values,
@@ -2389,7 +2389,8 @@ impl Vm {
             }
             Opcode::UnaryNeg => {
                 let value = self.pop_value()?;
-                self.push_value(neg_value(value)?);
+                let result = self.unary_neg_runtime(value)?;
+                self.push_value(result);
             }
             Opcode::UnaryNot => {
                 let value = self.pop_value()?;
@@ -2398,11 +2399,13 @@ impl Vm {
             }
             Opcode::UnaryPos => {
                 let value = self.pop_value()?;
-                self.push_value(pos_value(value)?);
+                let result = self.unary_pos_runtime(value)?;
+                self.push_value(result);
             }
             Opcode::UnaryInvert => {
                 let value = self.pop_value()?;
-                self.push_value(invert_value(value)?);
+                let result = self.unary_invert_runtime(value)?;
+                self.push_value(result);
             }
             Opcode::ConvertValue => {
                 let value = self.pop_value()?;

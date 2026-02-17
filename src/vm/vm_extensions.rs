@@ -12921,6 +12921,115 @@ pub unsafe extern "C" fn PyBytes_FromObject(object: *mut c_void) -> *mut c_void 
     })
 }
 
+unsafe fn cpython_bytes_join_impl(separator: *mut c_void, iterable: *mut c_void) -> *mut c_void {
+    fn bytes_join_value_to_bytes(
+        vm: &mut Vm,
+        context: &mut ModuleCapiContext,
+        value: Value,
+        label: &str,
+    ) -> Result<Vec<u8>, ()> {
+        match value {
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(values) => Ok(values.clone()),
+                _ => {
+                    context.set_error(format!(
+                        "PyBytes_Join encountered invalid {label} bytes storage"
+                    ));
+                    Err(())
+                }
+            },
+            Value::ByteArray(bytearray_obj) => match &*bytearray_obj.kind() {
+                Object::ByteArray(values) => Ok(values.clone()),
+                _ => {
+                    context.set_error(format!(
+                        "PyBytes_Join encountered invalid {label} bytearray storage"
+                    ));
+                    Err(())
+                }
+            },
+            other => match vm.call_builtin(BuiltinFunction::Bytes, vec![other], HashMap::new()) {
+                Ok(Value::Bytes(bytes_obj)) => match &*bytes_obj.kind() {
+                    Object::Bytes(values) => Ok(values.clone()),
+                    _ => {
+                        context.set_error(format!(
+                            "PyBytes_Join encountered invalid {label} bytes conversion"
+                        ));
+                        Err(())
+                    }
+                },
+                Ok(_) | Err(_) => {
+                    context.set_error(format!(
+                        "TypeError: sequence item for PyBytes_Join is not bytes-like ({label})"
+                    ));
+                    Err(())
+                }
+            },
+        }
+    }
+
+    if separator.is_null() || iterable.is_null() {
+        unsafe { _PyErr_BadInternalCall(std::ptr::null(), 0) };
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyBytes_Join missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(separator_value) = context.cpython_value_from_ptr_or_proxy(separator) else {
+            context.set_error("PyBytes_Join received unknown separator pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(iterable_value) = context.cpython_value_from_ptr_or_proxy(iterable) else {
+            context.set_error("PyBytes_Join received unknown iterable pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let separator_bytes = match bytes_join_value_to_bytes(vm, context, separator_value, "separator") {
+            Ok(values) => values,
+            Err(()) => return std::ptr::null_mut(),
+        };
+        let values = match vm.collect_iterable_values(iterable_value) {
+            Ok(values) => values,
+            Err(err) => {
+                context.set_error(err.message);
+                return std::ptr::null_mut();
+            }
+        };
+        let mut output = Vec::new();
+        for (idx, value) in values.into_iter().enumerate() {
+            let bytes = match bytes_join_value_to_bytes(vm, context, value, "item") {
+                Ok(values) => values,
+                Err(()) => return std::ptr::null_mut(),
+            };
+            if idx > 0 && !separator_bytes.is_empty() {
+                output.extend_from_slice(&separator_bytes);
+            }
+            output.extend_from_slice(&bytes);
+        }
+        let joined = vm.heap.alloc(Object::Bytes(output));
+        context.alloc_cpython_ptr_for_value(Value::Bytes(joined))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_Join(separator: *mut c_void, iterable: *mut c_void) -> *mut c_void {
+    unsafe { cpython_bytes_join_impl(separator, iterable) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyBytes_Join(
+    separator: *mut c_void,
+    iterable: *mut c_void,
+) -> *mut c_void {
+    unsafe { cpython_bytes_join_impl(separator, iterable) }
+}
+
 unsafe fn cpython_clear_pyobject_ref(slot: *mut *mut c_void) {
     if slot.is_null() {
         return;
@@ -34910,6 +35019,9 @@ pub static mut _Py_TrueStruct: CpythonObjectHead = CpythonObjectHead {
 pub static PyStructSequence_UnnamedField: [u8; 14] = *b"unnamed field\0";
 static PY_FILESYSTEM_DEFAULT_ENCODING: &[u8; 6] = b"utf-8\0";
 static PY_FILESYSTEM_DEFAULT_ENCODE_ERRORS: &[u8; 7] = b"strict\0";
+#[unsafe(no_mangle)]
+#[used]
+pub static mut _PyByteArray_empty_string: [c_char; 1] = [0];
 
 #[unsafe(no_mangle)]
 #[used]
@@ -40825,6 +40937,43 @@ impl Vm {
         Some(unsafe { !(*type_ptr).tp_iternext.is_null() })
     }
 
+    fn cpython_proxy_unary_numeric_op(
+        &mut self,
+        value: &Value,
+        op: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        failure_label: &str,
+        unknown_ptr_label: &str,
+    ) -> Option<Result<Value, RuntimeError>> {
+        Self::cpython_proxy_raw_ptr_from_value(value)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let value_ptr = call_ctx.alloc_cpython_ptr_for_value(value.clone());
+        let result_ptr = if value_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: pointer was materialized in the active C-API context above.
+            unsafe { op(value_ptr) }
+        };
+        cpython_set_active_context(previous_context);
+        if value_ptr.is_null() {
+            return Some(Err(RuntimeError::new(format!(
+                "{failure_label} to materialize operand",
+            ))));
+        }
+        if result_ptr.is_null() {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| failure_label.to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(
+            call_ctx
+                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .ok_or_else(|| RuntimeError::new(unknown_ptr_label)),
+        )
+    }
+
     fn cpython_proxy_binary_numeric_op(
         &mut self,
         left: &Value,
@@ -40959,6 +41108,42 @@ impl Vm {
         };
         cpython_set_active_context(previous_context);
         Some(result)
+    }
+
+    pub(super) fn cpython_proxy_negative(
+        &mut self,
+        value: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_unary_numeric_op(
+            value,
+            PyNumber_Negative,
+            "proxy unary negative failed",
+            "proxy unary negative returned unknown object pointer",
+        )
+    }
+
+    pub(super) fn cpython_proxy_positive(
+        &mut self,
+        value: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_unary_numeric_op(
+            value,
+            PyNumber_Positive,
+            "proxy unary positive failed",
+            "proxy unary positive returned unknown object pointer",
+        )
+    }
+
+    pub(super) fn cpython_proxy_invert(
+        &mut self,
+        value: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_unary_numeric_op(
+            value,
+            PyNumber_Invert,
+            "proxy unary invert failed",
+            "proxy unary invert returned unknown object pointer",
+        )
     }
 
     pub(super) fn cpython_proxy_add(

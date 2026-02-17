@@ -764,6 +764,16 @@ fn executes_unary_plus_assignment() {
 }
 
 #[test]
+fn unary_operators_fall_back_to_special_methods() {
+    let source = "class Sentinel:\n    def __neg__(self):\n        return 41\n    def __pos__(self):\n        return 42\n    def __invert__(self):\n        return 43\ns = Sentinel()\nok = (-s == 41 and +s == 42 and ~s == 43)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn try_finally_reraises_original_exception_after_finally_calls() {
     let source = "def helper():\n    try:\n        1 / 0\n    except:\n        pass\n\ndef run():\n    try:\n        raise RuntimeError('boom')\n    finally:\n        helper()\n\nok = False\ntry:\n    run()\nexcept RuntimeError as exc:\n    ok = str(exc) == 'boom'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
