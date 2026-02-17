@@ -3407,10 +3407,23 @@ impl Vm {
         class: &ObjRef,
         attr_name: &str,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
-        let (class_name, class_metaclass) = match &*class.kind() {
-            Object::Class(class_data) => (class_data.name.clone(), class_data.metaclass.clone()),
-            _ => ("<class>".to_string(), None),
+        let (class_name, class_metaclass, is_cpython_proxy_class) = match &*class.kind() {
+            Object::Class(class_data) => (
+                class_data.name.clone(),
+                class_data.metaclass.clone(),
+                matches!(
+                    class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                    Some(Value::Bool(true))
+                ),
+            ),
+            _ => ("<class>".to_string(), None, false),
         };
+        if is_cpython_proxy_class
+            && attr_name == "__flags__"
+            && let Some(proxy_flags) = self.cpython_proxy_type_flags(class)
+        {
+            return Ok(AttrAccessOutcome::Value(Value::Int(proxy_flags)));
+        }
         let mut descriptor_owner: Option<ObjRef> = None;
         let attr = if let Some(attr) = class_attr_lookup(class, attr_name) {
             attr

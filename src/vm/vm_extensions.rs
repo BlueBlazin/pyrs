@@ -21932,6 +21932,42 @@ pub unsafe extern "C" fn PyObject_Not(object: *mut c_void) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
+    if !object.is_null() {
+        let str_slot_result = with_active_cpython_context_mut(|context| {
+            let type_ptr = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if type_ptr.is_null() {
+                return None;
+            }
+            // SAFETY: `type_ptr` is derived from a valid object header and `tp_str` is read-only.
+            let slot = unsafe { (*type_ptr).tp_str };
+            if slot.is_null() {
+                return None;
+            }
+            let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(*context));
+            // SAFETY: `tp_str` uses unary slot signature (`reprfunc`) for this type.
+            let str_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                unsafe { std::mem::transmute(slot) };
+            let rendered = unsafe { str_fn(object) };
+            cpython_set_active_context(previous_context);
+            Some(rendered)
+        });
+        match str_slot_result {
+            Ok(Some(rendered)) if !rendered.is_null() => return rendered,
+            Ok(Some(_)) => return std::ptr::null_mut(),
+            Ok(None) => {}
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        }
+    }
+
     let value = match with_active_cpython_context_mut(|context| {
         context.cpython_value_from_ptr_or_proxy(object)
     }) {
@@ -21959,6 +21995,42 @@ pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
+    if !object.is_null() {
+        let repr_slot_result = with_active_cpython_context_mut(|context| {
+            let type_ptr = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if type_ptr.is_null() {
+                return None;
+            }
+            // SAFETY: `type_ptr` is derived from a valid object header and `tp_repr` is read-only.
+            let slot = unsafe { (*type_ptr).tp_repr };
+            if slot.is_null() {
+                return None;
+            }
+            let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(*context));
+            // SAFETY: `tp_repr` uses unary slot signature (`reprfunc`) for this type.
+            let repr_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                unsafe { std::mem::transmute(slot) };
+            let rendered = unsafe { repr_fn(object) };
+            cpython_set_active_context(previous_context);
+            Some(rendered)
+        });
+        match repr_slot_result {
+            Ok(Some(rendered)) if !rendered.is_null() => return rendered,
+            Ok(Some(_)) => return std::ptr::null_mut(),
+            Ok(None) => {}
+            Err(err) => {
+                cpython_set_error(err);
+                return std::ptr::null_mut();
+            }
+        }
+    }
+
     let value = match with_active_cpython_context_mut(|context| {
         context.cpython_value_from_ptr_or_proxy(object)
     }) {
@@ -41739,6 +41811,16 @@ impl Vm {
         attr_name: &str,
     ) -> Option<Value> {
         self.load_cpython_proxy_attr_for_value(&Value::Class(proxy_class.clone()), attr_name)
+    }
+
+    pub(super) fn cpython_proxy_type_flags(&self, proxy_class: &ObjRef) -> Option<i64> {
+        let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(&Value::Class(proxy_class.clone()))?;
+        if !cpython_is_type_object_ptr(raw_ptr) {
+            return None;
+        }
+        // SAFETY: `raw_ptr` is verified as a type object pointer and `tp_flags` is a plain field read.
+        let flags = unsafe { (*raw_ptr.cast::<CpythonTypeObject>()).tp_flags };
+        i64::try_from(flags).ok()
     }
 
     pub(super) fn register_extension_callable(

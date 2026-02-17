@@ -113,6 +113,10 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - `numpy_import`: `PASS`
   - `numpy_ndarray_sum`: `PASS` (`int(np.array([1,2,3]).sum()) == 6`)
   - `numpy_numerictypes_core`: `PASS` (`int8`/`float64`/`bool_` publication baseline)
+- NumPy import warning cleanup checkpoint:
+  - proxy class `__flags__` now reflects CPython `tp_flags` for extension-backed types (instead of always returning `PY_TPFLAGS_HEAPTYPE`), which removed the prior `_add_newdocs_scalars` warning flood during `import numpy`.
+- Open direct-mode blocker:
+  - invoking real NumPy `ndarray` formatting paths (`ndarray.__repr__`, `numpy.array2string`) still overflows the stack in current runtime; REPL/print currently fall back to generic proxy instance rendering (`<ndarray instance>`) for stability.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
   - `scipy_import`: `FAIL` (current lane-B blocker set includes remaining private CPython symbol closure for scipy extension modules)
   - `pandas_import` / `pandas_series_sum`: `FAIL` (pandas path currently hits deep-import/runtime stack failures after NumPy bootstrap)
