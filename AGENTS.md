@@ -78,6 +78,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - loaded native modules now publish symbol diagnostics metadata (`__pyrs_extension_expected_symbol__`, `__pyrs_extension_symbol_family__`) for ABI-mode visibility.
   - v1 extension C-API header slice is landed (`include/pyrs_capi.h`; contract in `docs/EXTENSION_CAPI_V1.md`) and now includes module setters, native callable registration (`module_add_function`, `module_add_function_kw`), init-scoped object handles + type/getter introspection (`object_new_*`, `module_set_object`, `object_incref/decref`, `object_type`, `object_get_*`), and import-time error state (`error_set/clear/occurred`).
   - C-API v1 callback surface is now isolated in `src/vm/vm_extensions/capi_v1.rs` (instead of being embedded in the main `vm_extensions.rs` monolith) to keep extension-callable API review and ownership bounded.
+  - CPython proxy runtime surface is now isolated in `src/vm/vm_extensions/proxy_runtime.rs` (`call`, attr lookup, iter/getitem/setitem, numeric proxy ops) to reduce `vm_extensions.rs` size and improve reviewability.
+  - VM `LOAD_ATTR` instance cache now prioritizes builtin/function descriptors over plain value cache entries; this fixes repeated-loop `io.StringIO.tell/seek` call arity regressions (covered by `tests/vm.rs::io_stringio_tell_works_across_repeated_loop_iterations`).
   - C-API v1 now includes `module_get_object(...)` for handle-based reads of module globals during extension init/call paths.
   - C-API v1 now includes `module_import(...)` for native-side module loading during extension init/call paths.
   - C-API v1 now includes `module_get_attr(...)` for module-handle attribute extraction with explicit module-type checks.
