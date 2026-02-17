@@ -107,6 +107,41 @@ fn bigint_to_value(value: BigInt) -> Value {
     }
 }
 
+fn debug_value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::None => "None",
+        Value::Bool(_) => "Bool",
+        Value::Int(_) => "Int",
+        Value::BigInt(_) => "BigInt",
+        Value::Float(_) => "Float",
+        Value::Complex { .. } => "Complex",
+        Value::Str(_) => "Str",
+        Value::Bytes(_) => "Bytes",
+        Value::ByteArray(_) => "ByteArray",
+        Value::Tuple(_) => "Tuple",
+        Value::List(_) => "List",
+        Value::Dict(_) => "Dict",
+        Value::Set(_) => "Set",
+        Value::FrozenSet(_) => "FrozenSet",
+        Value::Slice(_) => "Slice",
+        Value::Iterator(_) => "Iterator",
+        Value::MemoryView(_) => "MemoryView",
+        Value::Code(_) => "Code",
+        Value::Function(_) => "Function",
+        Value::Generator(_) => "Generator",
+        Value::Builtin(_) => "Builtin",
+        Value::Class(_) => "Class",
+        Value::Instance(_) => "Instance",
+        Value::BoundMethod(_) => "BoundMethod",
+        Value::Module(_) => "Module",
+        Value::Exception(_) => "Exception",
+        Value::ExceptionType(_) => "ExceptionType",
+        Value::Super(_) => "Super",
+        Value::DictKeys(_) => "DictKeys",
+        Value::Cell(_) => "Cell",
+    }
+}
+
 pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     if let (Some(left_text), Some(right_text)) =
         (string_like_for_add(&left), string_like_for_add(&right))
@@ -276,7 +311,18 @@ pub(super) fn sub_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             }
         }
         Some((left, right)) => Ok(Value::Float(numeric_as_f64(left) - numeric_as_f64(right))),
-        None => Err(RuntimeError::new("unsupported operand type for -")),
+        None => {
+            if std::env::var_os("PYRS_TRACE_SUB_OP").is_some() {
+                eprintln!(
+                    "[sub-op] unsupported '-' left_kind={} right_kind={} left_repr={} right_repr={}",
+                    debug_value_kind(&left),
+                    debug_value_kind(&right),
+                    format_repr(&left),
+                    format_repr(&right)
+                );
+            }
+            Err(RuntimeError::new("unsupported operand type for -"))
+        }
     }
 }
 
@@ -1042,27 +1088,26 @@ pub(super) fn or_values(left: Value, right: Value, heap: &Heap) -> Result<Value,
         append_type_union_members(right, &mut members);
         return Ok(heap.alloc_tuple(members));
     }
-    let (left, right) = integer_pair(&left, &right)
-        .ok_or_else(|| RuntimeError::new("unsupported operand type for |"))?;
+    let (left, right) = match integer_pair(&left, &right) {
+        Some(pair) => pair,
+        None => {
+            if std::env::var_os("PYRS_TRACE_TYPE_UNION").is_some() {
+                eprintln!(
+                    "[type-union] unsupported | left={} right={}",
+                    format_repr(&left),
+                    format_repr(&right),
+                );
+            }
+            return Err(RuntimeError::new("unsupported operand type for |"));
+        }
+    };
     Ok(bigint_to_value(left.bitor(&right)))
 }
 
 fn is_type_union_operand(value: &Value) -> bool {
     match value {
         Value::None | Value::Class(_) | Value::ExceptionType(_) => true,
-        Value::Instance(instance) => class_name_for_instance(instance)
-            .map(|name| {
-                matches!(
-                    name.as_str(),
-                    "GenericAlias"
-                        | "UnionType"
-                        | "TypeVar"
-                        | "TypeVarTuple"
-                        | "ParamSpec"
-                        | "TypeAliasType"
-                )
-            })
-            .unwrap_or(false),
+        Value::Instance(instance) => is_type_union_instance(instance),
         Value::Builtin(
             BuiltinFunction::Type
             | BuiltinFunction::Bool
@@ -1077,6 +1122,7 @@ fn is_type_union_operand(value: &Value) -> bool {
             | BuiltinFunction::Bytes
             | BuiltinFunction::ByteArray
             | BuiltinFunction::MemoryView
+            | BuiltinFunction::Range
             | BuiltinFunction::Complex
             | BuiltinFunction::ClassMethod
             | BuiltinFunction::StaticMethod
@@ -1088,6 +1134,59 @@ fn is_type_union_operand(value: &Value) -> bool {
         },
         _ => false,
     }
+}
+
+fn is_type_union_instance(instance: &crate::runtime::ObjRef) -> bool {
+    let Some(class_name) = class_name_for_instance(instance) else {
+        return false;
+    };
+    if matches!(
+        class_name.as_str(),
+        "GenericAlias"
+            | "UnionType"
+            | "TypeVar"
+            | "TypeVarTuple"
+            | "ParamSpec"
+            | "TypeAliasType"
+    ) {
+        return true;
+    }
+
+    let module_name = {
+        let instance_kind = instance.kind();
+        match &*instance_kind {
+            Object::Instance(instance_data) => {
+                let class_kind = instance_data.class.kind();
+                match &*class_kind {
+                    Object::Class(class_data) => match class_data.attrs.get("__module__") {
+                        Some(Value::Str(module_name)) => Some(module_name.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    };
+
+    if matches!(module_name.as_deref(), Some("typing" | "_typing" | "types")) {
+        if class_name.contains("GenericAlias") || class_name.contains("SpecialForm") {
+            return true;
+        }
+        if matches!(
+            class_name.as_str(),
+            "Union"
+                | "_SpecialForm"
+                | "_TypedCacheSpecialForm"
+                | "_AnyMeta"
+                | "_TupleType"
+                | "_TypingEllipsis"
+        ) {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn append_type_union_members(value: Value, members: &mut Vec<Value>) {

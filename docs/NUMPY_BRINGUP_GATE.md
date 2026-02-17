@@ -103,11 +103,14 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
 - Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
 - Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
-- Current first direct-mode blocker for NumPy is now class/metaclass object-model parity in typing/protocol-heavy import paths:
-  - top-level `import numpy` currently reaches `_core/_add_newdocs*` and then fails with `RuntimeError: object.__init__() takes exactly one argument`
-  - closure target is root `super()`/metaclass/object-initialization parity (no local test-by-test attribute patching)
+- Latest direct-mode gate status (`perf/numpy_gate_direct_latest.json`):
+  - `numpy_import`: `PASS`
+  - `numpy_ndarray_sum`: `FAIL` with `RuntimeError: PyNumber_Long requires int-compatible object`
+  - current blocker is numeric conversion parity for extension-backed scalar return paths in ndarray reduction flows (`a.sum()` -> `int(...)`).
 - Extension-init failure reporting now preserves the first meaningful per-module `Py_mod_exec` failure across retry attempts, preventing fallback noise like `cannot load module more than once per process` from masking the root blocker.
 - Recent direct-mode bring-up deltas:
+  - `_PyType_Lookup` now preserves no-new-error semantics and falls back to runtime MRO lookup when `tp_dict`-only lookup misses.
+  - attribute optional/presence helpers now treat CPython-style "missing attribute" message paths as non-fatal misses (`HasAttr*WithError`, `GetOptionalAttr*`).
   - pure-stdlib preference logic now includes `typing` (not only `types`) when CPython `Lib` sources are present.
   - `datetime.datetime_CAPI` capsule baseline is now registered for `PyCapsule_Import`.
   - `math.trunc` landed for stdlib parity used during NumPy init.

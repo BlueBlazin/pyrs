@@ -157,6 +157,7 @@ const PURE_STDLIB_RE_MODULES: &[&str] = &[
     "re._parser",
     "re._casefix",
 ];
+const PURE_STDLIB_COLLECTIONS_MODULES: &[&str] = &["collections.abc"];
 const PURE_STDLIB_PATHLIB_MODULES: &[&str] = &["pathlib"];
 const PURE_STDLIB_TYPES_MODULES: &[&str] = &["types", "typing"];
 const MT_N: usize = 624;
@@ -763,6 +764,7 @@ pub struct Vm {
     extension_contextvar_allocations: Vec<*mut u8>,
     extension_pinned_cpython_allocations: Vec<*mut c_void>,
     extension_pinned_cpython_allocation_set: HashSet<usize>,
+    extension_pinned_external_cpython_refs: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
     extension_cpython_ptr_values: HashMap<usize, Value>,
     extension_module_def_registry: HashMap<u64, usize>,
@@ -845,6 +847,16 @@ impl Drop for Vm {
             }
         }
         self.extension_pinned_cpython_allocation_set.clear();
+        for ptr in self.extension_pinned_external_cpython_refs.drain() {
+            if ptr == 0 {
+                continue;
+            }
+            // SAFETY: pointers in this set were incref'd when external proxies were
+            // materialized and must be decref'd exactly once at VM teardown.
+            unsafe {
+                vm_extensions::Py_DecRef(ptr as *mut c_void);
+            }
+        }
         self.extension_pinned_capsule_names.clear();
         self.extension_cpython_ptr_values.clear();
         // Break reference cycles before field teardown so per-VM object graphs
@@ -938,6 +950,7 @@ impl Vm {
             extension_contextvar_allocations: Vec::new(),
             extension_pinned_cpython_allocations: Vec::new(),
             extension_pinned_cpython_allocation_set: HashSet::new(),
+            extension_pinned_external_cpython_refs: HashSet::new(),
             extension_pinned_capsule_names: HashMap::new(),
             extension_cpython_ptr_values: HashMap::new(),
             extension_module_def_registry: HashMap::new(),
@@ -982,6 +995,7 @@ impl Vm {
         vm.install_random_module();
         vm.install_stdlib_modules();
         vm.install_builtins();
+        vm.normalize_bootstrap_module_classes();
         vm.install_builtins_module();
         vm.refresh_import_resolver_state();
         vm.gc_last_allocation_count = vm.heap.total_allocations();
@@ -3082,6 +3096,10 @@ impl Vm {
                 "spec_from_file_location".to_string(),
                 Value::Builtin(BuiltinFunction::ImportlibSpecFromFileLocation),
             );
+            module_data.globals.insert(
+                "module_from_spec".to_string(),
+                Value::Builtin(BuiltinFunction::ImportlibModuleFromSpec),
+            );
         }
         self.register_module("importlib.util", util.clone());
         self.link_module_chain("importlib.util", util);
@@ -3390,6 +3408,136 @@ impl Vm {
         self.register_module(name, module);
     }
 
+    fn alloc_bootstrap_class_value(&mut self, name: &str, module_name: &str) -> Value {
+        let mut bases = Vec::new();
+        if name != "object"
+            && let Some(Value::Class(object_class)) = self.builtins.get("object")
+        {
+            bases.push(object_class.clone());
+        }
+        let class = match self
+            .heap
+            .alloc_class(ClassObject::new(name.to_string(), bases.clone()))
+        {
+            Value::Class(class) => class,
+            other => return other,
+        };
+        let mro = self.build_class_mro(&class, &bases).unwrap_or_else(|_| {
+            let mut fallback = vec![class.clone()];
+            for base in &bases {
+                if !fallback.iter().any(|entry| entry.id() == base.id()) {
+                    fallback.push(base.clone());
+                }
+            }
+            fallback
+        });
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.mro = mro.clone();
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str(name.to_string()));
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str(name.to_string()));
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str(module_name.to_string()));
+            class_data.attrs.insert(
+                "__bases__".to_string(),
+                self.heap.alloc_tuple(
+                    bases
+                        .iter()
+                        .cloned()
+                        .map(Value::Class)
+                        .collect::<Vec<_>>(),
+                ),
+            );
+            class_data.attrs.insert(
+                "__mro__".to_string(),
+                self.heap
+                    .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+            );
+        }
+        Value::Class(class)
+    }
+
+    fn normalize_bootstrap_module_classes(&mut self) {
+        let Some(Value::Class(object_class)) = self.builtins.get("object") else {
+            return;
+        };
+        let object_class = object_class.clone();
+        let module_refs = self.modules.values().cloned().collect::<Vec<_>>();
+        let mut visited = HashSet::new();
+        for module in module_refs {
+            let (module_name, classes) = match &*module.kind() {
+                Object::Module(module_data) => (
+                    module_data.name.clone(),
+                    module_data
+                        .globals
+                        .values()
+                        .filter_map(|value| match value {
+                            Value::Class(class) => Some(class.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                _ => continue,
+            };
+            for class in classes {
+                if !visited.insert(class.id()) {
+                    continue;
+                }
+                let needs_object_base = match &*class.kind() {
+                    Object::Class(class_data) => {
+                        class_data.name != "object"
+                            && class_data.name != "type"
+                            && class_data.bases.is_empty()
+                    }
+                    _ => false,
+                };
+                if !needs_object_base {
+                    continue;
+                }
+                let bases = vec![object_class.clone()];
+                let mro = self.build_class_mro(&class, &bases).unwrap_or_else(|_| {
+                    let mut fallback = vec![class.clone()];
+                    fallback.push(object_class.clone());
+                    fallback
+                });
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    class_data.bases = bases.clone();
+                    class_data.attrs.insert(
+                        "__name__".to_string(),
+                        Value::Str(class_data.name.clone()),
+                    );
+                    class_data.attrs.entry("__qualname__".to_string()).or_insert_with(|| {
+                        Value::Str(class_data.name.clone())
+                    });
+                    class_data
+                        .attrs
+                        .entry("__module__".to_string())
+                        .or_insert(Value::Str(module_name.clone()));
+                    class_data.attrs.insert(
+                        "__bases__".to_string(),
+                        self.heap.alloc_tuple(
+                            bases
+                                .iter()
+                                .cloned()
+                                .map(Value::Class)
+                                .collect::<Vec<_>>(),
+                        ),
+                    );
+                    class_data.mro = mro.clone();
+                    class_data.attrs.insert(
+                        "__mro__".to_string(),
+                        self.heap
+                            .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+                    );
+                }
+            }
+        }
+    }
+
     fn install_builtins_module(&mut self) {
         let module = match self.heap.alloc_module(ModuleObject::new("builtins")) {
             Value::Module(obj) => obj,
@@ -3522,7 +3670,13 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         Value::BigInt(value) => value
             .to_i64()
             .ok_or_else(|| RuntimeError::new("integer overflow")),
-        _ => Err(RuntimeError::new("unsupported operand type")),
+        other => {
+            if std::env::var_os("PYRS_TRACE_VALUE_TO_INT").is_some() {
+                eprintln!("[value_to_int] unsupported value={}", format_repr(&other));
+                eprintln!("[value_to_int] backtrace:\n{:?}", std::backtrace::Backtrace::force_capture());
+            }
+            Err(RuntimeError::new("unsupported operand type"))
+        }
     }
 }
 
@@ -5320,6 +5474,9 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 IteratorKind::SequenceGetItem { .. } => {
                     return Err(RuntimeError::new("expected bytes-like payload"));
                 }
+                IteratorKind::CpythonSequence { .. } => {
+                    return Err(RuntimeError::new("expected bytes-like payload"));
+                }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
                 | IteratorKind::Cycle { .. } => {
@@ -5376,7 +5533,11 @@ fn re_pattern_from_value(value: &Value) -> Result<RePatternValue, RuntimeError> 
 fn re_pattern_from_compiled_module(module: &ObjRef) -> Result<RePatternValue, RuntimeError> {
     match &*module.kind() {
         Object::Module(module_data) if module_data.name == "__re_pattern__" => {
-            let Some(pattern) = module_data.globals.get("pattern") else {
+            let pattern = module_data
+                .globals
+                .get("__pyrs_compiled_pattern__")
+                .or_else(|| module_data.globals.get("pattern"));
+            let Some(pattern) = pattern else {
                 return Err(RuntimeError::new("pattern receiver is invalid"));
             };
             re_pattern_from_value(pattern)
@@ -5602,9 +5763,12 @@ fn parse_simple_quantifier(chars: &[char], idx: &mut usize) -> Option<ReQuantifi
     } else {
         ReQuantifier::One
     };
-    if !matches!(quantifier, ReQuantifier::One) && *idx < chars.len() && chars[*idx] == '?' {
-        // Non-greedy marker accepted but currently ignored.
-        *idx += 1;
+    if !matches!(quantifier, ReQuantifier::One) {
+        while *idx < chars.len() && (chars[*idx] == '?' || chars[*idx] == '+') {
+            // Non-greedy (`?`) / possessive (`+`) quantifier modifiers are
+            // accepted for compatibility, but ignored by this fallback engine.
+            *idx += 1;
+        }
     }
     Some(quantifier)
 }
@@ -5638,6 +5802,20 @@ fn parse_simple_regex_sequence(
                 *idx += 1;
                 if *idx < chars.len() && chars[*idx] == ':' {
                     *idx += 1;
+                } else if *idx + 2 < chars.len()
+                    && chars[*idx] == 'P'
+                    && chars[*idx + 1] == '<'
+                {
+                    *idx += 2;
+                    while *idx < chars.len() && chars[*idx] != '>' {
+                        *idx += 1;
+                    }
+                    if *idx >= chars.len() || chars[*idx] != '>' {
+                        return None;
+                    }
+                    *idx += 1;
+                    *capture_count += 1;
+                    capture = Some(*capture_count);
                 } else {
                     return None;
                 }
@@ -5850,13 +6028,32 @@ fn expand_simple_group_alternation(pattern: &str) -> Option<Vec<String>> {
         }
 
         let mut content_start = idx + 1;
+        let mut group_prefix = "(".to_string();
         if content_start + 1 < chars.len()
             && chars[content_start] == '?'
             && chars[content_start + 1] == ':'
         {
             content_start += 2;
+            group_prefix = "(?:".to_string();
+        } else if content_start + 2 < chars.len()
+            && chars[content_start] == '?'
+            && chars[content_start + 1] == 'P'
+            && chars[content_start + 2] == '<'
+        {
+            let name_start = content_start + 3;
+            let mut name_end = name_start;
+            while name_end < chars.len() && chars[name_end] != '>' {
+                name_end += 1;
+            }
+            if name_end >= chars.len() || chars[name_end] != '>' {
+                idx += 1;
+                continue;
+            }
+            let name: String = chars[name_start..name_end].iter().collect();
+            group_prefix = format!("(?P<{name}>");
+            content_start = name_end + 1;
         } else if content_start < chars.len() && chars[content_start] == '?' {
-            // Unsupported group forms (named groups/lookarounds/backrefs).
+            // Unsupported group forms (lookarounds/backrefs/conditionals).
             idx += 1;
             continue;
         }
@@ -5874,7 +6071,7 @@ fn expand_simple_group_alternation(pattern: &str) -> Option<Vec<String>> {
         return Some(
             alternatives
                 .into_iter()
-                .map(|alt| format!("{prefix}(?:{alt}){suffix}"))
+                .map(|alt| format!("{prefix}{group_prefix}{alt}){suffix}"))
                 .collect(),
         );
     }
@@ -7657,6 +7854,21 @@ fn bind_arguments(
     let mut kwonly_values: HashMap<String, Value> = HashMap::new();
     for (name, value) in kwargs.drain() {
         if func.code.posonly_params.iter().any(|param| param == &name) {
+            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+                eprintln!(
+                    "[bind-args] fn={} unexpected-posonly-keyword={}",
+                    func.code.name, name
+                );
+                eprintln!(
+                    "[bind-args] fn={} signature posonly={:?} params={:?} kwonly={:?} vararg={:?} kwarg={:?}",
+                    func.code.name,
+                    func.code.posonly_params,
+                    func.code.params,
+                    func.code.kwonly_params,
+                    func.code.vararg,
+                    func.code.kwarg
+                );
+            }
             return Err(RuntimeError::new("unexpected keyword argument"));
         }
         if let Some(index) = func.code.params.iter().position(|param| param == &name) {
@@ -7675,6 +7887,21 @@ fn bind_arguments(
             }
             extra_kwargs.insert(name, value);
         } else {
+            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+                eprintln!(
+                    "[bind-args] fn={} unexpected-keyword={}",
+                    func.code.name, name
+                );
+                eprintln!(
+                    "[bind-args] fn={} signature posonly={:?} params={:?} kwonly={:?} vararg={:?} kwarg={:?}",
+                    func.code.name,
+                    func.code.posonly_params,
+                    func.code.params,
+                    func.code.kwonly_params,
+                    func.code.vararg,
+                    func.code.kwarg
+                );
+            }
             return Err(RuntimeError::new("unexpected keyword argument"));
         }
     }

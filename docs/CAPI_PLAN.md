@@ -11,8 +11,9 @@ This is the active workstream. If context is compacted, resume from this section
 - [x] Conformance tests expanded with behavior-level abi3 semantics across batch probes (`tests/extension_smoke.rs`).
 - [x] NumPy gate is mapped as P0 Lane B (`docs/NUMPY_BRINGUP_GATE.md`).
 - [ ] Checkpoint discipline: land work in small commits per batch (`manifest` -> `tests` -> `ABI impl` -> `NumPy gate refresh`).
+- [x] Root-cause fix for module-state/attr publication in NumPy import path is landed (`numpy_import` now passes in direct mode).
+- [ ] `numpy_ndarray_sum` remains open: `int(np.array([1,2,3]).sum())` fails with `PyNumber_Long requires int-compatible object`.
 - [ ] Deterministic `numpy._core.numerictypes` completion gate (must publish `int8`, `float64`, `bool_`, etc.) is still open.
-- [ ] Root-cause fix for module-state/attr publication in NumPy import path is still open.
 
 ## ABI3 Status Snapshot (2026-02-16)
 

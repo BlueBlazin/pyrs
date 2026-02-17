@@ -224,6 +224,9 @@ pub enum NativeMethodKind {
     DictPop,
     DictCopy,
     DictInit,
+    ContextVarGetMethod,
+    ContextVarSetMethod,
+    ContextVarResetMethod,
     ListInit,
     ListAppend,
     ListExtend,
@@ -302,6 +305,7 @@ pub enum NativeMethodKind {
     StrStrip,
     StrLJust,
     StrExpandTabs,
+    CodeReplace,
     SetContains,
     SetAdd,
     SetDiscard,
@@ -330,6 +334,7 @@ pub enum NativeMethodKind {
     BoundMethodReduceEx,
     ComplexReduceEx,
     FunctionDescriptorGet,
+    FunctionAnnotate,
     ClassRegister,
     PropertyGet,
     PropertySet,
@@ -1124,6 +1129,9 @@ pub enum IteratorKind {
         target: Value,
         getitem: Value,
     },
+    CpythonSequence {
+        target: Value,
+    },
     CallIter {
         callable: Value,
         sentinel: Value,
@@ -1675,6 +1683,9 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
             }
+            IteratorKind::CpythonSequence { target } => {
+                trace_value(target, stack, marked);
+            }
             IteratorKind::CallIter { callable, sentinel } => {
                 trace_value(callable, stack, marked);
                 trace_value(sentinel, stack, marked);
@@ -1812,6 +1823,10 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.index = 0;
                 }
                 IteratorKind::SequenceGetItem { .. } => {
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::CpythonSequence { .. } => {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -2273,6 +2288,7 @@ pub enum BuiltinFunction {
     AIter,
     ANext,
     Type,
+    TypeInit,
     ClassMethod,
     StaticMethod,
     Property,
@@ -2349,6 +2365,7 @@ pub enum BuiltinFunction {
     ImportlibSourceFromCache,
     ImportlibCacheFromSource,
     ImportlibSpecFromFileLocation,
+    ImportlibModuleFromSpec,
     FrozenImportlibSpecFromLoader,
     FrozenImportlibVerboseMessage,
     FrozenImportlibExternalPathJoin,
@@ -4300,6 +4317,13 @@ impl BuiltinFunction {
                     .or_insert_with(|| Value::Str(name));
                 Ok(heap.alloc_class(class))
             }
+            BuiltinFunction::TypeInit => {
+                let payload_len = args.len().saturating_sub(1);
+                if payload_len != 1 && payload_len != 3 {
+                    return Err(RuntimeError::new("type.__init__() takes 1 or 3 arguments"));
+                }
+                Ok(Value::None)
+            }
             BuiltinFunction::ClassMethod => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("classmethod() expects one argument"));
@@ -4689,20 +4713,44 @@ impl BuiltinFunction {
                     Value::Str(value) => value.clone(),
                     _ => return Err(RuntimeError::new("typing helper name must be string")),
                 };
-                let marker = match heap.alloc_module(ModuleObject::new(format!("<typing {name}>")))
-                {
-                    Value::Module(obj) => obj,
+                let kind_name = match self {
+                    BuiltinFunction::TypingTypeVar => "TypeVar",
+                    BuiltinFunction::TypingParamSpec => "ParamSpec",
+                    BuiltinFunction::TypingTypeVarTuple => "TypeVarTuple",
+                    BuiltinFunction::TypingTypeAliasType => "TypeAliasType",
                     _ => unreachable!(),
                 };
-                if let Object::Module(module_data) = &mut *marker.kind_mut() {
-                    module_data
-                        .globals
-                        .insert("__name__".to_string(), Value::Str(name.clone()));
-                    module_data
-                        .globals
-                        .insert("__qualname__".to_string(), Value::Str(name));
+                let class = match heap.alloc_class(ClassObject::new(kind_name, Vec::new())) {
+                    Value::Class(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    class_data
+                        .attrs
+                        .insert("__name__".to_string(), Value::Str(kind_name.to_string()));
+                    class_data
+                        .attrs
+                        .insert("__qualname__".to_string(), Value::Str(kind_name.to_string()));
+                    class_data
+                        .attrs
+                        .insert("__module__".to_string(), Value::Str("_typing".to_string()));
                 }
-                Ok(Value::Module(marker))
+                let marker = match heap.alloc_instance(InstanceObject::new(class)) {
+                    Value::Instance(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Instance(instance_data) = &mut *marker.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("__name__".to_string(), Value::Str(name.clone()));
+                    instance_data
+                        .attrs
+                        .insert("__qualname__".to_string(), Value::Str(name));
+                    instance_data
+                        .attrs
+                        .insert("__module__".to_string(), Value::Str("typing".to_string()));
+                }
+                Ok(Value::Instance(marker))
             }
             BuiltinFunction::DivMod => {
                 if args.len() != 2 {
@@ -5317,6 +5365,7 @@ impl BuiltinFunction {
             | BuiltinFunction::ImportlibSourceFromCache
             | BuiltinFunction::ImportlibCacheFromSource
             | BuiltinFunction::ImportlibSpecFromFileLocation
+            | BuiltinFunction::ImportlibModuleFromSpec
             | BuiltinFunction::FrozenImportlibSpecFromLoader
             | BuiltinFunction::FrozenImportlibVerboseMessage
             | BuiltinFunction::FrozenImportlibExternalPathJoin
@@ -6344,6 +6393,9 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     Ok(out)
                 }
                 IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::new("expected iterable")),
+                IteratorKind::CpythonSequence { .. } => {
+                    Err(RuntimeError::new("expected iterable"))
+                }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
                 | IteratorKind::Cycle { .. } => Err(RuntimeError::new("expected iterable")),
@@ -7027,6 +7079,15 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::DictPop => "<bound method dict.pop>".to_string(),
                     NativeMethodKind::DictCopy => "<bound method dict.copy>".to_string(),
                     NativeMethodKind::DictInit => "<bound method dict.__init__>".to_string(),
+                    NativeMethodKind::ContextVarGetMethod => {
+                        "<bound method ContextVar.get>".to_string()
+                    }
+                    NativeMethodKind::ContextVarSetMethod => {
+                        "<bound method ContextVar.set>".to_string()
+                    }
+                    NativeMethodKind::ContextVarResetMethod => {
+                        "<bound method ContextVar.reset>".to_string()
+                    }
                     NativeMethodKind::ListInit => "<bound method list.__init__>".to_string(),
                     NativeMethodKind::ListAppend => "<bound method list.append>".to_string(),
                     NativeMethodKind::ListExtend => "<bound method list.extend>".to_string(),
@@ -7139,6 +7200,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
                     NativeMethodKind::StrLJust => "<bound method str.ljust>".to_string(),
                     NativeMethodKind::StrExpandTabs => "<bound method str.expandtabs>".to_string(),
+                    NativeMethodKind::CodeReplace => "<bound method code.replace>".to_string(),
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
@@ -7179,6 +7241,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::FunctionDescriptorGet => {
                         "<bound method function.__get__>".to_string()
+                    }
+                    NativeMethodKind::FunctionAnnotate => {
+                        "<bound method function.__annotate__>".to_string()
                     }
                     NativeMethodKind::ObjectReduceExBound => {
                         "<bound method object.__reduce_ex__>".to_string()
@@ -7596,9 +7661,14 @@ pub struct RuntimeError {
 
 impl RuntimeError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
+        let message = message.into();
+        if message.starts_with("attempted to call non-function")
+            && std::env::var_os("PYRS_TRACE_NON_FUNCTION_BT").is_some()
+        {
+            eprintln!("[non-function] {}", message);
+            eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
         }
+        Self { message }
     }
 }
 

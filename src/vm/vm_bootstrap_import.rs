@@ -2,12 +2,13 @@ use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
     InstanceObject, LOCAL_SHIM_MODULES, ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef,
-    Object, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
-    PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError,
-    SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER,
-    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler,
-    cpython, dict_get_value, dict_remove_value, dict_set_value, matches_finder_kind,
-    parse_uuid_like_string, parser, source_path_from_cache_path,
+    Object, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_JSON_MODULES,
+    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES,
+    PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
+    SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
+    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
+    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
+    source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -3461,6 +3462,13 @@ impl Vm {
                 ("check_hash_based_pycs", Value::Str("default".to_string())),
             ],
         );
+        let typing_paramspec_args_class =
+            self.alloc_bootstrap_class_value("ParamSpecArgs", "_typing");
+        let typing_paramspec_kwargs_class =
+            self.alloc_bootstrap_class_value("ParamSpecKwargs", "_typing");
+        let typing_generic_class = self.alloc_bootstrap_class_value("Generic", "_typing");
+        let typing_union_class = self.alloc_bootstrap_class_value("Union", "_typing");
+        let typing_nodefault_class = self.alloc_bootstrap_class_value("NoDefault", "_typing");
         self.install_builtin_module(
             "_typing",
             &[
@@ -3473,28 +3481,23 @@ impl Vm {
             vec![
                 (
                     "ParamSpecArgs",
-                    self.heap
-                        .alloc_class(ClassObject::new("ParamSpecArgs".to_string(), Vec::new())),
+                    typing_paramspec_args_class,
                 ),
                 (
                     "ParamSpecKwargs",
-                    self.heap
-                        .alloc_class(ClassObject::new("ParamSpecKwargs".to_string(), Vec::new())),
+                    typing_paramspec_kwargs_class,
                 ),
                 (
                     "Generic",
-                    self.heap
-                        .alloc_class(ClassObject::new("Generic".to_string(), Vec::new())),
+                    typing_generic_class,
                 ),
                 (
                     "Union",
-                    self.heap
-                        .alloc_class(ClassObject::new("Union".to_string(), Vec::new())),
+                    typing_union_class,
                 ),
                 (
                     "NoDefault",
-                    self.heap
-                        .alloc_class(ClassObject::new("NoDefault".to_string(), Vec::new())),
+                    typing_nodefault_class,
                 ),
             ],
         );
@@ -3918,6 +3921,13 @@ impl Vm {
             Value::Class(class) => class,
             _ => unreachable!(),
         };
+        let inspect_parameter_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Parameter".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
         if let Object::Class(class_data) = &mut *inspect_signature_class.kind_mut() {
             class_data
                 .attrs
@@ -3930,6 +3940,29 @@ impl Vm {
                 "__repr__".to_string(),
                 Value::Builtin(BuiltinFunction::InspectSignatureRepr),
             );
+        }
+        if let Object::Class(class_data) = &mut *inspect_parameter_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("inspect".to_string()));
+            class_data
+                .attrs
+                .insert("empty".to_string(), inspect_sentinel.clone());
+            class_data
+                .attrs
+                .insert("POSITIONAL_ONLY".to_string(), Value::Int(0));
+            class_data
+                .attrs
+                .insert("POSITIONAL_OR_KEYWORD".to_string(), Value::Int(1));
+            class_data
+                .attrs
+                .insert("VAR_POSITIONAL".to_string(), Value::Int(2));
+            class_data
+                .attrs
+                .insert("KEYWORD_ONLY".to_string(), Value::Int(3));
+            class_data
+                .attrs
+                .insert("VAR_KEYWORD".to_string(), Value::Int(4));
         }
         self.install_builtin_module(
             "inspect",
@@ -3967,8 +4000,10 @@ impl Vm {
                 ),
             ],
             vec![
-                ("_sentinel", inspect_sentinel),
+                ("_sentinel", inspect_sentinel.clone()),
+                ("_empty", inspect_sentinel.clone()),
                 ("Signature", Value::Class(inspect_signature_class)),
+                ("Parameter", Value::Class(inspect_parameter_class)),
                 ("CO_VARARGS", Value::Int(0x04)),
                 ("CO_VARKEYWORDS", Value::Int(0x08)),
                 ("CO_GENERATOR", Value::Int(0x20)),
@@ -5455,9 +5490,19 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::TimeInit),
             );
         }
+        let tzinfo_class = match self
+            .heap
+            .alloc_class(ClassObject::new("tzinfo".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
         let timezone_class = match self
             .heap
-            .alloc_class(ClassObject::new("timezone".to_string(), Vec::new()))
+            .alloc_class(ClassObject::new(
+                "timezone".to_string(),
+                vec![tzinfo_class.clone()],
+            ))
         {
             Value::Class(obj) => obj,
             _ => unreachable!(),
@@ -5499,6 +5544,7 @@ impl Vm {
                 ("date", Value::Class(date_class)),
                 ("timedelta", Value::Class(timedelta_class)),
                 ("time", Value::Class(time_class)),
+                ("tzinfo", Value::Class(tzinfo_class)),
                 ("timezone", Value::Class(timezone_class)),
                 ("UTC", Value::Instance(timezone_utc)),
             ],
@@ -6004,10 +6050,16 @@ impl Vm {
     }
 
     pub(super) fn has_cpython_pure_module_on_module_path(&self, module_name: &str) -> bool {
-        let rel = module_name.replace('.', "/");
-        self.module_paths.iter().any(|root| {
-            root.join(format!("{rel}.py")).is_file()
-                || root.join(&rel).join("__init__.py").is_file()
+        let mut candidates = vec![module_name.to_string()];
+        if let Some(alias_name) = Self::module_source_alias(module_name) {
+            candidates.push(alias_name.to_string());
+        }
+        candidates.into_iter().any(|candidate| {
+            let rel = candidate.replace('.', "/");
+            self.module_paths.iter().any(|root| {
+                root.join(format!("{rel}.py")).is_file()
+                    || root.join(&rel).join("__init__.py").is_file()
+            })
         })
     }
 
@@ -6032,6 +6084,13 @@ impl Vm {
         self.preferred_filesystem_module_cache
             .insert(module_name.to_string(), present);
         present
+    }
+
+    fn module_source_alias(module_name: &str) -> Option<&'static str> {
+        match module_name {
+            "collections.abc" => Some("_collections_abc"),
+            _ => None,
+        }
     }
 
     pub(super) fn maybe_prefer_cpython_pure_stdlib_modules(&mut self) {
@@ -6063,6 +6122,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_PATHLIB_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_COLLECTIONS_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {
@@ -6310,6 +6376,11 @@ impl Vm {
         }
         let roots = self.module_paths.clone();
         if let Some(source) = self.find_module_source_in_roots(name, &roots) {
+            return Some(source);
+        }
+        if let Some(alias_name) = Self::module_source_alias(name)
+            && let Some(source) = self.find_module_source_in_roots(alias_name, &roots)
+        {
             return Some(source);
         }
         if !self.local_shim_fallback_enabled {
@@ -7186,12 +7257,14 @@ impl Vm {
             name,
             "re" | "re._compiler" | "re._constants" | "re._parser" | "re._casefix"
         );
+        let is_collections_stack = matches!(name, "collections.abc");
         let is_decimal_stack = name == "decimal";
         let is_functools_stack = name == "functools";
         let is_types_stack = matches!(name, "types" | "typing");
         if !is_json_stack
             && !is_pickle_stack
             && !is_re_stack
+            && !is_collections_stack
             && !is_decimal_stack
             && !is_functools_stack
             && !is_types_stack

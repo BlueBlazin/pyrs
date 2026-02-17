@@ -228,14 +228,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - direct CPython compatibility surface now exports the `_multiarray_umath` unresolved symbol set (public `Py*` plus internal `_Py*`) so NumPy reaches module-init execution instead of failing at dynamic-link resolution.
   - direct NumPy bring-up now includes `datetime.datetime_CAPI` capsule registry baseline, `math.trunc`, and expanded CPython-style varargs builders/call helpers via C shim (`build.rs`, `src/vm/capi_variadics.c`).
   - pure-stdlib preference logic now includes `typing` (in addition to `types`) when CPython `Lib` sources are available on `sys.path`.
-  - current direct NumPy import blocker is object-model/metaclass-super semantics during typing/protocol-heavy import paths: top-level `import numpy` currently fails with `RuntimeError: object.__init__() takes exactly one argument` after progressing through `_core`/`_add_newdocs*` (direct gate artifact: `perf/numpy_gate_direct_latest.json`).
+  - direct NumPy gate checkpoint: `numpy_import` now passes in direct mode; current blocker moved to `numpy_ndarray_sum` (`int(np.array([1,2,3]).sum())`) failing with `RuntimeError: PyNumber_Long requires int-compatible object` (`perf/numpy_gate_direct_latest.json`).
   - CPython-object ABI substrate was advanced for direct-mode extension init: compat objects now carry CPython-style object/varobject headers, singleton pointers (`Py_None`/`Py_True`/`Py_False`) are returned directly, tuple pointers expose contiguous `ob_item[]` storage, list pointers expose `ob_item`/`allocated` storage, and compat allocations are pinned across init-scoped free/decref churn.
   - CPython exception globals (`PyExc_*`) are now initialized to non-null exported sentinel objects and pointer->exception-type translation is wired in C-API pointer conversion.
   - `PyObject_CallFunction` now has C-side varargs parsing coverage for core formats (`O`/`N`/`s`/`i`/`l`/`k`/`n`/`d`/`f`, plus tuple-wrapped forms) via `src/vm/capi_variadics.c`.
   - C-side varargs handling now also covers `PyArg_ParseTuple`, `PyArg_ParseTupleAndKeywords`, `PyObject_CallFunctionObjArgs`, `PyObject_CallMethod`, `PyEval_CallFunction`, `PyEval_CallMethod`, `PyBytes_FromFormat`, and `PyBytes_FromFormatV` in `src/vm/capi_variadics.c`.
   - `PyTypeObject` compat layout has been expanded through allocation/init/new/call slots, `PyType_Ready` now seeds baseline inherited slots, and `PyType_Type.tp_call` now routes through a CPython-style `tp_new`/`tp_init` call bridge.
   - extension init now caches first per-module dynamic-init failure (`extension_init_failures`) so repeated import retries report the original `Py_mod_exec` blocker instead of masking it behind reentry noise.
-  - immediate NumPy priority is deterministic closure of class/metaclass object-model parity in `super()`/`object.__init__` paths reached by `typing`/`Protocol` imports, then re-run direct gate (`perf/numpy_gate_direct_latest.json`).
+  - immediate NumPy priority is deterministic closure of numeric conversion parity in extension-backed scalar reduction paths (`PyNumber_Long` / scalar `__int__` substrate), then re-run direct gate (`perf/numpy_gate_direct_latest.json`).
   - extension slot tracing is now available via `PYRS_TRACE_EXT_SLOTS=1` for `Py_mod_create` / `Py_mod_exec` debugging in direct `PyInit_*` mode.
   - CPython-ABI bridge runtime/env path has been removed; scientific-stack gating is now direct-mode only (`perf/numpy_gate_direct_latest.json`).
   - when `VIRTUAL_ENV` is set, runtime now sets `sys.prefix`/`sys.exec_prefix` to the venv root so startup `site` handling picks up venv `site-packages`.
@@ -311,6 +311,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - REPL checkpoint: no-arg CLI path now starts an interactive `reedline` REPL (`RSPYTHON` banner, Python syntax highlighting, Tab=4-space indentation, Shift-Tab/Ctrl-Space completion menu, dotted member completion, multiline, `%time` one-shot timing, `:paste`/`:timing`/`:reset` controls, optional startup script `~/.pyrsrc`/`PYRS_REPL_INIT`), while non-interactive no-arg runs consume stdin as script input (CPython-like `python < file.py` behavior).
   - REPL expression echo now routes through Python-level `repr(...)` protocol (instead of raw `format_repr` fallback), so extension-backed objects display CPython-style repr text in interactive output.
   - builtin type-repr checkpoint: `repr(type(7))`, `repr(int)`, and `repr(type)` now match CPython class-style formatting (`<class 'int'>`, `<class 'type'>`) instead of generic `<builtin>`.
+  - extension crash-stability checkpoint: re-entrant C-API callback paths now pass `ModuleCapiContext*` via `std::ptr::addr_of_mut!(...)` (not `&mut ... as *mut ...`) to avoid aliasing-UB under callback re-entry; repeated local extension-smoke loops are stable.
+  - error-state safety checkpoint: `error_set(...)` / `PyErr_SetString(...)` now prioritize stable message+type indicator state over synthetic string-pointer `pvalue` materialization to prevent crashy pseudo-unicode pointer paths; full CPython non-null error-value pointer semantics are tracked in `docs/STUB_ACCOUNTING.md`.
 - Extended probe remaining red modules: none (`50/50` smoke green).
 
 ## Execution Policy
@@ -318,6 +320,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `Modules/*.c`
   - `Objects/*.c`
   - `Lib/*.py`
+- For re-entrant extension callback paths, never pass context pointers via `&mut ctx as *mut ...`; use `std::ptr::addr_of_mut!(ctx)` and raw-pointer plumbing to avoid aliasing UB.
 - Sequence Milestone 13 work as native-core-first:
   1. Native/runtime substrate closure (`_io`, `_csv`, `_sre`, `_pickle`, object protocol)
   2. Pure-stdlib strict-lane expansion/closure

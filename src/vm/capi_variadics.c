@@ -45,8 +45,10 @@ extern void *PyObject_Call(void *callable, void *args, void *kwargs);
 extern void *PyObject_CallObject(void *callable, void *args);
 extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
+extern void *PyObject_Str(void *object);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
+extern const char *PyUnicode_AsUTF8(void *object);
 extern void PyErr_BadInternalCall(void);
 extern void *PyErr_Occurred(void);
 extern void Py_IncRef(void *object);
@@ -126,19 +128,259 @@ int PySys_Audit(const char *event, const char *format, ...)
     return pyrs_capi_sys_audit_noargs(event);
 }
 
+typedef struct {
+    char *data;
+    size_t len;
+    size_t cap;
+} PyrsFormatBuffer;
+
+static int pyrs_format_buffer_ensure(PyrsFormatBuffer *buf, size_t additional)
+{
+    size_t needed = buf->len + additional + 1;
+    if (needed <= buf->cap) {
+        return 1;
+    }
+    size_t next_cap = buf->cap == 0 ? 128 : buf->cap;
+    while (next_cap < needed) {
+        next_cap *= 2;
+    }
+    char *next = (char *)realloc(buf->data, next_cap);
+    if (next == NULL) {
+        return 0;
+    }
+    buf->data = next;
+    buf->cap = next_cap;
+    return 1;
+}
+
+static int pyrs_format_buffer_append_bytes(PyrsFormatBuffer *buf, const char *text, size_t len)
+{
+    if (!pyrs_format_buffer_ensure(buf, len)) {
+        return 0;
+    }
+    if (len > 0) {
+        memcpy(buf->data + buf->len, text, len);
+        buf->len += len;
+    }
+    buf->data[buf->len] = '\0';
+    return 1;
+}
+
+static int pyrs_format_buffer_append_cstr(PyrsFormatBuffer *buf, const char *text)
+{
+    if (text == NULL) {
+        text = "(null)";
+    }
+    return pyrs_format_buffer_append_bytes(buf, text, strlen(text));
+}
+
+static int pyrs_format_buffer_append_object_str(PyrsFormatBuffer *buf, void *object)
+{
+    if (object == NULL) {
+        return pyrs_format_buffer_append_cstr(buf, "<NULL>");
+    }
+    void *rendered = PyObject_Str(object);
+    if (rendered == NULL) {
+        return pyrs_format_buffer_append_cstr(buf, "<object>");
+    }
+    const char *utf8 = PyUnicode_AsUTF8(rendered);
+    int ok = pyrs_format_buffer_append_cstr(buf, utf8 != NULL ? utf8 : "<object>");
+    Py_DecRef(rendered);
+    return ok;
+}
+
+static char *pyrs_format_pyerr_message(const char *format, va_list ap)
+{
+    PyrsFormatBuffer buf = {0};
+    const char *cursor = format != NULL ? format : "error";
+    while (*cursor != '\0') {
+        if (*cursor != '%') {
+            if (!pyrs_format_buffer_append_bytes(&buf, cursor, 1)) {
+                free(buf.data);
+                return NULL;
+            }
+            cursor++;
+            continue;
+        }
+        cursor++;
+        if (*cursor == '\0') {
+            if (!pyrs_format_buffer_append_bytes(&buf, "%", 1)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        if (*cursor == '%') {
+            if (!pyrs_format_buffer_append_bytes(&buf, "%", 1)) {
+                free(buf.data);
+                return NULL;
+            }
+            cursor++;
+            continue;
+        }
+
+        while (*cursor == '-' || *cursor == '+' || *cursor == ' ' || *cursor == '#' || *cursor == '0') {
+            cursor++;
+        }
+        while (isdigit((unsigned char)*cursor)) {
+            cursor++;
+        }
+        if (*cursor == '.') {
+            cursor++;
+            while (isdigit((unsigned char)*cursor)) {
+                cursor++;
+            }
+        }
+
+        int length_l = 0;
+        int length_ll = 0;
+        int length_z = 0;
+        if (*cursor == 'l') {
+            length_l = 1;
+            cursor++;
+            if (*cursor == 'l') {
+                length_ll = 1;
+                cursor++;
+            }
+        } else if (*cursor == 'z') {
+            length_z = 1;
+            cursor++;
+        }
+
+        char spec = *cursor;
+        if (spec == '\0') {
+            break;
+        }
+        cursor++;
+
+        char num_buf[128];
+        int wrote = 0;
+        switch (spec) {
+        case 's': {
+            const char *text = va_arg(ap, const char *);
+            if (!pyrs_format_buffer_append_cstr(&buf, text)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        case 'S':
+        case 'R':
+        case 'A': {
+            void *object = va_arg(ap, void *);
+            if (!pyrs_format_buffer_append_object_str(&buf, object)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        case 'c': {
+            int ch = va_arg(ap, int);
+            char out = (char)ch;
+            if (!pyrs_format_buffer_append_bytes(&buf, &out, 1)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        case 'd':
+        case 'i': {
+            if (length_ll) {
+                long long value = va_arg(ap, long long);
+                wrote = snprintf(num_buf, sizeof(num_buf), "%lld", value);
+            } else if (length_l) {
+                long value = va_arg(ap, long);
+                wrote = snprintf(num_buf, sizeof(num_buf), "%ld", value);
+            } else if (length_z) {
+                Py_ssize_t value = va_arg(ap, Py_ssize_t);
+                wrote = snprintf(num_buf, sizeof(num_buf), "%lld", (long long)value);
+            } else {
+                int value = va_arg(ap, int);
+                wrote = snprintf(num_buf, sizeof(num_buf), "%d", value);
+            }
+            if (wrote < 0 || !pyrs_format_buffer_append_bytes(&buf, num_buf, (size_t)wrote)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        case 'u':
+        case 'x':
+        case 'X': {
+            if (length_ll) {
+                unsigned long long value = va_arg(ap, unsigned long long);
+                wrote = snprintf(num_buf, sizeof(num_buf), spec == 'u' ? "%llu" : (spec == 'x' ? "%llx" : "%llX"), value);
+            } else if (length_l) {
+                unsigned long value = va_arg(ap, unsigned long);
+                wrote = snprintf(num_buf, sizeof(num_buf), spec == 'u' ? "%lu" : (spec == 'x' ? "%lx" : "%lX"), value);
+            } else if (length_z) {
+                size_t value = va_arg(ap, size_t);
+                wrote = snprintf(num_buf, sizeof(num_buf), spec == 'u' ? "%zu" : (spec == 'x' ? "%zx" : "%zX"), value);
+            } else {
+                unsigned int value = va_arg(ap, unsigned int);
+                wrote = snprintf(num_buf, sizeof(num_buf), spec == 'u' ? "%u" : (spec == 'x' ? "%x" : "%X"), value);
+            }
+            if (wrote < 0 || !pyrs_format_buffer_append_bytes(&buf, num_buf, (size_t)wrote)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        case 'p': {
+            void *value = va_arg(ap, void *);
+            wrote = snprintf(num_buf, sizeof(num_buf), "%p", value);
+            if (wrote < 0 || !pyrs_format_buffer_append_bytes(&buf, num_buf, (size_t)wrote)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        default: {
+            if (!pyrs_format_buffer_append_bytes(&buf, "%", 1) ||
+                !pyrs_format_buffer_append_bytes(&buf, &spec, 1)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        }
+    }
+    if (buf.data == NULL) {
+        buf.data = (char *)malloc(1);
+        if (buf.data == NULL) {
+            return NULL;
+        }
+        buf.data[0] = '\0';
+    }
+    return buf.data;
+}
+
 void *PyErr_Format(void *exception, const char *format, ...)
 {
-    (void)exception;
     va_list ap;
     va_start(ap, format);
+    char *message = pyrs_format_pyerr_message(format, ap);
     va_end(ap);
-    return pyrs_capi_pyerr_format_fallback(exception, format);
+    if (message == NULL) {
+        return pyrs_capi_pyerr_format_fallback(exception, format);
+    }
+    void *result = pyrs_capi_pyerr_format_fallback(exception, message);
+    free(message);
+    return result;
 }
 
 void *PyErr_FormatV(void *exception, const char *format, va_list vargs)
 {
-    (void)vargs;
-    return pyrs_capi_pyerr_formatv_fallback(exception, format, NULL);
+    va_list ap;
+    va_copy(ap, vargs);
+    char *message = pyrs_format_pyerr_message(format, ap);
+    va_end(ap);
+    if (message == NULL) {
+        return pyrs_capi_pyerr_formatv_fallback(exception, format, NULL);
+    }
+    void *result = pyrs_capi_pyerr_formatv_fallback(exception, message, NULL);
+    free(message);
+    return result;
 }
 
 typedef struct {
@@ -1343,6 +1585,18 @@ static int parse_args_and_keywords_va(
     va_list *ap
 )
 {
+    if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+        const char *fmt = (format == NULL) ? "<null>" : format;
+        fprintf(
+            stderr,
+            "[pyarg-va] parse args=%p kwargs=%p format=%p keywords=%p spec=\"%.80s\"\n",
+            args,
+            kwargs,
+            (const void *)format,
+            (const void *)keywords,
+            fmt
+        );
+    }
     if (format == NULL) {
         pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords received null format");
         return 0;
@@ -1446,6 +1700,16 @@ static int parse_args_and_keywords_va(
             p++;
             arg_converter_fn converter = va_arg(*ap, arg_converter_fn);
             void *output = va_arg(*ap, void *);
+            if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+                fprintf(
+                    stderr,
+                    "[pyarg-va] O& token present=%d optional=%d converter=%p output=%p\n",
+                    present,
+                    optional,
+                    (const void *)converter,
+                    output
+                );
+            }
             if (!present) {
                 if (!optional) {
                     free(spec);
@@ -1455,7 +1719,19 @@ static int parse_args_and_keywords_va(
                 token_index++;
                 continue;
             }
-            if (converter == NULL || converter(value, output) == 0) {
+            int converted = 0;
+            if (converter != NULL) {
+                converted = converter(value, output);
+            }
+            if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+                fprintf(
+                    stderr,
+                    "[pyarg-va] O& converter result=%d value=%p\n",
+                    converted,
+                    value
+                );
+            }
+            if (converter == NULL || converted == 0) {
                 free(spec);
                 if (PyErr_Occurred() == NULL) {
                     pyrs_capi_set_error_message("PyArg_ParseTupleAndKeywords converter failed");
@@ -1739,6 +2015,16 @@ int PyArg_ValidateKeywordArguments(void *kwargs)
 
 int PyArg_ParseTuple(void *args, const char *format, ...)
 {
+    if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+        const char *fmt = (format == NULL) ? "<null>" : format;
+        fprintf(
+            stderr,
+            "[pyarg-va] PyArg_ParseTuple args=%p format=%p spec=\"%.80s\"\n",
+            args,
+            (const void *)format,
+            fmt
+        );
+    }
     va_list ap;
     va_start(ap, format);
     int result = parse_args_and_keywords_va(args, NULL, format, NULL, &ap);
@@ -1748,6 +2034,16 @@ int PyArg_ParseTuple(void *args, const char *format, ...)
 
 int _PyArg_ParseTuple_SizeT(void *args, const char *format, ...)
 {
+    if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+        const char *fmt = (format == NULL) ? "<null>" : format;
+        fprintf(
+            stderr,
+            "[pyarg-va] _PyArg_ParseTuple_SizeT args=%p format=%p spec=\"%.80s\"\n",
+            args,
+            (const void *)format,
+            fmt
+        );
+    }
     va_list ap;
     va_start(ap, format);
     int result = parse_args_and_keywords_va(args, NULL, format, NULL, &ap);
@@ -1763,6 +2059,18 @@ int PyArg_ParseTupleAndKeywords(
     ...
 )
 {
+    if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+        const char *fmt = (format == NULL) ? "<null>" : format;
+        fprintf(
+            stderr,
+            "[pyarg-va] PyArg_ParseTupleAndKeywords args=%p kwargs=%p format=%p keywords=%p spec=\"%.80s\"\n",
+            args,
+            kwargs,
+            (const void *)format,
+            (const void *)keywords,
+            fmt
+        );
+    }
     va_list ap;
     va_start(ap, keywords);
     int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &ap);
@@ -1778,10 +2086,49 @@ int _PyArg_ParseTupleAndKeywords_SizeT(
     ...
 )
 {
+    if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+        const char *fmt = (format == NULL) ? "<null>" : format;
+        fprintf(
+            stderr,
+            "[pyarg-va] _PyArg_ParseTupleAndKeywords_SizeT args=%p kwargs=%p format=%p keywords=%p spec=\"%.80s\"\n",
+            args,
+            kwargs,
+            (const void *)format,
+            (const void *)keywords,
+            fmt
+        );
+    }
     va_list ap;
     va_start(ap, keywords);
     int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &ap);
     va_end(ap);
+    return result;
+}
+
+int PyArg_VaParseTupleAndKeywords(
+    void *args,
+    void *kwargs,
+    const char *format,
+    const char *const *keywords,
+    va_list va
+)
+{
+    if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+        const char *fmt = (format == NULL) ? "<null>" : format;
+        fprintf(
+            stderr,
+            "[pyarg-va] PyArg_VaParseTupleAndKeywords args=%p kwargs=%p format=%p keywords=%p spec=\"%.80s\"\n",
+            args,
+            kwargs,
+            (const void *)format,
+            (const void *)keywords,
+            fmt
+        );
+    }
+    va_list lva;
+    va_copy(lva, va);
+    int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &lva);
+    va_end(lva);
     return result;
 }
 
@@ -1793,6 +2140,18 @@ int _PyArg_VaParseTupleAndKeywords_SizeT(
     va_list va
 )
 {
+    if (getenv("PYRS_TRACE_PYARG_VA") != NULL) {
+        const char *fmt = (format == NULL) ? "<null>" : format;
+        fprintf(
+            stderr,
+            "[pyarg-va] _PyArg_VaParseTupleAndKeywords_SizeT args=%p kwargs=%p format=%p keywords=%p spec=\"%.80s\"\n",
+            args,
+            kwargs,
+            (const void *)format,
+            (const void *)keywords,
+            fmt
+        );
+    }
     va_list lva;
     va_copy(lva, va);
     int result = parse_args_and_keywords_va(args, kwargs, format, keywords, &lva);

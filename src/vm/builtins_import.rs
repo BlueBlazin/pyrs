@@ -1,6 +1,7 @@
 use super::{
-    BUILTIN_MODULE_LOADER, HashMap, NAMESPACE_LOADER, OPCODE_METADATA, ObjRef, Object,
-    OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, Value, Vm,
+    BUILTIN_MODULE_LOADER, HashMap, ModuleObject, NAMESPACE_LOADER, OPCODE_METADATA, ObjRef,
+    Object, OpcodeMetadata, PathBuf, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
+    Value, Vm,
     bytes_like_from_value, cache_path_from_source_path, class_attr_lookup, fs, is_truthy,
     opcode_flags_contains, source_path_from_cache_path, split_relative_import_name, value_to_int,
     value_to_path,
@@ -190,13 +191,61 @@ impl Vm {
         self.run_stop_depth = Some(caller_depth);
         let run_result = self.run();
         self.run_stop_depth = previous_stop;
-        run_result?;
+        if let Err(err) = run_result {
+            if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                let caller_exc = self
+                    .frames
+                    .get(caller_depth.saturating_sub(1))
+                    .and_then(|frame| frame.active_exception.as_ref())
+                    .map(|value| self.value_type_name_for_error(value))
+                    .unwrap_or_else(|| "<none>".to_string());
+                eprintln!(
+                    "[import-pending-err] caller_depth={} frames={} err={} caller_exc={}",
+                    caller_depth,
+                    self.frames.len(),
+                    err.message,
+                    caller_exc
+                );
+            }
+            if caller_depth > 0
+                && let Some(active) = self
+                    .frames
+                    .get(caller_depth.saturating_sub(1))
+                    .and_then(|frame| frame.active_exception.as_ref())
+            {
+                let exception_name = self.value_type_name_for_error(active);
+                return Err(RuntimeError::new(format!(
+                    "{exception_name}: import raised exception"
+                )));
+            }
+            return Err(err);
+        }
         if caller_depth > 0 {
             let caller_frame = self.frames.get(caller_depth.saturating_sub(1));
             let caller_active_exception_after =
                 caller_frame.and_then(|frame| frame.active_exception.clone());
             if caller_active_exception_after != caller_active_exception_before {
-                return Err(self.runtime_error_from_active_exception("import raised exception"));
+                if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                    let before = caller_active_exception_before
+                        .as_ref()
+                        .map(|value| self.value_type_name_for_error(value))
+                        .unwrap_or_else(|| "<none>".to_string());
+                    let after = caller_active_exception_after
+                        .as_ref()
+                        .map(|value| self.value_type_name_for_error(value))
+                        .unwrap_or_else(|| "<none>".to_string());
+                    eprintln!(
+                        "[import-pending-active-exc] caller_depth={} before={} after={}",
+                        caller_depth, before, after
+                    );
+                }
+                if let Some(active) = caller_active_exception_after.as_ref() {
+                    let exception_name = self.value_type_name_for_error(active);
+                    return Err(RuntimeError::new(format!(
+                        "{exception_name}: import raised exception"
+                    )));
+                }
+                return Err(RuntimeError::new("RuntimeError: import raised exception"));
             }
         }
         Ok(())
@@ -680,6 +729,83 @@ impl Vm {
         );
         self.set_module_spec_field(&spec, "__spec__", Value::None);
         Ok(spec)
+    }
+
+    pub(super) fn builtin_importlib_module_from_spec(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "module_from_spec() expects exactly one spec argument",
+            ));
+        }
+        let spec = args.remove(0);
+        let spec_field = |spec: &Value, field: &str| -> Option<Value> {
+            match spec {
+                Value::Module(obj) => match &*obj.kind() {
+                    Object::Module(module_data) => module_data.globals.get(field).cloned(),
+                    _ => None,
+                },
+                Value::Dict(obj) => match &*obj.kind() {
+                    Object::Dict(entries) => entries.find(&Value::Str(field.to_string())).cloned(),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        let name = match spec_field(&spec, "name") {
+            Some(Value::Str(value)) if !value.is_empty() => value,
+            _ => return Err(RuntimeError::new("module_from_spec() requires spec.name")),
+        };
+        let loader = spec_field(&spec, "loader").unwrap_or(Value::None);
+        let origin = spec_field(&spec, "origin").unwrap_or(Value::None);
+        let cached = spec_field(&spec, "cached").unwrap_or(Value::None);
+        let submodule_search_locations =
+            spec_field(&spec, "submodule_search_locations").unwrap_or(Value::None);
+        let package = if matches!(submodule_search_locations, Value::None) {
+            spec_field(&spec, "parent").unwrap_or_else(|| {
+                Value::Str(
+                    name.rsplit_once('.')
+                        .map(|(parent, _)| parent.to_string())
+                        .unwrap_or_default(),
+                )
+            })
+        } else {
+            Value::Str(name.clone())
+        };
+
+        let module = match self.heap.alloc_module(ModuleObject::new(name.clone())) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert("__name__".to_string(), Value::Str(name));
+            module_data
+                .globals
+                .insert("__loader__".to_string(), loader.clone());
+            module_data
+                .globals
+                .insert("__package__".to_string(), package);
+            module_data
+                .globals
+                .insert("__spec__".to_string(), spec.clone());
+            if !matches!(origin, Value::None) {
+                module_data.globals.insert("__file__".to_string(), origin);
+            }
+            if !matches!(cached, Value::None) {
+                module_data.globals.insert("__cached__".to_string(), cached);
+            }
+            if !matches!(submodule_search_locations, Value::None) {
+                module_data
+                    .globals
+                    .insert("__path__".to_string(), submodule_search_locations);
+            }
+        }
+        Ok(Value::Module(module))
     }
 
     pub(super) fn builtin_frozen_importlib_spec_from_loader(

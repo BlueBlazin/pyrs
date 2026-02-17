@@ -457,7 +457,19 @@ impl Vm {
             index => match value {
                 Value::List(obj) => match &*obj.kind() {
                     Object::List(values) => {
-                        let mut index_int = value_to_int(index)? as isize;
+                        let mut index_int = match value_to_int(index.clone()) {
+                            Ok(index) => index as isize,
+                            Err(err) => {
+                                if std::env::var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
+                                    eprintln!(
+                                        "[getitem-index] list index conversion failed container={} index={}",
+                                        format_repr(&Value::List(obj.clone())),
+                                        format_repr(&index)
+                                    );
+                                }
+                                return Err(err);
+                            }
+                        };
                         if index_int < 0 {
                             index_int += values.len() as isize;
                         }
@@ -470,7 +482,28 @@ impl Vm {
                 },
                 Value::Tuple(obj) => match &*obj.kind() {
                     Object::Tuple(values) => {
-                        let mut index_int = value_to_int(index)? as isize;
+                        if tuple_is_typing_alias_shape(values)
+                            && typing_alias_index_shape(&index)
+                        {
+                            // Typing-only tuple aliases (e.g. unions used as TypeAlias bases)
+                            // are subscripted in NumPy/typing modules for metadata construction.
+                            // Preserve them as symbolic runtime objects instead of treating as
+                            // concrete tuple indexing.
+                            return Ok(Value::Tuple(obj.clone()));
+                        }
+                        let mut index_int = match value_to_int(index.clone()) {
+                            Ok(index) => index as isize,
+                            Err(err) => {
+                                if std::env::var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
+                                    eprintln!(
+                                        "[getitem-index] tuple index conversion failed container={} index={}",
+                                        format_repr(&Value::Tuple(obj.clone())),
+                                        format_repr(&index)
+                                    );
+                                }
+                                return Err(err);
+                            }
+                        };
                         if index_int < 0 {
                             index_int += values.len() as isize;
                         }
@@ -482,7 +515,19 @@ impl Vm {
                     _ => Err(RuntimeError::new("subscript unsupported type")),
                 },
                 Value::Str(value) => {
-                    let mut index_int = value_to_int(index)? as isize;
+                    let mut index_int = match value_to_int(index.clone()) {
+                        Ok(index) => index as isize,
+                        Err(err) => {
+                            if std::env::var_os("PYRS_TRACE_GETITEM_INDEX").is_some() {
+                                eprintln!(
+                                    "[getitem-index] str index conversion failed container={} index={}",
+                                    format_repr(&Value::Str(value.clone())),
+                                    format_repr(&index)
+                                );
+                            }
+                            return Err(err);
+                        }
+                    };
                     let chars: Vec<char> = value.chars().collect();
                     if index_int < 0 {
                         index_int += chars.len() as isize;
@@ -1119,6 +1164,10 @@ impl Vm {
             type_data
                 .attrs
                 .insert("__new__".to_string(), Value::Builtin(BuiltinFunction::Type));
+            type_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::TypeInit),
+            );
             type_data
                 .attrs
                 .insert("__flags__".to_string(), Value::Int(0));
@@ -1569,9 +1618,59 @@ impl Vm {
             Object::Function(data) => data.clone(),
             _ => return Err(RuntimeError::new("class body must be a function")),
         };
-        let mut base_classes = Vec::new();
+        let orig_bases_tuple = self.heap.alloc_tuple(args.clone());
+        let mut resolved_bases = Vec::new();
         for base in args {
-            base_classes.push(self.class_from_base_value(base)?);
+            let maybe_mro_entries = if matches!(base, Value::Class(_)) {
+                None
+            } else {
+                match self.builtin_getattr(
+                    vec![base.clone(), Value::Str("__mro_entries__".to_string())],
+                    HashMap::new(),
+                ) {
+                    Ok(callable) => Some(callable),
+                    Err(err) if classify_runtime_error(&err.message) == "AttributeError" => None,
+                    Err(err) => return Err(err),
+                }
+            };
+            if let Some(mro_entries) = maybe_mro_entries {
+                let entries = match self.call_internal(
+                    mro_entries,
+                    vec![orig_bases_tuple.clone()],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "__mro_entries__ call failed",
+                        ));
+                    }
+                };
+                let Value::Tuple(entries_tuple) = entries else {
+                    return Err(RuntimeError::new("__mro_entries__ must return a tuple"));
+                };
+                let Object::Tuple(items) = &*entries_tuple.kind() else {
+                    return Err(RuntimeError::new("__mro_entries__ must return a tuple"));
+                };
+                resolved_bases.extend(items.iter().cloned());
+            } else {
+                resolved_bases.push(base);
+            }
+        }
+
+        let mut base_classes = Vec::new();
+        for base in resolved_bases {
+            match self.class_from_base_value(base.clone()) {
+                Ok(class) => base_classes.push(class),
+                Err(err) => {
+                    if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some()
+                        && err.message == "class base must be a class object"
+                    {
+                        eprintln!("[class-base] __build_class__ base={}", format_repr(&base));
+                    }
+                    return Err(err);
+                }
+            }
         }
 
         let class_module = match self.heap.alloc_module(ModuleObject::new(name.clone())) {
@@ -1799,9 +1898,71 @@ impl Vm {
                 Ok(self.alloc_synthetic_class("defaultdict"))
             }
             other => {
+                if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some() {
+                    eprintln!(
+                        "[class-base] unsupported base value={}",
+                        format_repr(&other)
+                    );
+                }
                 let _ = other;
                 Err(RuntimeError::new("class base must be a class object"))
             }
         }
+    }
+}
+
+fn tuple_is_typing_alias_shape(values: &[Value]) -> bool {
+    values.iter().any(typing_alias_marker_value)
+}
+
+fn typing_alias_index_shape(value: &Value) -> bool {
+    match value {
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(items) => items.iter().all(typing_alias_operand_value),
+            _ => false,
+        },
+        other => typing_alias_operand_value(other),
+    }
+}
+
+fn typing_alias_operand_value(value: &Value) -> bool {
+    match value {
+        Value::None | Value::Class(_) | Value::ExceptionType(_) => true,
+        Value::Builtin(_) => true,
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(items) => items.iter().all(typing_alias_operand_value),
+            _ => false,
+        },
+        Value::Instance(instance) => typing_alias_marker_instance(instance),
+        _ => false,
+    }
+}
+
+fn typing_alias_marker_value(value: &Value) -> bool {
+    match value {
+        Value::Instance(instance) => typing_alias_marker_instance(instance),
+        Value::Tuple(obj) => match &*obj.kind() {
+            Object::Tuple(items) => items.iter().any(typing_alias_marker_value),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn typing_alias_marker_instance(instance: &ObjRef) -> bool {
+    match &*instance.kind() {
+        Object::Instance(instance_data) => match &*instance_data.class.kind() {
+            Object::Class(class_data) => matches!(
+                class_data.name.as_str(),
+                "GenericAlias"
+                    | "UnionType"
+                    | "TypeVar"
+                    | "TypeVarTuple"
+                    | "ParamSpec"
+                    | "TypeAliasType"
+            ),
+            _ => false,
+        },
+        _ => false,
     }
 }

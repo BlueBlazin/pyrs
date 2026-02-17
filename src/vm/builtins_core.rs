@@ -14,8 +14,10 @@ use super::{
     frame_cell_value, is_import_error_family, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, normalize_codec_encoding, normalize_codec_errors,
     ordering_from_cmp_value, parse_hex_float_literal, parser, round_float_with_ndigits,
-    runtime_error_matches_exception, value_from_bigint, value_from_object_ref, value_to_bigint,
-    value_to_f64, value_to_int, weakref_target_id, weakref_target_object, with_bytes_like_source,
+    runtime_error_matches_exception, sub_values, matmul_values, mul_values, value_from_bigint, value_from_object_ref,
+    or_values,
+    value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
+    with_bytes_like_source,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -3067,6 +3069,25 @@ impl Vm {
         BuiltinFunction::Type.call(&self.heap, args)
     }
 
+    pub(super) fn builtin_type_init(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        // CPython (Objects/typeobject.c:type_init) accepts payload arity 1 or 3,
+        // where payload excludes the bound receiver (`cls`).
+        let payload_len = args.len().saturating_sub(1);
+        if !kwargs.is_empty() && payload_len == 1 {
+            return Err(RuntimeError::new(
+                "type.__init__() takes no keyword arguments",
+            ));
+        }
+        if payload_len != 1 && payload_len != 3 {
+            return Err(RuntimeError::new("type.__init__() takes 1 or 3 arguments"));
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_type_annotations_get(
         &mut self,
         args: Vec<Value>,
@@ -5278,6 +5299,37 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Option<Ordering>, RuntimeError> {
+        const PY_LT: i32 = 0;
+        const PY_GT: i32 = 4;
+        if std::env::var_os("PYRS_TRACE_COMPARE_ORDER").is_some() {
+            eprintln!(
+                "[cmp-order] left_type={} right_type={} left_proxy={:p} right_proxy={:p}",
+                self.value_type_name_for_error(&left),
+                self.value_type_name_for_error(&right),
+                Self::cpython_proxy_raw_ptr_from_value(&left).unwrap_or(std::ptr::null_mut()),
+                Self::cpython_proxy_raw_ptr_from_value(&right).unwrap_or(std::ptr::null_mut())
+            );
+        }
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&left, &right, PY_LT)
+            && result?
+        {
+            return Ok(Some(Ordering::Less));
+        }
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&left, &right, PY_GT)
+            && result?
+        {
+            return Ok(Some(Ordering::Greater));
+        }
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&right, &left, PY_GT)
+            && result?
+        {
+            return Ok(Some(Ordering::Less));
+        }
+        if let Some(result) = self.cpython_proxy_richcmp_bool(&right, &left, PY_LT)
+            && result?
+        {
+            return Ok(Some(Ordering::Greater));
+        }
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
             && result
@@ -5331,6 +5383,21 @@ impl Vm {
         let result = match self.call_internal(callable, vec![argument], HashMap::new())? {
             InternalCallOutcome::Value(value) => value,
             InternalCallOutcome::CallerExceptionHandled => {
+                let active_exception = self
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.active_exception.clone());
+                if let Some(active_exception) = active_exception
+                    && self
+                        .exception_matches(
+                            &active_exception,
+                            &Value::ExceptionType("TypeError".to_string()),
+                        )
+                        .unwrap_or(false)
+                {
+                    self.clear_active_exception();
+                    return Ok(None);
+                }
                 return Err(self.runtime_error_from_active_exception("comparison method raised"));
             }
         };
@@ -5437,21 +5504,55 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        let trace = std::env::var_os("PYRS_TRACE_BINARY_DIV_RUNTIME").is_some();
         match div_values(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
                 if err.message.contains("unsupported operand type")
                     && err.message.contains("for /") =>
             {
+                if trace {
+                    eprintln!(
+                        "[bin-div] numeric fallback left_type={} right_type={} left={} right={}",
+                        self.value_type_name_for_error(&left),
+                        self.value_type_name_for_error(&right),
+                        format_repr(&left),
+                        format_repr(&right)
+                    );
+                }
+                if let Some(proxy_result) = self.cpython_proxy_true_divide(&left, &right) {
+                    if trace {
+                        match &proxy_result {
+                            Ok(value) => {
+                                eprintln!("[bin-div] used proxy numeric slot -> {}", format_repr(value))
+                            }
+                            Err(proxy_err) => {
+                                eprintln!("[bin-div] proxy numeric slot error -> {}", proxy_err.message)
+                            }
+                        }
+                    }
+                    return proxy_result;
+                }
                 if let Some(value) =
                     self.call_binary_special_method(&left, "__truediv__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
                 {
+                    if trace {
+                        eprintln!("[bin-div] used __truediv__ -> {}", format_repr(&value));
+                    }
                     return Ok(value);
                 }
                 if let Some(value) =
                     self.call_binary_special_method(&right, "__rtruediv__", left)?
+                    && !self.is_not_implemented_singleton(&value)
                 {
+                    if trace {
+                        eprintln!("[bin-div] used __rtruediv__ -> {}", format_repr(&value));
+                    }
                     return Ok(value);
+                }
+                if trace {
+                    eprintln!("[bin-div] no usable __truediv__/__rtruediv__");
                 }
                 Err(err)
             }
@@ -5470,6 +5571,9 @@ impl Vm {
                 if err.message.contains("unsupported operand type")
                     && err.message.contains("for +") =>
             {
+                if let Some(proxy_result) = self.cpython_proxy_add(&left, &right) {
+                    return proxy_result;
+                }
                 if let Some(value) =
                     self.call_binary_special_method(&left, "__add__", right.clone())?
                     && !self.is_not_implemented_singleton(&value)
@@ -5477,6 +5581,184 @@ impl Vm {
                     return Ok(value);
                 }
                 if let Some(value) = self.call_binary_special_method(&right, "__radd__", left)?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_mul_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        let trace = std::env::var_os("PYRS_TRACE_BINARY_MUL_RUNTIME").is_some();
+        match mul_values(left.clone(), right.clone(), &self.heap) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for *") =>
+            {
+                if trace {
+                    eprintln!(
+                        "[bin-mul] numeric fallback left_type={} right_type={} left={} right={}",
+                        self.value_type_name_for_error(&left),
+                        self.value_type_name_for_error(&right),
+                        format_repr(&left),
+                        format_repr(&right)
+                    );
+                }
+                if let Some(proxy_result) = self.cpython_proxy_multiply(&left, &right) {
+                    if trace {
+                        match &proxy_result {
+                            Ok(value) => {
+                                eprintln!("[bin-mul] used proxy numeric slot -> {}", format_repr(value))
+                            }
+                            Err(proxy_err) => {
+                                eprintln!("[bin-mul] proxy numeric slot error -> {}", proxy_err.message)
+                            }
+                        }
+                    }
+                    return proxy_result;
+                }
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__mul__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    if trace {
+                        eprintln!("[bin-mul] used __mul__ -> {}", format_repr(&value));
+                    }
+                    return Ok(value);
+                }
+                if let Some(value) = self.call_binary_special_method(&right, "__rmul__", left)?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    if trace {
+                        eprintln!("[bin-mul] used __rmul__ -> {}", format_repr(&value));
+                    }
+                    return Ok(value);
+                }
+                if trace {
+                    eprintln!("[bin-mul] no usable __mul__/__rmul__");
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_matmul_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        match matmul_values(left.clone(), right.clone()) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for @") =>
+            {
+                if let Some(proxy_result) = self.cpython_proxy_matmul(&left, &right) {
+                    return proxy_result;
+                }
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__matmul__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                if let Some(value) = self.call_binary_special_method(&right, "__rmatmul__", left)?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_sub_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        let trace = std::env::var_os("PYRS_TRACE_BINARY_SUB_RUNTIME").is_some();
+        match sub_values(left.clone(), right.clone(), &self.heap) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for -") =>
+            {
+                if trace {
+                    eprintln!(
+                        "[bin-sub] numeric fallback left_type={} right_type={} left={} right={}",
+                        self.value_type_name_for_error(&left),
+                        self.value_type_name_for_error(&right),
+                        format_repr(&left),
+                        format_repr(&right)
+                    );
+                }
+                if let Some(proxy_result) = self.cpython_proxy_subtract(&left, &right) {
+                    if trace {
+                        match &proxy_result {
+                            Ok(value) => {
+                                eprintln!("[bin-sub] used proxy numeric slot -> {}", format_repr(value))
+                            }
+                            Err(err) => {
+                                eprintln!("[bin-sub] proxy numeric slot error -> {}", err.message)
+                            }
+                        }
+                    }
+                    return proxy_result;
+                }
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__sub__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    if trace {
+                        eprintln!("[bin-sub] used __sub__ -> {}", format_repr(&value));
+                    }
+                    return Ok(value);
+                }
+                if let Some(value) = self.call_binary_special_method(&right, "__rsub__", left)?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    if trace {
+                        eprintln!("[bin-sub] used __rsub__ -> {}", format_repr(&value));
+                    }
+                    return Ok(value);
+                }
+                if trace {
+                    eprintln!("[bin-sub] no usable __sub__/__rsub__");
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_or_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        match or_values(left.clone(), right.clone(), &self.heap) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for |") =>
+            {
+                if let Some(value) = self.call_binary_special_method(&left, "__or__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    return Ok(value);
+                }
+                if let Some(value) = self.call_binary_special_method(&right, "__ror__", left)?
                     && !self.is_not_implemented_singleton(&value)
                 {
                     return Ok(value);
@@ -7223,12 +7505,15 @@ impl Vm {
                 .posonly_params
                 .iter()
                 .chain(frame.code.params.iter())
-                .find_map(|name| Vm::frame_local_value(frame, name))
-                .or_else(|| Vm::frame_local_value(frame, "self"))
+                .find_map(|name| {
+                    Vm::frame_local_value(frame, name).or_else(|| frame_cell_value(frame, name))
+                })
+                .or_else(|| {
+                    Vm::frame_local_value(frame, "self")
+                        .or_else(|| frame_cell_value(frame, "self"))
+                })
                 .ok_or_else(|| {
-                    RuntimeError::new(
-                        "super(): unable to determine object for zero-argument super()",
-                    )
+                    RuntimeError::new("super(): unable to determine object for zero-argument super()")
                 })?;
 
             let class_from_locals =

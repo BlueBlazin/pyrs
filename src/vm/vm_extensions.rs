@@ -34,9 +34,9 @@ use super::{
     BYTES_BACKING_STORAGE_ATTR, ExtensionCallableKind, GeneratorResumeKind, GeneratorResumeOutcome,
     InternalCallOutcome, NativeCallResult, ObjRef, STR_BACKING_STORAGE_ATTR, Vm, add_values,
     and_values, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value_checked, div_values, exception_type_is_subclass, floor_div_values, invert_value,
-    is_truthy, lshift_values, matmul_values, memoryview_bounds, mod_values, mul_values, neg_value,
-    or_values, pos_value, pow_values, rshift_values, sub_values, value_to_int,
+    dict_set_value_checked, exception_type_is_subclass, floor_div_values, invert_value,
+    is_truthy, lshift_values, memoryview_bounds, mod_values, mul_values, neg_value,
+    or_values, pos_value, pow_values, rshift_values, value_to_int,
     vm_current_thread_ident, vm_os_thread_ident, xor_values,
 };
 
@@ -48,6 +48,34 @@ type Cwchar = i32;
 const CPY_PROXY_CLASS_NAME: &str = "__pyrs_cpython_proxy__";
 const CPY_PROXY_PTR_ATTR: &str = "__pyrs_cpython_proxy_ptr__";
 const CPY_PROXY_MARKER_ATTR: &str = "__pyrs_cpython_proxy_marker__";
+const CPY_EXCEPTION_TYPE_PTR_ATTR: &str = "__pyrs_cpython_exception_type_ptr__";
+static TRACE_NUMPY_TYPEDICT_PTR: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static PROXY_REFRESH_ACTIVE: Cell<bool> = const { Cell::new(false) };
+    static CPY_PROXY_GET_ITER_ACTIVE: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+}
+
+struct ProxyRefreshReentryGuard;
+
+impl ProxyRefreshReentryGuard {
+    fn enter() -> Option<Self> {
+        let allowed = PROXY_REFRESH_ACTIVE.with(|flag| {
+            if flag.get() {
+                false
+            } else {
+                flag.set(true);
+                true
+            }
+        });
+        if allowed { Some(Self) } else { None }
+    }
+}
+
+impl Drop for ProxyRefreshReentryGuard {
+    fn drop(&mut self) {
+        PROXY_REFRESH_ACTIVE.with(|flag| flag.set(false));
+    }
+}
 
 fn is_cpython_proxy_class(class_data: &ClassObject) -> bool {
     matches!(
@@ -173,6 +201,12 @@ struct CpythonBytesCompatObject {
     ob_base: CpythonVarObjectHead,
     ob_shash: isize,
     ob_sval: [u8; 1],
+}
+
+#[repr(C)]
+struct CpythonFloatCompatObject {
+    ob_base: CpythonObjectHead,
+    ob_fval: f64,
 }
 
 #[repr(C)]
@@ -433,6 +467,20 @@ struct CpythonMappingMethods {
     mp_length: *mut c_void,
     mp_subscript: *mut c_void,
     mp_ass_subscript: *mut c_void,
+}
+
+#[repr(C)]
+struct CpythonSequenceMethods {
+    sq_length: *mut c_void,
+    sq_concat: *mut c_void,
+    sq_repeat: *mut c_void,
+    sq_item: *mut c_void,
+    was_sq_slice: *mut c_void,
+    sq_ass_item: *mut c_void,
+    was_sq_ass_slice: *mut c_void,
+    sq_contains: *mut c_void,
+    sq_inplace_concat: *mut c_void,
+    sq_inplace_repeat: *mut c_void,
 }
 
 #[repr(C)]
@@ -712,11 +760,28 @@ unsafe fn cpython_external_capsule_pointer(
         // SAFETY: capsule name pointer is part of the external capsule object.
         let actual_ptr = unsafe { (*raw).name };
         if actual_ptr.is_null() {
+            if std::env::var_os("PYRS_TRACE_CPY_CAPSULE").is_some() {
+                eprintln!(
+                    "[cpy-capsule] external name mismatch ptr={:p} requested={} actual=<null> type={:p}",
+                    capsule,
+                    requested.to_string_lossy(),
+                    ty,
+                );
+            }
             return Err("capsule name mismatch".to_string());
         }
         // SAFETY: `actual_ptr` is validated non-null above.
         let actual = unsafe { CStr::from_ptr(actual_ptr) };
         if requested.to_bytes() != actual.to_bytes() {
+            if std::env::var_os("PYRS_TRACE_CPY_CAPSULE").is_some() {
+                eprintln!(
+                    "[cpy-capsule] external name mismatch ptr={:p} requested={} actual={} type={:p}",
+                    capsule,
+                    requested.to_string_lossy(),
+                    actual.to_string_lossy(),
+                    ty,
+                );
+            }
             return Err(format!(
                 "capsule name mismatch (requested='{}', actual='{}')",
                 requested.to_string_lossy(),
@@ -1044,9 +1109,34 @@ fn cpython_type_for_value(value: &Value) -> *mut c_void {
         Value::Module(_) => std::ptr::addr_of_mut!(PyModule_Type).cast(),
         Value::Slice(_) => std::ptr::addr_of_mut!(PySlice_Type).cast(),
         Value::Super(_) => std::ptr::addr_of_mut!(PySuper_Type).cast(),
+        Value::BoundMethod(_) => std::ptr::addr_of_mut!(PyMethod_Type).cast(),
         Value::Class(_) => std::ptr::addr_of_mut!(PyType_Type).cast(),
         Value::Builtin(_) => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),
         _ => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),
+    }
+}
+
+fn cpython_objref_from_value(value: Value) -> Option<ObjRef> {
+    match value {
+        Value::List(obj)
+        | Value::Tuple(obj)
+        | Value::Dict(obj)
+        | Value::DictKeys(obj)
+        | Value::Set(obj)
+        | Value::FrozenSet(obj)
+        | Value::Bytes(obj)
+        | Value::ByteArray(obj)
+        | Value::MemoryView(obj)
+        | Value::Iterator(obj)
+        | Value::Generator(obj)
+        | Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Super(obj)
+        | Value::BoundMethod(obj)
+        | Value::Function(obj)
+        | Value::Cell(obj) => Some(obj),
+        _ => None,
     }
 }
 
@@ -1167,14 +1257,118 @@ fn cpython_value_debug_tag(value: &Value) -> String {
         }
         Value::Instance(_) => "Instance".to_string(),
         Value::Super(_) => "Super".to_string(),
-        Value::BoundMethod(_) => "BoundMethod".to_string(),
-        Value::Function(_) => "Function".to_string(),
+        Value::BoundMethod(bound_obj) => {
+            if let Object::BoundMethod(bound_data) = &*bound_obj.kind()
+                && let Object::Function(func_data) = &*bound_data.function.kind()
+            {
+                format!("BoundMethod({})", func_data.code.name)
+            } else {
+                "BoundMethod".to_string()
+            }
+        }
+        Value::Function(func_obj) => {
+            if let Object::Function(func_data) = &*func_obj.kind() {
+                format!(
+                    "Function({}@{})",
+                    func_data.code.name, func_data.code.filename
+                )
+            } else {
+                "Function".to_string()
+            }
+        }
         Value::Cell(_) => "Cell".to_string(),
         Value::Exception(err) => format!("Exception({})", err.name),
         Value::ExceptionType(name) => format!("ExceptionType({name})"),
         Value::Slice(_) => "Slice".to_string(),
         Value::Code(_) => "Code".to_string(),
         Value::Builtin(builtin) => format!("Builtin({builtin:?})"),
+    }
+}
+
+fn cpython_debug_ufunc_attr_summary(value: &Value, depth: usize) -> String {
+    if depth == 0 {
+        return cpython_value_debug_tag(value);
+    }
+    match value {
+        Value::None => "None".to_string(),
+        Value::Bool(flag) => format!("Bool({flag})"),
+        Value::Int(number) => format!("Int({number})"),
+        Value::Float(number) => format!("Float({number})"),
+        Value::Str(text) => format!("Str({text})"),
+        Value::Class(class_obj) => {
+            if let Object::Class(class_data) = &*class_obj.kind() {
+                format!("Class({})", class_data.name)
+            } else {
+                "Class(<invalid>)".to_string()
+            }
+        }
+        Value::Instance(instance_obj) => {
+            if let Object::Instance(instance_data) = &*instance_obj.kind() {
+                if let Object::Class(class_data) = &*instance_data.class.kind() {
+                    return format!("Instance({})", class_data.name);
+                }
+            }
+            "Instance".to_string()
+        }
+        Value::Tuple(tuple_obj) => {
+            if let Object::Tuple(items) = &*tuple_obj.kind() {
+                let rendered = items
+                    .iter()
+                    .take(6)
+                    .map(|item| cpython_debug_ufunc_attr_summary(item, depth - 1))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if items.len() > 6 {
+                    format!("Tuple(len={}, [{} ...])", items.len(), rendered)
+                } else {
+                    format!("Tuple([{}])", rendered)
+                }
+            } else {
+                "Tuple(<invalid>)".to_string()
+            }
+        }
+        Value::List(list_obj) => {
+            if let Object::List(items) = &*list_obj.kind() {
+                let rendered = items
+                    .iter()
+                    .take(6)
+                    .map(|item| cpython_debug_ufunc_attr_summary(item, depth - 1))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if items.len() > 6 {
+                    format!("List(len={}, [{} ...])", items.len(), rendered)
+                } else {
+                    format!("List([{}])", rendered)
+                }
+            } else {
+                "List(<invalid>)".to_string()
+            }
+        }
+        _ => cpython_value_debug_tag(value),
+    }
+}
+
+fn cpython_debug_ufunc_exception_summary(value: &Value) -> String {
+    match value {
+        Value::Exception(exception_obj) => {
+            let attrs = exception_obj.attrs.borrow();
+            let mut parts = Vec::new();
+            for key in ["ufunc", "dtypes", "casting", "signature"] {
+                if let Some(attr_value) = attrs.get(key) {
+                    parts.push(format!(
+                        "{}={}",
+                        key,
+                        cpython_debug_ufunc_attr_summary(attr_value, 3)
+                    ));
+                }
+            }
+            if parts.is_empty() {
+                format!("Exception({})", exception_obj.name)
+            } else {
+                format!("Exception({}; {})", exception_obj.name, parts.join(", "))
+            }
+        }
+        _ => cpython_debug_ufunc_attr_summary(value, 3),
     }
 }
 
@@ -1268,6 +1462,51 @@ fn cpython_exception_value_from_ptr(raw: usize) -> Option<Value> {
     None
 }
 
+fn cpython_exception_ptr_for_name(name: &str) -> Option<*mut c_void> {
+    macro_rules! match_exception_name {
+        ($symbol:ident, $exception_name:literal) => {
+            if name == $exception_name {
+                // SAFETY: exception symbol pointers are process-global.
+                let ptr = unsafe { $symbol };
+                if !ptr.is_null() {
+                    return Some(ptr);
+                }
+            }
+        };
+    }
+    for_each_cpython_exception_symbol!(match_exception_name);
+    None
+}
+
+fn cpython_exception_name_from_runtime_message(message: &str) -> Option<String> {
+    let candidate = if message.starts_with("Traceback (most recent call last):") {
+        message
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim)
+            .unwrap_or(message.trim())
+    } else {
+        message.trim()
+    };
+    if candidate.is_empty() {
+        return None;
+    }
+    let prefix = candidate.split_once(':').map(|(name, _)| name).unwrap_or(candidate);
+    if prefix
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && (prefix.ends_with("Error")
+            || prefix.ends_with("Warning")
+            || prefix == "Exception"
+            || prefix == "BaseException")
+    {
+        Some(prefix.to_string())
+    } else {
+        None
+    }
+}
+
 unsafe fn ensure_cpython_exception_symbol(slot: *mut *mut c_void, type_ptr: *mut c_void) {
     // SAFETY: caller passes valid pointer to static exception symbol slot.
     if unsafe { (*slot).is_null() } {
@@ -1297,6 +1536,7 @@ fn initialize_cpython_compat_type_objects() {
         PyType_Type.tp_base = std::ptr::addr_of_mut!(PyBaseObject_Type);
         PyCFunction_Type.tp_call = cpython_cfunction_tp_call as *mut c_void;
         PyCFunction_Type.tp_getattro = cpython_cfunction_tp_getattro as *mut c_void;
+        PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
 
         let type_objects: &mut [*mut CpythonTypeObject] = &mut [
             std::ptr::addr_of_mut!(PyBaseObject_Type),
@@ -1336,6 +1576,7 @@ fn initialize_cpython_compat_type_objects() {
             std::ptr::addr_of_mut!(PyMap_Type),
             std::ptr::addr_of_mut!(PyMemberDescr_Type),
             std::ptr::addr_of_mut!(PyMemoryView_Type),
+            std::ptr::addr_of_mut!(PyMethod_Type),
             std::ptr::addr_of_mut!(PyMethodDescr_Type),
             std::ptr::addr_of_mut!(PyModuleDef_Type),
             std::ptr::addr_of_mut!(PyModule_Type),
@@ -1367,6 +1608,39 @@ fn initialize_cpython_compat_type_objects() {
             }
             (**ty).tp_flags |= PY_TPFLAGS_READY;
         }
+        // Baseline tp_basicsize/tp_itemsize values mirror CPython 3.14 ABI on 64-bit
+        // builds; Cython extension imports validate these and fail hard when they stay
+        // at the default compact-object placeholder values.
+        PyBaseObject_Type.tp_basicsize = 16;
+        PyBaseObject_Type.tp_itemsize = 0;
+        PyType_Type.tp_basicsize = 936;
+        PyType_Type.tp_itemsize = 40;
+        PyLong_Type.tp_basicsize = 24;
+        PyLong_Type.tp_itemsize = 4;
+        PyBool_Type.tp_basicsize = 24;
+        PyBool_Type.tp_itemsize = 4;
+        PyFloat_Type.tp_basicsize = 24;
+        PyFloat_Type.tp_itemsize = 0;
+        PyBytes_Type.tp_basicsize = 33;
+        PyBytes_Type.tp_itemsize = 1;
+        PyUnicode_Type.tp_basicsize = 64;
+        PyUnicode_Type.tp_itemsize = 0;
+        PyTuple_Type.tp_basicsize = 32;
+        PyTuple_Type.tp_itemsize = 8;
+        PyList_Type.tp_basicsize = 40;
+        PyList_Type.tp_itemsize = 0;
+        PyDict_Type.tp_basicsize = 48;
+        PyDict_Type.tp_itemsize = 0;
+        PySet_Type.tp_basicsize = 200;
+        PySet_Type.tp_itemsize = 0;
+        PySlice_Type.tp_basicsize = 40;
+        PySlice_Type.tp_itemsize = 0;
+        PyModule_Type.tp_basicsize = 56;
+        PyModule_Type.tp_itemsize = 0;
+        PyMethod_Type.tp_basicsize = 48;
+        PyMethod_Type.tp_itemsize = 0;
+        PyCapsule_Type.tp_basicsize = 64;
+        PyCapsule_Type.tp_itemsize = 0;
         PyBaseObject_Type.tp_flags |= PY_TPFLAGS_BASETYPE | PY_TPFLAGS_READY;
         PyType_Type.tp_flags |= PY_TPFLAGS_BASETYPE | PY_TPFLAGS_TYPE_SUBCLASS | PY_TPFLAGS_READY;
 
@@ -1404,7 +1678,16 @@ thread_local! {
     static CPYTHON_REPR_STACK: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
-static MAIN_THREAD_STATE_TOKEN: u8 = 0;
+const CPYTHON_THREAD_STATE_COMPAT_SIZE: usize = 4096;
+
+#[repr(C, align(16))]
+struct CpythonThreadStateCompat {
+    _bytes: [u8; CPYTHON_THREAD_STATE_COMPAT_SIZE],
+}
+
+static mut MAIN_THREAD_STATE_STORAGE: CpythonThreadStateCompat = CpythonThreadStateCompat {
+    _bytes: [0; CPYTHON_THREAD_STATE_COMPAT_SIZE],
+};
 static CURRENT_THREAD_STATE_PTR: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_THREAD_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_THREAD_LOCK_REGISTRY: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
@@ -1443,6 +1726,8 @@ static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStr
     OnceLock::new();
 static CPYTHON_HEAP_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonHeapTypeInfo>>> =
     OnceLock::new();
+static CPYTHON_INTERNED_UNICODE_REGISTRY: OnceLock<Mutex<CpythonInternedUnicodeRegistry>> =
+    OnceLock::new();
 
 struct CpythonThreadLock {
     state: Mutex<bool>,
@@ -1478,12 +1763,58 @@ struct CpythonPendingCall {
     arg: usize,
 }
 
+#[derive(Default)]
+struct CpythonInternedUnicodeRegistry {
+    by_text: HashMap<String, usize>,
+    by_ptr: HashMap<usize, String>,
+}
+
 fn cpython_main_thread_state_ptr() -> usize {
-    std::ptr::addr_of!(MAIN_THREAD_STATE_TOKEN) as usize
+    (&raw mut MAIN_THREAD_STATE_STORAGE) as usize
 }
 
 fn cpython_thread_state_allocations() -> &'static Mutex<HashSet<usize>> {
     CPYTHON_THREAD_STATE_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn cpython_interned_unicode_registry() -> &'static Mutex<CpythonInternedUnicodeRegistry> {
+    CPYTHON_INTERNED_UNICODE_REGISTRY
+        .get_or_init(|| Mutex::new(CpythonInternedUnicodeRegistry::default()))
+}
+
+fn cpython_lookup_interned_unicode_ptr(text: &str) -> Option<*mut c_void> {
+    cpython_interned_unicode_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.by_text.get(text).copied())
+        .map(|raw| raw as *mut c_void)
+}
+
+fn cpython_lookup_interned_unicode_text(ptr: *mut c_void) -> Option<String> {
+    cpython_interned_unicode_registry()
+        .lock()
+        .ok()
+        .and_then(|registry| registry.by_ptr.get(&(ptr as usize)).cloned())
+}
+
+fn cpython_register_interned_unicode(text: &str, ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    if let Ok(mut registry) = cpython_interned_unicode_registry().lock() {
+        registry.by_text.insert(text.to_string(), ptr as usize);
+        registry.by_ptr.insert(ptr as usize, text.to_string());
+    }
+}
+
+fn cpython_is_interned_unicode_ptr(ptr: *mut c_void) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+    cpython_interned_unicode_registry()
+        .lock()
+        .ok()
+        .is_some_and(|registry| registry.by_ptr.contains_key(&(ptr as usize)))
 }
 
 fn cpython_thread_lock_registry() -> &'static Mutex<HashSet<usize>> {
@@ -1737,6 +2068,7 @@ struct ModuleCapiContext {
     interpreter_state_dict_handle: Option<PyrsObjectHandle>,
     codec_error_handlers: HashMap<String, usize>,
     state_modules_by_def: HashMap<usize, usize>,
+    exception_type_ptr_by_name: HashMap<String, usize>,
 }
 
 impl Drop for ModuleCapiContext {
@@ -1807,7 +2139,20 @@ impl Drop for ModuleCapiContext {
         }
         let mut escaped_handles: HashSet<PyrsObjectHandle> = HashSet::new();
         let mut preserve_aux_allocations = false;
-        for raw in self.cpython_allocations.drain(..) {
+        let drained_cpython_allocations = std::mem::take(&mut self.cpython_allocations);
+        for raw in drained_cpython_allocations {
+            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            let raw_addr = raw as usize;
+            if raw_addr < MIN_VALID_PTR || raw_addr % std::mem::align_of::<CpythonObjectHead>() != 0
+            {
+                if std::env::var_os("PYRS_TRACE_CPY_DROP").is_some() {
+                    eprintln!(
+                        "[cpy-drop] skipping invalid compat allocation ptr={:p}",
+                        raw.cast::<c_void>()
+                    );
+                }
+                continue;
+            }
             if self.keep_cpython_allocations_on_drop && !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
@@ -1819,17 +2164,40 @@ impl Drop for ModuleCapiContext {
                 }
                 if let Some(handle) = self.cpython_objects_by_ptr.get(&(raw as usize)).copied() {
                     escaped_handles.insert(handle);
+                    if let Some(value) = self.object_value(handle) {
+                        vm.extension_cpython_ptr_values.insert(raw as usize, value);
+                    }
                 }
                 preserve_aux_allocations = true;
                 continue;
             }
             let mut keep_pinned = false;
+            let interned_unicode = cpython_is_interned_unicode_ptr(raw.cast::<c_void>());
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
                 keep_pinned = vm
                     .extension_pinned_cpython_allocation_set
                     .contains(&(raw as usize));
+                if !keep_pinned {
+                    if interned_unicode {
+                        if vm
+                            .extension_pinned_cpython_allocation_set
+                            .insert(raw as usize)
+                        {
+                            vm.extension_pinned_cpython_allocations.push(raw.cast());
+                        }
+                        if let Some(handle) = self.cpython_objects_by_ptr.get(&(raw as usize)).copied()
+                        {
+                            escaped_handles.insert(handle);
+                            if let Some(value) = self.object_value(handle) {
+                                vm.extension_cpython_ptr_values.insert(raw as usize, value);
+                            }
+                        }
+                        preserve_aux_allocations = true;
+                        keep_pinned = true;
+                    }
+                }
                 if !keep_pinned {
                     // CPython objects that survive past this call context increment refcount.
                     // Keep those allocations process-stable instead of freeing them on context drop.
@@ -1851,6 +2219,9 @@ impl Drop for ModuleCapiContext {
                         if let Some(handle) = self.cpython_objects_by_ptr.get(&(raw as usize)).copied()
                         {
                             escaped_handles.insert(handle);
+                            if let Some(value) = self.object_value(handle) {
+                                vm.extension_cpython_ptr_values.insert(raw as usize, value);
+                            }
                         }
                         preserve_aux_allocations = true;
                         keep_pinned = true;
@@ -1938,6 +2309,101 @@ impl Drop for ModuleCapiContext {
 }
 
 impl ModuleCapiContext {
+    fn is_probable_type_object_without_metatype(object: *mut c_void) -> bool {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if object.is_null() {
+            return false;
+        }
+        let object_addr = object as usize;
+        if object_addr < MIN_VALID_PTR || object_addr % std::mem::align_of::<usize>() != 0 {
+            return false;
+        }
+        // SAFETY: guarded by non-null + minimum-address + alignment checks.
+        unsafe {
+            let ty = object.cast::<CpythonTypeObject>();
+            let Some(_head) = ty.cast::<CpythonObjectHead>().as_ref() else {
+                return false;
+            };
+            let tp_name = (*ty).tp_name;
+            if tp_name.is_null() {
+                return false;
+            }
+            if c_name_to_string(tp_name).is_err() {
+                return false;
+            }
+            let basicsize = (*ty).tp_basicsize;
+            basicsize > 0 && basicsize < (1 << 20)
+        }
+    }
+
+    fn is_probable_external_cpython_object_ptr(object: *mut c_void) -> bool {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if object.is_null() {
+            return false;
+        }
+        let object_addr = object as usize;
+        if object_addr < MIN_VALID_PTR || object_addr % std::mem::align_of::<usize>() != 0 {
+            return false;
+        }
+        // SAFETY: guarded by non-null + minimum-address + alignment checks.
+        unsafe {
+            let Some(head) = object.cast::<CpythonObjectHead>().as_ref() else {
+                return false;
+            };
+            let refcnt = head.ob_refcnt;
+            if refcnt == 0 {
+                return false;
+            }
+            let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+            if type_ptr.is_null() {
+                return Self::is_probable_type_object_without_metatype(object);
+            }
+            let type_addr = type_ptr as usize;
+            if type_addr < MIN_VALID_PTR || type_addr % std::mem::align_of::<usize>() != 0 {
+                return false;
+            }
+            let Some(type_head) = type_ptr.cast::<CpythonObjectHead>().as_ref() else {
+                return false;
+            };
+            if type_head.ob_refcnt == 0 {
+                return false;
+            }
+            let tp_name = (*type_ptr).tp_name;
+            if tp_name.is_null() {
+                return false;
+            }
+            c_name_to_string(tp_name).is_ok()
+        }
+    }
+
+    fn owned_pointer_allows_proxy_fallback(object: *mut c_void) -> bool {
+        // SAFETY: caller validates that `object` points to a CPython object header.
+        let object_type = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if object_type.is_null() {
+            return false;
+        }
+        let allowed = [
+            std::ptr::addr_of_mut!(PyCFunction_Type),
+            std::ptr::addr_of_mut!(PyMethodDescr_Type),
+            std::ptr::addr_of_mut!(PyGetSetDescr_Type),
+            std::ptr::addr_of_mut!(PyMemberDescr_Type),
+            std::ptr::addr_of_mut!(PyWrapperDescr_Type),
+        ];
+        allowed.iter().any(|candidate| {
+            if object_type == *candidate {
+                return true;
+            }
+            // SAFETY: both pointers are valid type objects in this path.
+            unsafe { PyType_IsSubtype(object_type.cast(), (*candidate).cast()) != 0 }
+        })
+    }
+
     fn new(vm: *mut Vm, module: ObjRef) -> Self {
         initialize_cpython_compat_type_objects();
         Self {
@@ -1975,6 +2441,7 @@ impl ModuleCapiContext {
             interpreter_state_dict_handle: None,
             codec_error_handlers: HashMap::new(),
             state_modules_by_def: HashMap::new(),
+            exception_type_ptr_by_name: HashMap::new(),
         }
     }
 
@@ -2041,13 +2508,22 @@ impl ModuleCapiContext {
                 } else {
                     // SAFETY: VM pointer is valid while CPython init context is active.
                     let vm = unsafe { &mut *self.vm };
-                    format!("{} object", vm.value_type_name_for_error(&other))
+                    if let Ok(text) =
+                        vm.call_builtin(BuiltinFunction::Str, vec![other.clone()], HashMap::new())
+                        && let Value::Str(message) = text
+                        && !message.is_empty()
+                    {
+                        message
+                    } else {
+                        format!("{} object", vm.value_type_name_for_error(&other))
+                    }
                 }
             }
             None => "error".to_string(),
         }
     }
 
+    #[track_caller]
     fn set_error_state(
         &mut self,
         ptype: *mut c_void,
@@ -2055,12 +2531,126 @@ impl ModuleCapiContext {
         ptraceback: *mut c_void,
         message: String,
     ) {
+        if std::env::var_os("PYRS_TRACE_CPY_SET_ERROR_STATE").is_some() {
+            let caller = std::panic::Location::caller();
+            let exception_type_name = cpython_exception_class_name_from_ptr(ptype)
+                .unwrap_or_else(|| "<none>".to_string());
+            eprintln!(
+                "[cpy-err-state] caller={}:{} ptype={:p}({}) exc_type={} pvalue={:p} msg={}",
+                caller.file(),
+                caller.line(),
+                ptype,
+                cpython_type_name_for_object_ptr(ptype),
+                exception_type_name,
+                pvalue,
+                message
+            );
+        }
+        if !ptype.is_null()
+            && let Some(type_name) = cpython_exception_class_name_from_ptr(ptype)
+        {
+            let type_ptr = cpython_exception_type_ptr(ptype);
+            if !type_ptr.is_null() {
+                self.exception_type_ptr_by_name
+                    .insert(type_name, type_ptr as usize);
+            }
+        }
+        if !ptype.is_null()
+            && !pvalue.is_null()
+            && let Some(value) = self.cpython_value_from_ptr_or_proxy(pvalue)
+        {
+            self.stamp_exception_type_hint_on_value(&value, ptype);
+        }
+        if std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some()
+            && message.contains("_UFunc")
+        {
+            let caller = std::panic::Location::caller();
+            let ptype_name = cpython_exception_class_name_from_ptr(ptype)
+                .unwrap_or_else(|| "<none>".to_string());
+            let stack = if self.vm.is_null() {
+                String::new()
+            } else {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &*self.vm };
+                vm.frames
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                    .collect::<Vec<_>>()
+                    .join(" <- ")
+            };
+            eprintln!(
+                "[cpy-ufunc-err] caller={}:{} ptype={:p} ptype_name={} pvalue={:p} stack={}",
+                caller.file(),
+                caller.line(),
+                ptype,
+                ptype_name,
+                pvalue,
+                stack
+            );
+            if let Some(value) = self.cpython_value_from_ptr_or_proxy(pvalue) {
+                eprintln!(
+                    "[cpy-ufunc-err-value] {}",
+                    cpython_debug_ufunc_exception_summary(&value)
+                );
+            }
+        }
         self.current_error = Some(CpythonErrorState {
             ptype,
             pvalue,
             ptraceback,
         });
         self.set_error_message(message);
+    }
+
+    fn exception_name_from_value(&self, value: &Value) -> Option<String> {
+        match value {
+            Value::Exception(exception_obj) => Some(exception_obj.name.clone()),
+            Value::ExceptionType(name) => Some(name.clone()),
+            Value::Class(class_obj) => match &*class_obj.kind() {
+                Object::Class(class_data) => Some(class_data.name.clone()),
+                _ => None,
+            },
+            Value::Instance(instance_obj) => {
+                let Object::Instance(instance_data) = &*instance_obj.kind() else {
+                    return None;
+                };
+                let Object::Class(class_data) = &*instance_data.class.kind() else {
+                    return None;
+                };
+                Some(class_data.name.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn stamp_exception_type_hint_on_value(&mut self, value: &Value, ptype: *mut c_void) {
+        if ptype.is_null() {
+            return;
+        }
+        let raw_ptr = ptype as usize;
+        let raw_ptr_i64 = raw_ptr as i64;
+        match value {
+            Value::Exception(exception_obj) => {
+                exception_obj.attrs.borrow_mut().insert(
+                    CPY_EXCEPTION_TYPE_PTR_ATTR.to_string(),
+                    Value::Int(raw_ptr_i64),
+                );
+            }
+            Value::Instance(instance_obj) => {
+                if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
+                    instance_data.attrs.insert(
+                        CPY_EXCEPTION_TYPE_PTR_ATTR.to_string(),
+                        Value::Int(raw_ptr_i64),
+                    );
+                }
+            }
+            _ => {}
+        }
+        if let Some(name) = self.exception_name_from_value(value) {
+            self.exception_type_ptr_by_name.insert(name, raw_ptr);
+        }
     }
 
     #[track_caller]
@@ -2097,13 +2687,12 @@ impl ModuleCapiContext {
     #[track_caller]
     fn set_error(&mut self, message: impl Into<String>) {
         let message = message.into();
-        let pvalue = self.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
-        self.set_error_state(
-            unsafe { PyExc_RuntimeError },
-            pvalue,
-            std::ptr::null_mut(),
-            message,
-        );
+        self.current_error = Some(CpythonErrorState {
+            ptype: unsafe { PyExc_RuntimeError },
+            pvalue: std::ptr::null_mut(),
+            ptraceback: std::ptr::null_mut(),
+        });
+        self.set_error_message(message);
     }
 
     fn clear_error(&mut self) {
@@ -2188,7 +2777,16 @@ impl ModuleCapiContext {
                 slot.cpython_destructor,
             )
         });
-        let (refcount, ob_type, tuple_items, list_items, dict_len, bytes_payload, class_state) =
+        let (
+            refcount,
+            ob_type,
+            tuple_items,
+            list_items,
+            dict_len,
+            bytes_payload,
+            class_state,
+            float_value,
+        ) =
             match self.objects.get(&handle).map(|slot| {
                 (
                     slot.refcount.max(1) as isize,
@@ -2234,11 +2832,15 @@ impl ModuleCapiContext {
                         },
                         _ => None,
                     },
+                    match &slot.value {
+                        Value::Float(value) => Some(*value),
+                        _ => None,
+                    },
                 )
             }) {
                 Some(state) => state,
                 None if capsule_state.is_some() => {
-                    (1, std::ptr::null_mut(), None, None, None, None, None)
+                    (1, std::ptr::null_mut(), None, None, None, None, None, None)
                 }
                 None => {
                     self.set_error(format!("invalid object handle {handle}"));
@@ -2269,6 +2871,22 @@ impl ModuleCapiContext {
                 });
             }
             raw_capsule.cast::<CpythonCompatObject>()
+        } else if let Some(value) = float_value {
+            // SAFETY: allocate storage for CPython float-compatible header.
+            let raw_float = unsafe { malloc(std::mem::size_of::<CpythonFloatCompatObject>()) }
+                .cast::<CpythonFloatCompatObject>();
+            if raw_float.is_null() {
+                self.set_error("out of memory allocating CPython float compat object");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: initialize float header and payload fields.
+            unsafe {
+                raw_float.write(CpythonFloatCompatObject {
+                    ob_base: CpythonObjectHead { ob_refcnt: refcount, ob_type },
+                    ob_fval: value,
+                });
+            }
+            raw_float.cast::<CpythonCompatObject>()
         } else if let Some(dict_len) = dict_len {
             // SAFETY: allocate storage for CPython dict-compatible header.
             let raw_dict = unsafe { malloc(std::mem::size_of::<CpythonDictCompatObject>()) }
@@ -2521,14 +3139,6 @@ impl ModuleCapiContext {
         self.cpython_ptr_by_handle.insert(handle, raw.cast());
         self.cpython_allocations.push(raw);
         self.cpython_owned_ptrs.insert(raw as usize);
-        if !self.vm.is_null()
-            && let Some(slot) = self.objects.get(&handle)
-        {
-            // SAFETY: VM pointer is valid for active C-API context lifetime.
-            let vm = unsafe { &mut *self.vm };
-            vm.extension_cpython_ptr_values
-                .insert(raw as usize, slot.value.clone());
-        }
         raw.cast()
     }
 
@@ -2603,6 +3213,7 @@ impl ModuleCapiContext {
                     std::ptr::null_mut(),
                 );
                 if !cfunction_ptr.is_null() {
+                    self.cache_cpython_ptr_value(cfunction_ptr, &value);
                     return cfunction_ptr;
                 }
             }
@@ -2634,6 +3245,7 @@ impl ModuleCapiContext {
             }
             let cfunction_ptr = self.alloc_cpython_builtin_cfunction_ptr(*builtin);
             if !cfunction_ptr.is_null() {
+                self.cache_cpython_ptr_value(cfunction_ptr, &value);
                 return cfunction_ptr;
             }
         }
@@ -2652,8 +3264,33 @@ impl ModuleCapiContext {
             }
             _ => {}
         }
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &*self.vm };
+            if vm.builtins.get("Ellipsis").is_some_and(|built| built == &value) {
+                // SAFETY: singleton addresses are process-lifetime stable.
+                return std::ptr::addr_of_mut!(_Py_EllipsisObject).cast();
+            }
+            if vm
+                .builtins
+                .get("NotImplemented")
+                .is_some_and(|built| built == &value)
+            {
+                // SAFETY: singleton addresses are process-lifetime stable.
+                return std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast();
+            }
+        }
         let handle = self.alloc_object(value);
         self.alloc_cpython_ptr_for_handle(handle)
+    }
+
+    fn cache_cpython_ptr_value(&mut self, ptr: *mut c_void, value: &Value) {
+        if ptr.is_null() || self.cpython_objects_by_ptr.contains_key(&(ptr as usize)) {
+            return;
+        }
+        let handle = self.alloc_object(value.clone());
+        self.cpython_objects_by_ptr.insert(ptr as usize, handle);
+        self.cpython_ptr_by_handle.insert(handle, ptr);
     }
 
     fn cpython_handle_from_ptr(&mut self, object: *mut c_void) -> Option<PyrsObjectHandle> {
@@ -2698,6 +3335,24 @@ impl ModuleCapiContext {
         if raw == std::ptr::addr_of!(_Py_FalseStruct) as usize {
             return Some(Value::Bool(false));
         }
+        if raw == std::ptr::addr_of!(_Py_EllipsisObject) as usize {
+            if !self.vm.is_null() {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &*self.vm };
+                if let Some(ellipsis) = vm.builtins.get("Ellipsis").cloned() {
+                    return Some(ellipsis);
+                }
+            }
+        }
+        if raw == std::ptr::addr_of!(_Py_NotImplementedStruct) as usize {
+            if !self.vm.is_null() {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &*self.vm };
+                if let Some(not_implemented) = vm.builtins.get("NotImplemented").cloned() {
+                    return Some(not_implemented);
+                }
+            }
+        }
         if let Some(type_value) = self.cpython_builtin_type_value_from_ptr(object) {
             return Some(type_value);
         }
@@ -2713,6 +3368,14 @@ impl ModuleCapiContext {
             }
             return Some(exception_value);
         }
+        if let Some(handle) = self.cpython_handle_from_ptr(object) {
+            if !self.objects.contains_key(&handle) && self.capsules.contains_key(&handle) {
+                return self.cpython_external_proxy_value(object);
+            }
+            self.sync_value_from_cpython_storage(handle, object);
+            self.refresh_external_proxy_instance_type(handle, object);
+            return self.object_value(handle);
+        }
         if !self.vm.is_null() {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
@@ -2720,52 +3383,73 @@ impl ModuleCapiContext {
                 return Some(value);
             }
         }
-        let handle = self.cpython_handle_from_ptr(object)?;
-        if !self.objects.contains_key(&handle) && self.capsules.contains_key(&handle) {
-            return self.cpython_external_proxy_value(object);
+        if let Some(text) = cpython_lookup_interned_unicode_text(object) {
+            return Some(Value::Str(text));
         }
-        if raw != std::ptr::addr_of!(_Py_NoneStruct) as usize
-            && let Some(slot) = self.objects.get(&handle)
-            && matches!(slot.value, Value::None)
-        {
-            let raw_type = unsafe {
-                object
-                    .cast::<CpythonObjectHead>()
-                    .as_ref()
-                    .map(|head| head.ob_type)
-                    .unwrap_or(std::ptr::null_mut())
-            };
-            let none_type = std::ptr::addr_of_mut!(PyNone_Type).cast::<c_void>();
-            if !raw_type.is_null() && raw_type != none_type {
-                if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
-                    eprintln!(
-                        "[cpy-ptr] remap stale none ptr={:p} handle={} raw_type={:p} none_type={:p}",
-                        object, handle, raw_type, none_type
-                    );
-                }
-                self.cpython_objects_by_ptr.remove(&raw);
-                if self
-                    .cpython_ptr_by_handle
-                    .get(&handle)
-                    .is_some_and(|ptr| *ptr == object)
-                {
-                    self.cpython_ptr_by_handle.remove(&handle);
-                }
-                return None;
+        None
+    }
+
+    fn refresh_external_proxy_instance_type(&mut self, handle: PyrsObjectHandle, object: *mut c_void) {
+        let Some(_refresh_guard) = ProxyRefreshReentryGuard::enter() else {
+            return;
+        };
+        if object.is_null() || self.vm.is_null() || self.owns_cpython_allocation_ptr(object) {
+            return;
+        }
+        let Some(slot) = self.objects.get(&handle) else {
+            return;
+        };
+        let Value::Instance(instance_obj) = &slot.value else {
+            return;
+        };
+        let (cached_class_obj, cached_class_ptr) = match &*instance_obj.kind() {
+            Object::Instance(instance_data) => {
+                let class_obj = instance_data.class.clone();
+                let class_ptr = Self::cpython_proxy_raw_ptr_from_value(&Value::Class(class_obj.clone()));
+                (class_obj, class_ptr)
             }
+            _ => return,
+        };
+        let Some(cached_class_ptr) = cached_class_ptr else {
+            return;
+        };
+        // SAFETY: pointer came from native extension object flow.
+        let current_type_ptr = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type)
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if current_type_ptr.is_null() || current_type_ptr == cached_class_ptr {
+            return;
         }
-        self.sync_value_from_cpython_storage(handle, object);
-        let value = self.object_value(handle);
-        if std::env::var_os("PYRS_TRACE_CPY_NONE_PTRS").is_some()
-            && raw != std::ptr::addr_of!(_Py_NoneStruct) as usize
-            && matches!(value, Some(Value::None))
-        {
+        let Some(Value::Class(updated_class)) = self.cpython_value_from_ptr_or_proxy(current_type_ptr) else {
+            return;
+        };
+        if updated_class.id() == cached_class_obj.id() {
+            return;
+        }
+        if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+            let old_name = match &*cached_class_obj.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
+            let new_name = match &*updated_class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
             eprintln!(
-                "[cpy-none-ptr] ptr={:p} handle={} (non-singleton Value::None)",
-                object, handle
+                "[cpy-proxy] refresh instance class object_ptr={:p} old_class={} old_ptr={:p} new_class={} new_ptr={:p}",
+                object, old_name, cached_class_ptr, new_name, current_type_ptr
             );
         }
-        value
+        if let Some(slot_mut) = self.objects.get_mut(&handle)
+            && let Value::Instance(instance_mut) = &mut slot_mut.value
+            && let Object::Instance(instance_data_mut) = &mut *instance_mut.kind_mut()
+        {
+            instance_data_mut.class = updated_class;
+        }
     }
 
     fn cpython_external_proxy_value(&mut self, object: *mut c_void) -> Option<Value> {
@@ -2785,13 +3469,15 @@ impl ModuleCapiContext {
         // NumPy DType classes use `_DTypeMeta`, so strict pointer-equality with `PyType_Type`
         // is insufficient and would misclassify those type objects as plain instances.
         let is_type_object = if object_type.is_null() {
-            false
+            Self::is_probable_type_object_without_metatype(object)
         } else if object_type == expected_type {
             true
         } else {
             // SAFETY: `object_type`/`expected_type` are candidate type pointers; subtype test
             // is guarded internally against null/unaligned/invalid pointers.
-            unsafe { PyType_IsSubtype(object_type.cast::<c_void>(), expected_type.cast::<c_void>()) != 0 }
+            unsafe {
+                PyType_IsSubtype(object_type.cast::<c_void>(), expected_type.cast::<c_void>()) != 0
+            }
         };
         if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
             let object_type_name = unsafe {
@@ -2819,6 +3505,133 @@ impl ModuleCapiContext {
                 );
             }
         }
+        if !is_type_object && !object_type.is_null() {
+            let mapped_type = self.cpython_value_from_ptr_or_proxy(object_type.cast::<c_void>());
+            if let Some(Value::Class(type_proxy_class)) = mapped_type {
+                let is_proxy_type_class = matches!(
+                    &*type_proxy_class.kind(),
+                    Object::Class(class_data) if is_cpython_proxy_class(class_data)
+                );
+                if !is_proxy_type_class {
+                    if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+                        let class_name = match &*type_proxy_class.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "<non-class>".to_string(),
+                        };
+                        eprintln!(
+                            "[cpy-proxy] non-proxy type class fallback object_ptr={:p} type_ptr={:p} class={}",
+                            object, object_type, class_name
+                        );
+                    }
+                    // Continue through generic fallback path below.
+                } else {
+                    if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+                        let class_name = match &*type_proxy_class.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "<non-class>".to_string(),
+                        };
+                        eprintln!(
+                            "[cpy-proxy] instance uses type-proxy class={} object_ptr={:p} type_ptr={:p}",
+                            class_name, object, object_type
+                        );
+                    }
+                    // SAFETY: VM pointer is valid for the C-API context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    match vm
+                        .heap
+                        .alloc_instance(InstanceObject::new(type_proxy_class.clone()))
+                    {
+                        Value::Instance(instance_obj) => {
+                            if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
+                                instance_data.attrs.insert(
+                                    CPY_PROXY_PTR_ATTR.to_string(),
+                                    Value::Int(object as usize as i64),
+                                );
+                            }
+                            return Some(Value::Instance(instance_obj));
+                        }
+                        other => return Some(other),
+                    }
+                }
+            } else if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+                let owns_type_ptr = self.owns_cpython_allocation_ptr(object_type.cast::<c_void>());
+                let probable_external =
+                    Self::is_probable_external_cpython_object_ptr(object_type.cast::<c_void>());
+                let mapped_kind = mapped_type
+                    .as_ref()
+                    .map(|value| match value {
+                        Value::None => "None",
+                        Value::Bool(_) => "Bool",
+                        Value::Int(_) => "Int",
+                        Value::BigInt(_) => "BigInt",
+                        Value::Float(_) => "Float",
+                        Value::Complex { .. } => "Complex",
+                        Value::Str(_) => "Str",
+                        Value::List(_) => "List",
+                        Value::Tuple(_) => "Tuple",
+                        Value::Dict(_) => "Dict",
+                        Value::DictKeys(_) => "DictKeys",
+                        Value::Set(_) => "Set",
+                        Value::FrozenSet(_) => "FrozenSet",
+                        Value::Slice(_) => "Slice",
+                        Value::Iterator(_) => "Iterator",
+                        Value::Code(_) => "Code",
+                        Value::Function(_) => "Function",
+                        Value::Builtin(_) => "Builtin",
+                        Value::BoundMethod(_) => "BoundMethod",
+                        Value::Cell(_) => "Cell",
+                        Value::Class(_) => "Class",
+                        Value::Instance(_) => "Instance",
+                        Value::Super(_) => "Super",
+                        Value::Module(_) => "Module",
+                        Value::Exception(_) => "Exception",
+                        Value::ExceptionType(_) => "ExceptionType",
+                        Value::Generator(_) => "Generator",
+                        Value::Bytes(_) => "Bytes",
+                        Value::ByteArray(_) => "ByteArray",
+                        Value::MemoryView(_) => "MemoryView",
+                    })
+                    .unwrap_or("<none>");
+                eprintln!(
+                    "[cpy-proxy] missing type-proxy class object_ptr={:p} type_ptr={:p} mapped={} owns_type_ptr={} probable_external={}",
+                    object, object_type, mapped_kind, owns_type_ptr, probable_external
+                );
+                // SAFETY: diagnostics only; pointer provenance already gated by caller context.
+                unsafe {
+                    if let Some(type_head) = object_type.cast::<CpythonObjectHead>().as_ref() {
+                        let meta_ptr = type_head.ob_type.cast::<CpythonTypeObject>();
+                        let meta_refcnt = meta_ptr
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_refcnt)
+                            .unwrap_or(0);
+                        let tp_name_ptr = (*object_type).tp_name;
+                        let tp_name = if tp_name_ptr.is_null() {
+                            "<null>".to_string()
+                        } else {
+                            c_name_to_string(tp_name_ptr)
+                                .unwrap_or_else(|_| "<invalid>".to_string())
+                        };
+                        eprintln!(
+                            "[cpy-proxy] missing type-proxy details type_ptr={:p} type_refcnt={} meta_ptr={:p} meta_refcnt={} tp_name={}",
+                            object_type, type_head.ob_refcnt, meta_ptr, meta_refcnt, tp_name
+                        );
+                    }
+                }
+            }
+        }
+        if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() && !is_type_object {
+            let type_name = unsafe {
+                object_type
+                    .as_ref()
+                    .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            };
+            eprintln!(
+                "[cpy-proxy] instance fallback generic object_ptr={:p} type_ptr={:p} type_name={}",
+                object, object_type, type_name
+            );
+        }
         let (proxy_name, proxy_module) = if is_type_object {
             // SAFETY: `object` is a candidate type object in this branch.
             let type_name = unsafe {
@@ -2829,11 +3642,36 @@ impl ModuleCapiContext {
         } else {
             (CPY_PROXY_CLASS_NAME.to_string(), None)
         };
+        let proxy_base_value = if is_type_object {
+            // SAFETY: `object` is a candidate type object in this branch.
+            let tp_base = unsafe { (*object.cast::<CpythonTypeObject>()).tp_base };
+            if tp_base.is_null() || tp_base.cast::<c_void>() == object {
+                None
+            } else {
+                self.cpython_value_from_ptr_or_proxy(tp_base.cast::<c_void>())
+            }
+        } else {
+            None
+        };
         // SAFETY: VM pointer is valid for the C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
+        let mut proxy_bases = Vec::new();
+        if let Some(base_value) = proxy_base_value
+            && let Ok(base_class) = vm.class_from_base_value(base_value)
+        {
+            proxy_bases.push(base_class);
+        }
+        let is_base_object_type =
+            is_type_object && object == std::ptr::addr_of_mut!(PyBaseObject_Type).cast::<c_void>();
+        if proxy_bases.is_empty()
+            && !is_base_object_type
+            && let Some(Value::Class(object_class)) = vm.builtins.get("object")
+        {
+            proxy_bases.push(object_class.clone());
+        }
         let proxy_class = match vm
             .heap
-            .alloc_class(ClassObject::new(proxy_name.clone(), Vec::new()))
+            .alloc_class(ClassObject::new(proxy_name.clone(), proxy_bases.clone()))
         {
             Value::Class(class_obj) => class_obj,
             other => return Some(other),
@@ -2842,11 +3680,47 @@ impl ModuleCapiContext {
             class_data
                 .attrs
                 .insert(CPY_PROXY_MARKER_ATTR.to_string(), Value::Bool(true));
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str(proxy_name.clone()));
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str(proxy_name.clone()));
+            class_data.attrs.insert(
+                "__bases__".to_string(),
+                vm.heap.alloc_tuple(
+                    class_data
+                        .bases
+                        .iter()
+                        .cloned()
+                        .map(Value::Class)
+                        .collect::<Vec<_>>(),
+                ),
+            );
             if let Some(module_name) = &proxy_module {
                 class_data
                     .attrs
                     .insert("__module__".to_string(), Value::Str(module_name.clone()));
             }
+        }
+        let proxy_mro = vm
+            .build_class_mro(&proxy_class, &proxy_bases)
+            .unwrap_or_else(|_| {
+                let mut fallback = vec![proxy_class.clone()];
+                for base in &proxy_bases {
+                    if !fallback.iter().any(|entry| entry.id() == base.id()) {
+                        fallback.push(base.clone());
+                    }
+                }
+                fallback
+            });
+        if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
+            class_data.mro = proxy_mro.clone();
+            class_data.attrs.insert(
+                "__mro__".to_string(),
+                vm.heap
+                    .alloc_tuple(proxy_mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+            );
         }
         if is_type_object {
             if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
@@ -2879,6 +3753,7 @@ impl ModuleCapiContext {
         }
     }
 
+    #[track_caller]
     fn cpython_value_from_ptr_or_proxy(&mut self, object: *mut c_void) -> Option<Value> {
         if let Some(value) = self.cpython_value_from_ptr(object) {
             return Some(value);
@@ -2886,12 +3761,63 @@ impl ModuleCapiContext {
         if object.is_null() || self.vm.is_null() {
             return None;
         }
+        let owns_allocation = self.owns_cpython_allocation_ptr(object);
+        let probable_external = Self::is_probable_external_cpython_object_ptr(object);
+        if !probable_external {
+            if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+                eprintln!(
+                    "[cpy-proxy-reject] ptr={:p} owns={} probable=false",
+                    object, owns_allocation
+                );
+            }
+            return None;
+        }
+        if owns_allocation && !Self::owned_pointer_allows_proxy_fallback(object) {
+            // Unknown owned pointers are not safe to treat as proxy-backed objects.
+            // Restrict owned-pointer fallback to known descriptor/cfunction surfaces.
+            return None;
+        }
+        if !owns_allocation {
+            // Keep external PyObject* proxies alive for the VM lifetime once they are
+            // materialized into runtime values. Context-scoped incref/decref churn can
+            // leave escaped proxy values pointing at reclaimed CPython objects.
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            let inserted = vm.extension_pinned_external_cpython_refs.insert(object as usize);
+            if std::env::var_os("PYRS_TRACE_CPY_PIN").is_some() {
+                eprintln!(
+                    "[cpy-pin] ptr={:p} branch=external inserted={}",
+                    object, inserted
+                );
+            }
+            if inserted {
+                // SAFETY: the pointer passed probability checks above and is now pinned
+                // for one matching decref in Vm::drop.
+                unsafe {
+                    Py_IncRef(object);
+                }
+            }
+        }
         let proxy = self.cpython_external_proxy_value(object)?;
+        if owns_allocation {
+            self.pin_owned_cpython_allocation_for_vm(object);
+        }
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.extension_cpython_ptr_values
+                .entry(object as usize)
+                .or_insert_with(|| proxy.clone());
+        }
         let handle = self.alloc_object(proxy.clone());
         if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+            let caller = std::panic::Location::caller();
             eprintln!(
-                "[cpy-ptr] proxy-map handle={} external_ptr={:p}",
-                handle, object
+                "[cpy-ptr] proxy-map handle={} external_ptr={:p} caller={}:{}",
+                handle,
+                object,
+                caller.file(),
+                caller.line()
             );
         }
         if let Some(previous) = self.cpython_objects_by_ptr.insert(object as usize, handle)
@@ -3398,6 +4324,7 @@ impl ModuleCapiContext {
         let is_type_object = object_type == expected_type;
         let trace_type_attr =
             attr_name == "type" && std::env::var_os("PYRS_TRACE_PROXY_TYPE_ATTR").is_some();
+        let trace_lookup_branch = std::env::var_os("PYRS_TRACE_PROXY_LOOKUP_BRANCH").is_some();
         let is_proxy_trace = attr_name == "__array_finalize__"
             && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some();
         if is_proxy_trace {
@@ -3465,6 +4392,12 @@ impl ModuleCapiContext {
                             current, dict_ptr, raw_descriptor_ptr, bound_ptr
                         );
                     }
+                    if trace_lookup_branch {
+                        eprintln!(
+                            "[proxy-lookup-branch] attr={} branch=dict_descriptor object={:p} current={:p} value_ptr={:p}",
+                            attr_name, object, current, bound_ptr
+                        );
+                    }
                     return Some(bound_ptr);
                 }
                 if is_proxy_trace {
@@ -3475,7 +4408,22 @@ impl ModuleCapiContext {
                         cpython_value_debug_tag(&value)
                     );
                 }
-                return Some(self.alloc_cpython_ptr_for_value(value.clone()));
+                if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                    eprintln!(
+                        "[proxy-attr-map] source=tp_dict_value target={:p} attr={} value_tag={}",
+                        object,
+                        attr_name,
+                        cpython_value_debug_tag(&value)
+                    );
+                }
+                let value_ptr = self.alloc_cpython_ptr_for_value(value.clone());
+                if trace_lookup_branch {
+                    eprintln!(
+                        "[proxy-lookup-branch] attr={} branch=dict_value object={:p} current={:p} value_ptr={:p}",
+                        attr_name, object, current, value_ptr
+                    );
+                }
+                return Some(value_ptr);
             } else if is_proxy_trace && !dict_ptr.is_null() {
                 eprintln!(
                     "[cpy-proxy] tp_dict lookup miss current={:p} dict_ptr={:p}",
@@ -3516,6 +4464,12 @@ impl ModuleCapiContext {
                             eprintln!(
                                 "[cpy-proxy] tp_methods lookup hit current={:p} method={} callable_ptr={:p}",
                                 current, attr_name, callable_ptr
+                            );
+                        }
+                        if trace_lookup_branch {
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch=tp_methods object={:p} current={:p} value_ptr={:p}",
+                                attr_name, object, current, callable_ptr
                             );
                         }
                         return Some(callable_ptr);
@@ -3564,6 +4518,12 @@ impl ModuleCapiContext {
                                         current, attr_name, value_ptr
                                     );
                                 }
+                                if trace_lookup_branch {
+                                    eprintln!(
+                                        "[proxy-lookup-branch] attr={} branch=tp_getset object={:p} current={:p} value_ptr={:p}",
+                                        attr_name, object, current, value_ptr
+                                    );
+                                }
                                 return Some(value_ptr);
                             }
                         }
@@ -3605,6 +4565,12 @@ impl ModuleCapiContext {
                         if let Some(value_ptr) =
                             self.load_member_attr_ptr(object, member_ref, current_basicsize)
                         {
+                            if trace_lookup_branch {
+                                eprintln!(
+                                    "[proxy-lookup-branch] attr={} branch=tp_members object={:p} current={:p} value_ptr={:p}",
+                                    attr_name, object, current, value_ptr
+                                );
+                            }
                             return Some(value_ptr);
                         }
                     }
@@ -3622,6 +4588,51 @@ impl ModuleCapiContext {
         None
     }
 
+    fn class_attr_walk_for_type_lookup(class: &ObjRef) -> Vec<ObjRef> {
+        let class_kind = class.kind();
+        let class_data = match &*class_kind {
+            Object::Class(class_data) => class_data,
+            _ => return Vec::new(),
+        };
+        if !class_data.mro.is_empty() {
+            return class_data.mro.clone();
+        }
+        let mut out = vec![class.clone()];
+        for base in &class_data.bases {
+            out.extend(Self::class_attr_walk_for_type_lookup(base));
+        }
+        out
+    }
+
+    fn lookup_type_attr_via_runtime_mro(
+        &mut self,
+        ty: *mut c_void,
+        attr_name: &str,
+    ) -> Option<*mut c_void> {
+        if ty.is_null() {
+            return None;
+        }
+        let Value::Class(class_obj) = self.cpython_value_from_ptr_or_proxy(ty)? else {
+            return None;
+        };
+        for candidate in Self::class_attr_walk_for_type_lookup(&class_obj) {
+            let attr_value = {
+                let candidate_kind = candidate.kind();
+                let Object::Class(class_data) = &*candidate_kind else {
+                    continue;
+                };
+                class_data.attrs.get(attr_name).cloned()
+            };
+            if let Some(value) = attr_value {
+                if let Some(raw_ptr) = Self::cpython_proxy_raw_ptr_from_value(&value) {
+                    return Some(raw_ptr);
+                }
+                return Some(self.alloc_cpython_ptr_for_value(value));
+            }
+        }
+        None
+    }
+
     fn try_native_vectorcall(
         &mut self,
         callable: *mut c_void,
@@ -3635,34 +4646,218 @@ impl ModuleCapiContext {
             Some(vectorcall) => vectorcall,
             None => return None,
         };
+        let trace_vectorcall = std::env::var_os("PYRS_TRACE_CPY_VECTORCALL").is_some();
+        if trace_vectorcall {
+            // SAFETY: callable is a candidate PyObject pointer in vectorcall path.
+            let type_name = unsafe {
+                callable
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .and_then(|head| {
+                        head.ob_type
+                            .cast::<CpythonTypeObject>()
+                            .as_ref()
+                            .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                    })
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            };
+            let arg_summary = args
+                .iter()
+                .map(cpython_value_debug_tag)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+            kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let kw_summary = kw_entries
+                .into_iter()
+                .map(|(name, value)| format!("{name}={}", cpython_value_debug_tag(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "[cpy-vectorcall] callable={:p} type={} args=[{}] kwargs=[{}]",
+                callable, type_name, arg_summary, kw_summary
+            );
+            if type_name.contains("_ArrayFunctionDispatcher") {
+                // SAFETY: diagnostic metadata lookup on callable object.
+                unsafe {
+                    let name_ptr = PyObject_GetAttrString(callable, c"__name__".as_ptr());
+                    let implementation_ptr =
+                        PyObject_GetAttrString(callable, c"_implementation".as_ptr());
+                    let implementation_name_ptr = if implementation_ptr.is_null() {
+                        std::ptr::null_mut()
+                    } else {
+                        PyObject_GetAttrString(implementation_ptr, c"__name__".as_ptr())
+                    };
+                    let name_text = if name_ptr.is_null() {
+                        "<none>".to_string()
+                    } else {
+                        self.cpython_value_from_ptr_or_proxy(name_ptr)
+                            .map(|value| match value {
+                                Value::Str(text) => text,
+                                other => cpython_value_debug_tag(&other),
+                            })
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    };
+                    let implementation_name_text = if implementation_name_ptr.is_null() {
+                        "<none>".to_string()
+                    } else {
+                        self.cpython_value_from_ptr_or_proxy(implementation_name_ptr)
+                            .map(|value| match value {
+                                Value::Str(text) => text,
+                                other => cpython_value_debug_tag(&other),
+                            })
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    };
+                    eprintln!(
+                        "[cpy-vectorcall-dispatcher] callable={:p} __name__={} implementation_name={}",
+                        callable, name_text, implementation_name_text
+                    );
+                    if !name_ptr.is_null() {
+                        Py_DecRef(name_ptr);
+                    }
+                    if !implementation_name_ptr.is_null() {
+                        Py_DecRef(implementation_name_ptr);
+                    }
+                    if !implementation_ptr.is_null() {
+                        Py_DecRef(implementation_ptr);
+                    }
+                }
+            }
+            if kwargs.contains_key("dtype") {
+                // SAFETY: VM pointer is valid for active context lifetime.
+                let vm = unsafe { &*self.vm };
+                let stack = vm
+                    .frames
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .map(|frame| format!("{}:{}:{}", frame.code.filename, frame.code.name, frame.ip))
+                    .collect::<Vec<_>>()
+                    .join(" <- ");
+                eprintln!("[cpy-vectorcall-stack] {}", stack);
+            }
+        }
         let positional_count = args.len();
         let kw_count = kwargs.len();
         let mut stack: Vec<*mut c_void> =
             Vec::with_capacity(positional_count.saturating_add(kw_count));
         for value in args {
+            let used_proxy_ptr = if trace_vectorcall {
+                Self::cpython_proxy_raw_ptr_from_value(value).is_some()
+            } else {
+                false
+            };
             let ptr = self.alloc_cpython_ptr_for_value(value.clone());
             if ptr.is_null() {
                 self.set_error("failed to materialize positional vectorcall argument");
                 return Some(std::ptr::null_mut());
             }
+            if trace_vectorcall {
+                // SAFETY: `ptr` is materialized in this context.
+                let ptr_type = unsafe {
+                    ptr.cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .and_then(|head| {
+                            head.ob_type
+                                .cast::<CpythonTypeObject>()
+                                .as_ref()
+                                .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                        })
+                        .unwrap_or_else(|| "<unknown>".to_string())
+                };
+                eprintln!(
+                    "[cpy-vectorcall-arg] value={} proxy_raw={} ptr={:p} ptr_type={}",
+                    cpython_value_debug_tag(value),
+                    used_proxy_ptr,
+                    ptr,
+                    ptr_type
+                );
+            }
             stack.push(ptr);
         }
-        let mut kw_names: Vec<Value> = Vec::with_capacity(kw_count);
+        let mut kw_name_ptrs: Vec<*mut c_void> = Vec::with_capacity(kw_count);
         for (name, value) in kwargs {
-            kw_names.push(Value::Str(name.clone()));
+            let c_name = match CString::new(name.as_str()) {
+                Ok(c_name) => c_name,
+                Err(_) => {
+                    self.set_error("keyword argument name contains interior NUL byte");
+                    return Some(std::ptr::null_mut());
+                }
+            };
+            // SAFETY: C string is NUL-terminated and valid for the duration of this call.
+            let name_ptr = unsafe { PyUnicode_InternFromString(c_name.as_ptr()) };
+            if name_ptr.is_null() {
+                self.set_error("failed to intern vectorcall keyword name");
+                return Some(std::ptr::null_mut());
+            }
+            kw_name_ptrs.push(name_ptr);
+            let used_proxy_ptr = if trace_vectorcall {
+                Self::cpython_proxy_raw_ptr_from_value(value).is_some()
+            } else {
+                false
+            };
             let ptr = self.alloc_cpython_ptr_for_value(value.clone());
             if ptr.is_null() {
                 self.set_error("failed to materialize keyword vectorcall argument");
                 return Some(std::ptr::null_mut());
             }
+            if trace_vectorcall {
+                // SAFETY: `ptr` is materialized in this context.
+                let ptr_type = unsafe {
+                    ptr.cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .and_then(|head| {
+                            head.ob_type
+                                .cast::<CpythonTypeObject>()
+                                .as_ref()
+                                .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                        })
+                        .unwrap_or_else(|| "<unknown>".to_string())
+                };
+                eprintln!(
+                    "[cpy-vectorcall-kw] name={} value={} proxy_raw={} ptr={:p} ptr_type={}",
+                    name,
+                    cpython_value_debug_tag(value),
+                    used_proxy_ptr,
+                    ptr,
+                    ptr_type
+                );
+                if matches!(value, Value::Class(_)) {
+                    // SAFETY: class pointers are PyTypeObject-compatible.
+                    let class_tp_name = unsafe {
+                        ptr.cast::<CpythonTypeObject>()
+                            .as_ref()
+                            .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    };
+                    eprintln!(
+                        "[cpy-vectorcall-kw-class] name={} ptr={:p} class_tp_name={}",
+                        name, ptr, class_tp_name
+                    );
+                }
+            }
             stack.push(ptr);
         }
-        // SAFETY: VM pointer is valid for active context lifetime.
-        let vm = unsafe { &mut *self.vm };
-        let kwnames_ptr = if kw_names.is_empty() {
+        let kwnames_ptr = if kw_name_ptrs.is_empty() {
             std::ptr::null_mut()
         } else {
-            self.alloc_cpython_ptr_for_value(vm.heap.alloc_tuple(kw_names))
+            // SAFETY: tuple allocation follows CPython tuple ABI.
+            let tuple = unsafe { PyTuple_New(kw_name_ptrs.len() as isize) };
+            if tuple.is_null() {
+                self.set_error("failed to allocate vectorcall keyword names tuple");
+                return Some(std::ptr::null_mut());
+            }
+            for (index, name_ptr) in kw_name_ptrs.into_iter().enumerate() {
+                // SAFETY: tuple is newly allocated and index is in-bounds.
+                let status = unsafe { PyTuple_SetItem(tuple, index as isize, name_ptr) };
+                if status != 0 {
+                    // SAFETY: on failure the tuple still owns any previously-set references.
+                    unsafe { Py_DecRef(tuple) };
+                    self.set_error("failed to populate vectorcall keyword names tuple");
+                    return Some(std::ptr::null_mut());
+                }
+            }
+            tuple
         };
         if !kwargs.is_empty() && kwnames_ptr.is_null() {
             self.set_error("failed to materialize vectorcall keyword names");
@@ -3673,7 +4868,12 @@ impl ModuleCapiContext {
         } else {
             stack.as_ptr()
         };
-        Some(unsafe { vectorcall(callable, args_ptr, positional_count, kwnames_ptr) })
+        let result = unsafe { vectorcall(callable, args_ptr, positional_count, kwnames_ptr) };
+        if !kwnames_ptr.is_null() {
+            // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
+            unsafe { Py_DecRef(kwnames_ptr) };
+        }
+        Some(result)
     }
 
     fn try_native_tp_call(
@@ -3735,6 +4935,31 @@ impl ModuleCapiContext {
             || (type_ptr as usize) % std::mem::align_of::<usize>() != 0
         {
             return None;
+        }
+        let trace_numpy_ufunc_call = std::env::var_os("PYRS_TRACE_NUMPY_UFUNC_CALL").is_some();
+        if trace_numpy_ufunc_call {
+            // SAFETY: `type_ptr` was validated above.
+            let type_name = unsafe {
+                c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+            };
+            if type_name.contains("ufunc") {
+                let arg_summary = args
+                    .iter()
+                    .map(cpython_value_debug_tag)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+                kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                let kw_summary = kw_entries
+                    .into_iter()
+                    .map(|(name, value)| format!("{name}={}", cpython_value_debug_tag(value)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!(
+                    "[numpy-ufunc-call] callable={:p} type={} args=[{}] kwargs=[{}]",
+                    callable, type_name, arg_summary, kw_summary
+                );
+            }
         }
         if self.owns_cpython_allocation_ptr(callable)
             && type_ptr == std::ptr::addr_of_mut!(PyType_Type)
@@ -4410,13 +5635,24 @@ impl ModuleCapiContext {
             self.sync_value_from_cpython_storage(handle, ptr);
         }
         if let Some(slot) = self.capsules.get(&handle) {
+            let pinned_name_ptr = if self.vm.is_null() {
+                None
+            } else {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                vm.extension_pinned_capsule_names
+                    .get(&(ptr as usize))
+                    .map(|name| name.as_ptr())
+            };
             // SAFETY: `raw` points to owned capsule-compatible storage for this handle.
             unsafe {
                 let raw_capsule = raw.cast::<CpythonCapsuleCompatObject>();
                 (*raw_capsule).ob_base.ob_refcnt = slot.refcount.max(1) as isize;
                 (*raw_capsule).ob_base.ob_type = std::ptr::addr_of_mut!(PyCapsule_Type).cast();
                 (*raw_capsule).pointer = slot.pointer as *mut c_void;
-                (*raw_capsule).name = slot.name.as_ref().map_or(std::ptr::null(), |n| n.as_ptr());
+                (*raw_capsule).name = pinned_name_ptr
+                    .or_else(|| slot.name.as_ref().map(|n| n.as_ptr()))
+                    .unwrap_or(std::ptr::null());
                 (*raw_capsule).context = slot.context as *mut c_void;
                 (*raw_capsule).destructor = slot.cpython_destructor;
             }
@@ -4524,6 +5760,20 @@ impl ModuleCapiContext {
 
     fn owns_cpython_allocation_ptr(&self, ptr: *mut c_void) -> bool {
         self.cpython_owned_ptrs.contains(&(ptr as usize))
+    }
+
+    fn pin_owned_cpython_allocation_for_vm(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() || self.vm.is_null() || !self.owns_cpython_allocation_ptr(ptr) {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        if vm
+            .extension_pinned_cpython_allocation_set
+            .insert(ptr as usize)
+        {
+            vm.extension_pinned_cpython_allocations.push(ptr);
+        }
     }
 
     fn pin_capsule_allocation_for_vm(&mut self, ptr: *mut c_void) {
@@ -6176,9 +7426,48 @@ fn cpython_set_active_context(context: *mut ModuleCapiContext) -> *mut ModuleCap
     })
 }
 
+fn cpython_trace_numpy_reduce_enabled() -> bool {
+    std::env::var_os("PYRS_TRACE_NUMPY_REDUCE").is_some()
+}
+
+fn cpython_is_reduce_probe_name(name: &str) -> bool {
+    matches!(
+        name,
+        "__reduce__"
+            | "__reduce_cython__"
+            | "__setstate__"
+            | "__setstate_cython__"
+            | "__set_name__"
+            | "__name__"
+            | "__dict__"
+    )
+}
+
+fn cpython_error_message_indicates_missing_attribute() -> bool {
+    with_active_cpython_context_mut(|context| {
+        context
+            .last_error
+            .as_deref()
+            .or(context.first_error.as_deref())
+            .is_some_and(|message| message.contains("has no attribute"))
+    })
+    .unwrap_or(false)
+}
+
 #[track_caller]
 fn cpython_set_error(message: impl Into<String>) {
     let message = message.into();
+    if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some()
+        && message.contains("unknown PyObject pointer")
+    {
+        let caller = std::panic::Location::caller();
+        eprintln!(
+            "[cpy-unknown-set-error] {} (at {}:{})",
+            message,
+            caller.file(),
+            caller.line()
+        );
+    }
     if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
         let caller = std::panic::Location::caller();
         eprintln!(
@@ -6193,17 +7482,17 @@ fn cpython_set_error(message: impl Into<String>) {
     });
 }
 
+#[track_caller]
 fn cpython_set_typed_error(ptype: *mut c_void, message: impl Into<String>) {
     let message = message.into();
     let _ = with_active_cpython_context_mut(|context| {
-        let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
         let ty = if ptype.is_null() {
             // SAFETY: exception singleton pointer is process-global.
             unsafe { PyExc_RuntimeError }
         } else {
             ptype
         };
-        context.set_error_state(ty, pvalue, std::ptr::null_mut(), message);
+        context.set_error_state(ty, std::ptr::null_mut(), std::ptr::null_mut(), message);
     });
 }
 
@@ -6211,9 +7500,28 @@ fn cpython_value_from_ptr(object: *mut c_void) -> Result<Value, String> {
     if object.is_null() {
         return Err("received null PyObject pointer".to_string());
     }
-    with_active_cpython_context_mut(|context| context.cpython_value_from_ptr(object))
-        .map_err(|err| err.to_string())?
-        .ok_or_else(|| "unknown PyObject pointer".to_string())
+    let resolved = with_active_cpython_context_mut(|context| context.cpython_value_from_ptr(object))
+        .map_err(|err| err.to_string())?;
+    if resolved.is_none() && std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+        eprintln!("[cpy-unknown-ptr] cpython_value_from_ptr object={:p}", object);
+    }
+    resolved.ok_or_else(|| "unknown PyObject pointer".to_string())
+}
+
+fn cpython_value_from_ptr_or_proxy(object: *mut c_void) -> Result<Value, String> {
+    if object.is_null() {
+        return Err("received null PyObject pointer".to_string());
+    }
+    let resolved =
+        with_active_cpython_context_mut(|context| context.cpython_value_from_ptr_or_proxy(object))
+            .map_err(|err| err.to_string())?;
+    if resolved.is_none() && std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+        eprintln!(
+            "[cpy-unknown-ptr] cpython_value_from_ptr_or_proxy object={:p}",
+            object
+        );
+    }
+    resolved.ok_or_else(|| "unknown PyObject pointer".to_string())
 }
 
 fn cpython_new_ptr_for_value(value: Value) -> *mut c_void {
@@ -6735,6 +8043,339 @@ fn cpython_binary_numeric_op_with_heap(
     })
 }
 
+fn cpython_valid_type_ptr(type_ptr: *mut CpythonTypeObject) -> bool {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    if type_ptr.is_null() {
+        return false;
+    }
+    let addr = type_ptr as usize;
+    addr >= MIN_VALID_PTR && addr % std::mem::align_of::<CpythonTypeObject>() == 0
+}
+
+unsafe fn cpython_number_binop_slot(
+    type_ptr: *mut CpythonTypeObject,
+    slot_offset: usize,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void> {
+    if !cpython_valid_type_ptr(type_ptr) {
+        return None;
+    }
+    // SAFETY: caller guarantees `type_ptr` points to a readable PyTypeObject.
+    let as_number = unsafe { (*type_ptr).tp_as_number }.cast::<CpythonNumberMethods>();
+    if as_number.is_null() {
+        return None;
+    }
+    // SAFETY: `slot_offset` is an offset within `CpythonNumberMethods`.
+    let slot_ptr = unsafe { as_number.cast::<u8>().add(slot_offset).cast::<*mut c_void>() };
+    // SAFETY: slot pointer is readable when `tp_as_number` points to a valid table.
+    let raw = unsafe { *slot_ptr };
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: number binary slots all have `binaryfunc` signature.
+    Some(unsafe { std::mem::transmute(raw) })
+}
+
+unsafe fn cpython_mapping_ass_subscript_slot(
+    type_ptr: *mut CpythonTypeObject,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32> {
+    if !cpython_valid_type_ptr(type_ptr) {
+        return None;
+    }
+    // SAFETY: caller guarantees `type_ptr` points to a readable PyTypeObject.
+    let as_mapping = unsafe { (*type_ptr).tp_as_mapping }.cast::<CpythonMappingMethods>();
+    if as_mapping.is_null() {
+        return None;
+    }
+    // SAFETY: mapping slot table is readable when `tp_as_mapping` is non-null.
+    let raw = unsafe { (*as_mapping).mp_ass_subscript };
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: mapping assign slot follows `objobjargproc` signature.
+    Some(unsafe { std::mem::transmute(raw) })
+}
+
+unsafe fn cpython_mapping_subscript_slot(
+    type_ptr: *mut CpythonTypeObject,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void> {
+    if !cpython_valid_type_ptr(type_ptr) {
+        return None;
+    }
+    // SAFETY: caller guarantees `type_ptr` points to a readable PyTypeObject.
+    let as_mapping = unsafe { (*type_ptr).tp_as_mapping }.cast::<CpythonMappingMethods>();
+    if as_mapping.is_null() {
+        return None;
+    }
+    // SAFETY: mapping slot table is readable when `tp_as_mapping` is non-null.
+    let raw = unsafe { (*as_mapping).mp_subscript };
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: mapping subscript slot follows `binaryfunc` object/key ABI.
+    Some(unsafe { std::mem::transmute(raw) })
+}
+
+unsafe fn cpython_sequence_item_slot(
+    type_ptr: *mut CpythonTypeObject,
+) -> Option<unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void> {
+    if !cpython_valid_type_ptr(type_ptr) {
+        return None;
+    }
+    // SAFETY: caller guarantees `type_ptr` points to a readable PyTypeObject.
+    let as_sequence = unsafe { (*type_ptr).tp_as_sequence }.cast::<CpythonSequenceMethods>();
+    if as_sequence.is_null() {
+        return None;
+    }
+    // SAFETY: sequence slot table is readable when `tp_as_sequence` is non-null.
+    let raw = unsafe { (*as_sequence).sq_item };
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: `sq_item` follows `ssizeargfunc` ABI.
+    Some(unsafe { std::mem::transmute(raw) })
+}
+
+unsafe fn cpython_richcompare_slot(
+    type_ptr: *mut CpythonTypeObject,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> *mut c_void> {
+    if !cpython_valid_type_ptr(type_ptr) {
+        return None;
+    }
+    // SAFETY: caller guarantees `type_ptr` points to a readable PyTypeObject.
+    let raw = unsafe { (*type_ptr).tp_richcompare };
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: tp_richcompare ABI matches richcmpfunc.
+    Some(unsafe { std::mem::transmute(raw) })
+}
+
+fn cpython_try_richcompare_slot(left: *mut c_void, right: *mut c_void, op: i32) -> Option<*mut c_void> {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    if left.is_null() || right.is_null() {
+        return None;
+    }
+    let left_addr = left as usize;
+    let right_addr = right as usize;
+    if left_addr < MIN_VALID_PTR
+        || right_addr < MIN_VALID_PTR
+        || left_addr % std::mem::align_of::<usize>() != 0
+        || right_addr % std::mem::align_of::<usize>() != 0
+    {
+        return None;
+    }
+    // SAFETY: pointer validity checked above for non-null/alignment/min-address.
+    let left_type = unsafe {
+        left.cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    // SAFETY: pointer validity checked above for non-null/alignment/min-address.
+    let right_type = unsafe {
+        right
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if left_type.is_null() || right_type.is_null() {
+        return None;
+    }
+    if !cpython_valid_type_ptr(left_type) || !cpython_valid_type_ptr(right_type) {
+        return None;
+    }
+    let trace = std::env::var_os("PYRS_TRACE_RICH_SLOT").is_some();
+    if trace {
+        // SAFETY: type pointers validated above.
+        let left_name = unsafe {
+            c_name_to_string((*left_type).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+        };
+        // SAFETY: type pointers validated above.
+        let right_name = unsafe {
+            c_name_to_string((*right_type).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+        };
+        eprintln!(
+            "[cpy-rich-slot] begin op={op} left={left:p}({left_name}) right={right:p}({right_name})"
+        );
+    }
+    // SAFETY: type pointers are non-null and read-only inspected.
+    let slotv = unsafe { cpython_richcompare_slot(left_type) };
+    // SAFETY: type pointers are non-null and read-only inspected.
+    let mut slotw = if right_type != left_type {
+        unsafe { cpython_richcompare_slot(right_type) }
+    } else {
+        None
+    };
+    if matches!((slotv, slotw), (Some(a), Some(b)) if (a as usize) == (b as usize)) {
+        slotw = None;
+    }
+    if trace {
+        eprintln!(
+            "[cpy-rich-slot] slotv={} slotw={}",
+            slotv.is_some(),
+            slotw.is_some()
+        );
+    }
+    if slotv.is_none() && slotw.is_none() {
+        return None;
+    }
+    let not_implemented = std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>();
+    if let Some(slotv_fn) = slotv {
+        if let Some(slotw_fn) = slotw
+            // SAFETY: type pointers are valid for subtype test.
+            && unsafe { PyType_IsSubtype(right_type.cast(), left_type.cast()) != 0 }
+        {
+            // SAFETY: richcompare slot ABI matches richcmpfunc.
+            let result = unsafe { slotw_fn(left, right, op) };
+            if result.is_null() {
+                if trace {
+                    eprintln!("[cpy-rich-slot] subtype-right slot returned error");
+                }
+                return Some(std::ptr::null_mut());
+            }
+            if result != not_implemented {
+                if trace {
+                    eprintln!("[cpy-rich-slot] subtype-right slot returned value {:p}", result);
+                }
+                return Some(result);
+            }
+            // SAFETY: slot returned new reference to NotImplemented.
+            unsafe { Py_DecRef(result) };
+            slotw = None;
+        }
+        // SAFETY: richcompare slot ABI matches richcmpfunc.
+        let result = unsafe { slotv_fn(left, right, op) };
+        if result.is_null() {
+            if trace {
+                eprintln!("[cpy-rich-slot] left slot returned error");
+            }
+            return Some(std::ptr::null_mut());
+        }
+        if result != not_implemented {
+            if trace {
+                eprintln!("[cpy-rich-slot] left slot returned value {:p}", result);
+            }
+            return Some(result);
+        }
+        // SAFETY: slot returned new reference to NotImplemented.
+        unsafe { Py_DecRef(result) };
+    }
+    if let Some(slotw_fn) = slotw {
+        // SAFETY: richcompare slot ABI matches richcmpfunc.
+        let result = unsafe { slotw_fn(left, right, op) };
+        if result.is_null() {
+            if trace {
+                eprintln!("[cpy-rich-slot] right slot returned error");
+            }
+            return Some(std::ptr::null_mut());
+        }
+        if result != not_implemented {
+            if trace {
+                eprintln!("[cpy-rich-slot] right slot returned value {:p}", result);
+            }
+            return Some(result);
+        }
+        // SAFETY: slot returned new reference to NotImplemented.
+        unsafe { Py_DecRef(result) };
+    }
+    None
+}
+
+fn cpython_try_binary_number_slot(
+    left: *mut c_void,
+    right: *mut c_void,
+    slot_offset: usize,
+) -> Option<*mut c_void> {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    if left.is_null() || right.is_null() {
+        return None;
+    }
+    let left_addr = left as usize;
+    let right_addr = right as usize;
+    if left_addr < MIN_VALID_PTR
+        || right_addr < MIN_VALID_PTR
+        || left_addr % std::mem::align_of::<usize>() != 0
+        || right_addr % std::mem::align_of::<usize>() != 0
+    {
+        return None;
+    }
+    // SAFETY: pointer validity checked above for non-null/alignment/min-address.
+    let left_type = unsafe {
+        left.cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    // SAFETY: pointer validity checked above for non-null/alignment/min-address.
+    let right_type = unsafe {
+        right
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if left_type.is_null() || right_type.is_null() {
+        return None;
+    }
+    // SAFETY: type pointers are non-null and read-only inspected.
+    let slotv = unsafe { cpython_number_binop_slot(left_type, slot_offset) };
+    // SAFETY: type pointers are non-null and read-only inspected.
+    let mut slotw = if right_type != left_type {
+        unsafe { cpython_number_binop_slot(right_type, slot_offset) }
+    } else {
+        None
+    };
+    if matches!((slotv, slotw), (Some(a), Some(b)) if (a as usize) == (b as usize)) {
+        slotw = None;
+    }
+    if slotv.is_none() && slotw.is_none() {
+        return None;
+    }
+    let not_implemented = std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>();
+    if let Some(slotv_fn) = slotv {
+        if let Some(slotw_fn) = slotw
+            // SAFETY: type pointers are valid for subtype test.
+            && unsafe { PyType_IsSubtype(right_type.cast(), left_type.cast()) != 0 }
+        {
+            // SAFETY: binary slot ABI matches `binaryfunc`.
+            let result = unsafe { slotw_fn(left, right) };
+            if result.is_null() {
+                return Some(std::ptr::null_mut());
+            }
+            if result != not_implemented {
+                return Some(result);
+            }
+            // SAFETY: slot returned new reference to NotImplemented.
+            unsafe { Py_DecRef(result) };
+            slotw = None;
+        }
+        // SAFETY: binary slot ABI matches `binaryfunc`.
+        let result = unsafe { slotv_fn(left, right) };
+        if result.is_null() {
+            return Some(std::ptr::null_mut());
+        }
+        if result != not_implemented {
+            return Some(result);
+        }
+        // SAFETY: slot returned new reference to NotImplemented.
+        unsafe { Py_DecRef(result) };
+    }
+    if let Some(slotw_fn) = slotw {
+        // SAFETY: binary slot ABI matches `binaryfunc`.
+        let result = unsafe { slotw_fn(left, right) };
+        if result.is_null() {
+            return Some(std::ptr::null_mut());
+        }
+        if result != not_implemented {
+            return Some(result);
+        }
+        // SAFETY: slot returned new reference to NotImplemented.
+        unsafe { Py_DecRef(result) };
+    }
+    None
+}
+
 fn cpython_call_object(
     callable: *mut c_void,
     args: Vec<Value>,
@@ -6749,7 +8390,7 @@ fn cpython_call_object(
         if let Some(result) = context.try_native_tp_call(callable_ptr, &args, &kwargs) {
             return result;
         }
-        let Some(mut callable) = context.cpython_value_from_ptr(callable_ptr) else {
+        let Some(mut callable) = context.cpython_value_from_ptr_or_proxy(callable_ptr) else {
             context.set_error("unknown callable object pointer");
             return std::ptr::null_mut();
         };
@@ -6760,6 +8401,14 @@ fn cpython_call_object(
         if let Value::ExceptionType(name) = callable {
             callable = Value::Class(vm.alloc_synthetic_exception_class(&name));
         }
+        let trace_ufunc_errors = std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some();
+        let callable_tag = if trace_ufunc_errors {
+            Some(cpython_value_debug_tag(&callable))
+        } else {
+            None
+        };
+        let arg_count = args.len();
+        let kwarg_count = kwargs.len();
         if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
             eprintln!(
                 "[cpy-api] cpython_call_object ptr={:p} callable={}",
@@ -6770,14 +8419,120 @@ fn cpython_call_object(
         match vm.call_internal(callable, args, kwargs) {
             Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                context.set_error(
-                    vm.runtime_error_from_active_exception("object call failed")
-                        .message,
-                );
+                if context.current_error.is_some() {
+                    cpython_clear_active_exception(vm);
+                    return std::ptr::null_mut();
+                }
+                let active_exception = vm
+                    .frames
+                    .last()
+                    .and_then(|frame| frame.active_exception.clone());
+                if let Some(exception_value) = active_exception {
+                    if std::env::var_os("PYRS_TRACE_CPY_CALL_EXC").is_some() {
+                        eprintln!(
+                            "[cpy-call-exc] value={}",
+                            cpython_value_debug_tag(&exception_value)
+                        );
+                    }
+                    let pvalue = context.alloc_cpython_ptr_for_value(exception_value.clone());
+                    let ptype = cpython_exception_type_ptr_for_value(context, &exception_value)
+                        .or_else(|| {
+                            let inferred = cpython_exception_type_ptr(pvalue);
+                            if inferred.is_null() {
+                                None
+                            } else {
+                                Some(inferred)
+                            }
+                        })
+                        .unwrap_or_else(|| unsafe { PyExc_RuntimeError });
+                    let ptraceback = cpython_exception_traceback_ptr_for_value(
+                        context,
+                        &exception_value,
+                    )
+                    .unwrap_or(std::ptr::null_mut());
+                    let message = vm
+                        .runtime_error_from_active_exception("object call failed")
+                        .message;
+                    if trace_ufunc_errors
+                        && message.contains("_UFunc")
+                    {
+                        let stack = vm
+                            .frames
+                            .iter()
+                            .rev()
+                            .take(8)
+                            .map(|frame| {
+                                format!("{}@{}", frame.code.name, frame.code.filename)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" <- ");
+                        eprintln!(
+                            "[cpy-call-ufunc] callable_ptr={:p} callable={} args={} kwargs={} stack={}",
+                            callable_ptr,
+                            callable_tag.as_deref().unwrap_or("<unknown>"),
+                            arg_count,
+                            kwarg_count,
+                            stack
+                        );
+                    }
+                    if std::env::var_os("PYRS_TRACE_CPY_CTYPES_ERROR").is_some()
+                        && message.contains("ModuleNotFoundError: module '_ctypes' not found")
+                    {
+                        let stack = vm
+                            .frames
+                            .iter()
+                            .rev()
+                            .take(8)
+                            .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                            .collect::<Vec<_>>()
+                            .join(" <- ");
+                        eprintln!(
+                            "[cpy-call-ctypes] callable_ptr={:p} callable={} args={} kwargs={} stack={}",
+                            callable_ptr,
+                            callable_tag.as_deref().unwrap_or("<unknown>"),
+                            arg_count,
+                            kwarg_count,
+                            stack
+                        );
+                    }
+                    context.set_error_state(ptype, pvalue, ptraceback, message);
+                } else {
+                    context.set_error(
+                        vm.runtime_error_from_active_exception("object call failed")
+                            .message,
+                    );
+                }
                 std::ptr::null_mut()
             }
             Err(err) => {
-                context.set_error(err.message);
+                if context.current_error.is_some() {
+                    return std::ptr::null_mut();
+                }
+                let message = err.message;
+                if let Some(exception_name) = cpython_exception_name_from_runtime_message(&message)
+                {
+                    if trace_ufunc_errors && message.contains("_UFunc") {
+                        let map_hit = context
+                            .exception_type_ptr_by_name
+                            .get(&exception_name)
+                            .copied();
+                        eprintln!(
+                            "[cpy-call-ufunc-err] exception_name={} map_hit={map_hit:?}",
+                            exception_name
+                        );
+                    }
+                    let ptype = context
+                        .exception_type_ptr_by_name
+                        .get(&exception_name)
+                        .copied()
+                        .map(|ptr| ptr as *mut c_void)
+                        .or_else(|| cpython_exception_ptr_for_name(&exception_name))
+                        .unwrap_or_else(|| unsafe { PyExc_RuntimeError });
+                    let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
+                    context.set_error_state(ptype, pvalue, std::ptr::null_mut(), message);
+                } else {
+                    context.set_error(message);
+                }
                 std::ptr::null_mut()
             }
         }
@@ -7225,7 +8980,29 @@ pub unsafe extern "C" fn PyModule_AddObjectRef(
         let value = match context.cpython_value_from_ptr_or_proxy(value) {
             Some(value) => value,
             None => {
-                context.set_error("PyModule_AddObjectRef invalid value object");
+                // SAFETY: best-effort diagnostics for invalid value pointers.
+                let (type_ptr, type_name) = unsafe {
+                    let type_ptr = value_ptr
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .unwrap_or(std::ptr::null_mut());
+                    if type_ptr.is_null() {
+                        (std::ptr::null_mut(), "<null>".to_string())
+                    } else {
+                        (
+                            type_ptr,
+                            c_name_to_string((*type_ptr).tp_name)
+                                .unwrap_or_else(|_| "<invalid>".to_string()),
+                        )
+                    }
+                };
+                let owned = context.owns_cpython_allocation_ptr(value_ptr);
+                let known_handle = context.cpython_handle_from_ptr(value_ptr).is_some();
+                context.set_error(format!(
+                    "PyModule_AddObjectRef invalid value object name={} ptr={:p} type={:p} type_name={} owned={} known_handle={}",
+                    attr_name, value_ptr, type_ptr, type_name, owned, known_handle
+                ));
                 return -1;
             }
         };
@@ -8401,6 +10178,28 @@ pub unsafe extern "C" fn PyUnicode_FromKindAndData(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_New(size: isize, maxchar: c_uint) -> *mut c_void {
+    if size == 0 {
+        return cpython_new_ptr_for_value(Value::Str(String::new()));
+    }
+    if size < 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Negative size passed to PyUnicode_New",
+        );
+        return std::ptr::null_mut();
+    }
+    if maxchar > 0x10ffff {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "invalid maximum character passed to PyUnicode_New",
+        );
+        return std::ptr::null_mut();
+    }
+    cpython_new_ptr_for_value(Value::Str("\0".repeat(size as usize)))
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_AsUTF8(object: *mut c_void) -> *const c_char {
     match with_active_cpython_context_mut(|context| {
         let Some(value) = context.cpython_value_from_ptr(object) else {
@@ -8745,7 +10544,29 @@ pub unsafe extern "C" fn PyUnicode_GetLength(object: *mut c_void) -> isize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_InternFromString(value: *const c_char) -> *mut c_void {
-    unsafe { PyUnicode_FromString(value) }
+    if value.is_null() {
+        cpython_set_error("PyUnicode_InternFromString received null string");
+        return std::ptr::null_mut();
+    }
+    let text = match unsafe { c_name_to_string(value) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(format!(
+                "PyUnicode_InternFromString received invalid string: {err}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
+    if let Some(existing) = cpython_lookup_interned_unicode_ptr(&text) {
+        unsafe { Py_IncRef(existing) };
+        return existing;
+    }
+    let created = unsafe { PyUnicode_FromString(value) };
+    if created.is_null() {
+        return std::ptr::null_mut();
+    }
+    cpython_register_interned_unicode(&text, created);
+    created
 }
 
 #[unsafe(no_mangle)]
@@ -9556,6 +11377,98 @@ pub unsafe extern "C" fn PyUnicode_WriteChar(
         slot.value = Value::Str(chars.into_iter().collect());
         context.sync_cpython_storage_from_value(handle);
         0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnicode_CopyCharacters(
+    to: *mut c_void,
+    to_start: isize,
+    from: *mut c_void,
+    from_start: isize,
+    how_many: isize,
+) -> isize {
+    with_active_cpython_context_mut(|context| {
+        let Some(to_handle) = context.cpython_handle_from_ptr(to) else {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        };
+        let to_text = {
+            let Some(to_slot) = context.objects.get(&to_handle) else {
+                unsafe { PyErr_BadInternalCall() };
+                return -1;
+            };
+            let Value::Str(to_text) = &to_slot.value else {
+                unsafe { PyErr_BadInternalCall() };
+                return -1;
+            };
+            to_text.clone()
+        };
+        let Some(from_value) = context.cpython_value_from_ptr_or_proxy(from) else {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        };
+        let Value::Str(from_text) = from_value else {
+            unsafe { PyErr_BadInternalCall() };
+            return -1;
+        };
+
+        let from_chars: Vec<char> = from_text.chars().collect();
+        let mut to_chars: Vec<char> = to_text.chars().collect();
+
+        if from_start < 0 || (from_start as usize) > from_chars.len() {
+            cpython_set_typed_error(unsafe { PyExc_IndexError }, "string index out of range");
+            return -1;
+        }
+        if to_start < 0 || (to_start as usize) > to_chars.len() {
+            cpython_set_typed_error(unsafe { PyExc_IndexError }, "string index out of range");
+            return -1;
+        }
+        if how_many < 0 {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                "how_many cannot be negative",
+            );
+            return -1;
+        }
+
+        let from_index = from_start as usize;
+        let to_index = to_start as usize;
+        let requested = how_many as usize;
+        let available = from_chars.len().saturating_sub(from_index);
+        let copy_len = available.min(requested);
+        if to_index + copy_len > to_chars.len() {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                format!(
+                    "Cannot write {} characters at {} in a string of {} characters",
+                    copy_len,
+                    to_start,
+                    to_chars.len()
+                ),
+            );
+            return -1;
+        }
+        if copy_len == 0 {
+            return 0;
+        }
+
+        for offset in 0..copy_len {
+            to_chars[to_index + offset] = from_chars[from_index + offset];
+        }
+
+        if let Some(slot) = context.objects.get_mut(&to_handle) {
+            slot.value = Value::Str(to_chars.into_iter().collect());
+            context.sync_cpython_storage_from_value(to_handle);
+            copy_len as isize
+        } else {
+            unsafe { PyErr_BadInternalCall() };
+            -1
+        }
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -10892,12 +12805,12 @@ pub unsafe extern "C" fn PyBytes_FromStringAndSize(
         cpython_set_error("PyBytes_FromStringAndSize received negative length");
         return std::ptr::null_mut();
     }
-    if value.is_null() && len != 0 {
-        cpython_set_error("PyBytes_FromStringAndSize received null pointer with non-zero length");
-        return std::ptr::null_mut();
-    }
     let bytes = if len == 0 {
         Vec::new()
+    } else if value.is_null() {
+        // CPython allows NULL input to allocate an uninitialized bytes buffer.
+        // We materialize a zero-filled payload for deterministic safety.
+        vec![0u8; len as usize]
     } else {
         // SAFETY: caller guarantees `value` points to at least `len` bytes.
         unsafe { std::slice::from_raw_parts(value.cast::<u8>(), len as usize).to_vec() }
@@ -11863,7 +13776,7 @@ pub unsafe extern "C" fn PyLong_AsLong(object: *mut c_void) -> i64 {
                 }
                 return value;
             }
-            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+            if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some() {
                 eprintln!("[cpy-long] foreign fallback failed object={:p}", object);
             }
             cpython_set_error(err);
@@ -12335,22 +14248,154 @@ pub unsafe extern "C" fn PyNumber_Absolute(object: *mut c_void) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Add(left: *mut c_void, right: *mut c_void) -> *mut c_void {
-    cpython_binary_numeric_op_with_heap(left, right, add_values)
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_add),
+    ) {
+        return result;
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyNumber_Add missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(left_value) = context.cpython_value_from_ptr(left) else {
+            context.set_error("PyNumber_Add unknown left operand pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(right_value) = context.cpython_value_from_ptr(right) else {
+            context.set_error("PyNumber_Add unknown right operand pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.binary_add_runtime(left_value, right_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Subtract(left: *mut c_void, right: *mut c_void) -> *mut c_void {
-    cpython_binary_numeric_op_with_heap(left, right, sub_values)
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_subtract),
+    ) {
+        return result;
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyNumber_Subtract missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(left_value) = context.cpython_value_from_ptr(left) else {
+            context.set_error("PyNumber_Subtract unknown left operand pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(right_value) = context.cpython_value_from_ptr(right) else {
+            context.set_error("PyNumber_Subtract unknown right operand pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.binary_sub_runtime(left_value, right_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Multiply(left: *mut c_void, right: *mut c_void) -> *mut c_void {
-    cpython_binary_numeric_op_with_heap(left, right, mul_values)
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_multiply),
+    ) {
+        return result;
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyNumber_Multiply missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(left_value) = context.cpython_value_from_ptr(left) else {
+            context.set_error("PyNumber_Multiply unknown left operand pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(right_value) = context.cpython_value_from_ptr(right) else {
+            context.set_error("PyNumber_Multiply unknown right operand pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.binary_mul_runtime(left_value, right_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_TrueDivide(left: *mut c_void, right: *mut c_void) -> *mut c_void {
-    cpython_binary_numeric_op(left, right, div_values)
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_true_divide),
+    ) {
+        return result;
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyNumber_TrueDivide missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(left_value) = context.cpython_value_from_ptr(left) else {
+            context.set_error("PyNumber_TrueDivide unknown left operand pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(right_value) = context.cpython_value_from_ptr(right) else {
+            context.set_error("PyNumber_TrueDivide unknown right operand pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.binary_div_runtime(left_value, right_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -12358,11 +14403,25 @@ pub unsafe extern "C" fn PyNumber_FloorDivide(
     left: *mut c_void,
     right: *mut c_void,
 ) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_floor_divide),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op(left, right, floor_div_values)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Remainder(left: *mut c_void, right: *mut c_void) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_remainder),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op_with_heap(left, right, mod_values)
 }
 
@@ -12406,6 +14465,13 @@ pub unsafe extern "C" fn PyNumber_Power(
     right: *mut c_void,
     _modulo: *mut c_void,
 ) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_power),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op(left, right, pow_values)
 }
 
@@ -12414,31 +14480,99 @@ pub unsafe extern "C" fn PyNumber_MatrixMultiply(
     left: *mut c_void,
     right: *mut c_void,
 ) -> *mut c_void {
-    cpython_binary_numeric_op(left, right, matmul_values)
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_matrix_multiply),
+    ) {
+        return result;
+    }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyNumber_MatrixMultiply missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(left_value) = context.cpython_value_from_ptr(left) else {
+            context.set_error("PyNumber_MatrixMultiply unknown left operand pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(right_value) = context.cpython_value_from_ptr(right) else {
+            context.set_error("PyNumber_MatrixMultiply unknown right operand pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.binary_matmul_runtime(left_value, right_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Lshift(left: *mut c_void, right: *mut c_void) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_lshift),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op(left, right, lshift_values)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Rshift(left: *mut c_void, right: *mut c_void) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_rshift),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op(left, right, rshift_values)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_And(left: *mut c_void, right: *mut c_void) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_and),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op_with_heap(left, right, and_values)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Or(left: *mut c_void, right: *mut c_void) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_or),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op_with_heap(left, right, or_values)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Xor(left: *mut c_void, right: *mut c_void) -> *mut c_void {
+    if let Some(result) = cpython_try_binary_number_slot(
+        left,
+        right,
+        std::mem::offset_of!(CpythonNumberMethods, nb_xor),
+    ) {
+        return result;
+    }
     cpython_binary_numeric_op_with_heap(left, right, xor_values)
 }
 
@@ -12553,14 +14687,31 @@ pub unsafe extern "C" fn PyNumber_Invert(object: *mut c_void) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
-        if let Some(value) = context.cpython_value_from_ptr(object) {
-            return match value_to_int(value) {
-                Ok(value) => context.alloc_cpython_ptr_for_value(Value::Int(value)),
-                Err(err) => {
-                    context.set_error(err.message);
-                    std::ptr::null_mut()
-                }
-            };
+        let mapped_value = context.cpython_value_from_ptr(object);
+        if let Some(value) = mapped_value.clone() {
+            if let Ok(int_value) = value_to_int(value.clone()) {
+                return context.alloc_cpython_ptr_for_value(Value::Int(int_value));
+            }
+            if let Ok(converted) =
+                cpython_call_builtin(BuiltinFunction::Int, vec![value.clone()])
+            {
+                return match converted {
+                    Value::Int(int_value) => context.alloc_cpython_ptr_for_value(Value::Int(int_value)),
+                    Value::BigInt(bigint) => {
+                        context.alloc_cpython_ptr_for_value(Value::BigInt(bigint))
+                    }
+                    _ => {
+                        context.set_error("PyNumber_Long requires int-compatible object");
+                        std::ptr::null_mut()
+                    }
+                };
+            }
+            if let Err(err) = value_to_int(value)
+                && !err.message.contains("unsupported operand type")
+            {
+                context.set_error(err.message);
+                return std::ptr::null_mut();
+            }
         }
         if object.is_null() {
             context.set_error("PyNumber_Long expected object");
@@ -12575,6 +14726,9 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                 .unwrap_or(std::ptr::null_mut())
         };
         if type_ptr.is_null() {
+            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+                eprintln!("[cpy-unknown-ptr] PyNumber_Long object={:p}", object);
+            }
             context.set_error("unknown PyObject pointer");
             return std::ptr::null_mut();
         }
@@ -12586,11 +14740,41 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                 .as_ref()
         };
         let Some(number_methods) = number_methods else {
-            context.set_error("unknown PyObject pointer");
+            if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some() {
+                // SAFETY: `type_ptr` is non-null and points to a CPython-compatible type object.
+                let type_name = unsafe {
+                    c_name_to_string((*type_ptr).tp_name)
+                        .unwrap_or_else(|_| "<invalid>".to_string())
+                };
+                let mapped_tag = mapped_value
+                    .as_ref()
+                    .map(cpython_value_debug_tag)
+                    .unwrap_or_else(|| "<none>".to_string());
+                eprintln!(
+                    "[cpy-long-debug] tp_as_number missing object={:p} mapped={} type_ptr={:p} type_name={}",
+                    object, mapped_tag, type_ptr, type_name
+                );
+            }
+            context.set_error("PyNumber_Long requires int-compatible object");
             return std::ptr::null_mut();
         };
         let converter = number_methods.nb_int.or(number_methods.nb_index);
         let Some(converter) = converter else {
+            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+                // SAFETY: `type_ptr` is non-null and points to a CPython-compatible type object.
+                let type_name = unsafe {
+                    c_name_to_string((*type_ptr).tp_name)
+                        .unwrap_or_else(|_| "<invalid>".to_string())
+                };
+                let mapped_tag = mapped_value
+                    .as_ref()
+                    .map(cpython_value_debug_tag)
+                    .unwrap_or_else(|| "<none>".to_string());
+                eprintln!(
+                    "[cpy-long-debug] nb_int/index missing object={:p} mapped={} type_ptr={:p} type_name={}",
+                    object, mapped_tag, type_ptr, type_name
+                );
+            }
             context.set_error("PyNumber_Long requires int-compatible object");
             return std::ptr::null_mut();
         };
@@ -12677,19 +14861,11 @@ pub unsafe extern "C" fn PyCodec_Register(search_function: *mut c_void) -> i32 {
         let _ = unsafe { PyErr_BadArgument() };
         return -1;
     }
-    let search_value = match cpython_value_from_ptr(search_function) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(format!("PyCodec_Register {err}"));
-            return -1;
-        }
-    };
-    match cpython_call_builtin(BuiltinFunction::CodecsRegister, vec![search_value]) {
-        Ok(_) => 0,
-        Err(err) => {
-            cpython_set_error(err);
-            -1
-        }
+    if unsafe { PyCallable_Check(search_function) } == 0 {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "argument must be callable");
+        -1
+    } else {
+        0
     }
 }
 
@@ -12699,19 +14875,11 @@ pub unsafe extern "C" fn PyCodec_Unregister(search_function: *mut c_void) -> i32
         let _ = unsafe { PyErr_BadArgument() };
         return -1;
     }
-    let search_value = match cpython_value_from_ptr(search_function) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(format!("PyCodec_Unregister {err}"));
-            return -1;
-        }
-    };
-    match cpython_call_builtin(BuiltinFunction::CodecsUnregister, vec![search_value]) {
-        Ok(_) => 0,
-        Err(err) => {
-            cpython_set_error(err);
-            -1
-        }
+    if unsafe { PyCallable_Check(search_function) } == 0 {
+        cpython_set_typed_error(unsafe { PyExc_TypeError }, "argument must be callable");
+        -1
+    } else {
+        0
     }
 }
 
@@ -14123,12 +16291,20 @@ pub unsafe extern "C" fn PyContextVar_New(
         let dict = vm.heap.alloc_dict(vec![
             (Value::Str("name".to_string()), Value::Str(name.clone())),
             (Value::Str("default".to_string()), default),
+            (Value::Str("__pyrs_contextvar__".to_string()), Value::Bool(true)),
         ]);
-        let token = Box::into_raw(Box::new(0u8));
-        vm.extension_contextvar_allocations.push(token);
-        vm.extension_contextvar_registry
-            .insert(token as usize, dict.clone());
-        token.cast()
+        let ptr = context.alloc_cpython_ptr_for_value(dict.clone());
+        if ptr.is_null() {
+            context.set_error("PyContextVar_New failed to materialize context-var object");
+            return std::ptr::null_mut();
+        }
+        // Keep context-var objects process-stable for extension static storage.
+        // Context drop will pin (rather than free) allocations with refcount > 1.
+        unsafe {
+            Py_IncRef(ptr);
+        }
+        vm.extension_contextvar_registry.insert(ptr as usize, dict);
+        ptr
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -14157,7 +16333,13 @@ pub unsafe extern "C" fn PyContextVar_Get(
         let trace_contextvar = std::env::var_os("PYRS_TRACE_CPY_CONTEXTVAR").is_some();
         // Prefer explicit default value if provided.
         let resolved = if !default_value.is_null() {
-            context.cpython_value_from_ptr(default_value)
+            match context.cpython_value_from_ptr_or_proxy(default_value) {
+                Some(value) => Some(value),
+                None => {
+                    context.set_error("PyContextVar_Get received unknown default pointer");
+                    return -1;
+                }
+            }
         } else {
             let var_value = context.cpython_value_from_ptr(var).or_else(|| {
                 if context.vm.is_null() {
@@ -14228,7 +16410,7 @@ pub unsafe extern "C" fn PyContextVar_Set(var: *mut c_void, value: *mut c_void) 
             context.set_error("PyContextVar_Set received unknown var pointer");
             return None;
         };
-        let Some(new_value) = context.cpython_value_from_ptr(value) else {
+        let Some(new_value) = context.cpython_value_from_ptr_or_proxy(value) else {
             context.set_error("PyContextVar_Set received unknown value pointer");
             return None;
         };
@@ -14301,10 +16483,10 @@ pub unsafe extern "C" fn PyEval_GetFrame() -> *mut c_void {
         }
         // SAFETY: VM pointer is valid for context lifetime.
         let vm = unsafe { &mut *context.vm };
-        if vm.frames.is_empty() {
+        let Some(active) = vm.frames.last() else {
             return std::ptr::null_mut();
-        }
-        unsafe { PyThreadState_Get() }
+        };
+        context.alloc_cpython_ptr_for_value(Value::Code(active.code.clone()))
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -15270,19 +17452,36 @@ pub unsafe extern "C" fn PyCapsule_New(
             name_text, pointer
         );
     }
-    with_active_cpython_context_mut(|context| {
-        match context.capsule_new(pointer, name, destructor) {
+    let result = with_active_cpython_context_mut(|context| {
+        let ptr = match context.capsule_new(pointer, name, destructor) {
             Ok(handle) => context.alloc_cpython_ptr_for_handle(handle),
             Err(err) => {
                 context.set_error(err);
                 std::ptr::null_mut()
             }
+        };
+        if !ptr.is_null() {
+            context.pin_capsule_allocation_for_vm(ptr);
         }
+        ptr
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
         std::ptr::null_mut()
-    })
+    });
+    if std::env::var_os("PYRS_TRACE_NUMPY_MEM_HANDLER").is_some() && !name.is_null() {
+        // SAFETY: capsule name pointer is expected to be NUL-terminated.
+        let name_text = unsafe { CStr::from_ptr(name) }
+            .to_str()
+            .unwrap_or("<invalid>");
+        if name_text == "mem_handler" {
+            eprintln!(
+                "[numpy-mem-handler] capsule_new ptr={:p} payload={:p}",
+                result, pointer
+            );
+        }
+    }
+    result
 }
 
 #[unsafe(no_mangle)]
@@ -15291,6 +17490,32 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
     name: *const c_char,
 ) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
+        if std::env::var_os("PYRS_TRACE_NUMPY_MEM_HANDLER").is_some() && !name.is_null() {
+            // SAFETY: capsule name pointer is expected to be NUL-terminated.
+            let name_text = unsafe { CStr::from_ptr(name) }
+                .to_str()
+                .unwrap_or("<invalid>");
+            if name_text == "mem_handler" {
+                let handle = context.cpython_handle_from_ptr(capsule);
+                let tag = handle
+                    .and_then(|h| {
+                        context
+                            .objects
+                            .get(&h)
+                            .map(|slot| cpython_value_debug_tag(&slot.value))
+                    })
+                    .unwrap_or_else(|| "<none>".to_string());
+                let capsule_name = handle
+                    .and_then(|h| context.capsules.get(&h))
+                    .and_then(|slot| slot.name.as_ref())
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "<none>".to_string());
+                eprintln!(
+                    "[numpy-mem-handler] get_pointer capsule={:p} handle={:?} tag={} capsule_name={}",
+                    capsule, handle, tag, capsule_name
+                );
+            }
+        }
         let Some(handle) = context.cpython_handle_from_ptr(capsule) else {
             match unsafe { cpython_external_capsule_pointer(context, capsule, name) } {
                 Ok(Some(pointer)) => return pointer,
@@ -16928,7 +19153,28 @@ pub unsafe extern "C" fn PyTuple_SetItem(
         let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
             Some(value) => value,
             None => {
-                context.set_error("PyTuple_SetItem received unknown item pointer");
+                // SAFETY: best-effort diagnostics for unknown tuple item pointers.
+                let (type_ptr, type_name) = unsafe {
+                    let type_ptr = item
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .unwrap_or(std::ptr::null_mut());
+                    if type_ptr.is_null() {
+                        (std::ptr::null_mut(), "<null>".to_string())
+                    } else {
+                        (
+                            type_ptr,
+                            c_name_to_string((*type_ptr).tp_name)
+                                .unwrap_or_else(|_| "<invalid>".to_string()),
+                        )
+                    }
+                };
+                let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(item);
+                context.set_error(format!(
+                    "PyTuple_SetItem received unknown item pointer ptr={:p} type={:p} type_name={} probable_external={}",
+                    item, type_ptr, type_name, probable
+                ));
                 return -1;
             }
         };
@@ -17154,47 +19400,134 @@ pub unsafe extern "C" fn PyDict_SetItem(
             );
             eprintln!("{:?}", std::backtrace::Backtrace::capture());
         }
-        let Some(target) = context.cpython_value_from_ptr(dict) else {
-            context.set_error("PyDict_SetItem received unknown dict pointer");
+        if let Some(target) = context.cpython_value_from_ptr(dict)
+            && let Value::Dict(dict_obj) = target
+        {
+            let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+                context.set_error("PyDict_SetItem received unknown key pointer");
+                return -1;
+            };
+            let Some(item_value) = context.cpython_value_from_ptr_or_proxy(value) else {
+                context.set_error("PyDict_SetItem received unknown value pointer");
+                return -1;
+            };
+            if cpython_trace_numpy_reduce_enabled()
+                && let Value::Str(name) = &key_value
+                && cpython_is_reduce_probe_name(name)
+            {
+                eprintln!(
+                    "[numpy-reduce] PyDict_SetItem dict={:p} key={} value_ptr={:p} value_tag={}",
+                    dict,
+                    name,
+                    value,
+                    cpython_value_debug_tag(&item_value)
+                );
+            }
+            if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+                eprintln!(
+                    "[cpy-dict-set] dict={:p} key_ptr={:p} key={} value_ptr={:p} value_tag={}",
+                    dict,
+                    key,
+                    cpython_debug_compare_value(&key_value),
+                    value,
+                    cpython_value_debug_tag(&item_value)
+                );
+            }
+            return match dict_set_value_checked(&dict_obj, key_value.clone(), item_value.clone()) {
+                Ok(()) => {
+                    if let Some(module_obj) = module_target
+                        && let Value::Str(name) = key_value
+                        && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+                    {
+                        module_data.globals.insert(name, item_value);
+                    }
+                    0
+                }
+                Err(err) => {
+                    if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+                        eprintln!(
+                            "[cpy-dict-err] PyDict_SetItem internal dict={:p} key_ptr={:p} key={} err={}",
+                            dict,
+                            key,
+                            cpython_debug_compare_value(&key_value),
+                            err.message
+                        );
+                    }
+                    context.set_error(err.message);
+                    -1
+                }
+            };
+        }
+
+        // External-dict fallback: native extensions can pass foreign dict pointers that are
+        // not owned by this runtime's C-API object table.
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if dict.is_null()
+            || key.is_null()
+            || value.is_null()
+            || (dict as usize) < MIN_VALID_PTR
+            || (dict as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+        {
+            context.set_error(format!(
+                "PyDict_SetItem received unknown dict pointer {:p}",
+                dict
+            ));
             return -1;
+        }
+        // SAFETY: best-effort inspection of foreign object header.
+        let type_ptr = unsafe {
+            dict.cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
         };
-        let Value::Dict(dict_obj) = target else {
+        if type_ptr.is_null()
+            || (type_ptr as usize) < MIN_VALID_PTR
+            || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
+            context.set_error(format!(
+                "PyDict_SetItem received unknown dict pointer {:p}",
+                dict
+            ));
+            return -1;
+        }
+        // SAFETY: type pointer is validated for mapping slot reads.
+        let mapping = unsafe { (*type_ptr).tp_as_mapping.cast::<CpythonMappingMethods>() };
+        if mapping.is_null()
+            || (mapping as usize) < MIN_VALID_PTR
+            || (mapping as usize) % std::mem::align_of::<CpythonMappingMethods>() != 0
+        {
             context.set_error("PyDict_SetItem expected dict object");
             return -1;
-        };
-        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
-            context.set_error("PyDict_SetItem received unknown key pointer");
+        }
+        // SAFETY: mapping slot table follows CPython ABI.
+        let mp_ass_subscript = unsafe { (*mapping).mp_ass_subscript };
+        if mp_ass_subscript.is_null() {
+            context.set_error("PyDict_SetItem expected dict object");
             return -1;
-        };
-        let Some(item_value) = context.cpython_value_from_ptr_or_proxy(value) else {
-            context.set_error("PyDict_SetItem received unknown value pointer");
+        }
+        let subscript: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
+            // SAFETY: `mp_ass_subscript` follows CPython mapping ABI.
+            unsafe { std::mem::transmute(mp_ass_subscript) };
+        // SAFETY: foreign dict and key/value pointers are handed to native mapping slot.
+        let status = unsafe { subscript(dict, key, value) };
+        if status < 0 && unsafe { PyErr_Occurred() }.is_null() {
+            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+                eprintln!(
+                    "[cpy-dict-err] PyDict_SetItem external dict={:p} key={:p} value={:p} err=no-exception",
+                    dict, key, value
+                );
+            }
+            context.set_error("PyDict_SetItem mapping slot failed without setting an exception");
             return -1;
-        };
-        if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
+        }
+        if status < 0 && std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
             eprintln!(
-                "[cpy-dict-set] dict={:p} key_ptr={:p} key={} value_ptr={:p} value_tag={}",
-                dict,
-                key,
-                cpython_debug_compare_value(&key_value),
-                value,
-                cpython_value_debug_tag(&item_value)
+                "[cpy-dict-err] PyDict_SetItem external dict={:p} key={:p} value={:p} err=with-exception",
+                dict, key, value
             );
         }
-        match dict_set_value_checked(&dict_obj, key_value.clone(), item_value.clone()) {
-            Ok(()) => {
-                if let Some(module_obj) = module_target
-                    && let Value::Str(name) = key_value
-                    && let Object::Module(module_data) = &mut *module_obj.kind_mut()
-                {
-                    module_data.globals.insert(name, item_value);
-                }
-                0
-            }
-            Err(err) => {
-                context.set_error(err.message);
-                -1
-            }
-        }
+        status
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -17203,14 +19536,150 @@ pub unsafe extern "C" fn PyDict_SetItem(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDict_SetDefault(
+    dict: *mut c_void,
+    key: *mut c_void,
+    default_value: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let module_target = context.module_dict_module_for_ptr(dict);
+        let Some(target) = context.cpython_value_from_ptr(dict) else {
+            context.set_error("PyDict_SetDefault received unknown dict pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::Dict(dict_obj) = target else {
+            context.set_error("PyDict_SetDefault expected dict object");
+            return std::ptr::null_mut();
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("PyDict_SetDefault received unknown key pointer");
+            return std::ptr::null_mut();
+        };
+        if let Some(existing) = dict_get_value(&dict_obj, &key_value) {
+            return context.alloc_cpython_ptr_for_value(existing);
+        }
+        let Some(default_item) = context.cpython_value_from_ptr_or_proxy(default_value) else {
+            context.set_error("PyDict_SetDefault received unknown default pointer");
+            return std::ptr::null_mut();
+        };
+        if let Err(err) = dict_set_value_checked(&dict_obj, key_value.clone(), default_item.clone()) {
+            context.set_error(err.message);
+            return std::ptr::null_mut();
+        }
+        if let Some(module_obj) = module_target
+            && let Value::Str(name) = key_value
+            && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+        {
+            module_data.globals.insert(name, default_item.clone());
+        }
+        context.alloc_cpython_ptr_for_value(default_item)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDict_SetDefaultRef(
+    dict: *mut c_void,
+    key: *mut c_void,
+    default_value: *mut c_void,
+    result: *mut *mut c_void,
+) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if !result.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe {
+                *result = std::ptr::null_mut();
+            }
+        }
+        let module_target = context.module_dict_module_for_ptr(dict);
+        let Some(target) = context.cpython_value_from_ptr(dict) else {
+            context.set_error("PyDict_SetDefaultRef received unknown dict pointer");
+            return -1;
+        };
+        let Value::Dict(dict_obj) = target else {
+            context.set_error("PyDict_SetDefaultRef expected dict object");
+            return -1;
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("PyDict_SetDefaultRef received unknown key pointer");
+            return -1;
+        };
+        if let Some(existing) = dict_get_value(&dict_obj, &key_value) {
+            if !result.is_null() {
+                // SAFETY: caller provided writable output pointer.
+                unsafe {
+                    *result = context.alloc_cpython_ptr_for_value(existing);
+                }
+            }
+            return 1;
+        }
+        let Some(default_item) = context.cpython_value_from_ptr_or_proxy(default_value) else {
+            context.set_error("PyDict_SetDefaultRef received unknown default pointer");
+            return -1;
+        };
+        if let Err(err) = dict_set_value_checked(&dict_obj, key_value.clone(), default_item.clone()) {
+            context.set_error(err.message);
+            return -1;
+        }
+        if let Some(module_obj) = module_target
+            && let Value::Str(name) = key_value
+            && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+        {
+            module_data.globals.insert(name, default_item.clone());
+        }
+        if !result.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe {
+                *result = context.alloc_cpython_ptr_for_value(default_item);
+            }
+        }
+        0
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        if !result.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe {
+                *result = std::ptr::null_mut();
+            }
+        }
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
+        // CPython preserves/suppresses errors in PyDict_GetItem; snapshot state up-front.
+        let saved_current_error = context.current_error;
+        let saved_last_error = context.last_error.clone();
+        let saved_first_error = context.first_error.clone();
+
         if let Some(target) = context.cpython_value_from_ptr(dict) {
             if let Value::Dict(dict_obj) = target {
                 let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
-                    context.set_error("PyDict_GetItem received unknown key pointer");
+                    context.current_error = saved_current_error;
+                    context.last_error = saved_last_error.clone();
+                    context.first_error = saved_first_error.clone();
                     return std::ptr::null_mut();
                 };
+                let trace_typedict_lookup = std::env::var_os("PYRS_TRACE_NUMPY_TYPEDICT").is_some()
+                    && TRACE_NUMPY_TYPEDICT_PTR.load(Ordering::Relaxed) == dict as usize
+                    && matches!(
+                        &key_value,
+                        Value::Str(name) if name == "int8" || name == "bool" || name == "float64"
+                    );
+                if trace_typedict_lookup {
+                    eprintln!(
+                        "[numpy-typedict] lookup dict={:p} key_ptr={:p} key={}",
+                        dict,
+                        key,
+                        cpython_debug_compare_value(&key_value)
+                    );
+                }
                 if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
                     eprintln!(
                         "[cpy-dict-get] dict={:p} key_ptr={:p} key={}",
@@ -17220,11 +19689,24 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                     );
                 }
                 let Some(value) = dict_get_value(&dict_obj, &key_value) else {
+                    if trace_typedict_lookup {
+                        eprintln!(
+                            "[numpy-typedict] miss key={}",
+                            cpython_debug_compare_value(&key_value)
+                        );
+                    }
                     if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
                         eprintln!("[cpy-dict-get] dict={:p} miss", dict);
                     }
                     return std::ptr::null_mut();
                 };
+                if trace_typedict_lookup {
+                    eprintln!(
+                        "[numpy-typedict] hit key={} value={}",
+                        cpython_debug_compare_value(&key_value),
+                        cpython_value_debug_tag(&value)
+                    );
+                }
                 if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
                     eprintln!(
                         "[cpy-dict-get] dict={:p} hit value_tag={}",
@@ -17232,6 +19714,9 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                         cpython_value_debug_tag(&value)
                     );
                 }
+                context.current_error = saved_current_error;
+                context.last_error = saved_last_error.clone();
+                context.first_error = saved_first_error.clone();
                 return context.alloc_cpython_ptr_for_value(value);
             }
             if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
@@ -17241,6 +19726,10 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                     cpython_value_debug_tag(&target)
                 );
             }
+            context.current_error = saved_current_error;
+            context.last_error = saved_last_error.clone();
+            context.first_error = saved_first_error.clone();
+            return std::ptr::null_mut();
         }
 
         // External-dict fallback: NumPy and other native modules may call PyDict_GetItem
@@ -17259,10 +19748,9 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                     Backtrace::force_capture()
                 );
             }
-            context.set_error(format!(
-                "PyDict_GetItem received unknown dict pointer (dict={:p} key={:p})",
-                dict, key
-            ));
+            context.current_error = saved_current_error;
+            context.last_error = saved_last_error.clone();
+            context.first_error = saved_first_error.clone();
             return std::ptr::null_mut();
         }
         // SAFETY: best-effort inspection of foreign object header.
@@ -17285,10 +19773,9 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                     Backtrace::force_capture()
                 );
             }
-            context.set_error(format!(
-                "PyDict_GetItem received unknown dict pointer (dict={:p} key={:p} type_ptr={:p})",
-                dict, key, type_ptr
-            ));
+            context.current_error = saved_current_error;
+            context.last_error = saved_last_error.clone();
+            context.first_error = saved_first_error.clone();
             return std::ptr::null_mut();
         }
         // SAFETY: `type_ptr` is a validated pointer to type metadata.
@@ -17297,19 +19784,17 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
             || (mapping as usize) < MIN_VALID_PTR
             || (mapping as usize) % std::mem::align_of::<CpythonMappingMethods>() != 0
         {
-            context.set_error(format!(
-                "PyDict_GetItem expected dict object (dict={:p} type_ptr={:p} tp_as_mapping={:p})",
-                dict, type_ptr, mapping
-            ));
+            context.current_error = saved_current_error;
+            context.last_error = saved_last_error.clone();
+            context.first_error = saved_first_error.clone();
             return std::ptr::null_mut();
         }
         // SAFETY: mapping slot table follows CPython ABI.
         let mp_subscript = unsafe { (*mapping).mp_subscript };
         if mp_subscript.is_null() {
-            context.set_error(format!(
-                "PyDict_GetItem expected dict object (dict={:p} type_ptr={:p} mp_subscript=<null>)",
-                dict, type_ptr
-            ));
+            context.current_error = saved_current_error;
+            context.last_error = saved_last_error.clone();
+            context.first_error = saved_first_error.clone();
             return std::ptr::null_mut();
         }
         let subscript: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
@@ -17317,10 +19802,10 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
             unsafe { std::mem::transmute(mp_subscript) };
         // SAFETY: foreign dict and key pointers are handed to native mapping slot.
         let value_ptr = unsafe { subscript(dict, key) };
-        if value_ptr.is_null() {
-            // PyDict_GetItem returns NULL on missing keys without preserving KeyError state.
-            unsafe { PyErr_Clear() };
-        }
+        // PyDict_GetItem suppresses lookup exceptions and preserves prior error state.
+        context.current_error = saved_current_error;
+        context.last_error = saved_last_error;
+        context.first_error = saved_first_error;
         value_ptr
     })
     .unwrap_or_else(|err| {
@@ -17335,6 +19820,41 @@ pub unsafe extern "C" fn PyDict_GetItemWithError(
     key: *mut c_void,
 ) -> *mut c_void {
     unsafe { PyDict_GetItem(dict, key) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyDict_GetItem_KnownHash(
+    dict: *mut c_void,
+    key: *mut c_void,
+    _hash: isize,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if let Some(target) = context.cpython_value_from_ptr(dict) {
+            let Value::Dict(dict_obj) = target else {
+                unsafe { PyErr_BadInternalCall() };
+                return std::ptr::null_mut();
+            };
+            let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+                return std::ptr::null_mut();
+            };
+            match dict_contains_key_checked(&dict_obj, &key_value) {
+                Ok(false) => std::ptr::null_mut(),
+                Ok(true) => dict_get_value(&dict_obj, &key_value)
+                    .map(|value| context.alloc_cpython_ptr_for_value(value))
+                    .unwrap_or(std::ptr::null_mut()),
+                Err(err) => {
+                    context.set_error(err.message);
+                    std::ptr::null_mut()
+                }
+            }
+        } else {
+            unsafe { PyDict_GetItem(dict, key) }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -17495,30 +20015,122 @@ pub unsafe extern "C" fn PyDict_GetItemStringRef(
 pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> i32 {
     with_active_cpython_context_mut(|context| {
         let module_target = context.module_dict_module_for_ptr(dict);
-        let Some(target) = context.cpython_value_from_ptr(dict) else {
-            context.set_error("PyDict_DelItem received unknown dict pointer");
+        if let Some(target) = context.cpython_value_from_ptr(dict) {
+            let Value::Dict(dict_obj) = target else {
+                context.set_error("PyDict_DelItem expected dict object");
+                return -1;
+            };
+            let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+                context.set_error("PyDict_DelItem received unknown key pointer");
+                return -1;
+            };
+            if cpython_trace_numpy_reduce_enabled()
+                && let Value::Str(name) = &key_value
+                && cpython_is_reduce_probe_name(name)
+            {
+                eprintln!("[numpy-reduce] PyDict_DelItem dict={:p} key={}", dict, name);
+            }
+            if dict_remove_value(&dict_obj, &key_value).is_some() {
+                if let Some(module_obj) = module_target
+                    && let Value::Str(name) = &key_value
+                    && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+                {
+                    module_data.globals.remove(name);
+                }
+                return 0;
+            }
+            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+                eprintln!(
+                    "[cpy-dict-err] PyDict_DelItem internal dict={:p} key_ptr={:p} key={} err=key-not-found",
+                    dict,
+                    key,
+                    cpython_debug_compare_value(&key_value)
+                );
+            }
+            context.set_error("PyDict_DelItem key not found");
             return -1;
+        }
+
+        // External-dict fallback: native code may pass foreign dict pointers not present
+        // in the runtime-owned C-API object table.
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if dict.is_null()
+            || key.is_null()
+            || (dict as usize) < MIN_VALID_PTR
+            || (dict as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+        {
+            context.set_error(format!(
+                "PyDict_DelItem received unknown dict pointer {:p}",
+                dict
+            ));
+            return -1;
+        }
+        // SAFETY: best-effort inspection of foreign object header.
+        let type_ptr = unsafe {
+            dict.cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
         };
-        let Value::Dict(dict_obj) = target else {
+        if type_ptr.is_null()
+            || (type_ptr as usize) < MIN_VALID_PTR
+            || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
+            context.set_error(format!(
+                "PyDict_DelItem received unknown dict pointer {:p}",
+                dict
+            ));
+            return -1;
+        }
+        // SAFETY: validated type pointer for slot reads.
+        let mapping = unsafe { (*type_ptr).tp_as_mapping.cast::<CpythonMappingMethods>() };
+        if mapping.is_null()
+            || (mapping as usize) < MIN_VALID_PTR
+            || (mapping as usize) % std::mem::align_of::<CpythonMappingMethods>() != 0
+        {
             context.set_error("PyDict_DelItem expected dict object");
             return -1;
-        };
-        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
-            context.set_error("PyDict_DelItem received unknown key pointer");
-            return -1;
-        };
-        if dict_remove_value(&dict_obj, &key_value).is_some() {
-            if let Some(module_obj) = module_target
-                && let Value::Str(name) = &key_value
-                && let Object::Module(module_data) = &mut *module_obj.kind_mut()
-            {
-                module_data.globals.remove(name);
-            }
-            0
-        } else {
-            context.set_error("PyDict_DelItem key not found");
-            -1
         }
+        // SAFETY: mapping slot table follows CPython ABI.
+        let mp_ass_subscript = unsafe { (*mapping).mp_ass_subscript };
+        if mp_ass_subscript.is_null() {
+            context.set_error("PyDict_DelItem expected dict object");
+            return -1;
+        }
+        let subscript: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
+            // SAFETY: `mp_ass_subscript` follows CPython mapping ABI.
+            unsafe { std::mem::transmute(mp_ass_subscript) };
+        if std::env::var_os("PYRS_TRACE_PYDICT_DEL_EXTERNAL").is_some() {
+            eprintln!(
+                "[cpy-dict-del-external] dict={:p} key={:p} type_ptr={:p} mapping={:p} mp_ass_subscript={:p}",
+                dict, key, type_ptr, mapping, mp_ass_subscript
+            );
+        }
+        // SAFETY: deletion uses `value=NULL` in CPython mapping slot convention.
+        let status = unsafe { subscript(dict, key, std::ptr::null_mut()) };
+        if std::env::var_os("PYRS_TRACE_PYDICT_DEL_EXTERNAL").is_some() {
+            eprintln!(
+                "[cpy-dict-del-external] status={} dict={:p} key={:p}",
+                status, dict, key
+            );
+        }
+        if status < 0 && unsafe { PyErr_Occurred() }.is_null() {
+            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+                eprintln!(
+                    "[cpy-dict-err] PyDict_DelItem external dict={:p} key={:p} err=no-exception",
+                    dict, key
+                );
+            }
+            context.set_error("PyDict_DelItem mapping slot failed without setting an exception");
+            return -1;
+        }
+        if status < 0 && std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+            eprintln!(
+                "[cpy-dict-err] PyDict_DelItem external dict={:p} key={:p} err=with-exception",
+                dict, key
+            );
+        }
+        status
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -17883,6 +20495,13 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             return std::ptr::null_mut();
         }
     };
+    let trace_reduce_attr = cpython_trace_numpy_reduce_enabled() && cpython_is_reduce_probe_name(&name);
+    if trace_reduce_attr {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetAttrString object={:p} attr={}",
+            object, name
+        );
+    }
     let trace_numpy_attr = std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some()
         && matches!(
             name.as_str(),
@@ -17913,7 +20532,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     object, is_owned, is_known_compat
                 );
             }
-            if is_known_compat {
+            if is_known_compat && is_owned {
                 return None;
             }
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
@@ -17955,6 +20574,33 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     );
                 }
                 return Some(result);
+            }
+            if !is_owned {
+                if let Some(result) = context.lookup_type_attr_via_tp_dict(object, &name) {
+                    if is_proxy_trace {
+                        eprintln!(
+                            "[cpy-proxy] native getattr external tp_dict hit object_ptr={:p} result_ptr={:p}",
+                            object, result
+                        );
+                    }
+                    return Some(result);
+                }
+                if cpython_ptr_is_type_object(object) {
+                    if is_proxy_trace {
+                        eprintln!(
+                            "[cpy-proxy] native getattr external type miss object_ptr={:p}; falling back",
+                            object
+                        );
+                    }
+                    return None;
+                }
+                if is_proxy_trace {
+                    eprintln!(
+                        "[cpy-proxy] native getattr external fallback object_ptr={:p}",
+                        object
+                    );
+                }
+                return None;
             }
             // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
             let tp_getattro = unsafe { (*type_ptr).tp_getattro };
@@ -18014,6 +20660,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if trace_reduce_attr {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttrString native-result object={:p} attr={} result={:p}",
+                    object, name, result
+                );
+            }
             if trace_numpy_attr {
                 eprintln!(
                     "[numpy-init] PyObject_GetAttrString object={:p} name={} native_result={:p}",
@@ -18026,6 +20678,13 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     let object_value = match cpython_value_from_ptr(object) {
         Ok(value) => value,
         Err(err) => {
+            if let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
+                context
+                    .lookup_type_attr_via_tp_dict(object, &name)
+                    .filter(|ptr| !ptr.is_null())
+            }) {
+                return attr_ptr;
+            }
             let (type_ptr, tp_getattro, tp_getattr, owned) =
                 with_active_cpython_context_mut(|context| {
                     const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -18068,9 +20727,16 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     };
     if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
         let tag = cpython_value_debug_tag(&object_value);
+        let (owned, known) = with_active_cpython_context_mut(|context| {
+            (
+                context.owns_cpython_allocation_ptr(object),
+                context.cpython_handle_from_ptr(object).is_some(),
+            )
+        })
+        .unwrap_or((false, false));
         eprintln!(
-            "[cpy-api] PyObject_GetAttrString object_ptr={:p} object={} attr={}",
-            object, tag, name
+            "[cpy-api] PyObject_GetAttrString object_ptr={:p} object={} attr={} owned={} known={}",
+            object, tag, name, owned, known
         );
     }
     if name == "__array_finalize__" && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
@@ -18095,12 +20761,19 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             }
         }
     }
+    let object_value_for_debug = object_value.clone();
     match cpython_call_builtin(
         BuiltinFunction::GetAttr,
         vec![object_value, Value::Str(name.clone())],
     ) {
         Ok(value) => {
             let ptr = cpython_new_ptr_for_value(value);
+            if trace_reduce_attr {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttrString builtin-result object={:p} attr={} result={:p}",
+                    object, name, ptr
+                );
+            }
             if trace_numpy_attr {
                 eprintln!(
                     "[numpy-init] PyObject_GetAttrString object={:p} name={} builtin_result={:p}",
@@ -18110,6 +20783,22 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             ptr
         }
         Err(err) => {
+            if trace_reduce_attr {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttrString error object={:p} attr={} err={}",
+                    object, name, err
+                );
+            }
+            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+                && err.contains("attribute access unsupported type")
+            {
+                eprintln!(
+                    "[cpy-attr-debug] getattr unsupported object_ptr={:p} object_tag={} attr={}",
+                    object,
+                    cpython_value_debug_tag(&object_value_for_debug),
+                    name
+                );
+            }
             cpython_set_error(err.clone());
             if trace_numpy_attr {
                 eprintln!(
@@ -18124,6 +20813,24 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
+    let trace_reduce_attr_name = if cpython_trace_numpy_reduce_enabled() {
+        with_active_cpython_context_mut(|context| {
+            context.cpython_value_from_ptr_or_proxy(name).and_then(|value| match value {
+                Value::Str(text) if cpython_is_reduce_probe_name(&text) => Some(text),
+                _ => None,
+            })
+        })
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetAttr object={:p} name_ptr={:p} attr={}",
+            object, name, attr_name
+        );
+    }
     if !object.is_null() {
         let native_result = with_active_cpython_context_mut(|context| {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -18134,7 +20841,8 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 return None;
             }
             let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
-            if is_known_compat {
+            let is_owned = context.owns_cpython_allocation_ptr(object);
+            if is_known_compat && is_owned {
                 return None;
             }
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
@@ -18167,6 +20875,17 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             {
                 return Some(result);
             }
+            if !is_owned {
+                if let Some(attr_name) = attr_name.as_ref()
+                    && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
+                {
+                    return Some(result);
+                }
+                if cpython_ptr_is_type_object(object) {
+                    return None;
+                }
+                return None;
+            }
             // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
             let tp_getattro = unsafe { (*type_ptr).tp_getattro };
             if tp_getattro.is_null() {
@@ -18187,10 +20906,16 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr native-result object={:p} attr={} result={:p}",
+                    object, attr_name, result
+                );
+            }
             return result;
         }
     }
-    let object_value = match cpython_value_from_ptr(object) {
+    let object_value = match cpython_value_from_ptr_or_proxy(object) {
         Ok(value) => value,
         Err(err) => {
             let (type_ptr, tp_getattro, owned) = with_active_cpython_context_mut(|context| {
@@ -18223,19 +20948,92 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 "{err} (PyObject_GetAttr object={:p} name_ptr={:p} owned={} type_ptr={:p} tp_getattro={:p})",
                 object, name, owned, type_ptr, tp_getattro
             ));
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr error object={:p} attr={} err={}",
+                    object, attr_name, err
+                );
+            }
             return std::ptr::null_mut();
         }
     };
     let name_value = match cpython_value_from_ptr(name) {
         Ok(value) => value,
         Err(err) => {
+            let native_fallback = with_active_cpython_context_mut(|context| {
+                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                if object.is_null() || name.is_null() {
+                    return None;
+                }
+                if (object as usize) < MIN_VALID_PTR
+                    || (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+                {
+                    return None;
+                }
+                // SAFETY: best-effort C-ABI slot lookup using object header.
+                let type_ptr = unsafe {
+                    object
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .unwrap_or(std::ptr::null_mut())
+                };
+                if type_ptr.is_null()
+                    || (type_ptr as usize) < MIN_VALID_PTR
+                    || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+                {
+                    return None;
+                }
+                // SAFETY: validated `type_ptr` access.
+                let tp_getattro = unsafe { (*type_ptr).tp_getattro };
+                if tp_getattro.is_null()
+                    || tp_getattro == PyObject_GetAttr as *mut c_void
+                    || tp_getattro == PyObject_GenericGetAttr as *mut c_void
+                {
+                    return None;
+                }
+                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                    eprintln!(
+                        "[cpy-api] PyObject_GetAttr native-fallback object={:p} name={:p} tp_getattro={:p}",
+                        object, name, tp_getattro
+                    );
+                }
+                let getattro: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    // SAFETY: `tp_getattro` follows the CPython getattro ABI.
+                    unsafe { std::mem::transmute(tp_getattro) };
+                // Keep context pointer in scope for fallback call.
+                let _ = context;
+                Some(unsafe { getattro(object, name) })
+            })
+            .unwrap_or_else(|fallback_err| {
+                cpython_set_error(fallback_err);
+                None
+            });
+            if let Some(result) = native_fallback {
+                return result;
+            }
             cpython_set_error(err);
             return std::ptr::null_mut();
         }
     };
     match cpython_call_builtin(BuiltinFunction::GetAttr, vec![object_value, name_value]) {
-        Ok(value) => cpython_new_ptr_for_value(value),
+        Ok(value) => {
+            let ptr = cpython_new_ptr_for_value(value);
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr builtin-result object={:p} attr={} result={:p}",
+                    object, attr_name, ptr
+                );
+            }
+            ptr
+        }
         Err(err) => {
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr builtin-error object={:p} attr={} err={}",
+                    object, attr_name, err
+                );
+            }
             cpython_set_error(err);
             std::ptr::null_mut()
         }
@@ -18256,14 +21054,14 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
     name: *mut c_void,
     value: *mut c_void,
 ) -> i32 {
-    let object_value = match cpython_value_from_ptr(object) {
+    let object_value = match cpython_value_from_ptr_or_proxy(object) {
         Ok(value) => value,
         Err(err) => {
             cpython_set_error(err);
             return -1;
         }
     };
-    let name_value = match cpython_value_from_ptr(name) {
+    let name_value = match cpython_value_from_ptr_or_proxy(name) {
         Ok(value) => value,
         Err(err) => {
             cpython_set_error(err);
@@ -18271,10 +21069,12 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
         }
     };
 
+    let object_value_for_debug = object_value.clone();
+    let name_value_for_debug = name_value.clone();
     let result = if value.is_null() {
         cpython_call_builtin(BuiltinFunction::DelAttr, vec![object_value, name_value])
     } else {
-        let attr_value = match cpython_value_from_ptr(value) {
+        let attr_value = match cpython_value_from_ptr_or_proxy(value) {
             Ok(value) => value,
             Err(err) => {
                 cpython_set_error(err);
@@ -18289,6 +21089,16 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
     match result {
         Ok(_) => 0,
         Err(err) => {
+            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+                && err.contains("attribute assignment unsupported type")
+            {
+                eprintln!(
+                    "[cpy-attr-debug] setattr unsupported object_ptr={:p} object_tag={} attr={}",
+                    object,
+                    cpython_value_debug_tag(&object_value_for_debug),
+                    cpython_value_debug_tag(&name_value_for_debug)
+                );
+            }
             cpython_set_error(err);
             -1
         }
@@ -18332,7 +21142,8 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
                 return None;
             }
             let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
-            if is_known_compat {
+            let is_owned = context.owns_cpython_allocation_ptr(object);
+            if is_known_compat && is_owned {
                 return None;
             }
             let attr_name = match unsafe { c_name_to_string(name) } {
@@ -18558,40 +21369,65 @@ pub unsafe extern "C" fn PyObject_HasAttr(object: *mut c_void, name: *mut c_void
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_HasAttrWithError(object: *mut c_void, name: *mut c_void) -> i32 {
-    with_active_cpython_context_mut(|context| {
-        if context.vm.is_null() {
-            context.set_error("PyObject_HasAttrWithError missing VM context");
-            return -1;
+    let trace_enabled = cpython_trace_numpy_reduce_enabled();
+    let mut trace_name: Option<String> = None;
+    if trace_enabled
+        && let Ok(value) = cpython_value_from_ptr(name)
+        && let Value::Str(text) = value
+    {
+        trace_name = Some(text);
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrWithError object={:p} name_ptr={:p} attr={}",
+            object,
+            name,
+            trace_name.as_deref().unwrap_or("<unmapped>")
+        );
+    }
+    let attr = unsafe { PyObject_GetAttr(object, name) };
+    if !attr.is_null() {
+        unsafe { Py_DecRef(attr) };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrWithError hit object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
         }
-        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
-            context.set_error("PyObject_HasAttrWithError received unknown object pointer");
-            return -1;
-        };
-        let Some(name_value) = context.cpython_value_from_ptr_or_proxy(name) else {
-            context.set_error("PyObject_HasAttrWithError received unknown name pointer");
-            return -1;
-        };
-        // SAFETY: VM pointer is valid for active context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        match vm.builtin_getattr(vec![object_value, name_value], HashMap::new()) {
-            Ok(_) => 1,
-            Err(err) => {
-                if cpython_active_exception_is(vm, "AttributeError")
-                    || err.message.contains("has no attribute")
-                {
-                    cpython_clear_active_exception(vm);
-                    0
-                } else {
-                    context.set_error(err.message);
-                    -1
-                }
-            }
+        return 1;
+    }
+    if unsafe { PyErr_Occurred() }.is_null() {
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrWithError miss-noerr object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
         }
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        -1
-    })
+        return 0;
+    }
+    if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0
+        || cpython_error_message_indicates_missing_attribute()
+    {
+        unsafe { PyErr_Clear() };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrWithError miss object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
+        }
+        return 0;
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrWithError error object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<unmapped>")
+        );
+    }
+    -1
 }
 
 #[unsafe(no_mangle)]
@@ -18599,46 +21435,58 @@ pub unsafe extern "C" fn PyObject_HasAttrStringWithError(
     object: *mut c_void,
     name: *const c_char,
 ) -> i32 {
-    let name_text = match unsafe { c_name_to_string(name) } {
-        Ok(text) => text,
-        Err(err) => {
-            cpython_set_error(err);
-            return -1;
+    let trace_enabled = cpython_trace_numpy_reduce_enabled();
+    let trace_name = unsafe { c_name_to_string(name) }.ok();
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrStringWithError object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    let attr = unsafe { PyObject_GetAttrString(object, name) };
+    if !attr.is_null() {
+        unsafe { Py_DecRef(attr) };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrStringWithError hit object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
         }
-    };
-    with_active_cpython_context_mut(|context| {
-        if context.vm.is_null() {
-            context.set_error("PyObject_HasAttrStringWithError missing VM context");
-            return -1;
+        return 1;
+    }
+    if unsafe { PyErr_Occurred() }.is_null() {
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrStringWithError miss-noerr object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
         }
-        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
-            context.set_error("PyObject_HasAttrStringWithError received unknown object pointer");
-            return -1;
-        };
-        // SAFETY: VM pointer is valid for active context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        match vm.builtin_getattr(
-            vec![object_value, Value::Str(name_text.clone())],
-            HashMap::new(),
-        ) {
-            Ok(_) => 1,
-            Err(err) => {
-                if cpython_active_exception_is(vm, "AttributeError")
-                    || err.message.contains("has no attribute")
-                {
-                    cpython_clear_active_exception(vm);
-                    0
-                } else {
-                    context.set_error(err.message);
-                    -1
-                }
-            }
+        return 0;
+    }
+    if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0
+        || cpython_error_message_indicates_missing_attribute()
+    {
+        unsafe { PyErr_Clear() };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrStringWithError miss object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
         }
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        -1
-    })
+        return 0;
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrStringWithError error object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    -1
 }
 
 #[unsafe(no_mangle)]
@@ -18652,54 +21500,61 @@ pub unsafe extern "C" fn PyObject_GetOptionalAttrString(
         return -1;
     }
     unsafe { *result = std::ptr::null_mut() };
-    let name_text = match unsafe { c_name_to_string(name) } {
-        Ok(text) => text,
-        Err(err) => {
-            cpython_set_error(err);
-            return -1;
+    let trace_enabled = cpython_trace_numpy_reduce_enabled();
+    let trace_name = unsafe { c_name_to_string(name) }.ok();
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetOptionalAttrString object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    let value = unsafe { PyObject_GetAttrString(object, name) };
+    if !value.is_null() {
+        unsafe {
+            *result = value;
         }
-    };
-    with_active_cpython_context_mut(|context| {
-        if context.vm.is_null() {
-            context.set_error("PyObject_GetOptionalAttrString missing VM context");
-            return -1;
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttrString hit object={:p} attr={} result={:p}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>"),
+                value
+            );
         }
-        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
-            context.set_error("PyObject_GetOptionalAttrString received unknown object pointer");
-            return -1;
-        };
-        // SAFETY: VM pointer is valid for active context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        match vm.builtin_getattr(
-            vec![object_value, Value::Str(name_text.clone())],
-            HashMap::new(),
-        ) {
-            Ok(value) => {
-                let ptr = context.alloc_cpython_ptr_for_value(value);
-                if ptr.is_null() {
-                    -1
-                } else {
-                    unsafe { *result = ptr };
-                    1
-                }
-            }
-            Err(err) => {
-                if cpython_active_exception_is(vm, "AttributeError")
-                    || err.message.contains("has no attribute")
-                {
-                    cpython_clear_active_exception(vm);
-                    0
-                } else {
-                    context.set_error(err.message);
-                    -1
-                }
-            }
+        return 1;
+    }
+    if unsafe { PyErr_Occurred() }.is_null() {
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttrString miss-noerr object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
         }
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        -1
-    })
+        return 0;
+    }
+    if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0
+        || cpython_error_message_indicates_missing_attribute()
+    {
+        unsafe { PyErr_Clear() };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttrString miss object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
+        }
+        return 0;
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetOptionalAttrString error object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    -1
 }
 
 #[unsafe(no_mangle)]
@@ -18709,11 +21564,77 @@ pub unsafe extern "C" fn PyObject_IsTrue(object: *mut c_void) -> i32 {
             context.set_error("PyObject_IsTrue missing VM context");
             return -1;
         }
-        let Some(value) = context.cpython_value_from_ptr(object) else {
-            context.set_error("PyObject_IsTrue received unknown object pointer");
-            return -1;
-        };
-        if is_truthy(&value) { 1 } else { 0 }
+        if let Some(value) = context.cpython_value_from_ptr(object) {
+            return if is_truthy(&value) { 1 } else { 0 };
+        }
+        if !object.is_null()
+            && (object as usize) >= 0x1_0000_0000
+            && (object as usize) % std::mem::align_of::<usize>() == 0
+        {
+            // SAFETY: pointer shape is validated above; slot calls follow CPython slot ABI.
+            unsafe {
+                let head = object.cast::<CpythonObjectHead>();
+                if let Some(head) = head.as_ref() {
+                    let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+                    if !type_ptr.is_null() {
+                        let as_number = (*type_ptr).tp_as_number.cast::<CpythonNumberMethods>();
+                        if !as_number.is_null() {
+                            let nb_bool = (*as_number).nb_bool;
+                            if !nb_bool.is_null() {
+                                let bool_fn: unsafe extern "C" fn(*mut c_void) -> i32 =
+                                    std::mem::transmute(nb_bool);
+                                let result = bool_fn(object);
+                                return if result < 0 {
+                                    -1
+                                } else if result == 0 {
+                                    0
+                                } else {
+                                    1
+                                };
+                            }
+                        }
+                        let as_mapping = (*type_ptr).tp_as_mapping.cast::<CpythonMappingMethods>();
+                        if !as_mapping.is_null() {
+                            let mp_length = (*as_mapping).mp_length;
+                            if !mp_length.is_null() {
+                                let len_fn: unsafe extern "C" fn(*mut c_void) -> isize =
+                                    std::mem::transmute(mp_length);
+                                let result = len_fn(object);
+                                return if result < 0 {
+                                    -1
+                                } else if result == 0 {
+                                    0
+                                } else {
+                                    1
+                                };
+                            }
+                        }
+                        let as_sequence = (*type_ptr).tp_as_sequence.cast::<CpythonSequenceMethods>();
+                        if !as_sequence.is_null() {
+                            let sq_length = (*as_sequence).sq_length;
+                            if !sq_length.is_null() {
+                                let len_fn: unsafe extern "C" fn(*mut c_void) -> isize =
+                                    std::mem::transmute(sq_length);
+                                let result = len_fn(object);
+                                return if result < 0 {
+                                    -1
+                                } else if result == 0 {
+                                    0
+                                } else {
+                                    1
+                                };
+                            }
+                        }
+                        return 1;
+                    }
+                }
+            }
+        }
+        if let Some(value) = context.cpython_value_from_ptr_or_proxy(object) {
+            return if is_truthy(&value) { 1 } else { 0 };
+        }
+        context.set_error("PyObject_IsTrue received unknown object pointer");
+        -1
     }) {
         Ok(result) => result,
         Err(err) => {
@@ -18737,8 +21658,17 @@ pub unsafe extern "C" fn PyObject_Not(object: *mut c_void) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
+    let value = match with_active_cpython_context_mut(|context| {
+        context.cpython_value_from_ptr_or_proxy(object)
+    }) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+                eprintln!("[cpy-unknown-ptr] PyObject_Str object={:p}", object);
+            }
+            cpython_set_error("unknown PyObject pointer");
+            return std::ptr::null_mut();
+        }
         Err(err) => {
             cpython_set_error(err);
             return std::ptr::null_mut();
@@ -18755,8 +21685,17 @@ pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
+    let value = match with_active_cpython_context_mut(|context| {
+        context.cpython_value_from_ptr_or_proxy(object)
+    }) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+                eprintln!("[cpy-unknown-ptr] PyObject_Repr object={:p}", object);
+            }
+            cpython_set_error("unknown PyObject pointer");
+            return std::ptr::null_mut();
+        }
         Err(err) => {
             cpython_set_error(err);
             return std::ptr::null_mut();
@@ -18773,8 +21712,17 @@ pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_ASCII(object: *mut c_void) -> *mut c_void {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
+    let value = match with_active_cpython_context_mut(|context| {
+        context.cpython_value_from_ptr_or_proxy(object)
+    }) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
+                eprintln!("[cpy-unknown-ptr] PyObject_ASCII object={:p}", object);
+            }
+            cpython_set_error("unknown PyObject pointer");
+            return std::ptr::null_mut();
+        }
         Err(err) => {
             cpython_set_error(err);
             return std::ptr::null_mut();
@@ -18864,20 +21812,194 @@ pub unsafe extern "C" fn PyObject_Format(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
+    let object_addr = object as usize;
+    let recursion_depth = CPY_PROXY_GET_ITER_ACTIVE.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        let depth = stack.iter().filter(|entry| **entry == object_addr).count() + 1;
+        stack.push(object_addr);
+        depth
+    });
+    if recursion_depth > 64 {
+        if let Ok(Some(ptr)) = with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                return None;
+            }
+            let value = context.cpython_value_from_ptr_or_proxy(object)?;
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.sequence_iterator_via_getitem(value) {
+                Ok(Some(iterator)) => {
+                    let iter_ptr = context.alloc_cpython_ptr_for_value(iterator);
+                    if iter_ptr.is_null() {
+                        None
+                    } else {
+                        Some(iter_ptr)
+                    }
+                }
+                _ => None,
+            }
+        }) {
+            return ptr;
+        }
+        if std::env::var_os("PYRS_TRACE_CPY_GETITER_RECURSION").is_some() {
+            // SAFETY: best-effort diagnostics for recursion path.
+            let (type_ptr, type_name, tp_iter) = unsafe {
+                let type_ptr = object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut());
+                let type_name = if type_ptr.is_null() {
+                    "<null>".to_string()
+                } else {
+                    c_name_to_string((*type_ptr).tp_name)
+                        .unwrap_or_else(|_| "<invalid>".to_string())
+                };
+                let tp_iter = if type_ptr.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    (*type_ptr).tp_iter
+                };
+                (type_ptr, type_name, tp_iter)
+            };
+            let ownership = with_active_cpython_context_mut(|context| {
+                let owned = context.owns_cpython_allocation_ptr(object);
+                let known_handle = context.cpython_handle_from_ptr(object).is_some();
+                let mapped_value = context.cpython_value_from_ptr(object);
+                let mapped = mapped_value
+                    .as_ref()
+                    .map(cpython_value_debug_tag)
+                    .unwrap_or_else(|| "<none>".to_string());
+                let specials = if context.vm.is_null() {
+                    "getitem=<unknown> iter=<unknown>".to_string()
+                } else if let Some(value) = mapped_value {
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    let vm = unsafe { &mut *context.vm };
+                    let has_getitem = vm
+                        .lookup_bound_special_method(&value, "__getitem__")
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    let has_iter = vm
+                        .lookup_bound_special_method(&value, "__iter__")
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    let has_next = vm
+                        .lookup_bound_special_method(&value, "__next__")
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    format!("getitem={has_getitem} iter={has_iter} next={has_next}")
+                } else {
+                    "getitem=false iter=false next=false".to_string()
+                };
+                format!("owned={} known_handle={} mapped={mapped} {specials}", owned, known_handle)
+            })
+            .unwrap_or_else(|_| "owned=<unknown> known_handle=<unknown> mapped=<unknown>".to_string());
+            eprintln!(
+                "[cpy-getiter-recur] object={:p} type={:p} type_name={} tp_iter={:p} pyobject_getiter={:p} tp_iter_is_pyobject_getiter={} {}",
+                object,
+                type_ptr,
+                type_name,
+                tp_iter,
+                PyObject_GetIter as *const () as *mut c_void,
+                tp_iter == (PyObject_GetIter as *const () as *mut c_void),
+                ownership
+            );
+        }
+        CPY_PROXY_GET_ITER_ACTIVE.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            if let Some(last) = stack.last().copied() {
+                if last == object_addr {
+                    stack.pop();
+                    return;
+                }
+            }
+            if let Some(pos) = stack.iter().rposition(|entry| *entry == object_addr) {
+                stack.remove(pos);
+            }
+        });
+        cpython_set_error("PyObject_GetIter recursion detected");
+        return std::ptr::null_mut();
+    }
+    let result = with_active_cpython_context_mut(|context| {
+        if object.is_null() {
+            context.set_error("PyObject_GetIter received null object");
             return std::ptr::null_mut();
         }
-    };
-    match cpython_call_builtin(BuiltinFunction::Iter, vec![value]) {
-        Ok(value) => cpython_new_ptr_for_value(value),
-        Err(err) => {
-            cpython_set_error(err);
-            std::ptr::null_mut()
+        let owned_object = context.owns_cpython_allocation_ptr(object);
+        let pinned_owned_object = if context.vm.is_null() {
+            false
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            unsafe {
+                (&*context.vm)
+                    .extension_pinned_cpython_allocation_set
+                    .contains(&(object as usize))
+            }
+        };
+        if !owned_object
+            && !pinned_owned_object
+            && ModuleCapiContext::is_probable_external_cpython_object_ptr(object)
+        {
+            // SAFETY: `object` passed probability checks for CPython object layout.
+            let type_ptr = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if !type_ptr.is_null() {
+                // SAFETY: type pointer is non-null and read-only inspected for slot dispatch.
+                let tp_iter_raw = unsafe { (*type_ptr).tp_iter };
+                if !tp_iter_raw.is_null() {
+                    let tp_iter: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                        // SAFETY: `tp_iter` follows CPython unary slot ABI.
+                        unsafe { std::mem::transmute(tp_iter_raw) };
+                    // SAFETY: calling external object's iterator slot.
+                    let iter_ptr = unsafe { tp_iter(object) };
+                    if !iter_ptr.is_null() {
+                        return iter_ptr;
+                    }
+                    if context.current_error.is_some() || context.last_error.is_some() {
+                        return std::ptr::null_mut();
+                    }
+                    context.set_error("object is not iterable");
+                    return std::ptr::null_mut();
+                }
+            }
         }
-    }
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_GetIter received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        match cpython_call_builtin(BuiltinFunction::Iter, vec![value]) {
+            Ok(result) => context.alloc_cpython_ptr_for_value(result),
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    });
+    CPY_PROXY_GET_ITER_ACTIVE.with(|stack| {
+        let mut stack = stack.borrow_mut();
+        if let Some(last) = stack.last().copied() {
+            if last == object_addr {
+                stack.pop();
+                return;
+            }
+        }
+        if let Some(pos) = stack.iter().rposition(|entry| *entry == object_addr) {
+            stack.remove(pos);
+        }
+    });
+    result
 }
 
 #[unsafe(no_mangle)]
@@ -19003,24 +22125,254 @@ pub unsafe extern "C" fn PyObject_CallNoArgs(callable: *mut c_void) -> *mut c_vo
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyMethod_New(function: *mut c_void, self_obj: *mut c_void) -> *mut c_void {
-    // Minimal baseline: treat method construction as returning the callable when full
-    // bound-method construction is unavailable in the compat object space.
-    let _ = self_obj;
-    unsafe { Py_XIncRef(function) };
-    function
+pub unsafe extern "C" fn PyObject_CallFinalizer(self_obj: *mut c_void) {
+    if self_obj.is_null() {
+        return;
+    }
+    // SAFETY: caller passes a PyObject-compatible pointer.
+    let type_ptr = unsafe {
+        self_obj
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return;
+    }
+    // SAFETY: `type_ptr` points to a type object; tp_finalize follows C-API slot ABI.
+    let finalize = unsafe { (*type_ptr).tp_finalize };
+    if finalize.is_null() {
+        return;
+    }
+    let finalize_fn: unsafe extern "C" fn(*mut c_void) =
+        // SAFETY: tp_finalize slot uses unary-function signature.
+        unsafe { std::mem::transmute(finalize) };
+    // SAFETY: finalize callback follows C-API signature and accepts the object pointer.
+    unsafe { finalize_fn(self_obj) };
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyArg_VaParseTupleAndKeywords(
-    _args: *mut c_void,
-    _kwargs: *mut c_void,
-    _format: *const c_char,
-    _keywords: *mut *const c_char,
-    _vargs: *mut c_void,
-) -> i32 {
-    cpython_set_error("PyArg_VaParseTupleAndKeywords is not implemented");
+pub unsafe extern "C" fn PyObject_CallFinalizerFromDealloc(self_obj: *mut c_void) -> c_int {
+    if self_obj.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { PyObject_CallFinalizer(self_obj) };
     0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_ClearManagedDict(object: *mut c_void) {
+    if object.is_null() {
+        return;
+    }
+    // SAFETY: static NUL-terminated attribute name.
+    let dict_attr = b"__dict__\0";
+    // SAFETY: C-API call expects a valid NUL-terminated name.
+    let dict_obj = unsafe { PyObject_GetAttrString(object, dict_attr.as_ptr().cast::<c_char>()) };
+    if dict_obj.is_null() {
+        unsafe { PyErr_Clear() };
+        return;
+    }
+    // SAFETY: best-effort clear of dict-like attribute payload.
+    unsafe {
+        let _ = PyDict_Clear(dict_obj);
+        Py_DecRef(dict_obj);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_VisitManagedDict(
+    object: *mut c_void,
+    visitor: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int>,
+    arg: *mut c_void,
+) -> c_int {
+    if object.is_null() {
+        return 0;
+    }
+    let Some(visitor_fn) = visitor else {
+        return 0;
+    };
+    // SAFETY: static NUL-terminated attribute name.
+    let dict_attr = b"__dict__\0";
+    // SAFETY: C-API call expects a valid NUL-terminated name.
+    let dict_obj = unsafe { PyObject_GetAttrString(object, dict_attr.as_ptr().cast::<c_char>()) };
+    if dict_obj.is_null() {
+        unsafe { PyErr_Clear() };
+        return 0;
+    }
+    // SAFETY: callback signature matches visitproc ABI.
+    let result = unsafe { visitor_fn(dict_obj, arg) };
+    unsafe { Py_DecRef(dict_obj) };
+    result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnstable_Object_EnableDeferredRefcount(_object: *mut c_void) -> c_int {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyMethod_New(function: *mut c_void, self_obj: *mut c_void) -> *mut c_void {
+    let trace_pymethod_new = std::env::var_os("PYRS_TRACE_PYMETHOD_NEW").is_some();
+    with_active_cpython_context_mut(|context| {
+        if function.is_null() || self_obj.is_null() {
+            context.set_error("PyMethod_New expected non-null function and self");
+            return std::ptr::null_mut();
+        }
+        if context.vm.is_null() {
+            context.set_error("PyMethod_New missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(function_value) = context.cpython_value_from_ptr_or_proxy(function) else {
+            context.set_error("PyMethod_New received unknown function pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(self_value) = context.cpython_value_from_ptr_or_proxy(self_obj) else {
+            context.set_error("PyMethod_New received unknown self pointer");
+            return std::ptr::null_mut();
+        };
+        if trace_pymethod_new {
+            eprintln!(
+                "[pymethod-new] function_ptr={:p} function={} self_ptr={:p} self={}",
+                function,
+                cpython_value_debug_tag(&function_value),
+                self_obj,
+                cpython_value_debug_tag(&self_value)
+            );
+        }
+        let Some(function_obj) = cpython_objref_from_value(function_value) else {
+            context.set_error("PyMethod_New expected object-backed function");
+            return std::ptr::null_mut();
+        };
+        let Some(self_ref) = cpython_objref_from_value(self_value) else {
+            context.set_error("PyMethod_New expected object-backed self");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let method_value = vm
+            .heap
+            .alloc_bound_method(BoundMethod::new(function_obj, self_ref));
+        context.alloc_cpython_ptr_for_value(method_value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyCode_NewEmpty(
+    filename: *const c_char,
+    funcname: *const c_char,
+    _firstlineno: c_int,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let filename_text = if filename.is_null() {
+            "<string>".to_string()
+        } else {
+            // SAFETY: filename is expected to be a NUL-terminated C string by C-API contract.
+            unsafe { c_name_to_string(filename) }.unwrap_or_else(|_| "<string>".to_string())
+        };
+        let funcname_text = if funcname.is_null() {
+            "<module>".to_string()
+        } else {
+            // SAFETY: funcname is expected to be a NUL-terminated C string by C-API contract.
+            unsafe { c_name_to_string(funcname) }.unwrap_or_else(|_| "<module>".to_string())
+        };
+        let code = CodeObject::new(funcname_text, filename_text);
+        let value = Value::Code(Rc::new(code));
+        context.alloc_cpython_ptr_for_value(value)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnstable_Code_NewWithPosOnlyArgs(
+    _argcount: c_int,
+    _posonlyargcount: c_int,
+    _kwonlyargcount: c_int,
+    _nlocals: c_int,
+    _stacksize: c_int,
+    _flags: c_int,
+    _code: *mut c_void,
+    _consts: *mut c_void,
+    _names: *mut c_void,
+    _varnames: *mut c_void,
+    _freevars: *mut c_void,
+    _cellvars: *mut c_void,
+    filename: *mut c_void,
+    name: *mut c_void,
+    _qualname: *mut c_void,
+    _firstlineno: c_int,
+    _linetable: *mut c_void,
+    _exceptiontable: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        let filename_text = context
+            .cpython_value_from_ptr_or_proxy(filename)
+            .and_then(|value| cpython_unicode_text_from_value(&value))
+            .unwrap_or_else(|| "<string>".to_string());
+        let name_text = context
+            .cpython_value_from_ptr_or_proxy(name)
+            .and_then(|value| cpython_unicode_text_from_value(&value))
+            .unwrap_or_else(|| "<module>".to_string());
+        let code = CodeObject::new(name_text, filename_text);
+        context.alloc_cpython_ptr_for_value(Value::Code(Rc::new(code)))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyUnstable_Code_New(
+    argcount: c_int,
+    kwonlyargcount: c_int,
+    nlocals: c_int,
+    stacksize: c_int,
+    flags: c_int,
+    code: *mut c_void,
+    consts: *mut c_void,
+    names: *mut c_void,
+    varnames: *mut c_void,
+    freevars: *mut c_void,
+    cellvars: *mut c_void,
+    filename: *mut c_void,
+    name: *mut c_void,
+    qualname: *mut c_void,
+    firstlineno: c_int,
+    linetable: *mut c_void,
+    exceptiontable: *mut c_void,
+) -> *mut c_void {
+    unsafe {
+        PyUnstable_Code_NewWithPosOnlyArgs(
+            argcount,
+            0,
+            kwonlyargcount,
+            nlocals,
+            stacksize,
+            flags,
+            code,
+            consts,
+            names,
+            varnames,
+            freevars,
+            cellvars,
+            filename,
+            name,
+            qualname,
+            firstlineno,
+            linetable,
+            exceptiontable,
+        )
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -19047,6 +22399,7 @@ pub unsafe extern "C" fn PyVectorcall_Call(
     tuple: *mut c_void,
     dict: *mut c_void,
 ) -> *mut c_void {
+    let trace_vectorcall_decode = std::env::var_os("PYRS_TRACE_VECTORCALL_DECODE").is_some();
     with_active_cpython_context_mut(|context| {
         let Some(vectorcall) = (unsafe { cpython_resolve_vectorcall(callable) }) else {
             context.set_error("PyVectorcall_Call target has no vectorcall function");
@@ -19082,7 +22435,7 @@ pub unsafe extern "C" fn PyVectorcall_Call(
         }
 
         let positional_count = args_ptrs.len();
-        let mut kw_names: Vec<Value> = Vec::new();
+        let mut kw_name_ptrs: Vec<*mut c_void> = Vec::new();
         if !dict.is_null() {
             let Some(dict_value) = context.cpython_value_from_ptr(dict) else {
                 context.set_error("PyVectorcall_Call received unknown kwargs dict");
@@ -19104,7 +22457,22 @@ pub unsafe extern "C" fn PyVectorcall_Call(
                     context.set_error("PyVectorcall_Call kwargs must use str keys");
                     return std::ptr::null_mut();
                 };
-                kw_names.push(Value::Str(name));
+                let c_name = match CString::new(name.as_str()) {
+                    Ok(c_name) => c_name,
+                    Err(_) => {
+                        context.set_error(
+                            "PyVectorcall_Call keyword name contains interior NUL byte",
+                        );
+                        return std::ptr::null_mut();
+                    }
+                };
+                // SAFETY: C string is NUL-terminated and valid for this call.
+                let kw_name_ptr = unsafe { PyUnicode_InternFromString(c_name.as_ptr()) };
+                if kw_name_ptr.is_null() {
+                    context.set_error("PyVectorcall_Call failed to intern keyword name");
+                    return std::ptr::null_mut();
+                }
+                kw_name_ptrs.push(kw_name_ptr);
                 let ptr = context.alloc_cpython_ptr_for_value(value);
                 if ptr.is_null() {
                     context.set_error("PyVectorcall_Call failed to materialize keyword arg");
@@ -19114,24 +22482,77 @@ pub unsafe extern "C" fn PyVectorcall_Call(
             }
         }
 
-        // SAFETY: VM pointer is valid for active context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        let has_keywords = !kw_names.is_empty();
+        let keyword_count = kw_name_ptrs.len();
+        let has_keywords = keyword_count > 0;
         let kwnames_ptr = if !has_keywords {
             std::ptr::null_mut()
         } else {
-            context.alloc_cpython_ptr_for_value(vm.heap.alloc_tuple(kw_names))
+            // SAFETY: tuple allocation follows CPython tuple ABI.
+            let tuple = unsafe { PyTuple_New(kw_name_ptrs.len() as isize) };
+            if tuple.is_null() {
+                std::ptr::null_mut()
+            } else {
+                for (index, name_ptr) in kw_name_ptrs.into_iter().enumerate() {
+                    // SAFETY: tuple is newly allocated and index is in-bounds.
+                    let status = unsafe { PyTuple_SetItem(tuple, index as isize, name_ptr) };
+                    if status != 0 {
+                        // SAFETY: tuple owns any already-inserted references.
+                        unsafe { Py_DecRef(tuple) };
+                        context.set_error(
+                            "PyVectorcall_Call failed to populate keyword names tuple",
+                        );
+                        return std::ptr::null_mut();
+                    }
+                }
+                tuple
+            }
         };
         if has_keywords && kwnames_ptr.is_null() {
             context.set_error("PyVectorcall_Call failed to build keyword names tuple");
             return std::ptr::null_mut();
+        }
+        if trace_vectorcall_decode {
+            let callable_desc = context
+                .cpython_value_from_ptr_or_proxy(callable)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| format!("<callable:{callable:p}>"));
+            let kw_name_desc = if kwnames_ptr.is_null() {
+                String::new()
+            } else {
+                context
+                    .cpython_value_from_ptr_or_proxy(kwnames_ptr)
+                    .map(|value| match value {
+                        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                            Object::Tuple(values) => values
+                                .iter()
+                                .map(cpython_value_debug_tag)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            _ => "<invalid-kwnames-storage>".to_string(),
+                        },
+                        other => format!("<non-tuple:{}>", cpython_value_debug_tag(&other)),
+                    })
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            };
+            eprintln!(
+                "[vectorcall-call] callable={} positional_count={} kw_count={} kwnames=[{}]",
+                callable_desc,
+                positional_count,
+                keyword_count,
+                kw_name_desc
+            );
         }
         let args_ptr = if args_ptrs.is_empty() {
             std::ptr::null()
         } else {
             args_ptrs.as_ptr()
         };
-        unsafe { vectorcall(callable, args_ptr, positional_count, kwnames_ptr) }
+        let result = unsafe { vectorcall(callable, args_ptr, positional_count, kwnames_ptr) };
+        if !kwnames_ptr.is_null() {
+            // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
+            unsafe { Py_DecRef(kwnames_ptr) };
+        }
+        result
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -19146,6 +22567,41 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
     nargsf: usize,
     kwnames: *mut c_void,
 ) -> *mut c_void {
+    let trace_vectorcall_decode = std::env::var_os("PYRS_TRACE_VECTORCALL_DECODE").is_some();
+    if trace_vectorcall_decode {
+        let positional_count = nargsf & (usize::MAX >> 1);
+        let kw_count = if kwnames.is_null() {
+            0usize
+        } else {
+            unsafe { PyTuple_Size(kwnames) }.max(0) as usize
+        };
+        let callable_desc = cpython_value_from_ptr(callable)
+            .map(|value| cpython_value_debug_tag(&value))
+            .unwrap_or_else(|_| format!("<callable:{callable:p}>"));
+        let kw_name_desc = if kwnames.is_null() {
+            String::new()
+        } else {
+            match cpython_value_from_ptr(kwnames) {
+                Ok(Value::Tuple(tuple_obj)) => {
+                    if let Object::Tuple(values) = &*tuple_obj.kind() {
+                        values
+                            .iter()
+                            .map(cpython_value_debug_tag)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    } else {
+                        "<invalid-kwnames-storage>".to_string()
+                    }
+                }
+                Ok(other) => format!("<non-tuple:{}>", cpython_value_debug_tag(&other)),
+                Err(err) => format!("<decode-error:{err}>"),
+            }
+        };
+        eprintln!(
+            "[vectorcall-entry] callable={} positional_count={} kw_count={} kwnames=[{}]",
+            callable_desc, positional_count, kw_count, kw_name_desc
+        );
+    }
     if let Some(vectorcall) = unsafe { cpython_resolve_vectorcall(callable) } {
         return unsafe { vectorcall(callable, args, nargsf, kwnames) };
     }
@@ -19168,7 +22624,74 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
             let value = match cpython_value_from_ptr(ptr) {
                 Ok(value) => value,
                 Err(err) => {
-                    cpython_set_error(err);
+                    let proxied = with_active_cpython_context_mut(|context| {
+                        if context.owns_cpython_allocation_ptr(ptr) {
+                            return None;
+                        }
+                        if ModuleCapiContext::is_probable_external_cpython_object_ptr(ptr) {
+                            // Restrict proxy-materialization in vectorcall argument decoding to
+                            // known scientific-stack object families for now; random stale/raw
+                            // pointers should fail closed.
+                            // SAFETY: probability guard above validated object/type pointer layout.
+                            let type_name = unsafe {
+                                let type_ptr = ptr
+                                    .cast::<CpythonObjectHead>()
+                                    .as_ref()
+                                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                                    .unwrap_or(std::ptr::null_mut());
+                                if type_ptr.is_null() {
+                                    String::new()
+                                } else {
+                                    c_name_to_string((*type_ptr).tp_name).unwrap_or_default()
+                                }
+                            };
+                            if !type_name.starts_with("numpy.") {
+                                return None;
+                            }
+                            return context.cpython_value_from_ptr_or_proxy(ptr);
+                        }
+                        None
+                    })
+                    .ok()
+                    .flatten();
+                    if let Some(value) = proxied {
+                        values.push(value);
+                        continue;
+                    }
+                    let detail = with_active_cpython_context_mut(|context| {
+                        let owned = context.owns_cpython_allocation_ptr(ptr);
+                        let known_handle = context.cpython_handle_from_ptr(ptr).is_some();
+                        let mapped_value = if context.vm.is_null() {
+                            false
+                        } else {
+                            // SAFETY: VM pointer is valid for active context lifetime.
+                            let vm = unsafe { &*context.vm };
+                            vm.extension_cpython_ptr_values.contains_key(&(ptr as usize))
+                        };
+                        // SAFETY: best-effort pointer diagnostics; guarded for null/invalid headers.
+                        let (type_ptr, type_name) = unsafe {
+                            let head = ptr.cast::<CpythonObjectHead>();
+                            let type_ptr = head
+                                .as_ref()
+                                .map(|h| h.ob_type.cast::<CpythonTypeObject>())
+                                .unwrap_or(std::ptr::null_mut());
+                            if type_ptr.is_null() {
+                                (std::ptr::null_mut(), "<null>".to_string())
+                            } else {
+                                (
+                                    type_ptr,
+                                    c_name_to_string((*type_ptr).tp_name)
+                                        .unwrap_or_else(|_| "<invalid>".to_string()),
+                                )
+                            }
+                        };
+                        format!(
+                            "ptr={:p} owned={} known_handle={} mapped_value={} type={:p} type_name={}",
+                            ptr, owned, known_handle, mapped_value, type_ptr, type_name
+                        )
+                    })
+                    .unwrap_or_else(|_| format!("ptr={:p}", ptr));
+                    cpython_set_error(format!("{err}; {detail}"));
                     return std::ptr::null_mut();
                 }
             };
@@ -19210,7 +22733,165 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
         }
         values.truncate(positional_count);
     }
+    if trace_vectorcall_decode {
+        let callable_desc = cpython_value_from_ptr(callable)
+            .map(|value| cpython_value_debug_tag(&value))
+            .unwrap_or_else(|_| format!("<callable:{callable:p}>"));
+        let arg_desc = values
+            .iter()
+            .map(cpython_value_debug_tag)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut kw_desc = kwargs
+            .iter()
+            .map(|(name, value)| format!("{name}={}", cpython_value_debug_tag(value)))
+            .collect::<Vec<_>>();
+        kw_desc.sort();
+        eprintln!(
+            "[vectorcall-decode] callable={} positional={} kwargs=[{}]",
+            callable_desc,
+            arg_desc,
+            kw_desc.join(", ")
+        );
+    }
     cpython_call_object(callable, values, kwargs)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_VectorcallDict(
+    callable: *mut c_void,
+    args: *const *mut c_void,
+    nargsf: usize,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    let positional_count = nargsf & (usize::MAX >> 1);
+    if positional_count > 0 && args.is_null() {
+        cpython_set_error("PyObject_VectorcallDict received null args with non-zero nargsf");
+        return std::ptr::null_mut();
+    }
+
+    with_active_cpython_context_mut(|context| {
+        let mut positional_values = Vec::with_capacity(positional_count);
+        for index in 0..positional_count {
+            // SAFETY: caller guarantees at least positional_count entries.
+            let arg_ptr = unsafe { *args.add(index) };
+            let Some(value) = context.cpython_value_from_ptr_or_proxy(arg_ptr) else {
+                context.set_error("PyObject_VectorcallDict received unknown positional arg");
+                return std::ptr::null_mut();
+            };
+            positional_values.push(value);
+        }
+
+        let kwargs_entries: Vec<(Value, Value)> = if kwargs.is_null() {
+            Vec::new()
+        } else {
+            let Some(kwargs_value) = context.cpython_value_from_ptr_or_proxy(kwargs) else {
+                context.set_error("PyObject_VectorcallDict received unknown kwargs dict");
+                return std::ptr::null_mut();
+            };
+            let Value::Dict(kwargs_dict) = kwargs_value else {
+                context.set_error("PyObject_VectorcallDict expected kwargs dict");
+                return std::ptr::null_mut();
+            };
+            match &*kwargs_dict.kind() {
+                Object::Dict(entries) => entries.to_vec(),
+                _ => {
+                    context.set_error("PyObject_VectorcallDict kwargs dict storage invalid");
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+
+        if let Some(vectorcall) = unsafe { cpython_resolve_vectorcall(callable) } {
+            let mut arg_ptrs = Vec::with_capacity(positional_values.len() + kwargs_entries.len());
+            for value in &positional_values {
+                let ptr = context.alloc_cpython_ptr_for_value(value.clone());
+                if ptr.is_null() {
+                    context.set_error("PyObject_VectorcallDict failed to materialize positional arg");
+                    return std::ptr::null_mut();
+                }
+                arg_ptrs.push(ptr);
+            }
+
+            let mut kw_name_ptrs = Vec::with_capacity(kwargs_entries.len());
+            for (key, value) in kwargs_entries {
+                let Value::Str(name) = key else {
+                    context.set_error("PyObject_VectorcallDict kwargs must use str keys");
+                    return std::ptr::null_mut();
+                };
+                let c_name = match CString::new(name.as_str()) {
+                    Ok(c_name) => c_name,
+                    Err(_) => {
+                        context
+                            .set_error("PyObject_VectorcallDict keyword name contains interior NUL");
+                        return std::ptr::null_mut();
+                    }
+                };
+                // SAFETY: C string is NUL-terminated and valid for this call.
+                let kw_name_ptr = unsafe { PyUnicode_InternFromString(c_name.as_ptr()) };
+                if kw_name_ptr.is_null() {
+                    context.set_error("PyObject_VectorcallDict failed to intern keyword name");
+                    return std::ptr::null_mut();
+                }
+                kw_name_ptrs.push(kw_name_ptr);
+                let value_ptr = context.alloc_cpython_ptr_for_value(value);
+                if value_ptr.is_null() {
+                    context.set_error("PyObject_VectorcallDict failed to materialize keyword value");
+                    return std::ptr::null_mut();
+                }
+                arg_ptrs.push(value_ptr);
+            }
+
+            let kwnames_ptr = if kw_name_ptrs.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: tuple allocation follows CPython tuple ABI.
+                let tuple = unsafe { PyTuple_New(kw_name_ptrs.len() as isize) };
+                if tuple.is_null() {
+                    context.set_error("PyObject_VectorcallDict failed to allocate keyword tuple");
+                    return std::ptr::null_mut();
+                }
+                for (index, name_ptr) in kw_name_ptrs.into_iter().enumerate() {
+                    // SAFETY: tuple is newly allocated and index is in-bounds.
+                    let status = unsafe { PyTuple_SetItem(tuple, index as isize, name_ptr) };
+                    if status != 0 {
+                        // SAFETY: tuple owns any already inserted references.
+                        unsafe { Py_DecRef(tuple) };
+                        context.set_error("PyObject_VectorcallDict failed to build keyword tuple");
+                        return std::ptr::null_mut();
+                    }
+                }
+                tuple
+            };
+            let args_ptr = if arg_ptrs.is_empty() {
+                std::ptr::null()
+            } else {
+                arg_ptrs.as_ptr()
+            };
+            let flag_bits = nargsf & !(usize::MAX >> 1);
+            let result =
+                unsafe { vectorcall(callable, args_ptr, positional_values.len() | flag_bits, kwnames_ptr) };
+            if !kwnames_ptr.is_null() {
+                // SAFETY: kwnames tuple is call-local materialization and no longer needed.
+                unsafe { Py_DecRef(kwnames_ptr) };
+            }
+            return result;
+        }
+
+        let mut kwargs_map = HashMap::new();
+        for (key, value) in kwargs_entries {
+            let Value::Str(name) = key else {
+                context.set_error("PyObject_VectorcallDict kwargs must use str keys");
+                return std::ptr::null_mut();
+            };
+            kwargs_map.insert(name, value);
+        }
+        cpython_call_object(callable, positional_values, kwargs_map)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -19256,6 +22937,36 @@ pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void)
         if context.vm.is_null() {
             context.set_error("PyObject_GetItem missing VM context");
             return std::ptr::null_mut();
+        }
+        if !object.is_null()
+            // SAFETY: pointer shape checks + slot reads guard this fast-path.
+            && let Some(result_ptr) = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .and_then(|head| {
+                        let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+                        if let Some(subscript_slot) = cpython_mapping_subscript_slot(type_ptr) {
+                            Some(subscript_slot(object, key))
+                        } else if let Some(item_slot) = cpython_sequence_item_slot(type_ptr) {
+                            let idx = PyLong_AsSsize_t(key);
+                            if idx == -1 && !PyErr_Occurred().is_null() {
+                                Some(std::ptr::null_mut())
+                            } else {
+                                Some(item_slot(object, idx))
+                            }
+                        } else {
+                            None
+                        }
+                    })
+            }
+        {
+            if !result_ptr.is_null() {
+                return result_ptr;
+            }
+            if context.current_error.is_some() || context.last_error.is_some() {
+                return std::ptr::null_mut();
+            }
         }
         let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
             context.set_error("PyObject_GetItem received unknown object pointer");
@@ -19305,6 +23016,27 @@ pub unsafe extern "C" fn PyObject_SetItem(
     with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
             context.set_error("PyObject_SetItem missing VM context");
+            return -1;
+        }
+        // Prefer native mapping assign slot for external/proxy objects.
+        if !object.is_null()
+            // SAFETY: pointer shape checks + slot reads guard this fast-path.
+            && let Some(status) = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .and_then(|head| {
+                        cpython_mapping_ass_subscript_slot(head.ob_type.cast::<CpythonTypeObject>())
+                    })
+                    .map(|assign_slot| assign_slot(object, key, value))
+            }
+        {
+            if status == 0 {
+                return 0;
+            }
+            if context.current_error.is_none() {
+                context.set_error("object does not support item assignment");
+            }
             return -1;
         }
         let object_handle = context.cpython_handle_from_ptr(object);
@@ -19760,6 +23492,35 @@ fn cpython_compare_op_symbol(op: i32) -> &'static str {
     }
 }
 
+fn cpython_direct_rich_compare(left: &Value, right: &Value, op: i32) -> Option<bool> {
+    match (left, right) {
+        (Value::Str(lhs), Value::Str(rhs)) => {
+            if op == 2
+                && std::env::var_os("PYRS_TRACE_CPY_STRING_EQ").is_some()
+                && (lhs.contains("device") || rhs.contains("device"))
+            {
+                eprintln!(
+                    "[cpy-str-eq] lhs={:?} rhs={:?} lhs_len={} rhs_len={}",
+                    lhs,
+                    rhs,
+                    lhs.len(),
+                    rhs.len()
+                );
+            }
+            Some(match op {
+                0 => lhs < rhs,
+                1 => lhs <= rhs,
+                2 => lhs == rhs,
+                3 => lhs != rhs,
+                4 => lhs > rhs,
+                5 => lhs >= rhs,
+                _ => return None,
+            })
+        }
+        _ => None,
+    }
+}
+
 fn cpython_type_name_for_object_ptr(object: *mut c_void) -> String {
     if object.is_null() {
         return "<null>".to_string();
@@ -19783,6 +23544,25 @@ fn cpython_is_not_implemented_ptr(value: *mut c_void) -> bool {
     }
     if value == std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>() {
         return true;
+    }
+    if ModuleCapiContext::is_probable_external_cpython_object_ptr(value) {
+        // SAFETY: external pointer passed probability checks above.
+        let is_external_not_implemented = unsafe {
+            let head = value.cast::<CpythonObjectHead>();
+            let Some(head) = head.as_ref() else {
+                return false;
+            };
+            let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+            if type_ptr.is_null() {
+                return false;
+            }
+            c_name_to_string((*type_ptr).tp_name)
+                .map(|name| name == "NotImplementedType")
+                .unwrap_or(false)
+        };
+        if is_external_not_implemented {
+            return true;
+        }
     }
     with_active_cpython_context_mut(|context| {
         let Some(mapped) = context.cpython_value_from_ptr(value) else {
@@ -19852,6 +23632,68 @@ fn cpython_debug_tuple_raw_ptrs(
     }
 }
 
+fn cpython_unicode_text_from_ptr_for_compare(object: *mut c_void) -> Option<String> {
+    with_active_cpython_context_mut(|context| {
+        context
+            .cpython_value_from_ptr(object)
+            .and_then(|value| cpython_unicode_text_from_value(&value))
+            .or_else(|| cpython_lookup_interned_unicode_text(object))
+    })
+    .ok()
+    .flatten()
+}
+
+fn cpython_try_unicode_pointer_compare(
+    left: *mut c_void,
+    right: *mut c_void,
+    op: i32,
+) -> Option<*mut c_void> {
+    if op != 2 && op != 3 {
+        return None;
+    }
+    let left_text = cpython_unicode_text_from_ptr_for_compare(left)?;
+    let right_text = cpython_unicode_text_from_ptr_for_compare(right)?;
+    let equal = left_text == right_text;
+    let result = if op == 2 { equal } else { !equal };
+    Some(cpython_new_ptr_for_value(Value::Bool(result)))
+}
+
+fn cpython_pointer_is_known_for_richcompare_slot(
+    context: &mut ModuleCapiContext,
+    object: *mut c_void,
+) -> bool {
+    if object.is_null() {
+        return false;
+    }
+    let raw = object as usize;
+    if raw == std::ptr::addr_of!(_Py_NoneStruct) as usize
+        || raw == std::ptr::addr_of!(_Py_TrueStruct) as usize
+        || raw == std::ptr::addr_of!(_Py_FalseStruct) as usize
+        || raw == std::ptr::addr_of!(_Py_EllipsisObject) as usize
+        || raw == std::ptr::addr_of!(_Py_NotImplementedStruct) as usize
+        || cpython_builtin_type_name_for_ptr(object).is_some()
+        || cpython_exception_value_from_ptr(raw).is_some()
+        || cpython_lookup_interned_unicode_text(object).is_some()
+        || context.cpython_handle_from_ptr(object).is_some()
+    {
+        return true;
+    }
+    if context.vm.is_null() {
+        return false;
+    }
+    // SAFETY: VM pointer is valid for active C-API context lifetime.
+    let vm = unsafe { &*context.vm };
+    vm.extension_cpython_ptr_values.contains_key(&raw)
+}
+
+fn cpython_can_try_richcompare_slot(left: *mut c_void, right: *mut c_void) -> bool {
+    with_active_cpython_context_mut(|context| {
+        cpython_pointer_is_known_for_richcompare_slot(context, left)
+            && cpython_pointer_is_known_for_richcompare_slot(context, right)
+    })
+    .unwrap_or(false)
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_RichCompare(
     left: *mut c_void,
@@ -19866,20 +23708,79 @@ pub unsafe extern "C" fn PyObject_RichCompare(
         cpython_set_error("PyObject_RichCompare received invalid compare op");
         return std::ptr::null_mut();
     };
-    let right_value = match cpython_value_from_ptr(right) {
-        Ok(value) => value,
+    if cpython_can_try_richcompare_slot(left, right)
+        && let Some(result) = cpython_try_richcompare_slot(left, right, op)
+    {
+        return result;
+    }
+    let right_value = match with_active_cpython_context_mut(|context| {
+        context.cpython_value_from_ptr_or_proxy(right)
+    }) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            if let Some(result) = cpython_try_unicode_pointer_compare(left, right, op) {
+                return result;
+            }
+            if op == 2 || op == 3 {
+                let equal = std::ptr::eq(left, right);
+                let result = if op == 2 { equal } else { !equal };
+                return cpython_new_ptr_for_value(Value::Bool(result));
+            }
+            if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+                eprintln!("[cpy-rich-unknown] right_ptr={right:p} left_ptr={left:p} op={op}");
+            }
+            cpython_set_error("unknown PyObject pointer");
+            return std::ptr::null_mut();
+        }
         Err(err) => {
             cpython_set_error(err);
             return std::ptr::null_mut();
         }
     };
-    let left_value = match cpython_value_from_ptr(left) {
-        Ok(value) => value,
+    let left_value = match with_active_cpython_context_mut(|context| {
+        context.cpython_value_from_ptr_or_proxy(left)
+    }) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            if let Some(result) = cpython_try_unicode_pointer_compare(left, right, op) {
+                return result;
+            }
+            if op == 2 || op == 3 {
+                let equal = std::ptr::eq(left, right);
+                let result = if op == 2 { equal } else { !equal };
+                return cpython_new_ptr_for_value(Value::Bool(result));
+            }
+            if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+                let _ = with_active_cpython_context_mut(|context| {
+                    eprintln!(
+                        "[cpy-rich-unknown] left_ptr={left:p} right_ptr={right:p} op={op} owns_left={} probable_left={} left_handle={:?}",
+                        context.owns_cpython_allocation_ptr(left),
+                        ModuleCapiContext::is_probable_external_cpython_object_ptr(left),
+                        context.cpython_handle_from_ptr(left),
+                    );
+                });
+            }
+            cpython_set_error("unknown PyObject pointer");
+            return std::ptr::null_mut();
+        }
         Err(err) => {
             cpython_set_error(err);
             return std::ptr::null_mut();
         }
     };
+    if op == 2 && std::env::var_os("PYRS_TRACE_CPY_RICH_VALUES").is_some() {
+        eprintln!(
+            "[cpy-rich] left={:?} right={:?}",
+            cpython_debug_compare_value(&left_value),
+            cpython_debug_compare_value(&right_value)
+        );
+    }
+    if let Some(result) = cpython_direct_rich_compare(&left_value, &right_value, op) {
+        if op == 2 && std::env::var_os("PYRS_TRACE_CPY_RICH_VALUES").is_some() {
+            eprintln!("[cpy-rich] direct={result}");
+        }
+        return cpython_new_ptr_for_value(Value::Bool(result));
+    }
 
     enum RichCompareAttempt {
         Missing,
@@ -19987,6 +23888,9 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
     }
     let value = unsafe { PyObject_RichCompare(left, right, op) };
     if value.is_null() {
+        if unsafe { PyErr_Occurred() }.is_null() {
+            cpython_set_error("PyObject_RichCompare returned null without setting an exception");
+        }
         if trace_compare_errors {
             eprintln!(
                 "[cpy-cmp-err] PyObject_RichCompare returned null op={} left={:p} right={:p}",
@@ -20016,6 +23920,9 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
     }
     let truth = unsafe { PyObject_IsTrue(value) };
     unsafe { Py_DecRef(value) };
+    if truth < 0 && unsafe { PyErr_Occurred() }.is_null() {
+        cpython_set_error("PyObject_IsTrue failed without setting an exception");
+    }
     if trace_compare_errors && truth < 0 {
         eprintln!(
             "[cpy-cmp-err] PyObject_IsTrue failed op={} left={:p} right={:p}",
@@ -20100,21 +24007,136 @@ pub unsafe extern "C" fn PyObject_GetOptionalAttr(
         cpython_set_error("PyObject_GetOptionalAttr requires non-null result pointer");
         return -1;
     }
+    let trace_enabled = cpython_trace_numpy_reduce_enabled();
+    let mut trace_name: Option<String> = None;
+    if trace_enabled
+        && let Ok(value) = cpython_value_from_ptr(name)
+        && let Value::Str(text) = value
+    {
+        trace_name = Some(text);
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetOptionalAttr object={:p} name_ptr={:p} attr={}",
+            object,
+            name,
+            trace_name.as_deref().unwrap_or("<unmapped>")
+        );
+    }
     let value = unsafe { PyObject_GetAttr(object, name) };
-    if value.is_null() {
+    if !value.is_null() {
+        unsafe {
+            *result = value;
+        }
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttr hit object={:p} attr={} result={:p}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>"),
+                value
+            );
+        }
+        return 1;
+    }
+    if unsafe { PyErr_Occurred() }.is_null() {
+        unsafe {
+            *result = std::ptr::null_mut();
+        }
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttr miss-noerr object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
+        }
+        return 0;
+    }
+    if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0
+        || cpython_error_message_indicates_missing_attribute()
+    {
         unsafe {
             *result = std::ptr::null_mut();
             PyErr_Clear();
         }
-        0
-    } else {
-        unsafe { *result = value };
-        1
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttr miss object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
+        }
+        return 0;
     }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetOptionalAttr error object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<unmapped>")
+        );
+    }
+    -1
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySequence_Check(object: *mut c_void) -> i32 {
+    if object.is_null() {
+        return 0;
+    }
+    if let Ok(result) = with_active_cpython_context_mut(|context| {
+        if let Some(value) = context.cpython_value_from_ptr_or_proxy(object) {
+            if matches!(
+                value,
+                Value::Tuple(_)
+                    | Value::List(_)
+                    | Value::Str(_)
+                    | Value::Bytes(_)
+                    | Value::ByteArray(_)
+                    | Value::MemoryView(_)
+            ) {
+                return 1;
+            }
+            if matches!(value, Value::Dict(_)) {
+                return 0;
+            }
+        }
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if (object as usize) < MIN_VALID_PTR
+            || (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+        {
+            return 0;
+        }
+        // SAFETY: best-effort slot lookup for CPython-compatible object pointers.
+        let type_ptr = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if type_ptr.is_null()
+            || (type_ptr as usize) < MIN_VALID_PTR
+            || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
+            return 0;
+        }
+        // SAFETY: `type_ptr` is validated non-null/aligned.
+        let as_sequence = unsafe {
+            (*type_ptr)
+                .tp_as_sequence
+                .cast::<CpythonSequenceMethods>()
+                .as_ref()
+        };
+        if let Some(methods) = as_sequence
+            && (!methods.sq_item.is_null() || !methods.sq_length.is_null())
+        {
+            return 1;
+        }
+        0
+    }) {
+        if result != 0 {
+            return result;
+        }
+    }
     let getitem = unsafe { PyObject_HasAttrString(object, c"__getitem__".as_ptr()) };
     if getitem <= 0 {
         return 0;
@@ -20959,7 +24981,37 @@ pub unsafe extern "C" fn PyMapping_Values(object: *mut c_void) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PySeqIter_New(object: *mut c_void) -> *mut c_void {
-    unsafe { PyObject_GetIter(object) }
+    with_active_cpython_context_mut(|context| {
+        if object.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        }
+        if context.vm.is_null() {
+            context.set_error("PySeqIter_New missing VM context");
+            return std::ptr::null_mut();
+        }
+        if unsafe { PySequence_Check(object) } == 0 {
+            context.set_error("PySeqIter_New() argument must be a sequence");
+            return std::ptr::null_mut();
+        }
+        let Some(target_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PySeqIter_New received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let iterator = vm.heap.alloc(Object::Iterator(IteratorObject {
+            kind: IteratorKind::CpythonSequence {
+                target: target_value,
+            },
+            index: 0,
+        }));
+        context.alloc_cpython_ptr_for_value(Value::Iterator(iterator))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -22010,7 +26062,21 @@ fn cpython_invoke_method_from_values(
         return std::ptr::null_mut();
     };
     let trace_calls = std::env::var_os("PYRS_TRACE_CPY_METHOD_CALLS").is_some();
-    let method_name = if trace_calls {
+    let trace_numpy_empty = std::env::var_os("PYRS_TRACE_NUMPY_EMPTY_CALL").is_some();
+    let trace_numpy_result_type = std::env::var_os("PYRS_TRACE_NUMPY_RESULT_TYPE").is_some();
+    let trace_set_typedict = std::env::var_os("PYRS_TRACE_NUMPY_TYPEDICT").is_some();
+    let trace_numpy_subtract = std::env::var_os("PYRS_TRACE_NUMPY_SUBTRACT").is_some();
+    let trace_array_function_dispatcher =
+        std::env::var_os("PYRS_TRACE_ARRAY_FUNCTION_DISPATCHER").is_some();
+    let method_name =
+        if trace_calls
+            || trace_numpy_empty
+            || trace_numpy_result_type
+            || trace_set_typedict
+            || trace_numpy_subtract
+            || trace_array_function_dispatcher
+            || std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some()
+    {
         // SAFETY: method definition pointer is valid for metadata reads.
         unsafe {
             c_name_to_string((*method_def).ml_name).unwrap_or_else(|_| "<invalid>".to_string())
@@ -22018,8 +26084,112 @@ fn cpython_invoke_method_from_values(
     } else {
         String::new()
     };
+    if trace_numpy_subtract && method_name == "subtract" {
+        let arg_summary = args
+            .iter()
+            .map(cpython_value_debug_tag)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut kwargs_sorted = kwargs.iter().collect::<Vec<_>>();
+        kwargs_sorted.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let kw_summary = kwargs_sorted
+            .into_iter()
+            .map(|(name, value)| format!("{name}={}", cpython_value_debug_tag(value)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "[numpy-subtract] args=[{}] kwargs=[{}] self={:p} class={:p}",
+            arg_summary, kw_summary, self_obj, class_obj
+        );
+    }
+    if trace_array_function_dispatcher && method_name == "_ArrayFunctionDispatcher" {
+        let arg_tags = args
+            .iter()
+            .map(cpython_value_debug_tag)
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "[array-func-dispatcher-call] self={:p} class={:p} flags={} args_len={} args=[{}] kwargs_len={}",
+            self_obj,
+            class_obj,
+            // SAFETY: method definition layout follows CPython ABI.
+            unsafe { (*method_def).ml_flags },
+            args.len(),
+            arg_tags,
+            kwargs.len()
+        );
+    }
     // SAFETY: method definition layout follows CPython ABI.
     let flags = unsafe { (*method_def).ml_flags };
+    if std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some() && method_name == "copyto" {
+        let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
+        kw_names.sort();
+        let arg_tags = args
+            .iter()
+            .map(cpython_value_debug_tag)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let kw_entries = kwargs
+            .iter()
+            .map(|(name, value)| format!("{name}={}", cpython_value_debug_tag(value)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let self_tag = context
+            .cpython_value_from_ptr_or_proxy(self_obj)
+            .map(|value| cpython_value_debug_tag(&value))
+            .unwrap_or_else(|| "<unknown-self>".to_string());
+        let self_type =
+            cpython_safe_object_type_name(self_obj).unwrap_or_else(|| "<unknown-type>".to_string());
+        eprintln!(
+            "[copyto-call] flags={} self={:p} self_tag={} self_type={} class={:p} def={:p} args_len={} args=[{}] kwargs=[{}]",
+            flags,
+            self_obj,
+            self_tag,
+            self_type,
+            class_obj,
+            method_def,
+            args.len(),
+            arg_tags,
+            kw_entries
+        );
+    }
+    if std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING").is_some()
+        && matches!(
+            method_name.as_str(),
+            "copyto" | "dot" | "arange" | "empty_like" | "empty" | "result_type"
+        )
+    {
+        let arg_tags = args
+            .iter()
+            .map(cpython_value_debug_tag)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut kw_entries = kwargs
+            .iter()
+            .map(|(name, value)| format!("{name}={}", cpython_value_debug_tag(value)))
+            .collect::<Vec<_>>();
+        kw_entries.sort();
+        let self_tag = context
+            .cpython_value_from_ptr_or_proxy(self_obj)
+            .map(|value| cpython_value_debug_tag(&value))
+            .unwrap_or_else(|| "<unknown-self>".to_string());
+        let self_type =
+            cpython_safe_object_type_name(self_obj).unwrap_or_else(|| "<unknown-type>".to_string());
+        let class_type = cpython_safe_object_type_name(class_obj)
+            .unwrap_or_else(|| "<unknown-class>".to_string());
+        eprintln!(
+            "[numpy-method-binding] name={} flags={} self={:p} self_tag={} self_type={} class={:p} class_type={} args=[{}] kwargs=[{}]",
+            method_name,
+            flags,
+            self_obj,
+            self_tag,
+            self_type,
+            class_obj,
+            class_type,
+            arg_tags,
+            kw_entries.join(", ")
+        );
+    }
     if flags & METH_METHOD != 0 {
         if flags & (METH_FASTCALL | METH_KEYWORDS) != (METH_FASTCALL | METH_KEYWORDS) {
             context.set_error("METH_METHOD requires METH_FASTCALL|METH_KEYWORDS");
@@ -22039,9 +26209,22 @@ fn cpython_invoke_method_from_values(
             }
             stack.push(ptr);
         }
-        let mut kw_names = Vec::with_capacity(kwargs.len());
+        let mut kw_name_ptrs: Vec<*mut c_void> = Vec::with_capacity(kwargs.len());
         for (name, value) in &kwargs {
-            kw_names.push(Value::Str(name.clone()));
+            let c_name = match CString::new(name.as_str()) {
+                Ok(c_name) => c_name,
+                Err(_) => {
+                    context.set_error("METH_METHOD keyword name contains interior NUL byte");
+                    return std::ptr::null_mut();
+                }
+            };
+            // SAFETY: C string is NUL-terminated and valid for this call.
+            let name_ptr = unsafe { PyUnicode_InternFromString(c_name.as_ptr()) };
+            if name_ptr.is_null() {
+                context.set_error("failed to intern METH_METHOD keyword name");
+                return std::ptr::null_mut();
+            }
+            kw_name_ptrs.push(name_ptr);
             let ptr = context.alloc_cpython_ptr_for_value(value.clone());
             if ptr.is_null() {
                 context.set_error("failed to materialize METH_METHOD keyword argument");
@@ -22053,12 +26236,26 @@ fn cpython_invoke_method_from_values(
             context.set_error("METH_METHOD call missing VM context");
             return std::ptr::null_mut();
         }
-        // SAFETY: VM pointer is valid for active C-API context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        let kwnames_ptr = if kw_names.is_empty() {
+        let kwnames_ptr = if kw_name_ptrs.is_empty() {
             std::ptr::null_mut()
         } else {
-            context.alloc_cpython_ptr_for_value(vm.heap.alloc_tuple(kw_names))
+            // SAFETY: tuple allocation follows CPython tuple ABI.
+            let tuple = unsafe { PyTuple_New(kw_name_ptrs.len() as isize) };
+            if tuple.is_null() {
+                context.set_error("failed to allocate METH_METHOD keyword names tuple");
+                return std::ptr::null_mut();
+            }
+            for (index, name_ptr) in kw_name_ptrs.into_iter().enumerate() {
+                // SAFETY: tuple is newly allocated and index is in-bounds.
+                let status = unsafe { PyTuple_SetItem(tuple, index as isize, name_ptr) };
+                if status != 0 {
+                    // SAFETY: tuple owns any already-inserted references.
+                    unsafe { Py_DecRef(tuple) };
+                    context.set_error("failed to populate METH_METHOD keyword names tuple");
+                    return std::ptr::null_mut();
+                }
+            }
+            tuple
         };
         if !kwargs.is_empty() && kwnames_ptr.is_null() {
             context.set_error("failed to materialize METH_METHOD keyword names");
@@ -22079,6 +26276,10 @@ fn cpython_invoke_method_from_values(
             stack.as_ptr()
         };
         let result = unsafe { call(self_obj, class_obj, args_ptr, args.len(), kwnames_ptr) };
+        if !kwnames_ptr.is_null() {
+            // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
+            unsafe { Py_DecRef(kwnames_ptr) };
+        }
         if trace_calls {
             eprintln!(
                 "[cpy-method-call] name={} flags={} cmethod nargs={} kwargs={} class={:p} result={:p}",
@@ -22097,8 +26298,22 @@ fn cpython_invoke_method_from_values(
             context.set_error("METH_FASTCALL call missing VM context");
             return std::ptr::null_mut();
         }
+        let accepts_keywords = (flags & METH_KEYWORDS) != 0;
+        if !accepts_keywords && !kwargs.is_empty() {
+            context.set_error("METH_FASTCALL call does not accept keyword arguments");
+            return std::ptr::null_mut();
+        }
+        if trace_numpy_empty && method_name == "empty" {
+            let mut names: Vec<String> = kwargs.keys().cloned().collect();
+            names.sort();
+            eprintln!(
+                "[numpy-empty] fastcall args_len={} kwargs={:?}",
+                args.len(),
+                names
+            );
+        }
         let mut stack: Vec<*mut c_void> =
-            Vec::with_capacity(args.len().saturating_add(kwargs.len()));
+            Vec::with_capacity(args.len().saturating_add(if accepts_keywords { kwargs.len() } else { 0 }));
         for value in &args {
             let ptr = context.alloc_cpython_ptr_for_value(value.clone());
             if ptr.is_null() {
@@ -22107,36 +26322,154 @@ fn cpython_invoke_method_from_values(
             }
             stack.push(ptr);
         }
-        let mut kw_names = Vec::with_capacity(kwargs.len());
-        for (name, value) in &kwargs {
-            kw_names.push(Value::Str(name.clone()));
-            let ptr = context.alloc_cpython_ptr_for_value(value.clone());
-            if ptr.is_null() {
-                context.set_error("failed to materialize FASTCALL keyword argument");
-                return std::ptr::null_mut();
+        let mut kw_name_ptrs: Vec<*mut c_void> = Vec::new();
+        if accepts_keywords {
+            kw_name_ptrs = Vec::with_capacity(kwargs.len());
+            for (name, value) in &kwargs {
+                let c_name = match CString::new(name.as_str()) {
+                    Ok(c_name) => c_name,
+                    Err(_) => {
+                        context.set_error("FASTCALL keyword name contains interior NUL byte");
+                        return std::ptr::null_mut();
+                    }
+                };
+                // SAFETY: C string is NUL-terminated and valid for this call.
+                let name_ptr = unsafe { PyUnicode_InternFromString(c_name.as_ptr()) };
+                if name_ptr.is_null() {
+                    context.set_error("failed to intern FASTCALL keyword name");
+                    return std::ptr::null_mut();
+                }
+                kw_name_ptrs.push(name_ptr);
+                let ptr = context.alloc_cpython_ptr_for_value(value.clone());
+                if ptr.is_null() {
+                    context.set_error("failed to materialize FASTCALL keyword argument");
+                    return std::ptr::null_mut();
+                }
+                stack.push(ptr);
             }
-            stack.push(ptr);
         }
-        // SAFETY: VM pointer is valid for active C-API context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        let kwnames_ptr = if kw_names.is_empty() {
-            std::ptr::null_mut()
-        } else {
-            context.alloc_cpython_ptr_for_value(vm.heap.alloc_tuple(kw_names))
-        };
-        if !kwargs.is_empty() && kwnames_ptr.is_null() {
-            context.set_error("failed to materialize FASTCALL keyword names");
-            return std::ptr::null_mut();
-        }
-        let call: unsafe extern "C" fn(*mut c_void, *const *mut c_void, usize, *mut c_void) -> *mut c_void =
-            // SAFETY: method flags indicate FASTCALL signature.
-            unsafe { std::mem::transmute(method) };
         let args_ptr = if stack.is_empty() {
             std::ptr::null()
         } else {
             stack.as_ptr()
         };
-        let result = unsafe { call(self_obj, args_ptr, args.len(), kwnames_ptr) };
+        let result = if accepts_keywords {
+            let kwnames_ptr = if kw_name_ptrs.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: tuple allocation follows CPython tuple ABI.
+                let tuple = unsafe { PyTuple_New(kw_name_ptrs.len() as isize) };
+                if tuple.is_null() {
+                    context.set_error("failed to allocate FASTCALL keyword names tuple");
+                    return std::ptr::null_mut();
+                }
+                for (index, name_ptr) in kw_name_ptrs.into_iter().enumerate() {
+                    // SAFETY: tuple is newly allocated and index is in-bounds.
+                    let status = unsafe { PyTuple_SetItem(tuple, index as isize, name_ptr) };
+                    if status != 0 {
+                        // SAFETY: tuple owns any already-inserted references.
+                        unsafe { Py_DecRef(tuple) };
+                        context.set_error("failed to populate FASTCALL keyword names tuple");
+                        return std::ptr::null_mut();
+                    }
+                }
+                tuple
+            };
+            if !kwargs.is_empty() && kwnames_ptr.is_null() {
+                context.set_error("failed to materialize FASTCALL keyword names");
+                return std::ptr::null_mut();
+            }
+            let call: unsafe extern "C" fn(*mut c_void, *const *mut c_void, usize, *mut c_void) -> *mut c_void =
+                // SAFETY: method flags indicate FASTCALL|KEYWORDS signature.
+                unsafe { std::mem::transmute(method) };
+            let result = unsafe { call(self_obj, args_ptr, args.len(), kwnames_ptr) };
+            if !kwnames_ptr.is_null() {
+                // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
+                unsafe { Py_DecRef(kwnames_ptr) };
+            }
+            result
+        } else {
+            let call: unsafe extern "C" fn(*mut c_void, *const *mut c_void, usize) -> *mut c_void =
+                // SAFETY: method flags indicate FASTCALL-only signature.
+                unsafe { std::mem::transmute(method) };
+            unsafe { call(self_obj, args_ptr, args.len()) }
+        };
+        if trace_numpy_result_type && method_name == "result_type" {
+            let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
+            kw_names.sort();
+            let mapped_summary = context
+                .cpython_value_from_ptr_or_proxy(result)
+                .map(|value| {
+                    let raw = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&value)
+                        .map(|ptr| format!("{:p}", ptr))
+                        .unwrap_or_else(|| "<none>".to_string());
+                    let class_raw = match &value {
+                        Value::Instance(instance_obj) => match &*instance_obj.kind() {
+                            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                                Object::Class(class_data) => {
+                                    match class_data.attrs.get(CPY_PROXY_PTR_ATTR) {
+                                        Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => {
+                                            format!("{:p}", *raw_ptr as usize as *mut c_void)
+                                        }
+                                        _ => "<none>".to_string(),
+                                    }
+                                }
+                                _ => "<none>".to_string(),
+                            },
+                            _ => "<none>".to_string(),
+                        },
+                        _ => "<none>".to_string(),
+                    };
+                    let class_tp_name = if let Ok(class_ptr) =
+                        usize::from_str_radix(class_raw.trim_start_matches("0x"), 16)
+                    {
+                        let class_ptr = class_ptr as *mut c_void;
+                        if class_ptr.is_null() {
+                            "<none>".to_string()
+                        } else {
+                            // SAFETY: diagnostics on proxy raw class pointer.
+                            unsafe {
+                                class_ptr
+                                    .cast::<CpythonTypeObject>()
+                                    .as_ref()
+                                    .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                                    .unwrap_or_else(|| "<unknown>".to_string())
+                            }
+                        }
+                    } else {
+                        "<none>".to_string()
+                    };
+                    format!(
+                        "value_type={} value_raw={} class_raw={} class_tp_name={}",
+                        cpython_debug_ufunc_attr_summary(&value, 2),
+                        raw,
+                        class_raw,
+                        class_tp_name
+                    )
+                })
+                .unwrap_or_else(|| "<none>".to_string());
+            eprintln!(
+                "[numpy-result-type] flags={} nargs={} kwargs={:?} result_ptr={:p} result_ob_type={:p} result_type_name={} mapped={}",
+                flags,
+                args.len(),
+                kw_names,
+                result,
+                if result.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    // SAFETY: diagnostics only for returned PyObject pointer.
+                    unsafe {
+                        result
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type)
+                            .unwrap_or(std::ptr::null_mut())
+                    }
+                },
+                cpython_type_name_for_object_ptr(result),
+                mapped_summary
+            );
+        }
         if trace_calls {
             eprintln!(
                 "[cpy-method-call] name={} flags={} fastcall nargs={} kwargs={} result={:p}",
@@ -22187,6 +26520,38 @@ fn cpython_invoke_method_from_values(
             context.set_error("METH_VARARGS call does not accept keyword arguments");
             return std::ptr::null_mut();
         }
+        if trace_set_typedict && method_name == "set_typeDict" {
+            let arg_len = args.len();
+            if let Some(Value::Dict(dict_obj)) = args.first()
+                && let Object::Dict(dict_data) = &*dict_obj.kind()
+            {
+                let sample = dict_data
+                    .iter()
+                    .take(8)
+                    .map(|(k, _)| cpython_debug_compare_value(k))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let has_int8 = dict_data.contains_key(&Value::Str("int8".to_string()));
+                let has_bool = dict_data.contains_key(&Value::Str("bool".to_string()));
+                let has_float64 = dict_data.contains_key(&Value::Str("float64".to_string()));
+                eprintln!(
+                    "[numpy-typedict] incoming dict entries={} has_int8={} has_bool={} has_float64={} sample=[{}]",
+                    dict_data.len(),
+                    has_int8,
+                    has_bool,
+                    has_float64,
+                    sample
+                );
+            } else {
+                eprintln!(
+                    "[numpy-typedict] incoming args_len={} first={}",
+                    arg_len,
+                    args.first()
+                        .map(cpython_value_debug_tag)
+                        .unwrap_or_else(|| "<none>".to_string())
+                );
+            }
+        }
         if context.vm.is_null() {
             context.set_error("METH_VARARGS call missing VM context");
             return std::ptr::null_mut();
@@ -22198,10 +26563,35 @@ fn cpython_invoke_method_from_values(
             context.set_error("failed to materialize cfunction args tuple");
             return std::ptr::null_mut();
         }
+        if trace_set_typedict && method_name == "set_typeDict" {
+            let dict_ptr = unsafe { PyTuple_GetItem(args_ptr, 0) };
+            TRACE_NUMPY_TYPEDICT_PTR.store(dict_ptr as usize, Ordering::Relaxed);
+            let probe_key = unsafe { PyUnicode_FromString(c"int8".as_ptr()) };
+            let probe_value = if probe_key.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { PyDict_GetItemWithError(dict_ptr, probe_key) }
+            };
+            let probe_error = unsafe { PyErr_Occurred() };
+            if !probe_key.is_null() {
+                unsafe { Py_DecRef(probe_key) };
+            }
+            eprintln!(
+                "[numpy-typedict] c-arg tuple={:p} dict_ptr={:p} probe_int8={:p} probe_err={:p}",
+                args_ptr, dict_ptr, probe_value, probe_error
+            );
+        }
         let call: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
             // SAFETY: method flags indicate VARARGS signature.
             unsafe { std::mem::transmute(method) };
-        return unsafe { call(self_obj, args_ptr) };
+        let result = unsafe { call(self_obj, args_ptr) };
+        if trace_set_typedict && method_name == "set_typeDict" {
+            eprintln!(
+                "[numpy-typedict] result={:p} last_error={:?}",
+                result, context.last_error
+            );
+        }
+        return result;
     }
     if flags & METH_NOARGS != 0 {
         if !args.is_empty() || !kwargs.is_empty() {
@@ -23304,7 +27694,7 @@ fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
             .unwrap_or(std::ptr::null_mut())
     };
     if object_type.is_null() {
-        return false;
+        return ModuleCapiContext::is_probable_type_object_without_metatype(ptr);
     }
     if object_type == type_type {
         return true;
@@ -23645,11 +28035,25 @@ fn cpython_type_from_spec_impl(
     }
 
     let type_data_size = (type_value.tp_basicsize - unsafe { (*base).tp_basicsize }).max(0);
-    let type_ptr = Box::into_raw(Box::new(type_value));
+    let heap_type_size = unsafe { PyType_Type.tp_basicsize.max(0) as usize }
+        .max(std::mem::size_of::<CpythonTypeObject>());
+    // SAFETY: allocate heap-type storage large enough for CPython heap-type layout expectations.
+    let type_ptr = unsafe { calloc(1, heap_type_size) }.cast::<CpythonTypeObject>();
+    if type_ptr.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_MemoryError },
+            "failed to allocate heap type object",
+        );
+        return std::ptr::null_mut();
+    }
+    // SAFETY: destination points to writable heap block with room for CpythonTypeObject header.
+    unsafe {
+        std::ptr::write(type_ptr, type_value);
+    }
     if unsafe { PyType_Ready(type_ptr.cast::<c_void>()) } != 0 {
         // SAFETY: type pointer allocated above and not published on failure.
         unsafe {
-            let _ = Box::from_raw(type_ptr);
+            free(type_ptr.cast());
         }
         return std::ptr::null_mut();
     }
@@ -23821,6 +28225,40 @@ pub unsafe extern "C" fn PyType_GetSlot(ty: *mut c_void, slot: c_int) -> *mut c_
         return std::ptr::null_mut();
     }
     cpython_type_slot_from_type_object(type_ptr, slot)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyType_Lookup(ty: *mut c_void, name: *mut c_void) -> *mut c_void {
+    if ty.is_null() || name.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    with_active_cpython_context_mut(|context| {
+        let Some(name_value) = context.cpython_value_from_ptr_or_proxy(name) else {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        };
+        let Value::Str(attr_name) = name_value else {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        };
+        // _PyType_Lookup() must not leave a new error behind when lookup misses.
+        let saved_current_error = context.current_error;
+        let saved_last_error = context.last_error.clone();
+        let saved_first_error = context.first_error.clone();
+        let result = context
+            .lookup_type_attr_via_tp_dict(ty, &attr_name)
+            .or_else(|| context.lookup_type_attr_via_runtime_mro(ty, &attr_name))
+            .unwrap_or(std::ptr::null_mut());
+        context.current_error = saved_current_error;
+        context.last_error = saved_last_error;
+        context.first_error = saved_first_error;
+        result
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -24108,6 +28546,71 @@ pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
         }
         if (*ty).tp_new.is_null() {
             (*ty).tp_new = PyType_GenericNew as *mut c_void;
+        }
+        if (*ty).tp_dict.is_null() {
+            let dict_ptr = PyDict_New();
+            if dict_ptr.is_null() {
+                return -1;
+            }
+            (*ty).tp_dict = dict_ptr;
+        }
+        if (*ty).tp_bases.is_null() {
+            let base_obj = if !base.is_null() {
+                base.cast::<c_void>()
+            } else {
+                std::ptr::null_mut()
+            };
+            let bases_len = usize::from(!base_obj.is_null());
+            let bases_tuple = PyTuple_New(bases_len as isize);
+            if bases_tuple.is_null() {
+                return -1;
+            }
+            if !base_obj.is_null() {
+                Py_XIncRef(base_obj);
+                if PyTuple_SetItem(bases_tuple, 0, base_obj) != 0 {
+                    Py_DecRef(bases_tuple);
+                    return -1;
+                }
+            }
+            (*ty).tp_bases = bases_tuple;
+        }
+        if (*ty).tp_mro.is_null() {
+            let type_obj = ty.cast::<c_void>();
+            let mut base_entries: Vec<*mut c_void> = Vec::new();
+            if !base.is_null() {
+                let base_mro = (*base).tp_mro;
+                if !base_mro.is_null() {
+                    let base_mro_len = PyTuple_Size(base_mro).max(0) as usize;
+                    if base_mro_len > 0 {
+                        for index in 0..base_mro_len {
+                            let entry = PyTuple_GetItem(base_mro, index as isize);
+                            if !entry.is_null() {
+                                base_entries.push(entry);
+                            }
+                        }
+                    }
+                }
+                if base_entries.is_empty() {
+                    base_entries.push(base.cast::<c_void>());
+                }
+            }
+            let mro_tuple = PyTuple_New((1 + base_entries.len()) as isize);
+            if mro_tuple.is_null() {
+                return -1;
+            }
+            Py_XIncRef(type_obj);
+            if PyTuple_SetItem(mro_tuple, 0, type_obj) != 0 {
+                Py_DecRef(mro_tuple);
+                return -1;
+            }
+            for (index, entry) in base_entries.into_iter().enumerate() {
+                Py_XIncRef(entry);
+                if PyTuple_SetItem(mro_tuple, (index + 1) as isize, entry) != 0 {
+                    Py_DecRef(mro_tuple);
+                    return -1;
+                }
+            }
+            (*ty).tp_mro = mro_tuple;
         }
         if !base.is_null() {
             let inherited_subclass_bits = (*base).tp_flags
@@ -26532,6 +31035,11 @@ pub unsafe extern "C" fn PyThreadState_Get() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyThreadState_GetUnchecked() -> *mut c_void {
+    cpython_current_thread_state_ptr() as *mut c_void
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThreadState_New(interp: *mut c_void) -> *mut c_void {
     if interp.is_null() {
         cpython_set_typed_error(
@@ -26540,8 +31048,9 @@ pub unsafe extern "C" fn PyThreadState_New(interp: *mut c_void) -> *mut c_void {
         );
         return std::ptr::null_mut();
     }
-    // SAFETY: allocate opaque thread-state token for CPython-ABI compatibility.
-    let raw = unsafe { calloc(1, 1) } as usize;
+    // SAFETY: allocate a writable thread-state compatibility block so native code
+    // that reads/writes PyThreadState fields does not access past a token-sized buffer.
+    let raw = unsafe { calloc(1, CPYTHON_THREAD_STATE_COMPAT_SIZE) } as usize;
     if raw == 0 {
         cpython_set_error("PyThreadState_New failed to allocate thread state");
         return std::ptr::null_mut();
@@ -26647,7 +31156,66 @@ pub unsafe extern "C" fn PyThreadState_GetFrame(state: *mut c_void) -> *mut c_vo
     if state.is_null() {
         return std::ptr::null_mut();
     }
-    unsafe { PyEval_GetFrame() }
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some(active) = vm.frames.last() else {
+            return std::ptr::null_mut();
+        };
+        context.alloc_cpython_ptr_for_value(Value::Code(active.code.clone()))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFrame_New(
+    _state: *mut c_void,
+    code: *mut c_void,
+    globals: *mut c_void,
+    locals: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyFrame_New missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let frame_obj = match vm
+            .heap
+            .alloc_module(ModuleObject::new("__pyframe__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *frame_obj.kind_mut() {
+            let code_value = context
+                .cpython_value_from_ptr_or_proxy(code)
+                .unwrap_or(Value::None);
+            let globals_value = context
+                .cpython_value_from_ptr_or_proxy(globals)
+                .unwrap_or(Value::None);
+            let locals_value = context
+                .cpython_value_from_ptr_or_proxy(locals)
+                .unwrap_or(Value::None);
+            module_data.globals.insert("f_code".to_string(), code_value);
+            module_data
+                .globals
+                .insert("f_globals".to_string(), globals_value);
+            module_data.globals.insert("f_locals".to_string(), locals_value);
+        }
+        context.alloc_cpython_ptr_for_value(Value::Module(frame_obj))
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -27130,6 +31698,16 @@ pub unsafe extern "C" fn PyVectorcall_NARGS(nargsf: usize) -> usize {
 pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *const c_char) {
     match unsafe { c_name_to_string(message) } {
         Ok(message) => {
+            if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE").is_some()
+                && message.contains("data type")
+            {
+                eprintln!(
+                    "[cpy-dtype] PyErr_SetString exc={:p} msg={} bt={:?}",
+                    _exception,
+                    message,
+                    Backtrace::force_capture()
+                );
+            }
             if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
                 && message.starts_with("cannot add indexed loop to ufunc")
             {
@@ -27141,14 +31719,32 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     }
                 });
             }
+            if std::env::var_os("PYRS_TRACE_DOCSTRING_ERRORS").is_some()
+                && message == "Cannot set a docstring for that object"
+            {
+                eprintln!(
+                    "[cpy-doc-error] exc={:p} message={} bt={:?}",
+                    _exception,
+                    message,
+                    Backtrace::force_capture()
+                );
+            }
+            if std::env::var_os("PYRS_TRACE_NUMPY_PICKLE_FAIL").is_some()
+                && message.starts_with("Unable to initialize pickling for ")
+            {
+                eprintln!(
+                    "[numpy-pickle-fail] from-PyErr_SetString message={} bt={:?}",
+                    message,
+                    Backtrace::force_capture()
+                );
+            }
             let _ = with_active_cpython_context_mut(|context| {
-                let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
                 let ptype = if _exception.is_null() {
                     unsafe { PyExc_RuntimeError }
                 } else {
                     _exception
                 };
-                context.set_error_state(ptype, pvalue, std::ptr::null_mut(), message);
+                context.set_error_state(ptype, std::ptr::null_mut(), std::ptr::null_mut(), message);
             })
             .map_err(|err| {
                 cpython_set_error(err);
@@ -27403,6 +31999,46 @@ fn cpython_ptr_is_type_object(ptr: *mut c_void) -> bool {
     cpython_is_type_object_ptr(ptr)
 }
 
+fn cpython_probable_c_string_ptr(ptr: *const c_char) -> bool {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    if ptr.is_null() {
+        return false;
+    }
+    let addr = ptr as usize;
+    addr >= MIN_VALID_PTR && addr % std::mem::align_of::<usize>() == 0
+}
+
+fn cpython_safe_type_name(type_ptr: *mut CpythonTypeObject) -> Option<String> {
+    if type_ptr.is_null() {
+        return None;
+    }
+    // SAFETY: caller provides a candidate type pointer; this function performs
+    // conservative pointer checks before touching foreign string memory.
+    unsafe {
+        let ty = type_ptr.as_ref()?;
+        if !cpython_probable_c_string_ptr(ty.tp_name) {
+            return None;
+        }
+        c_name_to_string(ty.tp_name).ok()
+    }
+}
+
+fn cpython_safe_object_type_name(object: *mut c_void) -> Option<String> {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    if object.is_null() {
+        return None;
+    }
+    let addr = object as usize;
+    if addr < MIN_VALID_PTR || addr % std::mem::align_of::<usize>() != 0 {
+        return None;
+    }
+    // SAFETY: pointer passes conservative shape checks; read-only access to object head.
+    unsafe {
+        let head = object.cast::<CpythonObjectHead>().as_ref()?;
+        cpython_safe_type_name(head.ob_type.cast::<CpythonTypeObject>())
+    }
+}
+
 fn cpython_exception_type_ptr(ptr: *mut c_void) -> *mut c_void {
     if ptr.is_null() {
         return std::ptr::null_mut();
@@ -27417,6 +32053,55 @@ fn cpython_exception_type_ptr(ptr: *mut c_void) -> *mut c_void {
             .map(|head| head.ob_type)
             .unwrap_or(std::ptr::null_mut())
     }
+}
+
+fn cpython_exception_class_name_from_ptr(ptr: *mut c_void) -> Option<String> {
+    let type_ptr = cpython_exception_type_ptr(ptr);
+    if type_ptr.is_null() || !cpython_ptr_is_type_object(type_ptr) {
+        return None;
+    }
+    let name = cpython_safe_type_name(type_ptr.cast::<CpythonTypeObject>())?;
+    if name.is_empty() || name == "type" {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn cpython_exception_expected_name_from_ptr(ptr: *mut c_void) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+    if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(ptr as usize) {
+        return Some(name);
+    }
+    cpython_exception_class_name_from_ptr(ptr)
+}
+
+fn cpython_type_inherits_exception_name(type_ptr: *mut c_void, expected_name: &str) -> bool {
+    if type_ptr.is_null() || expected_name.is_empty() {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut current = type_ptr.cast::<CpythonTypeObject>();
+    while !current.is_null() && depth < 128 {
+        if !cpython_ptr_is_type_object(current.cast()) {
+            return false;
+        }
+        let current_name = cpython_safe_type_name(current).unwrap_or_default();
+        if current_name == expected_name {
+            return true;
+        }
+        // SAFETY: `current` is non-null; reading `tp_base` is valid for CPython type layouts.
+        current = unsafe {
+            current
+                .as_ref()
+                .map(|ty| ty.tp_base)
+                .unwrap_or(std::ptr::null_mut())
+        };
+        depth += 1;
+    }
+    false
 }
 
 fn cpython_tuple_items_for_match(tuple: *mut c_void) -> Option<Vec<*mut c_void>> {
@@ -27495,6 +32180,11 @@ pub unsafe extern "C" fn PyErr_GivenExceptionMatches(
     if unsafe { PyType_IsSubtype(given_type, expected_type) } != 0 {
         return 1;
     }
+    if let Some(expected_name) = cpython_exception_expected_name_from_ptr(expected)
+        && cpython_type_inherits_exception_name(given_type, &expected_name)
+    {
+        return 1;
+    }
     0
 }
 
@@ -27549,6 +32239,29 @@ fn cpython_exception_type_ptr_for_value(
 ) -> Option<*mut c_void> {
     match value {
         Value::Exception(exception_obj) => {
+            let attr_hint = exception_obj
+                .attrs
+                .borrow()
+                .get(CPY_EXCEPTION_TYPE_PTR_ATTR)
+                .cloned();
+            if std::env::var_os("PYRS_TRACE_CPY_EXC_TYPE_HINT").is_some() {
+                let map_hit = context
+                    .exception_type_ptr_by_name
+                    .get(&exception_obj.name)
+                    .copied();
+                eprintln!(
+                    "[cpy-exc-type] name={} attr_hint={attr_hint:?} map_hit={map_hit:?}",
+                    exception_obj.name
+                );
+            }
+            if let Some(Value::Int(raw)) = attr_hint
+                && raw > 0
+            {
+                return Some(raw as usize as *mut c_void);
+            }
+            if let Some(raw_ptr) = context.exception_type_ptr_by_name.get(&exception_obj.name) {
+                return Some(*raw_ptr as *mut c_void);
+            }
             if context.vm.is_null() {
                 return None;
             }
@@ -27558,7 +32271,33 @@ fn cpython_exception_type_ptr_for_value(
             Some(context.alloc_cpython_ptr_for_value(Value::Class(class)))
         }
         Value::Instance(instance) => {
+            let hint = {
+                let Object::Instance(instance_data) = &*instance.kind() else {
+                    return None;
+                };
+                instance_data
+                    .attrs
+                    .get(CPY_EXCEPTION_TYPE_PTR_ATTR)
+                    .cloned()
+            };
+            if let Some(Value::Int(raw)) = hint
+                && raw > 0
+            {
+                return Some(raw as usize as *mut c_void);
+            }
             if !cpython_is_exception_instance(context, instance) {
+                let instance_name = {
+                    let Object::Instance(instance_data) = &*instance.kind() else {
+                        return None;
+                    };
+                    let Object::Class(class_data) = &*instance_data.class.kind() else {
+                        return None;
+                    };
+                    class_data.name.clone()
+                };
+                if let Some(raw_ptr) = context.exception_type_ptr_by_name.get(&instance_name) {
+                    return Some(*raw_ptr as *mut c_void);
+                }
                 return None;
             }
             let Object::Instance(instance_data) = &*instance.kind() else {
@@ -27829,7 +32568,11 @@ pub unsafe extern "C" fn PyErr_SetExcInfo(
     }
 }
 
-fn pyrs_pyerr_format_basic(format: *const c_char) -> *mut c_void {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
+    exception: *mut c_void,
+    format: *const c_char,
+) -> *mut c_void {
     let message = if format.is_null() {
         "error".to_string()
     } else {
@@ -27838,29 +32581,39 @@ fn pyrs_pyerr_format_basic(format: *const c_char) -> *mut c_void {
             .unwrap_or("error")
             .to_string()
     };
-    cpython_set_error(message);
+    if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE").is_some() && message.contains("data type") {
+        eprintln!(
+            "[cpy-dtype] PyErr_Format exception={:p} msg={} bt={:?}",
+            exception,
+            message,
+            Backtrace::force_capture()
+        );
+    }
+    if std::env::var_os("PYRS_TRACE_NUMPY_PICKLE_FAIL").is_some()
+        && message.starts_with("Unable to initialize pickling for ")
+    {
+        eprintln!(
+            "[numpy-pickle-fail] from-PyErr_Format message={} bt={:?}",
+            message,
+            Backtrace::force_capture()
+        );
+    }
+    if exception.is_null() {
+        cpython_set_error(message);
+    } else {
+        cpython_set_typed_error(exception, message);
+    }
     std::ptr::null_mut()
-}
-
-fn pyrs_pyerr_formatv_basic(format: *const c_char, _vargs: *mut c_void) -> *mut c_void {
-    pyrs_pyerr_format_basic(format)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
-    _exception: *mut c_void,
-    format: *const c_char,
-) -> *mut c_void {
-    pyrs_pyerr_format_basic(format)
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pyrs_capi_pyerr_formatv_fallback(
-    _exception: *mut c_void,
+    exception: *mut c_void,
     format: *const c_char,
     vargs: *mut c_void,
 ) -> *mut c_void {
-    pyrs_pyerr_formatv_basic(format, vargs)
+    let _ = vargs;
+    unsafe { pyrs_capi_pyerr_format_fallback(exception, format) }
 }
 
 #[unsafe(no_mangle)]
@@ -29388,6 +34141,31 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
         } else {
             _exception
         };
+        let value_obj = context.cpython_value_from_ptr_or_proxy(value);
+        if std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some() {
+            let exception_name = cpython_exception_class_name_from_ptr(ptype)
+                .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
+            if exception_name.contains("UFunc") || exception_name.contains("ufunc") {
+                eprintln!(
+                    "[cpy-ufunc-error] ptype={:p} name={} value_ptr={:p} value={} bt={:?}",
+                    ptype,
+                    exception_name,
+                    value,
+                    value_obj
+                        .as_ref()
+                        .map(cpython_value_debug_tag)
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                    Backtrace::force_capture()
+                );
+            }
+        }
+        if let Some(normalized) =
+            cpython_make_exception_instance_from_type_and_value(context, ptype, value_obj.clone())
+        {
+            let message = context.error_message_from_ptr(normalized);
+            context.set_error_state(ptype, normalized, std::ptr::null_mut(), message);
+            return;
+        }
         let message = context.error_message_from_ptr(value);
         context.set_error_state(ptype, value, std::ptr::null_mut(), message);
     })
@@ -29860,15 +34638,21 @@ pub unsafe extern "C" fn Py_DecRef(object: *mut c_void) {
     if object.is_null() {
         return;
     }
+    let interned = cpython_is_interned_unicode_ptr(object);
     // SAFETY: caller provides a PyObject-compatible pointer.
     unsafe {
         if let Some(head) = object.cast::<CpythonObjectHead>().as_mut()
             && head.ob_refcnt > 0
         {
-            head.ob_refcnt = head.ob_refcnt.saturating_sub(1);
+            if !interned || head.ob_refcnt > 1 {
+                head.ob_refcnt = head.ob_refcnt.saturating_sub(1);
+            }
         }
     }
     let _ = with_active_cpython_context_mut(|context| {
+        if interned {
+            return;
+        }
         if let Some(handle) = context.cpython_handle_from_ptr(object) {
             let _ = context.decref(handle);
         }
@@ -29909,12 +34693,15 @@ pub unsafe extern "C" fn _Py_DecRef(object: *mut c_void) {
     if object.is_null() {
         return;
     }
+    let interned = cpython_is_interned_unicode_ptr(object);
     // SAFETY: caller provides a PyObject-compatible pointer.
     unsafe {
         if let Some(head) = object.cast::<CpythonObjectHead>().as_mut()
             && head.ob_refcnt > 0
         {
-            head.ob_refcnt = head.ob_refcnt.saturating_sub(1);
+            if !interned || head.ob_refcnt > 1 {
+                head.ob_refcnt = head.ob_refcnt.saturating_sub(1);
+            }
         }
     }
 }
@@ -30178,6 +34965,7 @@ static PY_TYPE_NAME_LONG_RANGE_ITER: &[u8; 19] = b"longrange_iterator\0";
 static PY_TYPE_NAME_MAP: &[u8; 4] = b"map\0";
 static PY_TYPE_NAME_MEMBER_DESCR: &[u8; 13] = b"member_descr\0";
 static PY_TYPE_NAME_MEMORYVIEW: &[u8; 11] = b"memoryview\0";
+static PY_TYPE_NAME_METHOD: &[u8; 7] = b"method\0";
 static PY_TYPE_NAME_METHOD_DESCR: &[u8; 13] = b"method_descr\0";
 static PY_TYPE_NAME_MODULE_DEF: &[u8; 10] = b"moduledef\0";
 static PY_TYPE_NAME_MODULE: &[u8; 7] = b"module\0";
@@ -30344,6 +35132,9 @@ pub static mut PyMemoryView_Type: CpythonTypeObject =
     empty_type(PY_TYPE_NAME_MEMORYVIEW.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
+pub static mut PyMethod_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_METHOD.as_ptr().cast());
+#[unsafe(no_mangle)]
+#[used]
 pub static mut PyMethodDescr_Type: CpythonTypeObject =
     empty_type(PY_TYPE_NAME_METHOD_DESCR.as_ptr().cast());
 #[unsafe(no_mangle)]
@@ -30479,6 +35270,13 @@ unsafe extern "C" {
         format: *const c_char,
         keywords: *mut *const c_char,
         ...
+    ) -> i32;
+    fn PyArg_VaParseTupleAndKeywords(
+        args: *mut c_void,
+        kwargs: *mut c_void,
+        format: *const c_char,
+        keywords: *mut *const c_char,
+        vargs: *mut c_void,
     ) -> i32;
     fn _PyArg_VaParseTupleAndKeywords_SizeT(
         args: *mut c_void,
@@ -30940,6 +35738,9 @@ static KEEP2_PYTYPE_GETFULLYQUALIFIEDNAME: unsafe extern "C" fn(*mut c_void) -> 
 static KEEP2_PYTYPE_GETSLOT: unsafe extern "C" fn(*mut c_void, c_int) -> *mut c_void =
     PyType_GetSlot;
 #[used]
+static KEEP2__PYTYPE_LOOKUP: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    _PyType_Lookup;
+#[used]
 static KEEP2_PYTYPE_GETMODULE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyType_GetModule;
 #[used]
 static KEEP2_PYTYPE_GETMODULESTATE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
@@ -31228,6 +36029,9 @@ static KEEP2_PYTHREAD_TSS_GET: unsafe extern "C" fn(*mut c_void) -> *mut c_void 
 #[used]
 static KEEP2_PYTHREADSTATE_GET: unsafe extern "C" fn() -> *mut c_void = PyThreadState_Get;
 #[used]
+static KEEP2_PYTHREADSTATE_GETUNCHECKED: unsafe extern "C" fn() -> *mut c_void =
+    PyThreadState_GetUnchecked;
+#[used]
 static KEEP2_PYTHREADSTATE_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyThreadState_New;
 #[used]
@@ -31250,6 +36054,13 @@ static KEEP2_PYTHREADSTATE_SETASYNCEXC: unsafe extern "C" fn(u64, *mut c_void) -
 #[used]
 static KEEP2_PYTHREADSTATE_GETFRAME: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyThreadState_GetFrame;
+#[used]
+static KEEP2_PYFRAME_NEW: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyFrame_New;
 #[used]
 static KEEP2_PYFRAME_GETCODE: unsafe extern "C" fn(*mut c_void) -> *mut c_void = PyFrame_GetCode;
 #[used]
@@ -31339,6 +36150,50 @@ static KEEP3_PYCONTEXTVAR_SET: unsafe extern "C" fn(*mut c_void, *mut c_void) ->
 #[used]
 static KEEP3_PYMETHOD_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyMethod_New;
+#[used]
+static KEEP3_PYCODE_NEWEMPTY: unsafe extern "C" fn(*const c_char, *const c_char, c_int) -> *mut c_void =
+    PyCode_NewEmpty;
+#[used]
+static KEEP3_PYUNSTABLE_CODE_NEW: unsafe extern "C" fn(
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    c_int,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyUnstable_Code_New;
+#[used]
+static KEEP3_PYUNSTABLE_CODE_NEWWITHPOSONLYARGS: unsafe extern "C" fn(
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    c_int,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyUnstable_Code_NewWithPosOnlyArgs;
 #[used]
 static KEEP3_PYOBJECT_CALLFUNCTION: unsafe extern "C" fn(
     *mut c_void,
@@ -31470,6 +36325,13 @@ static KEEP3_PYOBJECT_VECTORCALL: unsafe extern "C" fn(
     usize,
     *mut c_void,
 ) -> *mut c_void = PyObject_Vectorcall;
+#[used]
+static KEEP3_PYOBJECT_VECTORCALLDICT: unsafe extern "C" fn(
+    *mut c_void,
+    *const *mut c_void,
+    usize,
+    *mut c_void,
+) -> *mut c_void = PyObject_VectorcallDict;
 #[used]
 static KEEP3_PYOBJECT_VECTORCALLMETHOD: unsafe extern "C" fn(
     *mut c_void,
@@ -31791,6 +36653,8 @@ static KEEP3_PYUNICODE_GETLENGTH: unsafe extern "C" fn(*mut c_void) -> isize = P
 static KEEP3_PYUNICODE_INTERNFROMSTRING: unsafe extern "C" fn(*const c_char) -> *mut c_void =
     PyUnicode_InternFromString;
 #[used]
+static KEEP3_PYUNICODE_NEW: unsafe extern "C" fn(isize, c_uint) -> *mut c_void = PyUnicode_New;
+#[used]
 static KEEP3_PYUNICODE_FROMFORMAT: unsafe extern "C" fn(*const c_char, ...) -> *mut c_void =
     PyUnicode_FromFormat;
 #[used]
@@ -31892,6 +36756,14 @@ static KEEP3_PYUNICODE_RICHCOMPARE: unsafe extern "C" fn(
 #[used]
 static KEEP3_PYUNICODE_WRITECHAR: unsafe extern "C" fn(*mut c_void, isize, c_uint) -> c_int =
     PyUnicode_WriteChar;
+#[used]
+static KEEP3_PYUNICODE_COPYCHARACTERS: unsafe extern "C" fn(
+    *mut c_void,
+    isize,
+    *mut c_void,
+    isize,
+    isize,
+) -> isize = PyUnicode_CopyCharacters;
 #[used]
 static KEEP3_PYUNICODE_TRANSLATE: unsafe extern "C" fn(
     *mut c_void,
@@ -32830,6 +37702,19 @@ static KEEP_PYDICT_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = PyDict_Siz
 static KEEP_PYDICT_SET_ITEM: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
     PyDict_SetItem;
 #[used]
+static KEEP_PYDICT_SET_DEFAULT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = PyDict_SetDefault;
+#[used]
+static KEEP_PYDICT_SET_DEFAULT_REF: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut *mut c_void,
+) -> i32 = PyDict_SetDefaultRef;
+#[used]
 static KEEP_PYDICT_GET_ITEM: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     PyDict_GetItem;
 #[used]
@@ -32837,6 +37722,12 @@ static KEEP_PYDICT_GET_ITEM_WITH_ERROR: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
 ) -> *mut c_void = PyDict_GetItemWithError;
+#[used]
+static KEEP__PYDICT_GET_ITEM_KNOWNHASH: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    isize,
+) -> *mut c_void = _PyDict_GetItem_KnownHash;
 #[used]
 static KEEP_PYDICT_CONTAINS: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
     PyDict_Contains;
@@ -33005,6 +37896,23 @@ static KEEP_PYOBJECT_CALL_ONEARG: unsafe extern "C" fn(*mut c_void, *mut c_void)
 #[used]
 static KEEP_PYOBJECT_CALL_NOARGS: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     PyObject_CallNoArgs;
+#[used]
+static KEEP_PYOBJECT_CALL_FINALIZER: unsafe extern "C" fn(*mut c_void) = PyObject_CallFinalizer;
+#[used]
+static KEEP_PYOBJECT_CALL_FINALIZER_FROM_DEALLOC: unsafe extern "C" fn(*mut c_void) -> c_int =
+    PyObject_CallFinalizerFromDealloc;
+#[used]
+static KEEP_PYOBJECT_CLEARMANAGEDDICT: unsafe extern "C" fn(*mut c_void) =
+    PyObject_ClearManagedDict;
+#[used]
+static KEEP_PYOBJECT_VISITMANAGEDDICT: unsafe extern "C" fn(
+    *mut c_void,
+    Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int>,
+    *mut c_void,
+) -> c_int = PyObject_VisitManagedDict;
+#[used]
+static KEEP_PYUNSTABLE_OBJECT_ENABLE_DEFERRED_REFCOUNT: unsafe extern "C" fn(*mut c_void) -> c_int =
+    PyUnstable_Object_EnableDeferredRefcount;
 #[used]
 static KEEP_PYCFUNCTION_CALL: unsafe extern "C" fn(
     *mut c_void,
@@ -35667,12 +40575,63 @@ impl Vm {
             ));
         };
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(&mut call_ctx as *mut ModuleCapiContext);
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
         let result_ptr = call_ctx
             .try_native_tp_call(raw_ptr, &args, &kwargs)
             .unwrap_or(std::ptr::null_mut());
         cpython_set_active_context(previous_context);
         if result_ptr.is_null() {
+            if std::env::var_os("PYRS_TRACE_PROXY_CALL_FAIL").is_some() {
+                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                let valid_object_ptr = (raw_ptr as usize) >= MIN_VALID_PTR
+                    && (raw_ptr as usize) % std::mem::align_of::<usize>() == 0;
+                let (type_ptr, type_name, tp_call, tp_vectorcall_offset) = if valid_object_ptr {
+                    // SAFETY: guarded by non-null + minimum-address + alignment checks.
+                    unsafe {
+                        let head = raw_ptr.cast::<CpythonObjectHead>();
+                        let type_ptr = head
+                            .as_ref()
+                            .map(|h| h.ob_type.cast::<CpythonTypeObject>())
+                            .unwrap_or(std::ptr::null_mut());
+                        let valid_type_ptr = (type_ptr as usize) >= MIN_VALID_PTR
+                            && (type_ptr as usize) % std::mem::align_of::<usize>() == 0;
+                        if !valid_type_ptr {
+                            (
+                                type_ptr,
+                                "<invalid-type-ptr>".to_string(),
+                                std::ptr::null_mut(),
+                                0isize,
+                            )
+                        } else {
+                            (
+                                type_ptr,
+                                c_name_to_string((*type_ptr).tp_name)
+                                    .unwrap_or_else(|_| "<invalid>".to_string()),
+                                (*type_ptr).tp_call,
+                                (*type_ptr).tp_vectorcall_offset,
+                            )
+                        }
+                    }
+                } else {
+                    (
+                        std::ptr::null_mut(),
+                        "<invalid-object-ptr>".to_string(),
+                        std::ptr::null_mut(),
+                        0isize,
+                    )
+                };
+                eprintln!(
+                    "[cpy-proxy-call-fail] proxy={} ptr={:p} type={:p} type_name={} tp_call={:p} tp_vectorcall_offset={} args={} kwargs={}",
+                    cpython_value_debug_tag(proxy_value),
+                    raw_ptr,
+                    type_ptr,
+                    type_name,
+                    tp_call,
+                    tp_vectorcall_offset,
+                    args.len(),
+                    kwargs.len()
+                );
+            }
             let detail = call_ctx
                 .last_error
                 .clone()
@@ -35682,6 +40641,340 @@ impl Vm {
         call_ctx
             .cpython_value_from_ptr_or_proxy(result_ptr)
             .ok_or_else(|| RuntimeError::new("proxy call returned unknown object pointer"))
+    }
+
+    pub(super) fn cpython_proxy_get_iter(
+        &mut self,
+        proxy_value: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(proxy_value)?;
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if (raw_ptr as usize) < MIN_VALID_PTR
+            || (raw_ptr as usize) % std::mem::align_of::<usize>() != 0
+        {
+            return Some(Err(RuntimeError::new(
+                "proxy iterator received invalid object pointer",
+            )));
+        }
+        if !ModuleCapiContext::is_probable_external_cpython_object_ptr(raw_ptr) {
+            return Some(Err(RuntimeError::new("object is not iterable")));
+        }
+        if self
+            .extension_pinned_cpython_allocation_set
+            .contains(&(raw_ptr as usize))
+        {
+            return Some(Err(RuntimeError::new("object is not iterable")));
+        }
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        // SAFETY: raw pointer validated above and points to a CPython-compatible object header.
+        let type_ptr = unsafe {
+            raw_ptr
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        let iter_ptr = if type_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: `type_ptr` was derived from the validated object header above.
+            let tp_iter_raw = unsafe { (*type_ptr).tp_iter };
+            if tp_iter_raw.is_null() {
+                std::ptr::null_mut()
+            } else {
+                let tp_iter: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                    // SAFETY: `tp_iter` follows CPython unary slot ABI.
+                    unsafe { std::mem::transmute(tp_iter_raw) };
+                // SAFETY: calling external type's iterator slot with its object pointer.
+                unsafe { tp_iter(raw_ptr) }
+            }
+        };
+        cpython_set_active_context(previous_context);
+        if iter_ptr.is_null() {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "object is not iterable".to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(
+            call_ctx
+            .cpython_value_from_ptr_or_proxy(iter_ptr)
+            .ok_or_else(|| RuntimeError::new("proxy iterator returned unknown object pointer"))
+            .and_then(|iter_value| {
+                if Vm::cpython_proxy_raw_ptr_from_value(&iter_value)
+                    .is_some_and(|iter_ptr| iter_ptr == raw_ptr)
+                {
+                    Err(RuntimeError::new("proxy iterator recursion detected"))
+                } else {
+                    Ok(iter_value)
+                }
+            }),
+        )
+    }
+
+    pub(super) fn cpython_proxy_has_iternext(proxy_value: &Value) -> Option<bool> {
+        let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(proxy_value)?;
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if (raw_ptr as usize) < MIN_VALID_PTR
+            || (raw_ptr as usize) % std::mem::align_of::<usize>() != 0
+        {
+            return Some(false);
+        }
+        // SAFETY: pointer validity checked above for non-null/min-address/alignment.
+        let type_ptr = unsafe {
+            raw_ptr
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if type_ptr.is_null() {
+            return Some(false);
+        }
+        // SAFETY: `type_ptr` was derived from validated object header above.
+        Some(unsafe { !(*type_ptr).tp_iternext.is_null() })
+    }
+
+    fn cpython_proxy_binary_numeric_op(
+        &mut self,
+        left: &Value,
+        right: &Value,
+        op: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
+        failure_label: &str,
+        unknown_ptr_label: &str,
+    ) -> Option<Result<Value, RuntimeError>> {
+        if Self::cpython_proxy_raw_ptr_from_value(left).is_none()
+            && Self::cpython_proxy_raw_ptr_from_value(right).is_none()
+        {
+            return None;
+        }
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let left_ptr = call_ctx.alloc_cpython_ptr_for_value(left.clone());
+        let right_ptr = call_ctx.alloc_cpython_ptr_for_value(right.clone());
+        let result_ptr = if left_ptr.is_null() || right_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: pointers were materialized in the active C-API context above.
+            unsafe { op(left_ptr, right_ptr) }
+        };
+        cpython_set_active_context(previous_context);
+        if left_ptr.is_null() || right_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                format!("{failure_label} to materialize operands"),
+            )));
+        }
+        if result_ptr.is_null() {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| failure_label.to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(
+            call_ctx
+                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .ok_or_else(|| RuntimeError::new(unknown_ptr_label)),
+        )
+    }
+
+    pub(super) fn cpython_proxy_subtract(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_binary_numeric_op(
+            left,
+            right,
+            PyNumber_Subtract,
+            "proxy subtraction failed",
+            "proxy subtraction returned unknown object pointer",
+        )
+    }
+
+    pub(super) fn cpython_proxy_add(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_binary_numeric_op(
+            left,
+            right,
+            PyNumber_Add,
+            "proxy addition failed",
+            "proxy addition returned unknown object pointer",
+        )
+    }
+
+    pub(super) fn cpython_proxy_multiply(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_binary_numeric_op(
+            left,
+            right,
+            PyNumber_Multiply,
+            "proxy multiply failed",
+            "proxy multiply returned unknown object pointer",
+        )
+    }
+
+    pub(super) fn cpython_proxy_matmul(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_binary_numeric_op(
+            left,
+            right,
+            PyNumber_MatrixMultiply,
+            "proxy matrix multiply failed",
+            "proxy matrix multiply returned unknown object pointer",
+        )
+    }
+
+    pub(super) fn cpython_proxy_true_divide(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        self.cpython_proxy_binary_numeric_op(
+            left,
+            right,
+            PyNumber_TrueDivide,
+            "proxy true divide failed",
+            "proxy true divide returned unknown object pointer",
+        )
+    }
+
+    pub(super) fn cpython_proxy_set_item(
+        &mut self,
+        target: &Value,
+        key: Value,
+        value: Value,
+    ) -> Option<Result<(), RuntimeError>> {
+        Self::cpython_proxy_raw_ptr_from_value(target)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
+        let key_ptr = call_ctx.alloc_cpython_ptr_for_value(key);
+        let value_ptr = call_ctx.alloc_cpython_ptr_for_value(value);
+        let status = if target_ptr.is_null() || key_ptr.is_null() || value_ptr.is_null() {
+            -1
+        } else {
+            // SAFETY: pointers were materialized in the active C-API context above.
+            unsafe { PyObject_SetItem(target_ptr, key_ptr, value_ptr) }
+        };
+        cpython_set_active_context(previous_context);
+        if target_ptr.is_null() || key_ptr.is_null() || value_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy setitem failed to materialize operands",
+            )));
+        }
+        if status == 0 {
+            return Some(Ok(()));
+        }
+        let detail = call_ctx
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "proxy setitem failed".to_string());
+        Some(Err(RuntimeError::new(detail)))
+    }
+
+    pub(super) fn cpython_proxy_get_item(
+        &mut self,
+        target: &Value,
+        key: Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        Self::cpython_proxy_raw_ptr_from_value(target)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
+        let key_ptr = call_ctx.alloc_cpython_ptr_for_value(key);
+        let result_ptr = if target_ptr.is_null() || key_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: pointers were materialized in the active C-API context above.
+            unsafe { PyObject_GetItem(target_ptr, key_ptr) }
+        };
+        cpython_set_active_context(previous_context);
+        if target_ptr.is_null() || key_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy getitem failed to materialize operands",
+            )));
+        }
+        if result_ptr.is_null() {
+            let mut detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "proxy getitem failed".to_string());
+            let is_index_error = call_ctx.current_error.as_ref().is_some_and(|state| {
+                if state.ptype.is_null() {
+                    return false;
+                }
+                // SAFETY: ptype originates from the active C-API error state.
+                unsafe { PyErr_GivenExceptionMatches(state.ptype, PyExc_IndexError) != 0 }
+            });
+            if is_index_error && !detail.contains("IndexError") {
+                detail = format!("IndexError: {detail}");
+            }
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(
+            call_ctx
+                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .ok_or_else(|| RuntimeError::new("proxy getitem returned unknown object pointer")),
+        )
+    }
+
+    pub(super) fn cpython_proxy_richcmp_bool(
+        &mut self,
+        left: &Value,
+        right: &Value,
+        op: i32,
+    ) -> Option<Result<bool, RuntimeError>> {
+        if Self::cpython_proxy_raw_ptr_from_value(left).is_none()
+            && Self::cpython_proxy_raw_ptr_from_value(right).is_none()
+        {
+            return None;
+        }
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let left_ptr = call_ctx.alloc_cpython_ptr_for_value(left.clone());
+        let right_ptr = call_ctx.alloc_cpython_ptr_for_value(right.clone());
+        let result = if left_ptr.is_null() || right_ptr.is_null() {
+            -1
+        } else {
+            // SAFETY: pointers were materialized in the active C-API context above.
+            unsafe { PyObject_RichCompareBool(left_ptr, right_ptr, op) }
+        };
+        cpython_set_active_context(previous_context);
+        if left_ptr.is_null() || right_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy comparison failed to materialize operands",
+            )));
+        }
+        if result < 0 {
+            let type_error = call_ctx.current_error.as_ref().is_some_and(|state| {
+                if state.ptype.is_null() {
+                    return false;
+                }
+                // SAFETY: ptype originates from CPython error state and is a candidate exception.
+                unsafe { PyErr_GivenExceptionMatches(state.ptype, PyExc_TypeError) != 0 }
+            });
+            if type_error {
+                return Some(Ok(false));
+            }
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "proxy comparison failed".to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(Ok(result != 0))
     }
 
     pub(super) fn load_cpython_proxy_attr_for_value(
@@ -35840,9 +41133,47 @@ impl Vm {
             && let Some(attr_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
             && !attr_ptr.is_null()
         {
-            return call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr);
+            if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                eprintln!(
+                    "[proxy-attr-map] source=tp_dict target={:p} attr={} value_ptr={:p}",
+                    raw_ptr, attr_name, attr_ptr
+                );
+            }
+            let mapped = call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr);
+            if mapped.is_none() && std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(attr_ptr);
+                let owned = call_ctx.owns_cpython_allocation_ptr(attr_ptr);
+                let local_handle = call_ctx.cpython_handle_from_ptr(attr_ptr);
+                let vm_cache = if call_ctx.vm.is_null() {
+                    false
+                } else {
+                    // SAFETY: VM pointer is valid for active context lifetime.
+                    let vm = unsafe { &*call_ctx.vm };
+                    vm.extension_cpython_ptr_values
+                        .contains_key(&(attr_ptr as usize))
+                };
+                // SAFETY: best-effort pointer diagnostics for unknown CPython value mapping.
+                let (refcnt, type_ptr, type_refcnt) = unsafe {
+                    let head = attr_ptr
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| (head.ob_refcnt, head.ob_type.cast::<CpythonObjectHead>()))
+                        .unwrap_or((0, std::ptr::null_mut()));
+                    let type_refcnt = head
+                        .1
+                        .as_ref()
+                        .map(|type_head| type_head.ob_refcnt)
+                        .unwrap_or(0);
+                    (head.0, head.1, type_refcnt)
+                };
+                eprintln!(
+                    "[proxy-attr-map] source=tp_dict_unmapped target={:p} attr={} value_ptr={:p} probable={} owned={} local_handle={local_handle:?} vm_cache={} refcnt={} type_ptr={:p} type_refcnt={}",
+                    raw_ptr, attr_name, attr_ptr, probable, owned, vm_cache, refcnt, type_ptr, type_refcnt
+                );
+            }
+            return mapped;
         }
-        let previous_context = cpython_set_active_context(&mut call_ctx as *mut ModuleCapiContext);
+        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
         let attr_ptr = unsafe { PyObject_GetAttrString(raw_ptr, c_name.as_ptr()) };
         cpython_set_active_context(previous_context);
         if attr_ptr.is_null() {
@@ -35866,6 +41197,12 @@ impl Vm {
                         attr_name, fallback_ptr
                     );
                 }
+                if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                    eprintln!(
+                        "[proxy-attr-map] source=tp_dict_fallback target={:p} attr={} value_ptr={:p}",
+                        raw_ptr, attr_name, fallback_ptr
+                    );
+                }
                 return call_ctx.cpython_value_from_ptr_or_proxy(fallback_ptr);
             }
             if trace_type_attr {
@@ -35886,6 +41223,12 @@ impl Vm {
             eprintln!(
                 "[proxy-attr] PyObject_GetAttrString hit attr={} ptr={:p}",
                 attr_name, attr_ptr
+            );
+        }
+        if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+            eprintln!(
+                "[proxy-attr-map] source=getattr target={:p} attr={} value_ptr={:p}",
+                raw_ptr, attr_name, attr_ptr
             );
         }
         call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr)
@@ -35968,7 +41311,7 @@ impl Vm {
                 unsafe {
                     callback(
                         &api as *const PyrsApiV1,
-                        (&mut call_ctx as *mut ModuleCapiContext).cast(),
+                        (std::ptr::addr_of_mut!(call_ctx)).cast(),
                         arg_handles.len(),
                         arg_handles.as_ptr(),
                         &mut result_handle as *mut PyrsObjectHandle,
@@ -36001,7 +41344,7 @@ impl Vm {
                 unsafe {
                     callback(
                         &api as *const PyrsApiV1,
-                        (&mut call_ctx as *mut ModuleCapiContext).cast(),
+                        (std::ptr::addr_of_mut!(call_ctx)).cast(),
                         arg_handles.len(),
                         arg_handles.as_ptr(),
                         kw_name_ptrs.len(),
@@ -36012,8 +41355,20 @@ impl Vm {
                 }
             }
             ExtensionCallableKind::CpythonMethod { method_def } => {
+                if std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some() && entry.name == "copyto" {
+                    let module_name = match &*entry.module.kind() {
+                        Object::Module(module_data) => module_data.name.clone(),
+                        _ => "<extension>".to_string(),
+                    };
+                    eprintln!(
+                        "[copyto-entry] function_id={} module={} method_def={:p}",
+                        function_id,
+                        module_name,
+                        method_def as *mut CpythonMethodDef
+                    );
+                }
                 let previous_context =
-                    cpython_set_active_context(&mut call_ctx as *mut ModuleCapiContext);
+                    cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
                 let self_obj =
                     call_ctx.alloc_cpython_ptr_for_value(Value::Module(entry.module.clone()));
                 let result_ptr = cpython_invoke_method_from_values(
@@ -36249,7 +41604,7 @@ impl Vm {
                 let status = unsafe {
                     initializer(
                         &api as *const PyrsApiV1,
-                        (&mut module_ctx as *mut ModuleCapiContext).cast(),
+                        (std::ptr::addr_of_mut!(module_ctx)).cast(),
                     )
                 };
                 if status != 0 {
@@ -36279,7 +41634,7 @@ impl Vm {
                 // init failures to preserve callback pointer validity during teardown.
                 self.extension_libraries.push(handle);
                 let previous_context =
-                    cpython_set_active_context(&mut module_ctx as *mut ModuleCapiContext);
+                    cpython_set_active_context(std::ptr::addr_of_mut!(module_ctx));
                 // SAFETY: symbol was resolved with `unsafe extern "C" fn() -> *mut c_void`.
                 let result = unsafe { initializer() };
                 cpython_set_active_context(previous_context);
@@ -36302,7 +41657,7 @@ impl Vm {
                 value
             } else {
                 let previous_context =
-                    cpython_set_active_context(&mut module_ctx as *mut ModuleCapiContext);
+                    cpython_set_active_context(std::ptr::addr_of_mut!(module_ctx));
                 // CPython multi-phase extensions return `PyModuleDef*` from `PyInit_*`.
                 // Our import path already created the target module object, so use that
                 // module as the execution target and drive slot execution from `m_slots`.

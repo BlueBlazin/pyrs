@@ -128,6 +128,7 @@ Return semantics:
 - stale module-state entries are pruned (with finalize+free callback execution) when modules are evicted/reloaded via `sys.modules` churn.
 - extension code can perform type relation checks via `object_is_instance(...)` and `object_is_subclass(...)`.
 - generic length/subscript helpers are available through `object_len(...)`, `object_get_item(...)`, `object_set_item(...)`, and `object_del_item(...)`.
+- `error_set(...)` always updates extension-visible error message state (`error_get_message(...)`) and exception indicator type; full CPython-style non-null error-value object materialization is tracked separately and still open.
 - generic membership probes are available through `object_contains(...)`.
 - dict-view helpers are available through `object_dict_keys(...)` and `object_dict_items(...)`.
 - buffer access helpers are available through `object_get_buffer(...)` and `object_release_buffer(...)`; non-contiguous memoryview layouts are rejected by the pointer-only `object_get_buffer(...)` path.

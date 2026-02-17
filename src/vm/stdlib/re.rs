@@ -14,6 +14,7 @@ const CSV_SNIFFER_PATTERN_4: &str = r#"(?:^|\n)(?P<quote>["\']).*?(?P=quote)(?:$
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
 const RE_MATCH_MODULE_NAME: &str = "__re_match__";
+const RE_FLAG_VERBOSE: i64 = 64;
 
 fn decimal_parser_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i64)>> {
     let looks_like_decimal_parser = pattern.contains("(?P<sign>[-+])?")
@@ -77,11 +78,32 @@ impl Vm {
         detail: ReMatchDetail,
         groupindex: Value,
     ) -> Result<Value, RuntimeError> {
-        let mut groups = Vec::with_capacity(detail.captures.len());
-        let mut spans = Vec::with_capacity(detail.captures.len());
+        let ReMatchDetail {
+            start: match_start,
+            end: match_end,
+            captures: detail_captures,
+        } = detail;
+        let expected_groups = match &groupindex {
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(entries) => entries
+                    .iter()
+                    .filter_map(|(_, value)| value_to_int(value.clone()).ok())
+                    .filter(|index| *index > 0)
+                    .max()
+                    .unwrap_or(0) as usize,
+                _ => 0,
+            },
+            _ => 0,
+        };
+        let mut captures = detail_captures;
+        if captures.len() < expected_groups {
+            captures.resize(expected_groups, None);
+        }
+        let mut groups = Vec::with_capacity(captures.len());
+        let mut spans = Vec::with_capacity(captures.len());
         match &source {
             Value::Str(text) => {
-                for capture in &detail.captures {
+                for capture in &captures {
                     match capture {
                         Some((start, end)) => {
                             groups.push(Value::Str(text[*start..*end].to_string()));
@@ -99,7 +121,7 @@ impl Vm {
             }
             Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_) => {
                 let bytes = bytes_like_from_value(source.clone())?;
-                for capture in &detail.captures {
+                for capture in &captures {
                     match capture {
                         Some((start, end)) => {
                             groups.push(self.heap.alloc_bytes(bytes[*start..*end].to_vec()));
@@ -129,10 +151,10 @@ impl Vm {
             module_data.globals.insert("_source".to_string(), source);
             module_data
                 .globals
-                .insert("_start".to_string(), Value::Int(detail.start as i64));
+                .insert("_start".to_string(), Value::Int(match_start as i64));
             module_data
                 .globals
-                .insert("_end".to_string(), Value::Int(detail.end as i64));
+                .insert("_end".to_string(), Value::Int(match_end as i64));
             module_data
                 .globals
                 .insert("_groups".to_string(), self.heap.alloc_tuple(groups));
@@ -446,10 +468,11 @@ impl Vm {
                 "re.compile() expects pattern and optional flags",
             ));
         }
-        if args.len() == 2 {
-            // Flags are currently accepted for compatibility but not interpreted.
-            let _ = args.pop();
-        }
+        let flags = if args.len() == 2 {
+            value_to_int(args.pop().unwrap_or(Value::Int(0)))?
+        } else {
+            0
+        };
         let pattern_value = match args.remove(0) {
             Value::Module(module) => {
                 let compiled_pattern = matches!(
@@ -486,6 +509,12 @@ impl Vm {
                 ));
             }
         };
+        let compiled_pattern_value = match &pattern_value {
+            Value::Str(pattern) if (flags & RE_FLAG_VERBOSE) != 0 => {
+                Value::Str(strip_verbose_pattern(pattern))
+            }
+            _ => pattern_value.clone(),
+        };
         let compiled = match self
             .heap
             .alloc_module(ModuleObject::new("__re_pattern__".to_string()))
@@ -497,6 +526,12 @@ impl Vm {
             module_data
                 .globals
                 .insert("pattern".to_string(), pattern_value);
+            module_data
+                .globals
+                .insert("__pyrs_compiled_pattern__".to_string(), compiled_pattern_value);
+            module_data
+                .globals
+                .insert("flags".to_string(), Value::Int(flags));
             let groupindex = if let Some(pattern) = module_data.globals.get("pattern") {
                 match pattern {
                     Value::Str(text) => {
@@ -1268,6 +1303,50 @@ fn csv_sniffer_groupindex_entries(pattern: &str) -> Option<Vec<(&'static str, i6
         PKGUTIL_RESOLVE_NAME_PATTERN => Some(vec![("pkg", 1), ("cln", 5), ("obj", 6)]),
         _ => None,
     }
+}
+
+fn strip_verbose_pattern(pattern: &str) -> String {
+    let mut out = String::new();
+    let mut chars = pattern.chars().peekable();
+    let mut in_class = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            out.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            out.push(ch);
+            escaped = true;
+            continue;
+        }
+        if in_class {
+            if ch == ']' {
+                in_class = false;
+            }
+            out.push(ch);
+            continue;
+        }
+        if ch == '[' {
+            in_class = true;
+            out.push(ch);
+            continue;
+        }
+        if ch == '#' {
+            while let Some(next) = chars.next() {
+                if next == '\n' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if ch.is_whitespace() {
+            continue;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn parse_sre_char_arg(

@@ -17,12 +17,13 @@ use super::{
     extract_import_error_name, extract_os_error_errno, extract_os_error_strerror,
     extract_prefixed_exception_message, extract_runtime_error_exception_name,
     extract_runtime_error_final_message, floor_div_values, format_value, infer_os_error_errno,
+    format_repr,
     invert_value, is_comprehension_code, is_import_error_family, is_os_error_family, lshift_values,
-    matmul_values, memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
+    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
     memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
-    module_globals_version, mul_values, neg_value, or_values, pos_value, pow_values, rshift_values,
+    module_globals_version, neg_value, pos_value, pow_values, rshift_values,
     runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, strip_sqlite_exception_metadata, sub_values, value_from_bigint,
+    slot_names_from_value, strip_sqlite_exception_metadata, value_from_bigint,
     value_to_int, value_to_optional_index, xor_values,
 };
 use crate::runtime::SliceValue;
@@ -1116,11 +1117,9 @@ impl Vm {
                         if let Some(left_int) = left_small {
                             match left_int.checked_sub(right_int) {
                                 Some(diff) => Value::Int(diff),
-                                None => sub_values(
-                                    Value::Int(left_int),
-                                    Value::Int(right_int),
-                                    &self.heap,
-                                )?,
+                                None => {
+                                    self.binary_sub_runtime(Value::Int(left_int), Value::Int(right_int))?
+                                }
                             }
                         } else {
                             self.fused_fast_local_sub_small_int_arg(
@@ -1260,10 +1259,9 @@ impl Vm {
                                 if let Some(left_int) = left_small {
                                     match left_int.checked_sub(right_int) {
                                         Some(diff) => Value::Int(diff),
-                                        None => sub_values(
+                                        None => self.binary_sub_runtime(
                                             Value::Int(left_int),
                                             Value::Int(right_int),
-                                            &self.heap,
                                         )?,
                                     }
                                 } else {
@@ -1849,6 +1847,15 @@ impl Vm {
                     }
                     _ => {
                         if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
+                            if let Some(frame) = self.frames.last() {
+                                let location = frame.code.locations.get(frame.last_ip);
+                                eprintln!(
+                                    "[store-attr] file={} line={} col={}",
+                                    frame.code.filename,
+                                    location.map(|loc| loc.line).unwrap_or(0),
+                                    location.map(|loc| loc.column).unwrap_or(0),
+                                );
+                            }
                             eprintln!(
                                 "[store-attr] unsupported target={} attr={}",
                                 self.value_type_name_for_error(&target),
@@ -1905,6 +1912,15 @@ impl Vm {
                     }
                     _ => {
                         if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
+                            if let Some(frame) = self.frames.last() {
+                                let location = frame.code.locations.get(frame.last_ip);
+                                eprintln!(
+                                    "[store-attr-cpython] file={} line={} col={}",
+                                    frame.code.filename,
+                                    location.map(|loc| loc.line).unwrap_or(0),
+                                    location.map(|loc| loc.column).unwrap_or(0),
+                                );
+                            }
                             eprintln!(
                                 "[store-attr-cpython] unsupported target={} attr={}",
                                 self.value_type_name_for_error(&target),
@@ -2053,9 +2069,9 @@ impl Vm {
                 let value = match (left, right) {
                     (Value::Int(a), Value::Int(b)) => match a.checked_sub(b) {
                         Some(diff) => Value::Int(diff),
-                        None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
+                        None => self.binary_sub_runtime(Value::Int(a), Value::Int(b))?,
                     },
-                    (left, right) => sub_values(left, right, &self.heap)?,
+                    (left, right) => self.binary_sub_runtime(left, right)?,
                 };
                 #[cfg(not(debug_assertions))]
                 let value = match self.try_fast_terminal_return_simple_no_cells(value) {
@@ -2092,10 +2108,10 @@ impl Vm {
                 let value = match (left, right_int, right_value) {
                     (Value::Int(a), Some(b), _) => match a.checked_sub(b) {
                         Some(diff) => Value::Int(diff),
-                        None => sub_values(Value::Int(a), Value::Int(b), &self.heap)?,
+                        None => self.binary_sub_runtime(Value::Int(a), Value::Int(b))?,
                     },
-                    (left, Some(b), _) => sub_values(left, Value::Int(b), &self.heap)?,
-                    (left, None, Some(right)) => sub_values(left, right, &self.heap)?,
+                    (left, Some(b), _) => self.binary_sub_runtime(left, Value::Int(b))?,
+                    (left, None, Some(right)) => self.binary_sub_runtime(left, right)?,
                     (_, None, None) => {
                         return Err(RuntimeError::new("invalid constant for BinarySubConst"));
                     }
@@ -2109,7 +2125,7 @@ impl Vm {
             Opcode::BinaryMul => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                let value = mul_values(left, right, &self.heap)?;
+                let value = self.binary_mul_runtime(left, right)?;
                 #[cfg(not(debug_assertions))]
                 let value = match self.try_fast_terminal_return_simple_no_cells(value) {
                     Ok(()) => return Ok(None),
@@ -2120,7 +2136,8 @@ impl Vm {
             Opcode::BinaryMatMul => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                self.push_value(matmul_values(left, right)?);
+                let value = self.binary_matmul_runtime(left, right)?;
+                self.push_value(value);
             }
             Opcode::BinaryDiv => {
                 let right = self.pop_value()?;
@@ -2183,7 +2200,8 @@ impl Vm {
             Opcode::BinaryOr => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                self.push_value(or_values(left, right, &self.heap)?);
+                let value = self.binary_or_runtime(left, right)?;
+                self.push_value(value);
             }
             Opcode::CompareEq => {
                 let right = self.pop_value()?;
@@ -2747,6 +2765,22 @@ impl Vm {
             Opcode::Subscript => {
                 let index = self.pop_value()?;
                 let value = self.pop_value()?;
+                if std::env::var_os("PYRS_TRACE_SUBSCRIPT").is_some()
+                    && matches!(value, Value::Tuple(_))
+                    && matches!(index, Value::Tuple(_))
+                {
+                    if let Some(frame) = self.frames.last() {
+                        let location = frame.code.locations.get(frame.last_ip);
+                        eprintln!(
+                            "[subscript] file={} line={} col={} value={} index={}",
+                            frame.code.filename,
+                            location.map(|loc| loc.line).unwrap_or(0),
+                            location.map(|loc| loc.column).unwrap_or(0),
+                            format_value(&value),
+                            format_value(&index)
+                        );
+                    }
+                }
                 let result = self.getitem_value(value, index)?;
                 self.push_value(result);
             }
@@ -2894,11 +2928,30 @@ impl Vm {
                                     }
                                 }
                                 self.push_value(target_value);
+                            } else if let Some(proxy_result) = self.cpython_proxy_set_item(
+                                &target_value,
+                                index.clone(),
+                                value.clone(),
+                            ) {
+                                proxy_result?;
+                                self.push_value(target_value);
                             } else if let Some(backing_dict) = self.instance_backing_dict(&instance)
                             {
                                 dict_set_value_checked(&backing_dict, index, value)?;
                                 self.push_value(Value::Instance(instance));
                             } else {
+                                if std::env::var_os("PYRS_TRACE_STORE_SUBSCRIPT").is_some() {
+                                    let target_value = Value::Instance(instance.clone());
+                                    eprintln!(
+                                        "[store-subscript] unsupported instance target_type={} index_type={} value_type={} target={} index={} value={}",
+                                        self.value_type_name_for_error(&target_value),
+                                        self.value_type_name_for_error(&index),
+                                        self.value_type_name_for_error(&value),
+                                        format_repr(&target_value),
+                                        format_repr(&index),
+                                        format_repr(&value),
+                                    );
+                                }
                                 return Err(RuntimeError::new("store subscript unsupported type"));
                             }
                         }
@@ -3287,7 +3340,25 @@ impl Vm {
                                     }
                                 }
                                 self.push_value(target_value);
+                            } else if let Some(proxy_result) = self.cpython_proxy_set_item(
+                                &target_value,
+                                index.clone(),
+                                value.clone(),
+                            ) {
+                                proxy_result?;
+                                self.push_value(target_value);
                             } else {
+                                if std::env::var_os("PYRS_TRACE_STORE_SUBSCRIPT").is_some() {
+                                    eprintln!(
+                                        "[store-subscript] unsupported target_type={} index_type={} value_type={} target={} index={} value={}",
+                                        self.value_type_name_for_error(&target),
+                                        self.value_type_name_for_error(&index),
+                                        self.value_type_name_for_error(&value),
+                                        format_repr(&target),
+                                        format_repr(&index),
+                                        format_repr(&value),
+                                    );
+                                }
                                 return Err(RuntimeError::new("store subscript unsupported type"));
                             }
                         }
@@ -3604,18 +3675,19 @@ impl Vm {
                 let orig_bases_tuple = self.heap.alloc_tuple(bases.clone());
                 let mut resolved_bases = Vec::new();
                 for base in bases {
-                    let maybe_mro_entries = match &base {
-                        Value::Instance(instance) => match self
-                            .load_attr_instance(instance, "__mro_entries__")
-                        {
-                            Ok(AttrAccessOutcome::Value(callable)) => Some(callable),
-                            Ok(AttrAccessOutcome::ExceptionHandled) => return Ok(None),
+                    let maybe_mro_entries = if matches!(base, Value::Class(_)) {
+                        None
+                    } else {
+                        match self.builtin_getattr(
+                            vec![base.clone(), Value::Str("__mro_entries__".to_string())],
+                            HashMap::new(),
+                        ) {
+                            Ok(callable) => Some(callable),
                             Err(err) if classify_runtime_error(&err.message) == "AttributeError" => {
                                 None
                             }
                             Err(err) => return Err(err),
-                        },
-                        _ => None,
+                        }
                     };
                     if let Some(mro_entries) = maybe_mro_entries {
                         let entries = match self.call_internal(
@@ -3639,7 +3711,25 @@ impl Vm {
                 }
                 let mut base_classes = Vec::new();
                 for base in resolved_bases {
-                    base_classes.push(self.class_from_base_value(base)?);
+                    match self.class_from_base_value(base.clone()) {
+                        Ok(class) => base_classes.push(class),
+                        Err(err) => {
+                            if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some()
+                                && err.message == "class base must be a class object"
+                                && let Some(frame) = self.frames.last()
+                            {
+                                let location = frame.code.locations.get(frame.last_ip);
+                                eprintln!(
+                                    "[class-base] build-class file={} line={} col={} base={}",
+                                    frame.code.filename,
+                                    location.map(|loc| loc.line).unwrap_or(0),
+                                    location.map(|loc| loc.column).unwrap_or(0),
+                                    format_value(&base)
+                                );
+                            }
+                            return Err(err);
+                        }
+                    }
                 }
 
                 let class_qualname = self
@@ -4326,13 +4416,7 @@ impl Vm {
                             )?;
                         }
                         Value::Instance(instance) => {
-                            let receiver = Value::Instance(instance.clone());
-                            let call_target = self
-                                .lookup_bound_special_method(&receiver, "__call__")?
-                                .ok_or_else(|| {
-                                    RuntimeError::new("attempted to call non-function")
-                                })?;
-                            match self.call_internal(call_target, args, kwargs)? {
+                            match self.call_internal(Value::Instance(instance), args, kwargs)? {
                                 InternalCallOutcome::Value(value) => self.push_value(value),
                                 InternalCallOutcome::CallerExceptionHandled => {}
                             }
@@ -4341,7 +4425,12 @@ impl Vm {
                             let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "attempted to call non-function: {}",
+                                format_value(&other)
+                            )));
+                        }
                     }
                 }
             }
@@ -4483,13 +4572,7 @@ impl Vm {
                             )?;
                         }
                         Value::Instance(instance) => {
-                            let receiver = Value::Instance(instance.clone());
-                            let call_target = self
-                                .lookup_bound_special_method(&receiver, "__call__")?
-                                .ok_or_else(|| {
-                                    RuntimeError::new("attempted to call non-function")
-                                })?;
-                            match self.call_internal(call_target, args, kwargs)? {
+                            match self.call_internal(Value::Instance(instance), args, kwargs)? {
                                 InternalCallOutcome::Value(value) => self.push_value(value),
                                 InternalCallOutcome::CallerExceptionHandled => {}
                             }
@@ -4498,7 +4581,12 @@ impl Vm {
                             let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "attempted to call non-function: {}",
+                                format_value(&other)
+                            )));
+                        }
                     }
                 }
             }
@@ -4604,13 +4692,7 @@ impl Vm {
                             )?;
                         }
                         Value::Instance(instance) => {
-                            let receiver = Value::Instance(instance.clone());
-                            let call_target = self
-                                .lookup_bound_special_method(&receiver, "__call__")?
-                                .ok_or_else(|| {
-                                    RuntimeError::new("attempted to call non-function")
-                                })?;
-                            match self.call_internal(call_target, args, kwargs)? {
+                            match self.call_internal(Value::Instance(instance), args, kwargs)? {
                                 InternalCallOutcome::Value(value) => self.push_value(value),
                                 InternalCallOutcome::CallerExceptionHandled => {}
                             }
@@ -4619,7 +4701,12 @@ impl Vm {
                             let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                             self.push_value(value);
                         }
-                        _ => return Err(RuntimeError::new("attempted to call non-function")),
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "attempted to call non-function: {}",
+                                format_value(&other)
+                            )));
+                        }
                     }
                 }
             }
@@ -4723,21 +4810,22 @@ impl Vm {
                         let call_result = self.call_builtin(builtin, args, kwargs);
                         self.finalize_builtin_opcode_call(caller_depth, caller_ip, call_result)?;
                     }
-                    Value::Instance(instance) => {
-                        let receiver = Value::Instance(instance.clone());
-                        let call_target = self
-                            .lookup_bound_special_method(&receiver, "__call__")?
-                            .ok_or_else(|| RuntimeError::new("attempted to call non-function"))?;
-                        match self.call_internal(call_target, args, kwargs)? {
-                            InternalCallOutcome::Value(value) => self.push_value(value),
-                            InternalCallOutcome::CallerExceptionHandled => {}
-                        }
+                Value::Instance(instance) => {
+                    match self.call_internal(Value::Instance(instance), args, kwargs)? {
+                        InternalCallOutcome::Value(value) => self.push_value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {}
                     }
+                }
                     Value::ExceptionType(name) => {
                         let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                         self.push_value(value);
                     }
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "attempted to call non-function: {}",
+                            format_value(&other)
+                        )));
+                    }
                 }
             }
             Opcode::ImportName => {
@@ -5850,6 +5938,17 @@ impl Vm {
 
             traceback.push(Self::frame_trace(frame));
 
+            if let Some(stop_depth) = self.run_stop_depth
+                && frame_depth <= stop_depth
+            {
+                // Stop-depth calls (`run_pending_import_frames`) must not consume
+                // caller handlers/blocks; leave the frame intact and bubble the
+                // pending exception back to the outer run loop.
+                frame.active_exception = Some(exc.clone());
+                let message = self.format_traceback(&traceback, &exc);
+                return Err(RuntimeError::new(message));
+            }
+
             if let Some(block) = frame.blocks.pop() {
                 if let Some(filter) = std::env::var_os("PYRS_TRACE_UNWIND")
                     && let Some(filter) = filter.to_str()
@@ -5910,14 +6009,6 @@ impl Vm {
                 return Ok(());
             }
 
-            if let Some(stop_depth) = self.run_stop_depth
-                && frame_depth <= stop_depth
-            {
-                frame.active_exception = Some(exc.clone());
-                let message = self.format_traceback(&traceback, &exc);
-                return Err(RuntimeError::new(message));
-            }
-
             let frame = self.frames.pop().expect("frame exists");
             if let Some(owner) = frame.generator_owner {
                 self.generator_states.remove(&owner.id());
@@ -5965,6 +6056,35 @@ impl Vm {
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
+        if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+            let active = self
+                .frames
+                .last()
+                .and_then(|frame| frame.active_exception.as_ref())
+                .map(|value| self.value_type_name_for_error(value))
+                .unwrap_or_else(|| "<none>".to_string());
+            let (last_ip, handler) = self
+                .frames
+                .last()
+                .map(|frame| {
+                    (
+                        frame.last_ip,
+                        Self::exception_handler_for_ip(frame, frame.last_ip),
+                    )
+                })
+                .unwrap_or((0, None));
+            let block_len = self
+                .frames
+                .last()
+                .map(|frame| frame.blocks.len())
+                .unwrap_or(0);
+            eprintln!("[handle-runtime] msg={}", err.message);
+            eprintln!("[handle-runtime] active={}", active);
+            eprintln!(
+                "[handle-runtime] last_ip={} handler={handler:?} blocks={block_len}",
+                last_ip
+            );
+        }
         let classified = classify_runtime_error(&err.message);
         let exception_type = if classified == "RuntimeError" {
             extract_runtime_error_exception_name(&err.message)
@@ -5972,6 +6092,20 @@ impl Vm {
         } else {
             classified.to_string()
         };
+        if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some()
+            && err.message.contains("module '_ctypes' not found")
+        {
+            let active = self
+                .frames
+                .last()
+                .and_then(|frame| frame.active_exception.as_ref())
+                .map(|value| self.value_type_name_for_error(value))
+                .unwrap_or_else(|| "<none>".to_string());
+            eprintln!(
+                "[handle-runtime-ctypes] classified={} exception_type={} active={}",
+                classified, exception_type, active
+            );
+        }
         if let Some(Value::Exception(active_exception)) = self
             .frames
             .last()
@@ -8032,7 +8166,7 @@ impl Vm {
                 ) {
                     return match left_int.checked_sub(right_int) {
                         Some(diff) => Ok(Value::Int(diff)),
-                        None => sub_values(Value::Int(left_int), Value::Int(right_int), &self.heap),
+                        None => self.binary_sub_runtime(Value::Int(left_int), Value::Int(right_int)),
                     };
                 }
             }
@@ -8062,21 +8196,21 @@ impl Vm {
             Value::Int(right) => match left {
                 Value::Int(left_int) => match left_int.checked_sub(right) {
                     Some(diff) => Ok(Value::Int(diff)),
-                    None => sub_values(Value::Int(left_int), Value::Int(right), &self.heap),
+                    None => self.binary_sub_runtime(Value::Int(left_int), Value::Int(right)),
                 },
-                other => sub_values(other, Value::Int(right), &self.heap),
+                other => self.binary_sub_runtime(other, Value::Int(right)),
             },
             Value::Bool(flag) => {
                 let right = if flag { 1 } else { 0 };
                 match left {
                     Value::Int(left_int) => match left_int.checked_sub(right) {
                         Some(diff) => Ok(Value::Int(diff)),
-                        None => sub_values(Value::Int(left_int), Value::Int(right), &self.heap),
+                        None => self.binary_sub_runtime(Value::Int(left_int), Value::Int(right)),
                     },
-                    other => sub_values(other, Value::Int(right), &self.heap),
+                    other => self.binary_sub_runtime(other, Value::Int(right)),
                 }
             }
-            right => sub_values(left, right, &self.heap),
+            right => self.binary_sub_runtime(left, right),
         }
     }
 
@@ -8105,7 +8239,7 @@ impl Vm {
         {
             return match left_int.checked_sub(right_int) {
                 Some(diff) => Ok(Value::Int(diff)),
-                None => sub_values(Value::Int(left_int), Value::Int(right_int), &self.heap),
+                None => self.binary_sub_runtime(Value::Int(left_int), Value::Int(right_int)),
             };
         }
 
@@ -8122,7 +8256,7 @@ impl Vm {
         } else {
             self.load_fast_local(local_idx)?
         };
-        sub_values(left, Value::Int(right_int), &self.heap)
+        self.binary_sub_runtime(left, Value::Int(right_int))
     }
 
     fn dispatch_call_no_kwargs(
@@ -8183,11 +8317,7 @@ impl Vm {
                 self.finalize_builtin_opcode_call(caller_depth, caller_ip, call_result)?;
             }
             Value::Instance(instance) => {
-                let receiver = Value::Instance(instance.clone());
-                let call_target = self
-                    .lookup_bound_special_method(&receiver, "__call__")?
-                    .ok_or_else(|| RuntimeError::new("attempted to call non-function"))?;
-                match self.call_internal(call_target, args, HashMap::new())? {
+                match self.call_internal(Value::Instance(instance), args, HashMap::new())? {
                     InternalCallOutcome::Value(value) => self.push_value(value),
                     InternalCallOutcome::CallerExceptionHandled => {}
                 }

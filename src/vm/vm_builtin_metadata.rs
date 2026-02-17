@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, Block, BoundMethod,
     BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, CodeObject, DICT_BACKING_STORAGE_ATTR,
@@ -9,8 +11,34 @@ use super::{
     bind_arguments, bytes_like_source_is_readonly, class_attr_lookup, class_attr_lookup_direct,
     class_attr_walk, class_inherits_dynamic_instance_dict, class_name_for_instance,
     classify_runtime_error, collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
-    memoryview_bounds, value_from_bigint, with_bytes_like_source,
+    format_repr, memoryview_bounds, value_from_bigint, with_bytes_like_source,
 };
+
+thread_local! {
+    static CALL_INTERNAL_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+struct CallInternalDepthGuard;
+
+impl CallInternalDepthGuard {
+    fn enter() -> (Self, usize) {
+        let depth = CALL_INTERNAL_DEPTH.with(|counter| {
+            let depth = counter.get().saturating_add(1);
+            counter.set(depth);
+            depth
+        });
+        (Self, depth)
+    }
+}
+
+impl Drop for CallInternalDepthGuard {
+    fn drop(&mut self) {
+        CALL_INTERNAL_DEPTH.with(|counter| {
+            let next = counter.get().saturating_sub(1);
+            counter.set(next);
+        });
+    }
+}
 
 fn memoryview_shape_and_strides(
     view: &crate::runtime::MemoryViewObject,
@@ -1371,6 +1399,9 @@ impl Vm {
                     IteratorKind::SequenceGetItem { .. } => {
                         ("iterator", None, None, None, false, true)
                     }
+                    IteratorKind::CpythonSequence { .. } => {
+                        ("iterator", None, None, None, false, true)
+                    }
                     IteratorKind::CallIter { .. } => {
                         ("callable_iterator", None, None, None, false, true)
                     }
@@ -1637,6 +1668,22 @@ impl Vm {
         if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
         }
+        let is_contextvar_storage = dict_get_value(
+            &dict,
+            &Value::Str("__pyrs_contextvar__".to_string()),
+        )
+        .is_some_and(|value| matches!(value, Value::Bool(true)));
+        if is_contextvar_storage {
+            let contextvar_kind = match attr_name {
+                "get" => Some(NativeMethodKind::ContextVarGetMethod),
+                "set" => Some(NativeMethodKind::ContextVarSetMethod),
+                "reset" => Some(NativeMethodKind::ContextVarResetMethod),
+                _ => None,
+            };
+            if let Some(kind) = contextvar_kind {
+                return Ok(self.alloc_native_bound_method(kind, dict));
+            }
+        }
         let kind = match attr_name {
             "__init__" => NativeMethodKind::DictInit,
             "keys" => NativeMethodKind::DictKeys,
@@ -1869,6 +1916,21 @@ impl Vm {
             "__func__" => Ok(Value::Function(func.clone())),
             "__get__" => Ok(self
                 .alloc_native_bound_method(NativeMethodKind::FunctionDescriptorGet, func.clone())),
+            "__annotate__" => {
+                let wrapper = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__function_annotate__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("function".to_string(), Value::Function(func.clone()));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::FunctionAnnotate, wrapper))
+            }
             "__defaults__" => {
                 let defaults = {
                     let func_ref = func.kind();
@@ -1962,7 +2024,7 @@ impl Vm {
         };
         if matches!(
             attr_name,
-            "__name__" | "__qualname__" | "__module__" | "__doc__"
+            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
         ) && let Some(overrides) = self.callable_attr_overrides.get(&function.id())
             && let Some(value) = overrides.get(attr_name)
         {
@@ -2016,8 +2078,14 @@ impl Vm {
             "__self__" => self.receiver_value(&receiver),
             "__func__" => as_value(&function_kind, &function)
                 .ok_or_else(|| RuntimeError::new("attribute access unsupported type")),
-            "__name__" | "__qualname__" | "__module__" | "__doc__" => {
+            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__" => {
                 if let BoundFunctionKind::NativeMethod(kind) = &function_kind {
+                    if attr_name == "__annotate__" {
+                        return Err(RuntimeError::new(format!(
+                            "method has no attribute '{}'",
+                            attr_name
+                        )));
+                    }
                     return match attr_name {
                         "__name__" | "__qualname__" => {
                             Ok(Value::Str(native_method_default_name(kind)))
@@ -2055,7 +2123,7 @@ impl Vm {
             method_data.function.clone()
         };
         match attr_name {
-            "__name__" | "__qualname__" | "__module__" | "__doc__" => {}
+            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__" => {}
             _ => {
                 return Err(RuntimeError::new(format!(
                     "method has no writable attribute '{}'",
@@ -2148,6 +2216,21 @@ impl Vm {
             .unwrap_or(1);
 
         match attr_name {
+            "replace" => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__code_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("value".to_string(), Value::Code(code.clone()));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::CodeReplace, receiver))
+            }
             "co_name" | "co_qualname" => Ok(Value::Str(code.name.clone())),
             "co_filename" => Ok(Value::Str(code.filename.clone())),
             "co_argcount" => Ok(Value::Int(
@@ -2635,11 +2718,17 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<InternalCallOutcome, RuntimeError> {
+        let (call_depth_guard, call_depth) = CallInternalDepthGuard::enter();
+        let _call_depth_guard = call_depth_guard;
         let caller_depth = self.frames.len();
         if caller_depth == 0 {
             return Err(RuntimeError::new(
                 "internal call requires an active execution frame",
             ));
+        }
+        let hard_limit = self.recursion_limit.max(1) as usize * 4;
+        if call_depth > hard_limit {
+            return Err(RuntimeError::new("maximum recursion depth exceeded"));
         }
         if caller_depth as i64 >= self.recursion_limit {
             return Err(RuntimeError::new("maximum recursion depth exceeded"));
@@ -2781,10 +2870,15 @@ impl Vm {
             }
             Value::Instance(instance) => {
                 let receiver = Value::Instance(instance.clone());
-                let call_target = self
-                    .lookup_bound_special_method(&receiver, "__call__")?
-                    .ok_or_else(|| RuntimeError::new("attempted to call non-function"))?;
-                return self.call_internal(call_target, args, kwargs);
+                if let Some(call_target) = self.lookup_bound_special_method(&receiver, "__call__")?
+                {
+                    return self.call_internal(call_target, args, kwargs);
+                }
+                if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
+                    let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
+                    return Ok(InternalCallOutcome::Value(value));
+                }
+                return Err(RuntimeError::new("attempted to call non-function"));
             }
             Value::Class(class) => {
                 let proxy_value = Value::Class(class.clone());
@@ -2813,8 +2907,12 @@ impl Vm {
                         })
                     {
                         used_custom_new = true;
-                        let mut new_args = Vec::with_capacity(args.len() + 1);
-                        new_args.push(class_value.clone());
+                        let prepend_class_arg = !matches!(new_callable, Value::BoundMethod(_));
+                        let mut new_args =
+                            Vec::with_capacity(args.len() + if prepend_class_arg { 1 } else { 0 });
+                        if prepend_class_arg {
+                            new_args.push(class_value.clone());
+                        }
                         new_args.extend(args.clone());
                         match self.call_internal(new_callable, new_args, kwargs.clone())? {
                             InternalCallOutcome::Value(value) => {
@@ -3177,7 +3275,21 @@ impl Vm {
                     }
                 }
             }
-            _ => {
+            other => {
+                if std::env::var_os("PYRS_TRACE_CALL_NON_FUNCTION").is_some() {
+                    if let Some(frame) = self.frames.last() {
+                        let location = frame.code.locations.get(frame.last_ip);
+                        eprintln!(
+                            "[call-non-function] file={} line={} col={} value={}",
+                            frame.code.filename,
+                            location.map(|loc| loc.line).unwrap_or(0),
+                            location.map(|loc| loc.column).unwrap_or(0),
+                            format_repr(&other),
+                        );
+                    } else {
+                        eprintln!("[call-non-function] value={}", format_repr(&other));
+                    }
+                }
                 return Err(RuntimeError::new("attempted to call non-function"));
             }
         };
@@ -3366,17 +3478,32 @@ impl Vm {
                 class.clone(),
             )));
         } else if attr_name == "__new__" {
+            if self.class_namedtuple_fields(class).is_some() {
+                return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                    BuiltinFunction::ObjectNew,
+                    class.clone(),
+                )));
+            }
             Value::Builtin(BuiltinFunction::ObjectNew)
         } else if attr_name == "__init__" {
             Value::Builtin(BuiltinFunction::ObjectInit)
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)
         } else if attr_name == "__repr__" {
-            Value::Builtin(BuiltinFunction::Repr)
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::Repr,
+                class.clone(),
+            )));
         } else if attr_name == "__str__" {
-            Value::Builtin(BuiltinFunction::Str)
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::Str,
+                class.clone(),
+            )));
         } else if attr_name == "__format__" {
-            Value::Builtin(BuiltinFunction::ObjectFormat)
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::ObjectFormat,
+                class.clone(),
+            )));
         } else if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             Value::Builtin(BuiltinFunction::ObjectReduceEx)
         } else if attr_name == "__doc__" {
@@ -3450,7 +3577,13 @@ impl Vm {
                 self.heap.alloc_bound_method(bound),
             ));
         }
-
+        if matches!(attr_name, "__repr__" | "__str__" | "__format__")
+            && let Value::Builtin(builtin) = attr.clone()
+        {
+            return Ok(AttrAccessOutcome::Value(
+                self.alloc_builtin_bound_method(builtin, class.clone()),
+            ));
+        }
         let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
         if let Some(getter) = getter {
             let getter_args = if let Some(owner) = descriptor_owner {
@@ -4278,6 +4411,20 @@ impl Vm {
             Object::Class(class_data) => class_data.name.clone(),
             _ => "<class>".to_string(),
         };
+        if std::env::var_os("PYRS_TRACE_PROXY_INSTANCE_ATTR_MISS").is_some()
+            && class_name == "__pyrs_cpython_proxy__"
+        {
+            let raw_ptr = match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    instance_data.attrs.get("__pyrs_cpython_proxy_ptr__").cloned()
+                }
+                _ => None,
+            };
+            eprintln!(
+                "[proxy-instance-miss] class={} attr={} raw_ptr={raw_ptr:?}",
+                class_name, attr_name
+            );
+        }
         Err(RuntimeError::new(format!(
             "'{}' object has no attribute '{}'",
             class_name, attr_name

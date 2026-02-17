@@ -114,6 +114,8 @@ impl Vm {
                     | NativeMethodKind::CodecsIncrementalDecoderDecode
                     | NativeMethodKind::CodecsIncrementalEncoderSetState
                     | NativeMethodKind::CodecsIncrementalDecoderSetState
+                    | NativeMethodKind::CodeReplace
+                    | NativeMethodKind::FunctionAnnotate
                     | NativeMethodKind::Builtin(_)
             )
         {
@@ -510,6 +512,121 @@ impl Vm {
                     return Ok(NativeCallResult::Value(value));
                 }
                 Ok(NativeCallResult::Value(default))
+            }
+            NativeMethodKind::ContextVarGetMethod => {
+                if args.len() > 1 || !kwargs.is_empty() {
+                    return Err(RuntimeError::new("ContextVar.get() expects 0-1 arguments"));
+                }
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
+                    return Err(RuntimeError::new("ContextVar.get() receiver must be contextvar"));
+                }
+                let marker = dict_get_value(
+                    &receiver,
+                    &Value::Str("__pyrs_contextvar__".to_string()),
+                );
+                if !matches!(marker, Some(Value::Bool(true))) {
+                    return Err(RuntimeError::new("ContextVar.get() receiver must be contextvar"));
+                }
+                if let Some(value) = dict_get_value(&receiver, &Value::Str("value".to_string())) {
+                    return Ok(NativeCallResult::Value(value));
+                }
+                if let Some(explicit_default) = args.first().cloned() {
+                    return Ok(NativeCallResult::Value(explicit_default));
+                }
+                if let Some(default) = dict_get_value(&receiver, &Value::Str("default".to_string()))
+                {
+                    return Ok(NativeCallResult::Value(default));
+                }
+                Err(RuntimeError::new("LookupError"))
+            }
+            NativeMethodKind::ContextVarSetMethod => {
+                if args.len() != 1 || !kwargs.is_empty() {
+                    return Err(RuntimeError::new("ContextVar.set() expects one argument"));
+                }
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
+                    return Err(RuntimeError::new("ContextVar.set() receiver must be contextvar"));
+                }
+                let marker = dict_get_value(
+                    &receiver,
+                    &Value::Str("__pyrs_contextvar__".to_string()),
+                );
+                if !matches!(marker, Some(Value::Bool(true))) {
+                    return Err(RuntimeError::new("ContextVar.set() receiver must be contextvar"));
+                }
+                let previous = dict_get_value(&receiver, &Value::Str("value".to_string()));
+                let had_value = previous.is_some();
+                dict_set_value(
+                    &receiver,
+                    Value::Str("value".to_string()),
+                    args[0].clone(),
+                );
+                let mut token_entries = vec![
+                    (
+                        Value::Str("__pyrs_contextvar_token__".to_string()),
+                        Value::Bool(true),
+                    ),
+                    (
+                        Value::Str("contextvar".to_string()),
+                        Value::Dict(receiver.clone()),
+                    ),
+                    (Value::Str("had_value".to_string()), Value::Bool(had_value)),
+                ];
+                if let Some(previous) = previous {
+                    token_entries.push((Value::Str("value".to_string()), previous));
+                }
+                Ok(NativeCallResult::Value(self.heap.alloc_dict(token_entries)))
+            }
+            NativeMethodKind::ContextVarResetMethod => {
+                if args.len() != 1 || !kwargs.is_empty() {
+                    return Err(RuntimeError::new("ContextVar.reset() expects one argument"));
+                }
+                if !matches!(&*receiver.kind(), Object::Dict(_)) {
+                    return Err(RuntimeError::new(
+                        "ContextVar.reset() receiver must be contextvar",
+                    ));
+                }
+                let marker = dict_get_value(
+                    &receiver,
+                    &Value::Str("__pyrs_contextvar__".to_string()),
+                );
+                if !matches!(marker, Some(Value::Bool(true))) {
+                    return Err(RuntimeError::new(
+                        "ContextVar.reset() receiver must be contextvar",
+                    ));
+                }
+                let Value::Dict(token_dict) = &args[0] else {
+                    return Err(RuntimeError::new("ContextVar.reset() received invalid token"));
+                };
+                let token_marker = dict_get_value(
+                    token_dict,
+                    &Value::Str("__pyrs_contextvar_token__".to_string()),
+                );
+                if !matches!(token_marker, Some(Value::Bool(true))) {
+                    return Err(RuntimeError::new("ContextVar.reset() received invalid token"));
+                }
+                let Some(Value::Dict(token_contextvar)) =
+                    dict_get_value(token_dict, &Value::Str("contextvar".to_string()))
+                else {
+                    return Err(RuntimeError::new("ContextVar.reset() received invalid token"));
+                };
+                if token_contextvar.id() != receiver.id() {
+                    return Err(RuntimeError::new(
+                        "ContextVar.reset() token was created by a different ContextVar",
+                    ));
+                }
+                let had_value =
+                    matches!(dict_get_value(token_dict, &Value::Str("had_value".to_string())), Some(Value::Bool(true)));
+                if had_value {
+                    if let Some(previous) = dict_get_value(token_dict, &Value::Str("value".to_string()))
+                    {
+                        dict_set_value(&receiver, Value::Str("value".to_string()), previous);
+                    } else {
+                        dict_remove_value(&receiver, &Value::Str("value".to_string()));
+                    }
+                } else {
+                    dict_remove_value(&receiver, &Value::Str("value".to_string()));
+                }
+                Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictGetItem => {
                 if args.len() != 1 || !kwargs.is_empty() {
@@ -3734,6 +3851,164 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Str(out)))
             }
+            NativeMethodKind::CodeReplace => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new(
+                        "replace() takes no positional arguments",
+                    ));
+                }
+                let code_obj = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Code(code_obj)) => code_obj.clone(),
+                        _ => return Err(RuntimeError::new("code receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("code receiver is invalid")),
+                };
+                let mut replaced = (*code_obj).clone();
+                let parse_str_sequence =
+                    |value: Value, field_name: &str| -> Result<Vec<String>, RuntimeError> {
+                        let items = match value {
+                            Value::Tuple(obj) => match &*obj.kind() {
+                                Object::Tuple(items) => items.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(format!(
+                                        "replace() {field_name} must be a tuple"
+                                    )));
+                                }
+                            },
+                            Value::List(obj) => match &*obj.kind() {
+                                Object::List(items) => items.clone(),
+                                _ => {
+                                    return Err(RuntimeError::new(format!(
+                                        "replace() {field_name} must be a tuple"
+                                    )));
+                                }
+                            },
+                            _ => {
+                                return Err(RuntimeError::new(format!(
+                                    "replace() {field_name} must be a tuple"
+                                )));
+                            }
+                        };
+                        let mut out = Vec::with_capacity(items.len());
+                        for item in items {
+                            match item {
+                                Value::Str(text) => out.push(text),
+                                _ => {
+                                    return Err(RuntimeError::new(format!(
+                                        "replace() {field_name} entries must be str"
+                                    )));
+                                }
+                            }
+                        }
+                        Ok(out)
+                    };
+                for (name, value) in kwargs {
+                    match name.as_str() {
+                        "co_filename" => match value {
+                            Value::Str(text) => replaced.filename = text,
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "replace() co_filename must be str",
+                                ));
+                            }
+                        },
+                        "co_name" | "co_qualname" => match value {
+                            Value::Str(text) => replaced.name = text,
+                            _ => {
+                                return Err(RuntimeError::new("replace() co_name must be str"));
+                            }
+                        },
+                        "co_names" => {
+                            replaced.names = parse_str_sequence(value, "co_names")?;
+                        }
+                        "co_freevars" => {
+                            replaced.freevars = parse_str_sequence(value, "co_freevars")?;
+                        }
+                        "co_cellvars" => {
+                            replaced.cellvars = parse_str_sequence(value, "co_cellvars")?;
+                        }
+                        "co_varnames" => {
+                            let _ = parse_str_sequence(value, "co_varnames")?;
+                        }
+                        "co_consts" => {
+                            let items = match value {
+                                Value::Tuple(obj) => match &*obj.kind() {
+                                    Object::Tuple(items) => items.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "replace() co_consts must be a tuple",
+                                        ));
+                                    }
+                                },
+                                _ => {
+                                    return Err(RuntimeError::new(
+                                        "replace() co_consts must be a tuple",
+                                    ));
+                                }
+                            };
+                            replaced.constants = items;
+                        }
+                        "co_flags" => {
+                            let flags = value_to_int(value)?;
+                            if flags < 0 {
+                                return Err(RuntimeError::new(
+                                    "replace() co_flags must be >= 0",
+                                ));
+                            }
+                            replaced.is_generator = (flags & 0x0020) != 0;
+                            replaced.is_coroutine = (flags & 0x0080) != 0;
+                            replaced.is_async_generator = (flags & 0x0200) != 0;
+                        }
+                        "co_argcount"
+                        | "co_posonlyargcount"
+                        | "co_kwonlyargcount"
+                        | "co_nlocals"
+                        | "co_stacksize" => {
+                            let value = value_to_int(value)?;
+                            if value < 0 {
+                                return Err(RuntimeError::new(format!(
+                                    "replace() {name} must be >= 0"
+                                )));
+                            }
+                        }
+                        "co_code" | "co_linetable" | "co_lnotab" | "co_exceptiontable" => {
+                            match value {
+                                Value::Bytes(_) | Value::ByteArray(_) => {}
+                                _ => {
+                                    return Err(RuntimeError::new(format!(
+                                        "replace() {name} must be bytes",
+                                    )));
+                                }
+                            }
+                        }
+                        "co_firstlineno" => {
+                            let line = value_to_int(value)?;
+                            if line <= 0 {
+                                return Err(RuntimeError::new(
+                                    "replace() co_firstlineno must be >= 1",
+                                ));
+                            }
+                            let line = line as usize;
+                            if let Some(first) = replaced.locations.first_mut() {
+                                first.line = line;
+                            } else {
+                                replaced
+                                    .locations
+                                    .push(crate::bytecode::Location::new(line, 0));
+                            }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "replace() got an unexpected keyword argument '{}'",
+                                name
+                            )));
+                        }
+                    }
+                }
+                replaced.rebuild_layout_indexes();
+                Ok(NativeCallResult::Value(Value::Code(Rc::new(replaced))))
+            }
             NativeMethodKind::RePatternSearch
             | NativeMethodKind::RePatternMatch
             | NativeMethodKind::RePatternFullMatch => {
@@ -3913,6 +4188,63 @@ impl Vm {
                 Ok(NativeCallResult::Value(self.heap.alloc_bound_method(
                     BoundMethod::new(receiver, bound_receiver),
                 )))
+            }
+            NativeMethodKind::FunctionAnnotate => {
+                if args.len() > 1 {
+                    return Err(RuntimeError::new(
+                        "__annotate__() takes at most one positional argument",
+                    ));
+                }
+                let receiver_kind = receiver.kind();
+                let Object::Module(module_data) = &*receiver_kind else {
+                    return Err(RuntimeError::new("function annotate receiver is invalid"));
+                };
+                let Some(Value::Function(function_obj)) = module_data.globals.get("function").cloned()
+                else {
+                    return Err(RuntimeError::new("function annotate receiver is invalid"));
+                };
+                let annotations = self.ensure_function_annotations(&function_obj)?;
+                let function_module = match &*function_obj.kind() {
+                    Object::Function(func_data) => func_data.module.clone(),
+                    _ => return Err(RuntimeError::new("function annotate receiver is invalid")),
+                };
+
+                let resolve_annotation_name = |vm: &mut Vm, name: &str| -> Option<Value> {
+                    let mut parts = name.split('.');
+                    let first = parts.next()?;
+                    let mut current = if let Object::Module(module_data) = &*function_module.kind()
+                    {
+                        module_data.globals.get(first).cloned()
+                    } else {
+                        None
+                    }
+                    .or_else(|| vm.builtins.get(first).cloned())?;
+                    for part in parts {
+                        current = vm
+                            .builtin_getattr(
+                                vec![current, Value::Str(part.to_string())],
+                                HashMap::new(),
+                            )
+                            .ok()?;
+                    }
+                    Some(current)
+                };
+
+                let mut resolved_entries = Vec::new();
+                if let Object::Dict(entries) = &*annotations.kind() {
+                    for (key, value) in entries.iter() {
+                        let Value::Str(name) = key else {
+                            continue;
+                        };
+                        let resolved_value = if let Value::Str(text) = value {
+                            resolve_annotation_name(self, text).unwrap_or_else(|| value.clone())
+                        } else {
+                            value.clone()
+                        };
+                        resolved_entries.push((Value::Str(name.clone()), resolved_value));
+                    }
+                }
+                Ok(NativeCallResult::Value(self.heap.alloc_dict(resolved_entries)))
             }
             NativeMethodKind::ObjectReduceExBound => {
                 let receiver_kind = receiver.kind();
@@ -4741,6 +5073,30 @@ impl Vm {
                     return self.to_iterator_value(Value::FrozenSet(backing_frozenset));
                 }
                 let other = Value::Instance(instance);
+                if let Some(proxy_iter_result) = self.cpython_proxy_get_iter(&other) {
+                    match proxy_iter_result {
+                        Ok(iterable) => {
+                            let same_proxy_identity = match (
+                                Vm::cpython_proxy_raw_ptr_from_value(&other),
+                                Vm::cpython_proxy_raw_ptr_from_value(&iterable),
+                            ) {
+                                (Some(left), Some(right)) => left == right,
+                                _ => false,
+                            };
+                            if same_proxy_identity
+                                || Vm::cpython_proxy_has_iternext(&iterable).unwrap_or(false)
+                            {
+                                return Ok(iterable);
+                            }
+                            return self.to_iterator_value(iterable);
+                        }
+                        Err(err) => {
+                            if !err.message.contains("not iterable") {
+                                return Err(err);
+                            }
+                        }
+                    }
+                }
                 let maybe_next = self.lookup_bound_special_method(&other, "__next__")?;
                 let Some(iter_method) = self.lookup_bound_special_method(&other, "__iter__")?
                 else {
@@ -5248,6 +5604,7 @@ impl Vm {
                     IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
                     IteratorKind::SequenceGetItem { .. } => "iterator",
+                    IteratorKind::CpythonSequence { .. } => "iterator",
                     IteratorKind::CallIter { .. } => "callable_iterator",
                 },
                 _ => "iterator",
@@ -5269,6 +5626,10 @@ impl Vm {
             SequenceGetItem {
                 target: Value,
                 getitem: Value,
+                index: i64,
+            },
+            CpythonSequence {
+                target: Value,
                 index: i64,
             },
             CallIter {
@@ -5506,6 +5867,15 @@ impl Vm {
                         index: state.index as i64,
                     };
                 }
+                IteratorKind::CpythonSequence { target } => {
+                    if state.index > i64::MAX as usize {
+                        return Err(RuntimeError::new("iterator index overflow"));
+                    }
+                    pending_step = PendingIteratorStep::CpythonSequence {
+                        target: target.clone(),
+                        index: state.index as i64,
+                    };
+                }
                 IteratorKind::CallIter { callable, sentinel } => {
                     pending_step = PendingIteratorStep::CallIter {
                         callable: callable.clone(),
@@ -5579,6 +5949,74 @@ impl Vm {
                         }
                         let _ = target;
                         let err = self.runtime_error_from_active_exception("__getitem__() failed");
+                        if runtime_error_matches_exception(&err.message, "IndexError")
+                            || err.message.contains("index out of range")
+                        {
+                            return Ok(None);
+                        }
+                        Err(err)
+                    }
+                    Err(err) => {
+                        if runtime_error_matches_exception(&err.message, "IndexError")
+                            || err.message.contains("index out of range")
+                        {
+                            return Ok(None);
+                        }
+                        Err(err)
+                    }
+                }
+            }
+            PendingIteratorStep::CpythonSequence { target, index } => {
+                let index_value = Value::Int(index);
+                if let Some(proxy_result) =
+                    self.cpython_proxy_get_item(&target, index_value.clone())
+                {
+                    match proxy_result {
+                        Ok(value) => {
+                            {
+                                let mut iter = iterator_ref.kind_mut();
+                                if let Object::Iterator(state) = &mut *iter
+                                    && let IteratorKind::CpythonSequence { .. } = &mut state.kind
+                                {
+                                    state.index += 1;
+                                }
+                            }
+                            return Ok(Some(value));
+                        }
+                        Err(err) => {
+                            if runtime_error_matches_exception(&err.message, "IndexError")
+                                || err.message.contains("index out of range")
+                            {
+                                return Ok(None);
+                            }
+                            return Err(err);
+                        }
+                    }
+                }
+                let Some(getitem) = self.lookup_bound_special_method(&target, "__getitem__")?
+                else {
+                    return Err(RuntimeError::new("object is not iterable"));
+                };
+                let call_result = self.call_internal(getitem, vec![index_value], HashMap::new());
+                match call_result {
+                    Ok(InternalCallOutcome::Value(value)) => {
+                        {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::CpythonSequence { .. } = &mut state.kind
+                            {
+                                state.index += 1;
+                            }
+                        }
+                        Ok(Some(value))
+                    }
+                    Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                        if self.active_exception_is("IndexError") {
+                            self.clear_active_exception();
+                            return Ok(None);
+                        }
+                        let err =
+                            self.runtime_error_from_active_exception("sequence iteration failed");
                         if runtime_error_matches_exception(&err.message, "IndexError")
                             || err.message.contains("index out of range")
                         {
@@ -5890,6 +6328,7 @@ impl Vm {
             BuiltinFunction::HasAttr => self.builtin_hasattr(args, kwargs),
             BuiltinFunction::Callable => self.builtin_callable(args, kwargs),
             BuiltinFunction::Type => self.builtin_type(args, kwargs),
+            BuiltinFunction::TypeInit => self.builtin_type_init(args, kwargs),
             BuiltinFunction::IsInstance => self.builtin_isinstance(args, kwargs),
             BuiltinFunction::IsSubclass => self.builtin_issubclass(args, kwargs),
             BuiltinFunction::TypeInstanceCheck => self.builtin_type_instancecheck(args, kwargs),
@@ -5960,6 +6399,9 @@ impl Vm {
             }
             BuiltinFunction::ImportlibSpecFromFileLocation => {
                 self.builtin_importlib_spec_from_file_location(args, kwargs)
+            }
+            BuiltinFunction::ImportlibModuleFromSpec => {
+                self.builtin_importlib_module_from_spec(args, kwargs)
             }
             BuiltinFunction::FrozenImportlibSpecFromLoader => {
                 self.builtin_frozen_importlib_spec_from_loader(args, kwargs)
