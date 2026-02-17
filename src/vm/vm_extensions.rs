@@ -53,7 +53,11 @@ mod callable_runtime;
 mod loader_runtime;
 mod module_context_state;
 mod cpython_context_runtime;
+mod cpython_args_runtime;
 
+use self::cpython_args_runtime::{
+    cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
+};
 use self::cpython_context_runtime::{
     cpython_builtin_cfunction_varargs_kwargs, cpython_call_builtin,
     cpython_error_message_indicates_missing_attribute, cpython_is_reduce_probe_name,
@@ -8600,42 +8604,6 @@ fn cpython_call_object(
     })
 }
 
-fn cpython_positional_args_from_tuple_object(args: *mut c_void) -> Result<Vec<Value>, String> {
-    if args.is_null() {
-        return Ok(Vec::new());
-    }
-    let value = cpython_value_from_ptr(args)?;
-    match value {
-        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
-            Object::Tuple(values) => Ok(values.clone()),
-            _ => Err("invalid tuple storage".to_string()),
-        },
-        _ => Err("expected tuple for positional arguments".to_string()),
-    }
-}
-
-fn cpython_keyword_args_from_dict_object(
-    kwargs: *mut c_void,
-) -> Result<HashMap<String, Value>, String> {
-    if kwargs.is_null() {
-        return Ok(HashMap::new());
-    }
-    let value = cpython_value_from_ptr(kwargs)?;
-    let Value::Dict(dict_obj) = value else {
-        return Err("expected dict for keyword arguments".to_string());
-    };
-    let Object::Dict(entries) = &*dict_obj.kind() else {
-        return Err("invalid kwargs dict storage".to_string());
-    };
-    let mut out = HashMap::new();
-    for (key, value) in entries.iter() {
-        let Value::Str(name) = key else {
-            return Err("keyword argument names must be str".to_string());
-        };
-        out.insert(name.clone(), value.clone());
-    }
-    Ok(out)
-}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModuleDef_Init(module: *mut c_void) -> *mut c_void {
