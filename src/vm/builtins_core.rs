@@ -589,11 +589,6 @@ impl Vm {
         &mut self,
         value: Value,
     ) -> Result<String, RuntimeError> {
-        if self.frames.is_empty()
-            && let Some(rendered) = self.try_render_numpy_array_display(&value)?
-        {
-            return Ok(rendered);
-        }
         if !self.frames.is_empty() {
             return match self.builtin_repr(vec![value], HashMap::new())? {
                 Value::Str(text) => Ok(text),
@@ -614,56 +609,6 @@ impl Vm {
             match self.execute(&code)? {
                 Value::Str(text) => Ok(text),
                 _ => Err(RuntimeError::new("__repr__ returned non-string")),
-            }
-        })();
-        match previous {
-            Some(value) => self.set_global(TEMP_REPR_NAME, value),
-            None => {
-                self.remove_global(TEMP_REPR_NAME);
-            }
-        }
-        render_result
-    }
-
-    fn try_render_numpy_array_display(
-        &mut self,
-        value: &Value,
-    ) -> Result<Option<String>, RuntimeError> {
-        let Value::Instance(instance) = value else {
-            return Ok(None);
-        };
-        let class_name = match &*instance.kind() {
-            Object::Instance(instance_data) => match &*instance_data.class.kind() {
-                Object::Class(class_data) => class_data.name.clone(),
-                _ => return Ok(None),
-            },
-            _ => return Ok(None),
-        };
-        if class_name != "ndarray" {
-            return Ok(None);
-        }
-
-        const TEMP_REPR_NAME: &str = "__pyrs_repl_repr_target__";
-        let previous = self.get_global(TEMP_REPR_NAME);
-        self.set_global(TEMP_REPR_NAME, value.clone());
-        let render_result = (|| -> Result<Option<String>, RuntimeError> {
-            let expr = parser::parse_expression(
-                "__import__('numpy').array2string(__pyrs_repl_repr_target__)",
-            )
-            .map_err(|err| {
-                RuntimeError::new(format!("ndarray display parse failed: {}", err.message))
-            })?;
-            let code = compiler::compile_expression_with_filename(&expr, "<repl-ndarray-display>")
-                .map_err(|err| {
-                    RuntimeError::new(format!("ndarray display compile failed: {}", err.message))
-                })?;
-            match self.execute(&code) {
-                Ok(Value::Str(text)) => Ok(Some(text)),
-                Ok(_) => Ok(None),
-                Err(_) => {
-                    self.clear_active_exception();
-                    Ok(None)
-                }
             }
         })();
         match previous {

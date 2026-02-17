@@ -2174,4 +2174,5 @@ mod tests {
             .expect("repr should render");
         assert_eq!(rendered, "custom-repr");
     }
+
 }

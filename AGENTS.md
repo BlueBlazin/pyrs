@@ -67,7 +67,6 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `_contextvars.ContextVar` now uses dict-backed marker storage compatible with native `get`/`set`/`reset` dispatch, unblocking NumPy print-options contextvar reads.
 - REPL responsiveness (2026-02-17):
   - completion-state refresh now skips single-expression submissions, reducing post-expression prompt latency after large imports (e.g. NumPy).
-  - REPL display path includes a NumPy ndarray-specific `numpy.array2string(...)` attempt before generic repr fallback.
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:
