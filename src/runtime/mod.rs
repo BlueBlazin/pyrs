@@ -2333,6 +2333,7 @@ pub enum BuiltinFunction {
     SysException,
     SysExcInfo,
     SysExit,
+    SysIsFinalizing,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
     SysGetRefCount,
@@ -5345,6 +5346,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysException
             | BuiltinFunction::SysExcInfo
             | BuiltinFunction::SysExit
+            | BuiltinFunction::SysIsFinalizing
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
             | BuiltinFunction::SysGetRefCount

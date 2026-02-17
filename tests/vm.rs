@@ -1114,6 +1114,16 @@ fn issubclass_accepts_exception_type_values_from_raised_exceptions() {
 }
 
 #[test]
+fn exposes_sys_is_finalizing_helper() {
+    let source = "import sys\nok = (sys.is_finalizing() is False)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_callable_builtin() {
     let source = "def f():\n    return 1\na = callable(f)\nb = callable(1)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

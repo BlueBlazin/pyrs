@@ -6261,6 +6261,7 @@ impl Vm {
             BuiltinFunction::SysException => self.builtin_sys_exception(args, kwargs),
             BuiltinFunction::SysExcInfo => self.builtin_sys_exc_info(args, kwargs),
             BuiltinFunction::SysExit => self.builtin_sys_exit(args, kwargs),
+            BuiltinFunction::SysIsFinalizing => self.builtin_sys_is_finalizing(args, kwargs),
             BuiltinFunction::SysGetFilesystemEncoding => {
                 self.builtin_sys_getfilesystemencoding(args, kwargs)
             }

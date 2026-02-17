@@ -1696,6 +1696,17 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_sys_is_finalizing(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("sys.is_finalizing() expects no arguments"));
+        }
+        Ok(Value::Bool(false))
+    }
+
     pub(super) fn builtin_sys_getfilesystemencoding(
         &self,
         args: Vec<Value>,

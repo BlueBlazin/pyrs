@@ -2959,6 +2959,10 @@ impl Vm {
             module_data
                 .globals
                 .insert("exit".to_string(), Value::Builtin(BuiltinFunction::SysExit));
+            module_data.globals.insert(
+                "is_finalizing".to_string(),
+                Value::Builtin(BuiltinFunction::SysIsFinalizing),
+            );
             module_data
                 .globals
                 .insert("path".to_string(), self.heap.alloc_list(Vec::new()));
