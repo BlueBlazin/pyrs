@@ -56,12 +56,16 @@ mod cpython_context_runtime;
 mod cpython_args_runtime;
 mod cpython_module_runtime;
 mod cpython_import_runtime;
+mod cpython_module_name_runtime;
 
 use self::cpython_args_runtime::{
     cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
 };
 use self::cpython_module_runtime::{
     cpython_bind_module_def, cpython_new_module_data,
+};
+use self::cpython_module_name_runtime::{
+    cpython_module_add_type_name, cpython_module_name_from_object, cpython_optional_value_from_ptr,
 };
 use self::cpython_import_runtime::{
     CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
@@ -9084,16 +9088,6 @@ pub unsafe extern "C" fn PyModule_AddFunctions(module: *mut c_void, functions: *
     })
 }
 
-fn cpython_module_add_type_name(tp_name: *const c_char) -> Result<String, String> {
-    let full_name = unsafe { c_name_to_string(tp_name) }?;
-    let short_name = full_name
-        .rsplit('.')
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or(full_name.as_str());
-    Ok(short_name.to_string())
-}
-
 fn cpython_structseq_count_fields(
     fields: *mut CpythonStructSequenceField,
 ) -> Result<usize, String> {
@@ -15589,37 +15583,6 @@ pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_vo
         }
     }
 }
-
-fn cpython_optional_value_from_ptr(
-    context: &mut ModuleCapiContext,
-    object: *mut c_void,
-    label: &str,
-) -> Result<Value, String> {
-    if object.is_null() {
-        return Ok(Value::None);
-    }
-    context
-        .cpython_value_from_ptr_or_proxy(object)
-        .ok_or_else(|| format!("unknown {label} object pointer"))
-}
-
-fn cpython_module_name_from_object(
-    context: &mut ModuleCapiContext,
-    name: *mut c_void,
-    api_name: &str,
-) -> Result<String, String> {
-    if name.is_null() {
-        return Err(format!("{api_name} expected module name"));
-    }
-    match context
-        .cpython_value_from_ptr_or_proxy(name)
-        .ok_or_else(|| format!("{api_name} received unknown module name pointer"))?
-    {
-        Value::Str(name) => Ok(name),
-        _ => Err(format!("{api_name} expected module name string")),
-    }
-}
-
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_Import(name: *mut c_void) -> *mut c_void {
