@@ -49,6 +49,9 @@ This document defines the current structure and ownership boundaries for the VM 
   - extension loader/exec runtime (`exec_extension_module`, dynamic shared-object init flow)
   - CPython-style module-def method registration + `PyInit_*` slot execution flow ownership
   - extension init metadata publication and init-state failure tracking
+- `/Users/$USER/pyrs/src/vm/vm_extensions/module_context_state.rs`
+  - `ModuleCapiContext` module-attribute/state/capsule-registry lifecycle helpers
+  - owns module state finalize/free wiring and exported capsule synchronization paths
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -94,6 +97,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython proxy runtime behavior and proxy-special operation dispatch: `vm_extensions/proxy_runtime.rs`.
 - New extension callable register/dispatch behavior: `vm_extensions/callable_runtime.rs`.
 - New extension loader/exec phase behavior: `vm_extensions/loader_runtime.rs`.
+- New `ModuleCapiContext` state/capsule lifecycle behavior: `vm_extensions/module_context_state.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
