@@ -59,6 +59,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_args_runtime.rs`
   - CPython tuple/dict argument conversion helpers (`cpython_positional_args_from_tuple_object`, `cpython_keyword_args_from_dict_object`)
   - shared argument normalization path used by CPython ABI call entrypoints and shims
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_module_runtime.rs`
+  - CPython module-def/runtime helpers (`cpython_bind_module_def`, `cpython_new_module_data`)
+  - module-state allocation/free bridge used by CPython module creation/exec paths
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -107,6 +110,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New `ModuleCapiContext` state/capsule lifecycle behavior: `vm_extensions/module_context_state.rs`.
 - New CPython active-context pointer/error bridge behavior: `vm_extensions/cpython_context_runtime.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
+- New CPython module-def/state helper behavior: `vm_extensions/cpython_module_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
