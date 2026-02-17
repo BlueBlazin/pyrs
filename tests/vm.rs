@@ -11378,7 +11378,8 @@ fn object_format_uses_str_for_empty_spec_and_rejects_nonempty_spec() {
 
 #[test]
 fn int_format_accepts_sign_flags() {
-    let source = "ok = (format(3, '-1d') == '3' and format(3, '+d') == '+3' and format(3, ' d') == ' 3')\n";
+    let source =
+        "ok = (format(3, '-1d') == '3' and format(3, '+d') == '+3' and format(3, ' d') == ' 3')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -13167,7 +13168,8 @@ fn contextlib_exit_allows_exception_traceback_assignment() {
     let Some(lib) = cpython_lib_path() else {
         return;
     };
-    let source = r#"from test.support.warnings_helper import save_restore_warnings_filters
+    run_with_large_stack("vm-contextlib-exit-traceback", move || {
+        let source = r#"from test.support.warnings_helper import save_restore_warnings_filters
 ok = False
 try:
     with save_restore_warnings_filters():
@@ -13175,12 +13177,13 @@ try:
 except ModuleNotFoundError:
     ok = True
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]

@@ -7918,9 +7918,6 @@ impl Vm {
         };
 
         let kind = match owner_attr {
-            Some(value) if Self::is_load_attr_cacheable_plain_value(&value) => {
-                Some(LoadAttrSiteCacheKind::InstanceValue { value })
-            }
             Some(Value::Function(function)) => {
                 Some(LoadAttrSiteCacheKind::InstanceFunction { function })
             }
@@ -7938,6 +7935,9 @@ impl Vm {
                 } else {
                     Some(LoadAttrSiteCacheKind::InstanceBuiltin { builtin })
                 }
+            }
+            Some(value) if Self::is_load_attr_cacheable_plain_value(&value) => {
+                Some(LoadAttrSiteCacheKind::InstanceValue { value })
             }
             Some(Value::Module(descriptor)) => {
                 let descriptor_module_name = match &*descriptor.kind() {

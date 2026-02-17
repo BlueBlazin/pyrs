@@ -32,9 +32,13 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions.rs`
   - extension manifest loader execution path (`.pyrs-ext` scaffolding)
   - direct shared-library extension execution path (`.so/.dylib/.pyd`)
-  - v1 C-API callback bridge (`include/pyrs_capi.h`)
+  - CPython ABI/runtime interop substrate and proxy runtime behavior
   - extension module metadata/entrypoint wiring
   - owns extension-loader behavior inside VM import execution
+- `/Users/$USER/pyrs/src/vm/vm_extensions/capi_v1.rs`
+  - v1 extension C-API callback bridge (`include/pyrs_capi.h`)
+  - exported C-API v1 function-pointer table wiring (`Vm::capi_api_v1`)
+  - C-API handle/object/module/buffer/capsule call surface for native extension callbacks
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -76,6 +80,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New builtin function dispatch path: `vm_native_dispatch.rs` + owning `builtins_*.rs` implementation.
 - New import/bootstrap wiring: `vm_bootstrap_import.rs`.
 - New extension-loader runtime behavior: `vm_extensions.rs` (and `src/extensions/` for manifest/types).
+- New extension C-API v1 entrypoints/table wiring: `vm_extensions/capi_v1.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
@@ -86,4 +91,5 @@ This document defines the current structure and ownership boundaries for the VM 
 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
+- Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.
