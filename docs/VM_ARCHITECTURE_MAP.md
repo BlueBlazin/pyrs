@@ -42,6 +42,13 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/proxy_runtime.rs`
   - CPython proxy object runtime bridge (`call`, numeric ops, attr lookup, iter/getitem/setitem)
   - proxy attribute and slot fallback dispatch paths used by cross-module VM runtime surfaces
+- `/Users/$USER/pyrs/src/vm/vm_extensions/callable_runtime.rs`
+  - extension callable registration + dispatch runtime (`register_extension_callable`, `call_extension_callable`)
+  - native/cpython callback invocation path ownership for extension-bound methods/functions
+- `/Users/$USER/pyrs/src/vm/vm_extensions/loader_runtime.rs`
+  - extension loader/exec runtime (`exec_extension_module`, dynamic shared-object init flow)
+  - CPython-style module-def method registration + `PyInit_*` slot execution flow ownership
+  - extension init metadata publication and init-state failure tracking
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -85,6 +92,8 @@ This document defines the current structure and ownership boundaries for the VM 
 - New extension-loader runtime behavior: `vm_extensions.rs` (and `src/extensions/` for manifest/types).
 - New extension C-API v1 entrypoints/table wiring: `vm_extensions/capi_v1.rs`.
 - New CPython proxy runtime behavior and proxy-special operation dispatch: `vm_extensions/proxy_runtime.rs`.
+- New extension callable register/dispatch behavior: `vm_extensions/callable_runtime.rs`.
+- New extension loader/exec phase behavior: `vm_extensions/loader_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
@@ -96,5 +105,5 @@ This document defines the current structure and ownership boundaries for the VM 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
 - Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
-- Next decomposition slice target: move extension-call registration/invocation paths (`register_extension_callable`, `call_extension_callable`) into a focused submodule.
+- Next decomposition slice target: move CPython compatibility helper clusters (pointer/object conversion and legacy C-API helper blocks) into focused `vm_extensions/*` modules.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.
