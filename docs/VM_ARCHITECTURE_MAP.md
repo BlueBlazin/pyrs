@@ -77,6 +77,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_codec_runtime.rs`
   - CPython codec helper substrate (`cpython_codec_*` lookup/call/error helpers, built-in codec error handler method defs)
   - shared codec C-API runtime used by `PyCodec_*` entrypoints
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_unicode_error_runtime.rs`
+  - CPython unicode-error helper substrate (`cpython_unicode_error_*`, `CpythonUnicodeErrorFlavor`)
+  - shared unicode-error C-API getter/setter and validation logic used by `PyUnicode*Error_*` entrypoints
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -131,6 +134,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython exception-name helper behavior: `vm_extensions/cpython_exception_name_runtime.rs`.
 - New CPython active-context call helper behavior: `vm_extensions/cpython_call_runtime.rs`.
 - New CPython codec helper behavior: `vm_extensions/cpython_codec_runtime.rs`.
+- New CPython unicode-error helper behavior: `vm_extensions/cpython_unicode_error_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
