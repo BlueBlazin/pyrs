@@ -55,12 +55,17 @@ mod module_context_state;
 mod cpython_context_runtime;
 mod cpython_args_runtime;
 mod cpython_module_runtime;
+mod cpython_import_runtime;
 
 use self::cpython_args_runtime::{
     cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
 };
 use self::cpython_module_runtime::{
     cpython_bind_module_def, cpython_new_module_data,
+};
+use self::cpython_import_runtime::{
+    CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
+    cpython_import_from_inittab, cpython_inittab_registry,
 };
 use self::cpython_context_runtime::{
     cpython_builtin_cfunction_varargs_kwargs, cpython_call_builtin,
@@ -15615,129 +15620,6 @@ fn cpython_module_name_from_object(
     }
 }
 
-fn cpython_import_add_module_by_name(
-    context: &mut ModuleCapiContext,
-    module_name: &str,
-) -> Result<ObjRef, String> {
-    if context.vm.is_null() {
-        return Err("missing VM context for import API".to_string());
-    }
-    // SAFETY: VM pointer is valid for the active context lifetime.
-    let vm = unsafe { &mut *context.vm };
-    let module = vm.ensure_module(module_name);
-    if let Some(modules_dict) = vm.sys_dict_obj("modules") {
-        dict_set_value_checked(
-            &modules_dict,
-            Value::Str(module_name.to_string()),
-            Value::Module(module.clone()),
-        )
-        .map_err(|err| err.message)?;
-    } else {
-        vm.refresh_sys_modules_dict();
-    }
-    Ok(module)
-}
-
-type CpythonInittabInitFunc = unsafe extern "C" fn() -> *mut c_void;
-
-fn cpython_inittab_registry() -> &'static Mutex<HashMap<String, CpythonInittabInitFunc>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, CpythonInittabInitFunc>>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn cpython_import_from_inittab(
-    context: &mut ModuleCapiContext,
-    module_name: &str,
-) -> Result<Option<Value>, String> {
-    let init_func = {
-        let guard = cpython_inittab_registry()
-            .lock()
-            .map_err(|_| "PyImport inittab registry lock poisoned".to_string())?;
-        guard.get(module_name).copied()
-    };
-    let Some(init_func) = init_func else {
-        return Ok(None);
-    };
-    let module_ptr = unsafe { init_func() };
-    if module_ptr.is_null() {
-        if let Some(message) = context.last_error.clone() {
-            return Err(message);
-        }
-        return Err(format!(
-            "PyImport inittab initializer for '{}' returned null",
-            module_name
-        ));
-    }
-    let Some(module_value) = context.cpython_value_from_ptr_or_proxy(module_ptr) else {
-        return Err(format!(
-            "PyImport inittab initializer for '{}' returned unknown module pointer",
-            module_name
-        ));
-    };
-    let Value::Module(module_obj) = module_value else {
-        return Err(format!(
-            "PyImport inittab initializer for '{}' did not return a module object",
-            module_name
-        ));
-    };
-    if context.vm.is_null() {
-        return Err("missing VM context for inittab import".to_string());
-    }
-    // SAFETY: VM pointer is valid for active context lifetime.
-    let vm = unsafe { &mut *context.vm };
-    vm.modules
-        .insert(module_name.to_string(), module_obj.clone());
-    if let Some(modules_dict) = vm.sys_dict_obj("modules") {
-        dict_set_value_checked(
-            &modules_dict,
-            Value::Str(module_name.to_string()),
-            Value::Module(module_obj.clone()),
-        )
-        .map_err(|err| err.message)?;
-    } else {
-        vm.refresh_sys_modules_dict();
-    }
-    Ok(Some(Value::Module(module_obj)))
-}
-
-fn cpython_import_exec_code_in_module(
-    context: &mut ModuleCapiContext,
-    module_name: &str,
-    code: Rc<CodeObject>,
-    pathname: Option<Value>,
-) -> Result<Value, String> {
-    let module = cpython_import_add_module_by_name(context, module_name)?;
-    if let Some(path_value) = pathname
-        && path_value != Value::None
-        && let Object::Module(module_data) = &mut *module.kind_mut()
-    {
-        module_data
-            .globals
-            .insert("__file__".to_string(), path_value);
-    }
-    if context.vm.is_null() {
-        return Err("PyImport_ExecCodeModule* missing VM context".to_string());
-    }
-    // SAFETY: VM pointer is valid for active context lifetime.
-    let vm = unsafe { &mut *context.vm };
-    match vm.builtin_exec(
-        vec![
-            Value::Code(code),
-            Value::Module(module.clone()),
-            Value::Module(module.clone()),
-        ],
-        HashMap::new(),
-    ) {
-        Ok(_) => Ok(Value::Module(module)),
-        Err(err) => {
-            vm.modules.remove(module_name);
-            if let Some(modules_dict) = vm.sys_dict_obj("modules") {
-                let _ = dict_remove_value(&modules_dict, &Value::Str(module_name.to_string()));
-            }
-            Err(err.message)
-        }
-    }
-}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyImport_Import(name: *mut c_void) -> *mut c_void {

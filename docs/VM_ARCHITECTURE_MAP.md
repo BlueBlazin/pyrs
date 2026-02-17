@@ -62,6 +62,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_module_runtime.rs`
   - CPython module-def/runtime helpers (`cpython_bind_module_def`, `cpython_new_module_data`)
   - module-state allocation/free bridge used by CPython module creation/exec paths
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_import_runtime.rs`
+  - CPython import helper substrate (`cpython_import_add_module_by_name`, inittab registry/lookup, exec-code-in-module flow)
+  - shared import-state wiring used by `PyImport_*` C-API entrypoints
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -111,6 +114,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython active-context pointer/error bridge behavior: `vm_extensions/cpython_context_runtime.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
 - New CPython module-def/state helper behavior: `vm_extensions/cpython_module_runtime.rs`.
+- New CPython import helper behavior: `vm_extensions/cpython_import_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
