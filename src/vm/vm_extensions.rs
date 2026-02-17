@@ -41888,6 +41888,14 @@ impl Vm {
             }
             return mapped;
         }
+        // Guard fallback `PyObject_GetAttrString` dispatch against same-target/same-attr
+        // re-entry loops. This keeps native fallback enabled while preventing unbounded
+        // recursion when attribute resolution routes back through proxy lookup.
+        let Some(_fallback_reentry_guard) =
+            ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, attr_name, is_proxy_type_object)
+        else {
+            return None;
+        };
         let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
         let attr_ptr = unsafe { PyObject_GetAttrString(raw_ptr, c_name.as_ptr()) };
         cpython_set_active_context(previous_context);
