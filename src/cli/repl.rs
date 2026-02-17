@@ -541,6 +541,9 @@ fn collect_completion_members(
 }
 
 fn value_member_bindings(value: &Value) -> Vec<(String, Value)> {
+    if is_cpython_proxy_completion_value(value) {
+        return Vec::new();
+    }
     let mut bindings: HashMap<String, Value> = HashMap::new();
     match value {
         Value::Module(obj) => {
@@ -631,6 +634,36 @@ fn value_member_bindings(value: &Value) -> Vec<(String, Value)> {
     let mut out = bindings.into_iter().collect::<Vec<_>>();
     out.sort_by(|left, right| left.0.cmp(&right.0));
     out
+}
+
+fn is_cpython_proxy_completion_value(value: &Value) -> bool {
+    match value {
+        Value::Class(obj) => matches!(
+            &*obj.kind(),
+            Object::Class(class_data)
+                if matches!(
+                    class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                    Some(Value::Bool(true))
+                )
+        ),
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance_data) => {
+                if instance_data.attrs.contains_key("__pyrs_cpython_proxy_ptr__") {
+                    return true;
+                }
+                matches!(
+                    &*instance_data.class.kind(),
+                    Object::Class(class_data)
+                        if matches!(
+                            class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                            Some(Value::Bool(true))
+                        )
+                )
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 fn collect_class_bindings_into(
@@ -2085,6 +2118,21 @@ mod tests {
         let suggestions = completer.complete("text.spl", "text.spl".len());
         let values: Vec<String> = suggestions.into_iter().map(|item| item.value).collect();
         assert!(values.iter().any(|value| value == "text.split"));
+    }
+
+    #[test]
+    fn completion_builder_skips_cpython_proxy_values() {
+        let mut vm = super::build_vm(false, true).expect("vm");
+        super::execute_module_source(
+            &mut vm,
+            "class Proxy:\n    pass\nProxy.__pyrs_cpython_proxy_marker__ = True\nproxy = Proxy()\nproxy.__pyrs_cpython_proxy_ptr__ = 123\nproxy.field = 1\n",
+            "<stdin>",
+            false,
+        )
+        .expect("module execution should succeed");
+        let state = super::build_completion_state(&vm);
+        assert!(!state.members.contains_key("proxy"));
+        assert!(!state.members.contains_key("Proxy"));
     }
 
     #[test]
