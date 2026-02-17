@@ -53,6 +53,7 @@ static TRACE_NUMPY_TYPEDICT_PTR: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     static PROXY_REFRESH_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static CPY_PROXY_GET_ITER_ACTIVE: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    static CPY_PROXY_ATTR_LOOKUP_ACTIVE: RefCell<Vec<(usize, String, bool)>> = const { RefCell::new(Vec::new()) };
 }
 
 struct ProxyRefreshReentryGuard;
@@ -74,6 +75,50 @@ impl ProxyRefreshReentryGuard {
 impl Drop for ProxyRefreshReentryGuard {
     fn drop(&mut self) {
         PROXY_REFRESH_ACTIVE.with(|flag| flag.set(false));
+    }
+}
+
+struct ProxyAttrLookupReentryGuard {
+    raw_ptr: usize,
+    attr_name: String,
+    is_type_object: bool,
+}
+
+impl ProxyAttrLookupReentryGuard {
+    fn enter(raw_ptr: usize, attr_name: &str, is_type_object: bool) -> Option<Self> {
+        let mut reentered = false;
+        CPY_PROXY_ATTR_LOOKUP_ACTIVE.with(|active| {
+            let mut stack = active.borrow_mut();
+            if stack.iter().any(|(ptr, name, is_type)| {
+                *ptr == raw_ptr && *is_type == is_type_object && name == attr_name
+            }) {
+                reentered = true;
+                return;
+            }
+            stack.push((raw_ptr, attr_name.to_string(), is_type_object));
+        });
+        if reentered {
+            None
+        } else {
+            Some(Self {
+                raw_ptr,
+                attr_name: attr_name.to_string(),
+                is_type_object,
+            })
+        }
+    }
+}
+
+impl Drop for ProxyAttrLookupReentryGuard {
+    fn drop(&mut self) {
+        CPY_PROXY_ATTR_LOOKUP_ACTIVE.with(|active| {
+            let mut stack = active.borrow_mut();
+            if let Some(index) = stack.iter().rposition(|(ptr, name, is_type)| {
+                *ptr == self.raw_ptr && *is_type == self.is_type_object && *name == self.attr_name
+            }) {
+                stack.remove(index);
+            }
+        });
     }
 }
 
@@ -1528,6 +1573,21 @@ unsafe fn ensure_cpython_exception_symbol(slot: *mut *mut c_void, type_ptr: *mut
     }
 }
 
+unsafe extern "C" fn cpython_object_tp_repr(object: *mut c_void) -> *mut c_void {
+    let value = match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    cpython_new_ptr_for_value(Value::Str(crate::runtime::format_value(&value)))
+}
+
+unsafe extern "C" fn cpython_object_tp_str(object: *mut c_void) -> *mut c_void {
+    unsafe { cpython_object_tp_repr(object) }
+}
+
 fn initialize_cpython_compat_type_objects() {
     static INIT: Once = Once::new();
     INIT.call_once(|| unsafe {
@@ -1537,6 +1597,10 @@ fn initialize_cpython_compat_type_objects() {
         PyType_Type.tp_alloc = PyType_GenericAlloc as *mut c_void;
         PyType_Type.tp_new = PyType_GenericNew as *mut c_void;
         PyType_Type.tp_base = std::ptr::addr_of_mut!(PyBaseObject_Type);
+        PyBaseObject_Type.tp_getattro = PyObject_GenericGetAttr as *mut c_void;
+        PyBaseObject_Type.tp_setattro = PyObject_GenericSetAttr as *mut c_void;
+        PyBaseObject_Type.tp_repr = cpython_object_tp_repr as *mut c_void;
+        PyBaseObject_Type.tp_str = cpython_object_tp_str as *mut c_void;
         PyCFunction_Type.tp_call = cpython_cfunction_tp_call as *mut c_void;
         PyCFunction_Type.tp_getattro = cpython_cfunction_tp_getattro as *mut c_void;
         PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
@@ -4411,6 +4475,8 @@ impl ModuleCapiContext {
         let trace_type_attr =
             attr_name == "type" && std::env::var_os("PYRS_TRACE_PROXY_TYPE_ATTR").is_some();
         let trace_lookup_branch = std::env::var_os("PYRS_TRACE_PROXY_LOOKUP_BRANCH").is_some();
+        let trace_repr_lookup = std::env::var_os("PYRS_TRACE_PROXY_REPR_LOOKUP").is_some()
+            && matches!(attr_name, "__repr__" | "__str__");
         let is_proxy_trace = attr_name == "__array_finalize__"
             && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some();
         if is_proxy_trace {
@@ -4435,6 +4501,16 @@ impl ModuleCapiContext {
             }
             // SAFETY: current points to a PyTypeObject-compatible header.
             let dict_ptr = unsafe { (*current).tp_dict };
+            if trace_repr_lookup {
+                // SAFETY: current points to a PyTypeObject-compatible header.
+                let type_name = unsafe {
+                    c_name_to_string((*current).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+                };
+                eprintln!(
+                    "[proxy-repr-lookup] attr={} object={:p} current={:p} type_name={} dict={:p}",
+                    attr_name, object, current, type_name, dict_ptr
+                );
+            }
             if trace_type_attr {
                 // SAFETY: current points to a type object header.
                 let (type_name, base_ptr, methods_ptr, getset_ptr) = unsafe {
@@ -4510,6 +4586,67 @@ impl ModuleCapiContext {
                     );
                 }
                 return Some(value_ptr);
+            } else if !dict_ptr.is_null()
+                && let Ok(attr_c_name) = CString::new(attr_name)
+            {
+                // External tp_dict pointers are common for proxied native types.
+                // Probe through the C-API dictionary surface so slot-wrapper descriptors
+                // materialized by PyType_Ready are visible here.
+                let external_value_ptr =
+                    unsafe { PyDict_GetItemString(dict_ptr, attr_c_name.as_ptr()) };
+                if !external_value_ptr.is_null() {
+                    // SAFETY: best-effort descriptor probe on external tp_dict entry.
+                    let descriptor_type = unsafe {
+                        external_value_ptr
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .unwrap_or(std::ptr::null_mut())
+                    };
+                    if !descriptor_type.is_null() {
+                        // SAFETY: descriptor type pointer was loaded from object header above.
+                        let descriptor_get = unsafe { (*descriptor_type).tp_descr_get };
+                        if !descriptor_get.is_null() {
+                            let descriptor_get: unsafe extern "C" fn(
+                                *mut c_void,
+                                *mut c_void,
+                                *mut c_void,
+                            ) -> *mut c_void =
+                                // SAFETY: descriptor getter follows CPython descriptor ABI.
+                                unsafe { std::mem::transmute(descriptor_get) };
+                            let owner_ptr = object_type.cast::<c_void>();
+                            let self_ptr = if is_type_object {
+                                std::ptr::null_mut()
+                            } else {
+                                object
+                            };
+                            // SAFETY: descriptor access mirrors CPython descriptor invocation.
+                            let bound =
+                                unsafe { descriptor_get(external_value_ptr, self_ptr, owner_ptr) };
+                            if !bound.is_null() {
+                                if trace_lookup_branch {
+                                    eprintln!(
+                                        "[proxy-lookup-branch] attr={} branch=dict_external_descriptor object={:p} current={:p} value_ptr={:p}",
+                                        attr_name, object, current, bound
+                                    );
+                                }
+                                return Some(bound);
+                            }
+                        }
+                    }
+                    if trace_lookup_branch {
+                        eprintln!(
+                            "[proxy-lookup-branch] attr={} branch=dict_external_value object={:p} current={:p} value_ptr={:p}",
+                            attr_name, object, current, external_value_ptr
+                        );
+                    }
+                    return Some(external_value_ptr);
+                } else if trace_repr_lookup {
+                    eprintln!(
+                        "[proxy-repr-lookup] attr={} dict_external_miss object={:p} current={:p}",
+                        attr_name, object, current
+                    );
+                }
             } else if is_proxy_trace && !dict_ptr.is_null() {
                 eprintln!(
                     "[cpy-proxy] tp_dict lookup miss current={:p} dict_ptr={:p}",
@@ -4669,10 +4806,22 @@ impl ModuleCapiContext {
             }
             // SAFETY: current points to a PyTypeObject-compatible header.
             let next = unsafe { (*current).tp_base };
+            if trace_repr_lookup {
+                eprintln!(
+                    "[proxy-repr-lookup] attr={} advance current={:p} next={:p}",
+                    attr_name, current, next
+                );
+            }
             if next.is_null() || next == current {
                 break;
             }
             current = next;
+        }
+        if trace_repr_lookup {
+            eprintln!(
+                "[proxy-repr-lookup] attr={} miss object={:p}",
+                attr_name, object
+            );
         }
         None
     }
@@ -20778,6 +20927,8 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             name.as_str(),
             "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base"
         );
+    let trace_proxy_getattr = std::env::var_os("PYRS_TRACE_PROXY_GETATTR").is_some()
+        && matches!(name.as_str(), "__repr__" | "__str__");
     if !object.is_null() {
         let native_result = with_active_cpython_context_mut(|context| {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -20815,10 +20966,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     .unwrap_or(std::ptr::null_mut())
             };
             if is_proxy_trace {
-                eprintln!(
-                    "[cpy-proxy] native getattr type_ptr={:p}",
-                    type_ptr
-                );
+                eprintln!("[cpy-proxy] native getattr type_ptr={:p}", type_ptr);
             }
             if type_ptr.is_null() {
                 return None;
@@ -20835,43 +20983,11 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 }
                 return None;
             }
-            if cpython_ptr_is_type_object(object)
-                && let Some(result) = context.lookup_type_attr_via_tp_dict(object, &name)
-            {
-                if is_proxy_trace {
-                    eprintln!(
-                        "[cpy-proxy] native getattr tp_dict(type) hit object_ptr={:p} result_ptr={:p}",
-                        object, result
-                    );
-                }
-                return Some(result);
-            }
-            if !is_owned {
-                if let Some(result) = context.lookup_type_attr_via_tp_dict(object, &name) {
-                    if is_proxy_trace {
-                        eprintln!(
-                            "[cpy-proxy] native getattr external tp_dict hit object_ptr={:p} result_ptr={:p}",
-                            object, result
-                        );
-                    }
-                    return Some(result);
-                }
-                if cpython_ptr_is_type_object(object) {
-                    if is_proxy_trace {
-                        eprintln!(
-                            "[cpy-proxy] native getattr external type miss object_ptr={:p}; falling back",
-                            object
-                        );
-                    }
-                    return None;
-                }
-                if is_proxy_trace {
-                    eprintln!(
-                        "[cpy-proxy] native getattr external fallback object_ptr={:p}",
-                        object
-                    );
-                }
-                return None;
+            if !is_owned && is_proxy_trace {
+                eprintln!(
+                    "[cpy-proxy] native getattr external object_ptr={:p} attempting slot dispatch",
+                    object
+                );
             }
             // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
             let tp_getattro = unsafe { (*type_ptr).tp_getattro };
@@ -20881,7 +20997,16 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     tp_getattro
                 );
             }
-            if !tp_getattro.is_null() {
+            if !tp_getattro.is_null()
+                && tp_getattro != PyObject_GetAttr as *mut c_void
+                && tp_getattro != PyObject_GenericGetAttr as *mut c_void
+            {
+                if trace_proxy_getattr {
+                    eprintln!(
+                        "[proxy-getattr] branch=tp_getattro object={:p} attr={} tp_getattro={:p}",
+                        object, name, tp_getattro
+                    );
+                }
                 let name_ptr = context.alloc_cpython_ptr_for_value(Value::Str(name.clone()));
                 if name_ptr.is_null() {
                     return Some(std::ptr::null_mut());
@@ -20900,6 +21025,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 );
             }
             if !tp_getattr.is_null() {
+                if trace_proxy_getattr {
+                    eprintln!(
+                        "[proxy-getattr] branch=tp_getattr object={:p} attr={} tp_getattr={:p}",
+                        object, name, tp_getattr
+                    );
+                }
                 let name_cstr = match context.scratch_c_string_ptr(&name) {
                     Ok(ptr) => ptr,
                     Err(err) => {
@@ -20913,6 +21044,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 return Some(unsafe { getattr(object, name_cstr) });
             }
             if let Some(result) = context.lookup_type_attr_via_tp_dict(object, &name) {
+                if trace_proxy_getattr {
+                    eprintln!(
+                        "[proxy-getattr] branch=tp_dict object={:p} attr={} result={:p}",
+                        object, name, result
+                    );
+                }
                 if is_proxy_trace {
                     eprintln!(
                         "[cpy-proxy] native getattr tp_dict hit object_ptr={:p} result_ptr={:p}",
@@ -20924,6 +21061,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             if is_proxy_trace {
                 eprintln!("[cpy-proxy] native getattr no native path hit; falling back");
             }
+            if trace_proxy_getattr {
+                eprintln!(
+                    "[proxy-getattr] branch=fallback object={:p} attr={}",
+                    object, name
+                );
+            }
             None
         })
         .unwrap_or_else(|err| {
@@ -20931,6 +21074,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if trace_proxy_getattr {
+                eprintln!(
+                    "[proxy-getattr] native-result object={:p} attr={} result={:p}",
+                    object, name, result
+                );
+            }
             if trace_reduce_attr {
                 eprintln!(
                     "[numpy-reduce] PyObject_GetAttrString native-result object={:p} attr={} result={:p}",
@@ -21142,26 +21291,12 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                         Value::Str(text) => Some(text),
                         _ => None,
                     });
-            if cpython_ptr_is_type_object(object)
-                && let Some(attr_name) = attr_name.as_ref()
-                && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
-            {
-                return Some(result);
-            }
-            if !is_owned {
-                if let Some(attr_name) = attr_name.as_ref()
-                    && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
-                {
-                    return Some(result);
-                }
-                if cpython_ptr_is_type_object(object) {
-                    return None;
-                }
-                return None;
-            }
             // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
             let tp_getattro = unsafe { (*type_ptr).tp_getattro };
-            if tp_getattro.is_null() {
+            if tp_getattro.is_null()
+                || tp_getattro == PyObject_GetAttr as *mut c_void
+                || tp_getattro == PyObject_GenericGetAttr as *mut c_void
+            {
                 if let Some(attr_name) = attr_name.as_ref()
                     && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
                 {
@@ -41539,6 +41674,15 @@ impl Vm {
     ) -> Option<Value> {
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(proxy_value)?;
         let is_proxy_type_object = matches!(proxy_value, Value::Class(_));
+        let _reentry_guard = if matches!(attr_name, "__repr__" | "__str__") {
+            Some(ProxyAttrLookupReentryGuard::enter(
+                raw_ptr as usize,
+                attr_name,
+                is_proxy_type_object,
+            )?)
+        } else {
+            None
+        };
         let c_name = CString::new(attr_name).ok()?;
         let trace_proxy_attr = std::env::var_os("PYRS_TRACE_PROXY_ATTR").is_some()
             && matches!(
@@ -41692,6 +41836,7 @@ impl Vm {
             }
         }
         if !is_proxy_type_object
+            && !matches!(attr_name, "__repr__" | "__str__")
             && let Some(attr_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
             && !attr_ptr.is_null()
         {
@@ -41802,7 +41947,18 @@ impl Vm {
                 raw_ptr, attr_name, attr_ptr
             );
         }
-        call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr)
+        let mapped = call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr);
+        if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+            let mapped_tag = mapped
+                .as_ref()
+                .map(cpython_value_debug_tag)
+                .unwrap_or_else(|| "<none>".to_string());
+            eprintln!(
+                "[proxy-attr-map] source=getattr_mapped target={:p} attr={} value_ptr={:p} mapped={}",
+                raw_ptr, attr_name, attr_ptr, mapped_tag
+            );
+        }
+        mapped
     }
 
     pub(super) fn load_cpython_proxy_attr(

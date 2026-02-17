@@ -4144,6 +4144,15 @@ impl Vm {
             Object::Instance(instance_data) => instance_data.class.clone(),
             _ => return Err(RuntimeError::new("attribute access unsupported type")),
         };
+        let is_cpython_proxy_instance = matches!(
+            &*class_ref.kind(),
+            Object::Class(class_data)
+                if class_data.name == "__pyrs_cpython_proxy__"
+                    || matches!(
+                        class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                        Some(Value::Bool(true))
+                    )
+        );
 
         if attr_name == "__class__" {
             return Ok(AttrAccessOutcome::Value(Value::Class(class_ref)));
@@ -4189,6 +4198,13 @@ impl Vm {
         }
         if let Some(attr) = self.load_attr_cached_property_instance(instance, attr_name) {
             return Ok(AttrAccessOutcome::Value(attr));
+        }
+        if is_cpython_proxy_instance
+            && matches!(attr_name, "__repr__" | "__str__")
+            && let Some(proxy_attr) = self
+                .load_cpython_proxy_attr_for_value(&Value::Instance(instance.clone()), attr_name)
+        {
+            return Ok(AttrAccessOutcome::Value(proxy_attr));
         }
 
         let mut class_attr_owner: Option<ObjRef> = None;

@@ -327,6 +327,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - builtin type-repr checkpoint: `repr(type(7))`, `repr(int)`, and `repr(type)` now match CPython class-style formatting (`<class 'int'>`, `<class 'type'>`) instead of generic `<builtin>`.
   - extension crash-stability checkpoint: re-entrant C-API callback paths now pass `ModuleCapiContext*` via `std::ptr::addr_of_mut!(...)` (not `&mut ... as *mut ...`) to avoid aliasing-UB under callback re-entry; repeated local extension-smoke loops are stable.
   - error-state safety checkpoint: `error_set(...)` / `PyErr_SetString(...)` now prioritize stable message+type indicator state over synthetic string-pointer `pvalue` materialization to prevent crashy pseudo-unicode pointer paths; full CPython non-null error-value pointer semantics are tracked in `docs/STUB_ACCOUNTING.md`.
+  - NumPy formatting blocker investigation checkpoint: proxied `ndarray.__repr__` currently falls through native attr lookup and maps to runtime fallback `<bound method Repr>`; `lookup_type_attr_via_tp_dict` confirms external `numpy.ndarray` `tp_dict` miss for `__repr__` and base `object` lookup with `tp_dict == NULL`, so slot-wrapper/type-ready publication closure remains required.
 - Extended probe remaining red modules: none (`50/50` smoke green).
 
 ## Execution Policy

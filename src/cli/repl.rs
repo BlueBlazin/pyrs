@@ -648,7 +648,10 @@ fn is_cpython_proxy_completion_value(value: &Value) -> bool {
         ),
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
-                if instance_data.attrs.contains_key("__pyrs_cpython_proxy_ptr__") {
+                if instance_data
+                    .attrs
+                    .contains_key("__pyrs_cpython_proxy_ptr__")
+                {
                     return true;
                 }
                 matches!(
@@ -2222,5 +2225,4 @@ mod tests {
             .expect("repr should render");
         assert_eq!(rendered, "custom-repr");
     }
-
 }
