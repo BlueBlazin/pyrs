@@ -113,6 +113,10 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - `numpy_import`: `PASS`
   - `numpy_ndarray_sum`: `PASS` (`int(np.array([1,2,3]).sum()) == 6`)
   - `numpy_numerictypes_core`: `PASS` (`int8`/`float64`/`bool_` publication baseline)
+- Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
+  - `scipy_import`: `FAIL` (current lane-B blocker set includes remaining private CPython symbol closure for scipy extension modules)
+  - `pandas_import` / `pandas_series_sum`: `FAIL` (pandas path currently hits deep-import/runtime stack failures after NumPy bootstrap)
+  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (import-stage assertion paths still open post-NumPy bootstrap)
 - `PyNumber_Long` reduction-path blocker is closed via:
   - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and
   - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.
