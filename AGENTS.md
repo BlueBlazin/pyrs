@@ -238,11 +238,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - direct NumPy gate checkpoint: base direct-mode probes are green (`numpy_import`, `numpy_ndarray_sum`, `numpy_numerictypes_core`) in `perf/numpy_gate_direct_latest.json`.
   - NumPy import warning cleanup checkpoint: proxy class `__flags__` now reads CPython `tp_flags` for extension-backed types, removing prior `_add_newdocs_scalars` warning spam during `import numpy`.
   - NumPy display checkpoint: `ndarray` REPL/print no longer crashes and now renders as `array([...])` via a temporary `tolist()`-derived fallback; full `arrayprint` parity (spacing/precision/line-break semantics) remains open.
-  - open NumPy scalar-format blocker: `np.float64` repr/format parity is incomplete (`repr` placeholder output and non-empty float format-spec gaps), and this is still a direct-mode blocker for true NumPy display semantics.
+  - NumPy scalar-format checkpoint: core `np.float64` constructor/`str`/`repr`/`format` parity is now green in direct mode (`0.5` / `np.float64(0.5)` baseline).
   - C varargs parser now covers `PyArg_ParseTupleAndKeywords` token `U` (unicode object) in `src/vm/capi_variadics.c`; batch26 extension smoke includes regression coverage for this token.
   - `PyNumber_Long` reduction-path blocker was closed by (a) stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts and (b) `int()` fallback through CPython proxy numeric slots (`nb_int` / `nb_index`) for extension-backed scalars.
   - unary operator runtime now falls back to special methods (`__neg__`, `__pos__`, `__invert__`) and CPython proxy numeric slots, with regression coverage (`tests/vm.rs::unary_operators_fall_back_to_special_methods`).
-  - lane-B symbol closure advanced with `_PyByteArray_empty_string` data export and `_PyBytes_Join`/`PyBytes_Join` function exports for scipy extension-loader paths.
+  - lane-B symbol closure advanced with `_PyByteArray_empty_string` data export and additional SciPy loader symbols (`_PyBytes_Join`/`PyBytes_Join`, `_PyDict_Pop`/`PyDict_Pop`/`PyDict_PopString`, `_Py_FatalErrorFunc`).
   - CPython-object ABI substrate was advanced for direct-mode extension init: compat objects now carry CPython-style object/varobject headers, singleton pointers (`Py_None`/`Py_True`/`Py_False`) are returned directly, tuple pointers expose contiguous `ob_item[]` storage, list pointers expose `ob_item`/`allocated` storage, and compat allocations are pinned across init-scoped free/decref churn.
   - CPython exception globals (`PyExc_*`) are now initialized to non-null exported sentinel objects and pointer->exception-type translation is wired in C-API pointer conversion.
   - `PyObject_CallFunction` now has C-side varargs parsing coverage for core formats (`O`/`N`/`s`/`i`/`l`/`k`/`n`/`d`/`f`, plus tuple-wrapped forms) via `src/vm/capi_variadics.c`.
@@ -250,7 +250,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `PyTypeObject` compat layout has been expanded through allocation/init/new/call slots, `PyType_Ready` now seeds baseline inherited slots, and `PyType_Type.tp_call` now routes through a CPython-style `tp_new`/`tp_init` call bridge.
   - extension init now caches first per-module dynamic-init failure (`extension_init_failures`) so repeated import retries report the original `Py_mod_exec` blocker instead of masking it behind reentry noise.
   - immediate NumPy priority is expansion beyond base NumPy gates into scientific-stack probes while keeping base direct-mode gates green (`perf/numpy_gate_direct_latest.json`).
-  - current optional scientific-stack gate remains red (`scipy_import`, `pandas_*`, `matplotlib_*`), with open blockers in remaining private symbol closure and deep-import/runtime stack stability.
+  - current optional scientific-stack gate remains red (`scipy_import`, `pandas_*`, `matplotlib_*`); primary SciPy blocker has moved to runtime semantics (`KeyError ... PyDict_DelItem key not found` during `_cyutility` init) after the latest symbol-closure slice.
   - extension slot tracing is now available via `PYRS_TRACE_EXT_SLOTS=1` for `Py_mod_create` / `Py_mod_exec` debugging in direct `PyInit_*` mode.
   - CPython-ABI bridge runtime/env path has been removed; scientific-stack gating is now direct-mode only (`perf/numpy_gate_direct_latest.json`).
   - when `VIRTUAL_ENV` is set, runtime now sets `sys.prefix`/`sys.exec_prefix` to the venv root so startup `site` handling picks up venv `site-packages`.

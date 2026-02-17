@@ -116,13 +116,14 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - NumPy import warning cleanup checkpoint:
   - proxy class `__flags__` now reflects CPython `tp_flags` for extension-backed types (instead of always returning `PY_TPFLAGS_HEAPTYPE`), which removed the prior `_add_newdocs_scalars` warning flood during `import numpy`.
 - Open direct-mode blocker:
-  - full NumPy scalar/display parity is still open.
-  - current state:
-    - `numpy.array_repr(np.arange(3))` path is green (subscript/range/format blockers closed).
-    - REPL/print display for `ndarray` now uses a stability fallback (`tolist()`-derived `array([...])`) instead of generic `<ndarray instance>` output.
-    - `np.float64` scalar rendering/formatting remains partial (`repr` placeholder output and non-empty float format-spec gaps), and this still blocks true `arrayprint` parity.
-  - remaining root-cause area:
-    - proxy descriptor/slot publication and numeric-conversion closure for float scalars (`nb_float`/`__format__`/repr path) in direct mode.
+  - `ndarray` rendering still relies on a stability fallback (`tolist()`-derived `array([...])`) instead of full NumPy `arrayprint` parity.
+  - scalar baseline parity for `np.float64` is now closed for core paths:
+    - `str(np.float64(0.5)) -> "0.5"`
+    - `repr(np.float64(0.5)) -> "np.float64(0.5)"`
+    - `format(np.float64(0.5)) -> "0.5"`
+  - direct scientific-stack blockers have moved past missing-symbol churn and are now primarily runtime semantics:
+    - latest `scipy_import` fails with `KeyError ... PyDict_DelItem key not found` during `_cyutility` init.
+    - latest `pandas_*` / `matplotlib_*` probes remain red on downstream runtime semantics.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
   - `scipy_import`: `FAIL` (current lane-B blocker set includes remaining private CPython symbol closure for scipy extension modules)
   - `pandas_import` / `pandas_series_sum`: `FAIL` (pandas path currently hits deep-import/runtime stack failures after NumPy bootstrap)
@@ -132,6 +133,11 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.
 - Extension-init failure reporting now preserves the first meaningful per-module `Py_mod_exec` failure across retry attempts, preventing fallback noise like `cannot load module more than once per process` from masking the root blocker.
 - Recent direct-mode bring-up deltas:
+  - NumPy scalar construction/formatting root-cause closure:
+    - `PyFloat_Type.tp_new` now implements CPython-style constructor behavior (base + subtype allocation path), fixing zero-initialized scalar results in NumPy float constructors.
+    - `PyUnicode_FromFormat` / `PyBytes_FromFormatV` now support object format specifiers `%S`, `%R`, `%A`.
+  - Lane-B symbol closure advanced for current SciPy loader paths:
+    - exported/kept `PyBytes_Join`, `_PyBytes_Join`, `PyDict_Pop`, `PyDict_PopString`, `_PyDict_Pop`, and `_Py_FatalErrorFunc`.
   - `_PyType_Lookup` now preserves no-new-error semantics and falls back to runtime MRO lookup when `tp_dict`-only lookup misses.
   - attribute optional/presence helpers now treat CPython-style "missing attribute" message paths as non-fatal misses (`HasAttr*WithError`, `GetOptionalAttr*`).
   - pure-stdlib preference logic now includes `typing` (not only `types`) when CPython `Lib` sources are present.

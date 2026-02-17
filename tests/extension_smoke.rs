@@ -522,7 +522,8 @@ fn imports_direct_cpython_style_single_phase_extension() {
     let source_path = temp_root.join("cpython_single_phase.c");
     fs::write(
         &source_path,
-        r#"#include "pyrs_cpython_compat.h"
+        r#"#include <stdint.h>
+#include "pyrs_cpython_compat.h"
 extern int PyDict_SetItemString(PyObject *dict, const char *key, PyObject *value);
 
 static struct PyModuleDef module_def = {
@@ -14630,6 +14631,144 @@ int pyrs_extension_init_v1(const PyrsApiV1* api, void* module_ctx) {
     .expect("null-module-ctx extension import should succeed");
 
     let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_float_tp_new_and_unicode_fromformat_object_specifiers_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping float tp_new/fromformat smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping float tp_new/fromformat smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_float_tp_new_fromformat");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_float_tp_new_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyMethodDef module_methods[];
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_float_tp_new_probe",
+    "float tp_new + unicode fromformat probe",
+    -1,
+    module_methods,
+    0,
+    0,
+    0,
+    0
+};
+
+static PyObject *
+make_subfloat(PyObject *self, PyObject *args)
+{
+    (void)self;
+    PyObject *type_obj = 0;
+    PyObject *value = 0;
+    if (!PyArg_ParseTuple(args, "OO", &type_obj, &value)) {
+        return 0;
+    }
+    PyObject *builtins = PyImport_ImportModule("builtins");
+    if (!builtins) {
+        return 0;
+    }
+    PyObject *float_type_obj = PyObject_GetAttrString(builtins, "float");
+    Py_DECREF(builtins);
+    if (!float_type_obj) {
+        return 0;
+    }
+    void *slot = PyType_GetSlot((PyTypeObject *)float_type_obj, Py_tp_new);
+    if (!slot) {
+        Py_DECREF(float_type_obj);
+        return 0;
+    }
+    typedef PyObject *(*newfunc)(PyTypeObject *, PyObject *, PyObject *);
+    newfunc tp_new = (newfunc)slot;
+    PyObject *call_args = PyTuple_Pack(1, value);
+    if (!call_args) {
+        Py_DECREF(float_type_obj);
+        return 0;
+    }
+    PyObject *result = tp_new((PyTypeObject *)type_obj, call_args, 0);
+    Py_DECREF(call_args);
+    Py_DECREF(float_type_obj);
+    return result;
+}
+
+typedef struct {
+    intptr_t ob_refcnt;
+    void *ob_type;
+    double ob_fval;
+} ProbeFloatObjectHead;
+
+static PyObject *
+read_subfloat_value(PyObject *self, PyObject *args)
+{
+    (void)self;
+    PyObject *obj = 0;
+    if (!PyArg_ParseTuple(args, "O", &obj)) {
+        return 0;
+    }
+    return PyFloat_FromDouble(((ProbeFloatObjectHead *)obj)->ob_fval);
+}
+
+static PyObject *
+format_obj(PyObject *self, PyObject *args)
+{
+    (void)self;
+    PyObject *obj = 0;
+    if (!PyArg_ParseTuple(args, "O", &obj)) {
+        return 0;
+    }
+    return PyUnicode_FromFormat("S=%S R=%R A=%A", obj, obj, obj);
+}
+
+static PyMethodDef module_methods[] = {
+    {"make_subfloat", make_subfloat, METH_VARARGS, "Create a float subtype via PyFloat_Type.tp_new"},
+    {"read_subfloat_value", read_subfloat_value, METH_VARARGS, "Read subtype ob_fval payload"},
+    {"format_obj", format_obj, METH_VARARGS, "Exercise PyUnicode_FromFormat object specifiers"},
+    {0, 0, 0, 0}
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_float_tp_new_probe(void)
+{
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        Py_DECREF(module);
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path =
+        temp_root.join(importable_module_library_filename("cpython_float_tp_new_probe"));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython float-tp_new probe extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_float_tp_new_probe as probe\nvalue = probe.make_subfloat(float, 0.5)\nassert isinstance(value, float)\nassert type(value) is float\nassert probe.read_subfloat_value(value) == 0.5\ntext = probe.format_obj('é')\nassert text.startswith('S=é R=')\nassert \"R='é'\" in text\nassert \"A='\\\\xe9'\" in text\nassert '%S' not in text and '%R' not in text and '%A' not in text",
+    )
+    .expect("float tp_new/fromformat probe import should succeed");
+
     let _ = fs::remove_file(library_path);
     let _ = fs::remove_file(source_path);
     let _ = fs::remove_dir_all(temp_root);

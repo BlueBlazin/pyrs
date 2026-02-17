@@ -1588,6 +1588,143 @@ unsafe extern "C" fn cpython_object_tp_str(object: *mut c_void) -> *mut c_void {
     unsafe { cpython_object_tp_repr(object) }
 }
 
+unsafe extern "C" fn cpython_float_tp_new(
+    subtype: *mut c_void,
+    args: *mut c_void,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    if subtype.is_null() {
+        cpython_set_error("TypeError: float.__new__ received null subtype");
+        return std::ptr::null_mut();
+    }
+    let float_type_ptr = std::ptr::addr_of_mut!(PyFloat_Type).cast::<c_void>();
+    if subtype != float_type_ptr && unsafe { PyType_IsSubtype(subtype, float_type_ptr) } == 0 {
+        // SAFETY: `subtype` is non-null and expected to point at a type object.
+        let subtype_name = unsafe {
+            let subtype_ptr = subtype.cast::<CpythonTypeObject>();
+            c_name_to_string((*subtype_ptr).tp_name).unwrap_or_else(|_| "<unnamed>".to_string())
+        };
+        cpython_set_error(format!(
+            "TypeError: float.__new__({subtype_name}): {subtype_name} is not a subtype of float"
+        ));
+        return std::ptr::null_mut();
+    }
+
+    let positional_count = if args.is_null() {
+        0
+    } else {
+        let size = unsafe { PyTuple_Size(args) };
+        if size < 0 {
+            return std::ptr::null_mut();
+        }
+        size as usize
+    };
+    if positional_count > 1 {
+        cpython_set_error(format!(
+            "TypeError: float expected at most 1 argument, got {positional_count}"
+        ));
+        return std::ptr::null_mut();
+    }
+
+    let mut input = if positional_count == 1 {
+        let value = unsafe { PyTuple_GetItem(args, 0) };
+        if value.is_null() {
+            return std::ptr::null_mut();
+        }
+        value
+    } else {
+        std::ptr::null_mut()
+    };
+
+    if !kwargs.is_null() {
+        let keyword_count = unsafe { PyDict_Size(kwargs) };
+        if keyword_count < 0 {
+            return std::ptr::null_mut();
+        }
+        if keyword_count > 1 {
+            cpython_set_error("TypeError: float() takes at most 1 keyword argument");
+            return std::ptr::null_mut();
+        }
+        if keyword_count == 1 {
+            let x_name = b"x\0".as_ptr().cast::<c_char>();
+            let keyword_value = unsafe { PyDict_GetItemString(kwargs, x_name) };
+            if keyword_value.is_null() {
+                cpython_set_error("TypeError: float() got an unexpected keyword argument");
+                return std::ptr::null_mut();
+            }
+            if !input.is_null() {
+                cpython_set_error("TypeError: float() got multiple values for argument 'x'");
+                return std::ptr::null_mut();
+            }
+            input = keyword_value;
+        }
+    }
+
+    let base_float = if input.is_null() {
+        unsafe { PyFloat_FromDouble(0.0) }
+    } else {
+        // SAFETY: `input` is a non-null candidate PyObject pointer supplied by parser/call-site.
+        let input_type = unsafe {
+            input
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type)
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if input_type == std::ptr::addr_of_mut!(PyUnicode_Type).cast() {
+            unsafe { PyFloat_FromString(input, std::ptr::null_mut()) }
+        } else {
+            unsafe { PyNumber_Float(input) }
+        }
+    };
+    if base_float.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    if subtype == float_type_ptr {
+        return base_float;
+    }
+
+    let subtype_ptr = subtype.cast::<CpythonTypeObject>();
+    if unsafe { (*subtype_ptr).tp_basicsize } < std::mem::size_of::<CpythonFloatCompatObject>() as isize
+    {
+        unsafe { Py_DecRef(base_float) };
+        cpython_set_error("TypeError: float subtype has incompatible instance layout");
+        return std::ptr::null_mut();
+    }
+
+    let alloc_slot = unsafe { (*subtype_ptr).tp_alloc };
+    if alloc_slot.is_null() {
+        unsafe { Py_DecRef(base_float) };
+        cpython_set_error("TypeError: float subtype has no allocator");
+        return std::ptr::null_mut();
+    }
+    let alloc_fn: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
+        // SAFETY: `tp_alloc` uses CPython allocfunc ABI.
+        unsafe { std::mem::transmute(alloc_slot) };
+    let new_obj = unsafe { alloc_fn(subtype, 0) };
+    if new_obj.is_null() {
+        unsafe { Py_DecRef(base_float) };
+        return std::ptr::null_mut();
+    }
+
+    let value = unsafe { PyFloat_AsDouble(base_float) };
+    if value == -1.0 && !unsafe { PyErr_Occurred() }.is_null() {
+        unsafe {
+            Py_DecRef(base_float);
+            Py_DecRef(new_obj);
+        }
+        return std::ptr::null_mut();
+    }
+
+    // SAFETY: float subtypes are guaranteed to share `PyFloatObject` prefix layout.
+    unsafe {
+        (*new_obj.cast::<CpythonFloatCompatObject>()).ob_fval = value;
+        Py_DecRef(base_float);
+    }
+    new_obj
+}
+
 fn initialize_cpython_compat_type_objects() {
     static INIT: Once = Once::new();
     INIT.call_once(|| unsafe {
@@ -1603,6 +1740,7 @@ fn initialize_cpython_compat_type_objects() {
         PyBaseObject_Type.tp_str = cpython_object_tp_str as *mut c_void;
         PyCFunction_Type.tp_call = cpython_cfunction_tp_call as *mut c_void;
         PyCFunction_Type.tp_getattro = cpython_cfunction_tp_getattro as *mut c_void;
+        PyFloat_Type.tp_new = cpython_float_tp_new as *mut c_void;
         PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
 
         let type_objects: &mut [*mut CpythonTypeObject] = &mut [
@@ -20525,6 +20663,104 @@ pub unsafe extern "C" fn PyDict_GetItemStringRef(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDict_Pop(
+    dict: *mut c_void,
+    key: *mut c_void,
+    result: *mut *mut c_void,
+) -> i32 {
+    with_active_cpython_context_mut(|context| {
+        if !result.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *result = std::ptr::null_mut() };
+        }
+        let module_target = context.module_dict_module_for_ptr(dict);
+        let Some(target) = context.cpython_value_from_ptr(dict) else {
+            context.set_error("PyDict_Pop received unknown dict pointer");
+            return -1;
+        };
+        let Value::Dict(dict_obj) = target else {
+            context.set_error("PyDict_Pop expected dict object");
+            return -1;
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("PyDict_Pop received unknown key pointer");
+            return -1;
+        };
+        let Some(popped) = dict_remove_value(&dict_obj, &key_value) else {
+            return 0;
+        };
+        if let Some(module_obj) = module_target
+            && let Value::Str(name) = &key_value
+            && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+        {
+            module_data.globals.remove(name);
+        }
+        let popped_ptr = context.alloc_cpython_ptr_for_value(popped);
+        if popped_ptr.is_null() {
+            return -1;
+        }
+        if result.is_null() {
+            // PyDict_Pop with null output still consumes one owned result reference.
+            unsafe { Py_DecRef(popped_ptr) };
+        } else {
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *result = popped_ptr };
+        }
+        1
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        if !result.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *result = std::ptr::null_mut() };
+        }
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyDict_PopString(
+    dict: *mut c_void,
+    key: *const c_char,
+    result: *mut *mut c_void,
+) -> i32 {
+    let key_obj = unsafe { PyUnicode_FromString(key) };
+    if key_obj.is_null() {
+        if !result.is_null() {
+            // SAFETY: caller provided writable output pointer.
+            unsafe { *result = std::ptr::null_mut() };
+        }
+        return -1;
+    }
+    let status = unsafe { PyDict_Pop(dict, key_obj, result) };
+    // SAFETY: `key_obj` is a temporary strong reference created above.
+    unsafe { Py_DecRef(key_obj) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyDict_Pop(
+    dict: *mut c_void,
+    key: *mut c_void,
+    default_value: *mut c_void,
+) -> *mut c_void {
+    let mut result = std::ptr::null_mut();
+    let status = unsafe { PyDict_Pop(dict, key, std::ptr::addr_of_mut!(result)) };
+    if status < 0 {
+        return std::ptr::null_mut();
+    }
+    if status == 1 {
+        return result;
+    }
+    if !default_value.is_null() {
+        unsafe { Py_IncRef(default_value) };
+        return default_value;
+    }
+    unsafe { PyErr_SetObject(PyExc_KeyError, key) };
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> i32 {
     with_active_cpython_context_mut(|context| {
         let module_target = context.module_dict_module_for_ptr(dict);
@@ -30331,6 +30567,26 @@ pub unsafe extern "C" fn Py_FatalError(message: *const c_char) {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn _Py_FatalErrorFunc(func: *const c_char, message: *const c_char) {
+    let rendered_func = if func.is_null() {
+        "<unknown>".to_string()
+    } else {
+        // SAFETY: caller provides a NUL-terminated function name.
+        unsafe { CStr::from_ptr(func) }.to_string_lossy().to_string()
+    };
+    let rendered_message = if message.is_null() {
+        "Fatal Python error".to_string()
+    } else {
+        // SAFETY: caller provides a NUL-terminated message.
+        unsafe { CStr::from_ptr(message) }
+            .to_string_lossy()
+            .to_string()
+    };
+    eprintln!("Fatal Python error: {rendered_func}: {rendered_message}");
+    std::process::abort();
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_NewInterpreter() -> *mut c_void {
     unsafe { PyThreadState_Get() }
 }
@@ -36496,6 +36752,9 @@ static KEEP2_PY_EXIT: unsafe extern "C" fn(c_int) = Py_Exit;
 #[used]
 static KEEP2_PY_FATALERROR: unsafe extern "C" fn(*const c_char) = Py_FatalError;
 #[used]
+static KEEP2_PY_FATALERRORFUNC: unsafe extern "C" fn(*const c_char, *const c_char) =
+    _Py_FatalErrorFunc;
+#[used]
 static KEEP2_PY_NEWINTERPRETER: unsafe extern "C" fn() -> *mut c_void = Py_NewInterpreter;
 #[used]
 static KEEP2_PY_ENDINTERPRETER: unsafe extern "C" fn(*mut c_void) = Py_EndInterpreter;
@@ -38005,6 +38264,12 @@ static KEEP_PYBYTES_DECODE_ESCAPE: unsafe extern "C" fn(
     *const c_char,
 ) -> *mut c_void = PyBytes_DecodeEscape;
 #[used]
+static KEEP_PYBYTES_JOIN: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    PyBytes_Join;
+#[used]
+static KEEP_PY_BYTES_JOIN_PRIVATE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    _PyBytes_Join;
+#[used]
 static KEEP_PYBYTEARRAY_FROM_STRING_AND_SIZE: unsafe extern "C" fn(
     *const c_char,
     isize,
@@ -38382,6 +38647,18 @@ static KEEP_PYDICT_GET_ITEM_STRING_REF: unsafe extern "C" fn(
     *const c_char,
     *mut *mut c_void,
 ) -> i32 = PyDict_GetItemStringRef;
+#[used]
+static KEEP_PYDICT_POP: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *mut c_void) -> i32 =
+    PyDict_Pop;
+#[used]
+static KEEP_PYDICT_POP_STRING: unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *mut *mut c_void,
+) -> i32 = PyDict_PopString;
+#[used]
+static KEEP_PY_DICT_POP_PRIVATE: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+    _PyDict_Pop;
 #[used]
 static KEEP_PYDICT_DEL_ITEM: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 = PyDict_DelItem;
 #[used]

@@ -46,6 +46,8 @@ extern void *PyObject_CallObject(void *callable, void *args);
 extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
 extern void *PyObject_Str(void *object);
+extern void *PyObject_Repr(void *object);
+extern void *PyObject_ASCII(void *object);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
 extern const char *PyUnicode_AsUTF8(void *object);
@@ -679,6 +681,30 @@ static int bytes_builder_append_char(bytes_builder *builder, unsigned char ch)
     return 1;
 }
 
+static int bytes_builder_append_object_text(bytes_builder *builder, void *object, char format_code)
+{
+    if (object == NULL) {
+        return bytes_builder_append_cstr(builder, "<NULL>");
+    }
+    void *text_obj = NULL;
+    if (format_code == 'R') {
+        text_obj = PyObject_Repr(object);
+    }
+    else if (format_code == 'A') {
+        text_obj = PyObject_ASCII(object);
+    }
+    else {
+        text_obj = PyObject_Str(object);
+    }
+    if (text_obj == NULL) {
+        return 0;
+    }
+    const char *utf8 = PyUnicode_AsUTF8(text_obj);
+    int ok = bytes_builder_append_cstr(builder, utf8 != NULL ? utf8 : "<object>");
+    Py_DecRef(text_obj);
+    return ok;
+}
+
 static void bytes_builder_dealloc(bytes_builder *builder)
 {
     if (builder->buf != NULL) {
@@ -1291,6 +1317,15 @@ void *PyBytes_FromFormatV(const char *format, va_list vargs)
                     }
                 }
                 if (!bytes_builder_append_bytes(&out, text, text_len)) {
+                    goto error;
+                }
+                break;
+            }
+            case 'S':
+            case 'R':
+            case 'A': {
+                void *object = va_arg(vargs, void *);
+                if (!bytes_builder_append_object_text(&out, object, *f)) {
                     goto error;
                 }
                 break;
