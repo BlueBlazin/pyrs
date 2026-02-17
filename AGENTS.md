@@ -228,7 +228,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - direct CPython compatibility surface now exports the `_multiarray_umath` unresolved symbol set (public `Py*` plus internal `_Py*`) so NumPy reaches module-init execution instead of failing at dynamic-link resolution.
   - direct NumPy bring-up now includes `datetime.datetime_CAPI` capsule registry baseline, `math.trunc`, and expanded CPython-style varargs builders/call helpers via C shim (`build.rs`, `src/vm/capi_variadics.c`).
   - pure-stdlib preference logic now includes `typing` (in addition to `types`) when CPython `Lib` sources are available on `sys.path`.
-  - direct NumPy gate checkpoint: both `numpy_import` and `numpy_ndarray_sum` now pass in direct mode (`perf/numpy_gate_direct_latest.json`).
+  - direct NumPy gate checkpoint: base direct-mode probes are green (`numpy_import`, `numpy_ndarray_sum`, `numpy_numerictypes_core`) in `perf/numpy_gate_direct_latest.json`.
   - `PyNumber_Long` reduction-path blocker was closed by (a) stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts and (b) `int()` fallback through CPython proxy numeric slots (`nb_int` / `nb_index`) for extension-backed scalars.
   - CPython-object ABI substrate was advanced for direct-mode extension init: compat objects now carry CPython-style object/varobject headers, singleton pointers (`Py_None`/`Py_True`/`Py_False`) are returned directly, tuple pointers expose contiguous `ob_item[]` storage, list pointers expose `ob_item`/`allocated` storage, and compat allocations are pinned across init-scoped free/decref churn.
   - CPython exception globals (`PyExc_*`) are now initialized to non-null exported sentinel objects and pointer->exception-type translation is wired in C-API pointer conversion.
@@ -236,7 +236,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - C-side varargs handling now also covers `PyArg_ParseTuple`, `PyArg_ParseTupleAndKeywords`, `PyObject_CallFunctionObjArgs`, `PyObject_CallMethod`, `PyEval_CallFunction`, `PyEval_CallMethod`, `PyBytes_FromFormat`, and `PyBytes_FromFormatV` in `src/vm/capi_variadics.c`.
   - `PyTypeObject` compat layout has been expanded through allocation/init/new/call slots, `PyType_Ready` now seeds baseline inherited slots, and `PyType_Type.tp_call` now routes through a CPython-style `tp_new`/`tp_init` call bridge.
   - extension init now caches first per-module dynamic-init failure (`extension_init_failures`) so repeated import retries report the original `Py_mod_exec` blocker instead of masking it behind reentry noise.
-  - immediate NumPy priority is deterministic closure of the `numpy._core.numerictypes` publication gate and expansion beyond the two-case baseline while keeping direct-mode gate green (`perf/numpy_gate_direct_latest.json`).
+  - immediate NumPy priority is expansion beyond base NumPy gates into scientific-stack probes while keeping base direct-mode gates green (`perf/numpy_gate_direct_latest.json`).
   - extension slot tracing is now available via `PYRS_TRACE_EXT_SLOTS=1` for `Py_mod_create` / `Py_mod_exec` debugging in direct `PyInit_*` mode.
   - CPython-ABI bridge runtime/env path has been removed; scientific-stack gating is now direct-mode only (`perf/numpy_gate_direct_latest.json`).
   - when `VIRTUAL_ENV` is set, runtime now sets `sys.prefix`/`sys.exec_prefix` to the venv root so startup `site` handling picks up venv `site-packages`.

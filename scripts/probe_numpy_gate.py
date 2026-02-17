@@ -23,6 +23,11 @@ BASE_CASES: list[CaseSpec] = [
         "import numpy as np\na = np.array([1, 2, 3])\nassert int(a.sum()) == 6",
         ("numpy",),
     ),
+    (
+        "numpy_numerictypes_core",
+        "import numpy._core.numerictypes as nt\nassert nt.int8 is not None\nassert nt.float64 is not None\nassert nt.bool_ is not None",
+        ("numpy",),
+    ),
 ]
 
 SCIENTIFIC_STACK_CASES: list[CaseSpec] = [

@@ -17,6 +17,12 @@ Execution model: see `docs/CAPI_PLAN.md`.
      - `import numpy as np`
      - `a = np.array([1, 2, 3])`
      - `assert int(a.sum()) == 6`
+3. `numpy_numerictypes_core`
+   - snippet:
+     - `import numpy._core.numerictypes as nt`
+     - `assert nt.int8 is not None`
+     - `assert nt.float64 is not None`
+     - `assert nt.bool_ is not None`
 
 These are intentionally small but strict: they verify import path + first ndarray runtime path.
 
@@ -106,6 +112,7 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - Latest direct-mode gate status (`perf/numpy_gate_direct_latest.json`):
   - `numpy_import`: `PASS`
   - `numpy_ndarray_sum`: `PASS` (`int(np.array([1,2,3]).sum()) == 6`)
+  - `numpy_numerictypes_core`: `PASS` (`int8`/`float64`/`bool_` publication baseline)
 - `PyNumber_Long` reduction-path blocker is closed via:
   - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and
   - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.
@@ -129,6 +136,6 @@ If a probed local module is not installed, its dependent cases are recorded as `
 
 NumPy bring-up baseline is closed only when all are true:
 
-1. Both gate cases are `PASS` on required platforms.
+1. All base gate cases are `PASS` on required platforms.
 2. No open P0 blockers remain for exercised extension surfaces in `docs/EXTENSION_CAPABILITY_MATRIX.md`.
 3. CI includes the probe in a dedicated extension bring-up lane.

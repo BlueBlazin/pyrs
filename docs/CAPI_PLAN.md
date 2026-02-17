@@ -13,7 +13,7 @@ This is the active workstream. If context is compacted, resume from this section
 - [ ] Checkpoint discipline: land work in small commits per batch (`manifest` -> `tests` -> `ABI impl` -> `NumPy gate refresh`).
 - [x] Root-cause fix for module-state/attr publication in NumPy import path is landed (`numpy_import` now passes in direct mode).
 - [x] `numpy_ndarray_sum` closure landed: `int(np.array([1,2,3]).sum()) == 6` now passes in direct mode.
-- [ ] Deterministic `numpy._core.numerictypes` completion gate (must publish `int8`, `float64`, `bool_`, etc.) is still open.
+- [x] Deterministic `numpy._core.numerictypes` completion gate is landed (`numpy_numerictypes_core`: `int8`/`float64`/`bool_`).
 
 ## ABI3 Status Snapshot (2026-02-16)
 
