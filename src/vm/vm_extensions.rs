@@ -57,6 +57,7 @@ mod cpython_args_runtime;
 mod cpython_module_runtime;
 mod cpython_import_runtime;
 mod cpython_module_name_runtime;
+mod cpython_exception_name_runtime;
 
 use self::cpython_args_runtime::{
     cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
@@ -66,6 +67,9 @@ use self::cpython_module_runtime::{
 };
 use self::cpython_module_name_runtime::{
     cpython_module_add_type_name, cpython_module_name_from_object, cpython_optional_value_from_ptr,
+};
+use self::cpython_exception_name_runtime::{
+    cpython_exception_name_from_runtime_message, cpython_exception_name_parts,
 };
 use self::cpython_import_runtime::{
     CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
@@ -1550,38 +1554,6 @@ fn cpython_exception_ptr_for_name(name: &str) -> Option<*mut c_void> {
     }
     for_each_cpython_exception_symbol!(match_exception_name);
     None
-}
-
-fn cpython_exception_name_from_runtime_message(message: &str) -> Option<String> {
-    let candidate = if message.starts_with("Traceback (most recent call last):") {
-        message
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .map(str::trim)
-            .unwrap_or(message.trim())
-    } else {
-        message.trim()
-    };
-    if candidate.is_empty() {
-        return None;
-    }
-    let prefix = candidate
-        .split_once(':')
-        .map(|(name, _)| name)
-        .unwrap_or(candidate);
-    if prefix
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-        && (prefix.ends_with("Error")
-            || prefix.ends_with("Warning")
-            || prefix == "Exception"
-            || prefix == "BaseException")
-    {
-        Some(prefix.to_string())
-    } else {
-        None
-    }
 }
 
 unsafe fn ensure_cpython_exception_symbol(slot: *mut *mut c_void, type_ptr: *mut c_void) {
@@ -31914,14 +31886,6 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
         }
         Err(err) => cpython_set_error(format!("PyErr_SetString invalid message: {err}")),
     }
-}
-
-fn cpython_exception_name_parts(name: &str) -> Option<(&str, &str)> {
-    let dot = name.rfind('.')?;
-    if dot == 0 || dot + 1 >= name.len() {
-        return None;
-    }
-    Some((&name[..dot], &name[dot + 1..]))
 }
 
 #[unsafe(no_mangle)]
