@@ -200,6 +200,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_string_runtime.rs`
   - CPython C-string/wide-string conversion helpers (`c_name_to_string`, `cpython_wide_ptr_to_string`, wide-unit encode/decode)
   - shared by unicode/runtime-misc/sys/thread C-API entrypoints
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_keepalive_exports.rs`
+  - CPython symbol-retention exports (`KEEP*` static references) for ABI surfaces that must survive dead-stripping
+  - isolated from executable runtime paths so linker/export policy does not bloat `/Users/$USER/pyrs/src/vm/vm_extensions.rs`
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -295,6 +298,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython value/type/debug helper behavior: `vm_extensions/cpython_value_runtime.rs`.
 - New CPython thread/interpreter registry helper behavior: `vm_extensions/cpython_thread_runtime.rs`.
 - New CPython string/wide-string conversion helper behavior: `vm_extensions/cpython_string_runtime.rs`.
+- New CPython keepalive symbol-retention behavior: `vm_extensions/cpython_keepalive_exports.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
@@ -306,5 +310,5 @@ This document defines the current structure and ownership boundaries for the VM 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
 - Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
-- Next decomposition slice target: split the remaining non-entrypoint support substrate in `/Users/$USER/pyrs/src/vm/vm_extensions.rs` (global CPython symbol/type bootstrap, keep-symbol references, extension type/static layouts) into focused runtime/helper modules.
+- Next decomposition slice target: split the remaining non-entrypoint support substrate in `/Users/$USER/pyrs/src/vm/vm_extensions.rs` (global CPython symbol/type bootstrap and extension type/static layouts) into focused runtime/helper modules.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.
