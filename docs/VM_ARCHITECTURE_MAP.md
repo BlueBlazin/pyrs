@@ -101,6 +101,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_lifecycle_api.rs`
   - exported object lifecycle C-API entrypoints (`PyObject_Init*`, `_PyObject_New*`, `_PyObject_GC_New`, `_Py_Dealloc`)
   - shared raw object header initialization and CPython pointer-handle dealloc bridging behavior
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_weakref_api.rs`
+  - exported weakref C-API entrypoints (`PyWeakref_NewRef`, `PyWeakref_NewProxy`, `PyWeakref_GetRef`, `PyWeakref_GetObject`, `PyObject_ClearWeakRefs`)
+  - shared weakref-target extraction and callable-callback validation for CPython weakref helper semantics
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_attr_api.rs`
   - exported `PyObject_*` attribute/introspection C-API entrypoints (`Get/Set/DelAttr*`, `Type`, `HasAttr*`, `GetOptionalAttrString`, generic attr/dict helpers)
   - shared native-slot fallback (`tp_getattro`/`tp_setattro`) + CPython-style missing-attribute error handling
@@ -211,6 +214,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython object item/hash/compare C-API entrypoint behavior: `vm_extensions/cpython_object_item_compare_api.rs`.
 - New CPython object buffer/memoryview C-API entrypoint behavior: `vm_extensions/cpython_object_buffer_api.rs`.
 - New CPython object lifecycle C-API entrypoint behavior: `vm_extensions/cpython_object_lifecycle_api.rs`.
+- New CPython weakref C-API entrypoint behavior: `vm_extensions/cpython_weakref_api.rs`.
 - New CPython object-attr C-API entrypoint behavior: `vm_extensions/cpython_object_attr_api.rs`.
 - New CPython bytes/bytearray C-API entrypoint behavior: `vm_extensions/cpython_bytes_api.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
