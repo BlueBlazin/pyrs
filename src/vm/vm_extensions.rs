@@ -2096,13 +2096,7 @@ impl Drop for ModuleCapiContext {
                 }
                 if let Some(handle) = self.cpython_objects_by_ptr.get(&(raw as usize)).copied() {
                     escaped_handles.insert(handle);
-                    if let Some(value) = self.object_value(handle) {
-                        if let Some(object_id) = Self::identity_object_id(&value) {
-                            vm.extension_cpython_ptr_by_object_id
-                                .insert(object_id, raw as usize);
-                        }
-                        vm.extension_cpython_ptr_values.insert(raw as usize, value);
-                    }
+                    self.persist_escaped_ptr_value(vm, handle, raw as usize);
                 }
                 preserve_aux_allocations = true;
                 continue;
@@ -2127,13 +2121,7 @@ impl Drop for ModuleCapiContext {
                             self.cpython_objects_by_ptr.get(&(raw as usize)).copied()
                         {
                             escaped_handles.insert(handle);
-                            if let Some(value) = self.object_value(handle) {
-                                if let Some(object_id) = Self::identity_object_id(&value) {
-                                    vm.extension_cpython_ptr_by_object_id
-                                        .insert(object_id, raw as usize);
-                                }
-                                vm.extension_cpython_ptr_values.insert(raw as usize, value);
-                            }
+                            self.persist_escaped_ptr_value(vm, handle, raw as usize);
                         }
                         preserve_aux_allocations = true;
                         keep_pinned = true;
@@ -2161,13 +2149,7 @@ impl Drop for ModuleCapiContext {
                             self.cpython_objects_by_ptr.get(&(raw as usize)).copied()
                         {
                             escaped_handles.insert(handle);
-                            if let Some(value) = self.object_value(handle) {
-                                if let Some(object_id) = Self::identity_object_id(&value) {
-                                    vm.extension_cpython_ptr_by_object_id
-                                        .insert(object_id, raw as usize);
-                                }
-                                vm.extension_cpython_ptr_values.insert(raw as usize, value);
-                            }
+                            self.persist_escaped_ptr_value(vm, handle, raw as usize);
                         }
                         preserve_aux_allocations = true;
                         keep_pinned = true;
@@ -3923,6 +3905,7 @@ impl ModuleCapiContext {
             );
         }
         if is_type_object {
+            self.populate_proxy_class_attrs_from_type_dict(&proxy_class, object);
             if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
                 class_data.attrs.insert(
                     CPY_PROXY_PTR_ATTR.to_string(),
@@ -5686,6 +5669,27 @@ impl ModuleCapiContext {
         self.objects.get(&handle)
     }
 
+    fn persist_escaped_ptr_value(
+        &self,
+        vm: &mut Vm,
+        handle: PyrsObjectHandle,
+        raw_ptr: usize,
+    ) {
+        let Some(slot) = self.objects.get(&handle) else {
+            return;
+        };
+        if let Some(object_id) = Self::identity_object_id(&slot.value) {
+            vm.extension_cpython_ptr_by_object_id
+                .insert(object_id, raw_ptr);
+        }
+        // `Value::Code` carries `Rc<CodeObject>` references that are frame-scoped and
+        // should not be published into cross-context pointer caches.
+        if !matches!(slot.value, Value::Code(_)) {
+            vm.extension_cpython_ptr_values
+                .insert(raw_ptr, slot.value.clone());
+        }
+    }
+
     fn object_value(&self, handle: PyrsObjectHandle) -> Option<Value> {
         self.object_slot(handle).map(|slot| slot.value.clone())
     }
@@ -6151,6 +6155,96 @@ impl ModuleCapiContext {
                 return;
             }
             (*raw).ob_base.ob_size = 0;
+        }
+    }
+
+    fn populate_proxy_class_attrs_from_type_dict(
+        &mut self,
+        proxy_class: &ObjRef,
+        type_ptr: *mut c_void,
+    ) {
+        if type_ptr.is_null() {
+            return;
+        }
+        let trace = std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some();
+        // SAFETY: caller gates `type_ptr` to type-object creation flow.
+        let type_dict_ptr = unsafe { (*type_ptr.cast::<CpythonTypeObject>()).tp_dict };
+        if type_dict_ptr.is_null() {
+            if trace {
+                eprintln!(
+                    "[cpy-proxy] populate class attrs skip type_ptr={:p} reason=null-tp_dict",
+                    type_ptr
+                );
+            }
+            return;
+        }
+        let Some(Value::Dict(dict_obj)) = self.cpython_value_from_ptr(type_dict_ptr) else {
+            if trace {
+                eprintln!(
+                    "[cpy-proxy] populate class attrs skip type_ptr={:p} dict_ptr={:p} reason=non-runtime-dict",
+                    type_ptr,
+                    type_dict_ptr
+                );
+            }
+            return;
+        };
+        let Object::Dict(entries) = &*dict_obj.kind() else {
+            if trace {
+                eprintln!(
+                    "[cpy-proxy] populate class attrs skip type_ptr={:p} dict_ptr={:p} reason=invalid-dict-storage",
+                    type_ptr,
+                    type_dict_ptr
+                );
+            }
+            return;
+        };
+        let mut updates = Vec::new();
+        let mut has_init = false;
+        for (key, value) in entries.iter() {
+            let Value::Str(name) = key else {
+                continue;
+            };
+            if name == "__init__" {
+                has_init = true;
+            }
+            if matches!(
+                name.as_str(),
+                CPY_PROXY_MARKER_ATTR
+                    | CPY_PROXY_PTR_ATTR
+                    | "__name__"
+                    | "__qualname__"
+                    | "__module__"
+                    | "__bases__"
+                    | "__mro__"
+            ) {
+                continue;
+            }
+            updates.push((name.clone(), value.clone()));
+        }
+        if updates.is_empty() {
+            if trace {
+                eprintln!(
+                    "[cpy-proxy] populate class attrs skip type_ptr={:p} dict_ptr={:p} reason=no-copyable-entries has_init={}",
+                    type_ptr,
+                    type_dict_ptr,
+                    has_init
+                );
+            }
+            return;
+        }
+        if let Object::Class(class_data) = &mut *proxy_class.kind_mut() {
+            for (name, value) in updates {
+                class_data.attrs.insert(name, value);
+            }
+            if trace {
+                eprintln!(
+                    "[cpy-proxy] populate class attrs from tp_dict type_ptr={:p} class={} attrs={} has_init={}",
+                    type_ptr,
+                    class_data.name,
+                    class_data.attrs.len(),
+                    has_init
+                );
+            }
         }
     }
 
