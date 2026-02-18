@@ -93,7 +93,7 @@ This document defines the current structure and ownership boundaries for the VM 
   - exported object item/hash/compare C-API entrypoints (`PyObject_Get/Set/DelItem`, `PyObject_Size/Length/LengthHint`, `PyObject_Hash*`, `PyObject_RichCompare*`, `PyObject_IsInstance/IsSubclass`, `PyObject_GetOptionalAttr`)
   - shared rich-compare slot fallback and compare-debug/type-name helpers used by remaining object C-API surfaces
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_buffer_api.rs`
-  - exported object buffer/memoryview C-API entrypoints (`PyObject_Check*Buffer`, `PyObject_As*Buffer`, `PyObject_GetBuffer`, `PyObject_CopyData`, `PyBuffer_*`, `PyMemoryView_*`)
+  - exported object buffer/memoryview/print C-API entrypoints (`PyObject_Check*Buffer`, `PyObject_As*Buffer`, `PyObject_GetBuffer`, `PyObject_CopyData`, `PyObject_Print`, `PyBuffer_*`, `PyMemoryView_*`)
   - shared contiguous-layout helpers and CPython buffer struct wiring for bytes/bytearray/memoryview interop
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_attr_api.rs`
   - exported `PyObject_*` attribute/introspection C-API entrypoints (`Get/Set/DelAttr*`, `Type`, `HasAttr*`, `GetOptionalAttrString`, generic attr/dict helpers)
@@ -230,5 +230,5 @@ This document defines the current structure and ownership boundaries for the VM 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
 - Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
-- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (object print/lifecycle and unicode) into focused `vm_extensions/*_api.rs` modules.
+- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (object lifecycle and unicode) into focused `vm_extensions/*_api.rs` modules.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.

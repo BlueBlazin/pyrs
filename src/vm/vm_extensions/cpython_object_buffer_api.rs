@@ -3,11 +3,11 @@ use std::ffi::{c_char, c_void};
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    CpythonBuffer, CpythonBufferInternal, ModuleCapiContext, Py_XIncRef, PyBuffer_Release,
-    PyErr_BadInternalCall, PyExc_BufferError, PyExc_TypeError, PyExc_ValueError, PyLong_AsLong,
-    PyrsObjectHandle, c_name_to_string, cpython_bytes_data_ptr, cpython_call_builtin,
-    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error, cpython_value_from_ptr,
-    with_active_cpython_context_mut,
+    CpythonBuffer, CpythonBufferInternal, ModuleCapiContext, Py_DecRef, Py_XIncRef,
+    PyBuffer_Release, PyErr_BadInternalCall, PyExc_BufferError, PyExc_TypeError, PyExc_ValueError,
+    PyLong_AsLong, PyObject_Str, PyrsObjectHandle, c_name_to_string, cpython_bytes_data_ptr,
+    cpython_call_builtin, cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
+    cpython_value_from_ptr, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -970,5 +970,25 @@ pub unsafe extern "C" fn PyBuffer_ToContiguous(
             cpython_buffer_add_one_index_c(&mut indices, &shape);
         }
     }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_Print(
+    object: *mut c_void,
+    _file: *mut c_void,
+    _flags: i32,
+) -> i32 {
+    let rendered = unsafe { PyObject_Str(object) };
+    if rendered.is_null() {
+        return -1;
+    }
+    let text = match cpython_value_from_ptr(rendered) {
+        Ok(Value::Str(text)) => text,
+        Ok(other) => format!("{other:?}"),
+        Err(_) => "<unprintable>".to_string(),
+    };
+    println!("{text}");
+    unsafe { Py_DecRef(rendered) };
     0
 }

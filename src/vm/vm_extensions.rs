@@ -200,7 +200,7 @@ use self::cpython_object_buffer_api::{
     PyMemoryView_FromBuffer, PyMemoryView_FromMemory, PyMemoryView_FromObject,
     PyMemoryView_GetContiguous, PyObject_AsCharBuffer, PyObject_AsFileDescriptor,
     PyObject_AsReadBuffer, PyObject_AsWriteBuffer, PyObject_CheckBuffer, PyObject_CheckReadBuffer,
-    PyObject_CopyData, PyObject_GetBuffer,
+    PyObject_CopyData, PyObject_GetBuffer, PyObject_Print,
 };
 use self::cpython_object_call_api::{
     PyAIter_Check, PyArg_UnpackTuple, PyCode_NewEmpty, PyMethod_New, PyObject_ASCII,
@@ -13130,26 +13130,6 @@ pub unsafe extern "C" fn PyCallIter_New(
     })
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyObject_Print(
-    object: *mut c_void,
-    _file: *mut c_void,
-    _flags: i32,
-) -> i32 {
-    let rendered = unsafe { PyObject_Str(object) };
-    if rendered.is_null() {
-        return -1;
-    }
-    let text = match cpython_value_from_ptr(rendered) {
-        Ok(Value::Str(text)) => text,
-        Ok(other) => format!("{other:?}"),
-        Err(_) => "<unprintable>".to_string(),
-    };
-    println!("{text}");
-    unsafe { Py_DecRef(rendered) };
-    0
-}
-
 fn cpython_invoke_method_from_values(
     context: &mut ModuleCapiContext,
     method_def: *mut CpythonMethodDef,
@@ -15777,7 +15757,6 @@ pub unsafe extern "C" fn PyType_GenericNew(
         unsafe { std::mem::transmute(alloc) };
     unsafe { alloc_fn(subtype, 0) }
 }
-
 
 fn cpython_is_runtime_weakref_ref(value: &Value) -> bool {
     let Value::BoundMethod(bound_obj) = value else {
