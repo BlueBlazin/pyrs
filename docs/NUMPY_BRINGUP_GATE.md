@@ -123,11 +123,11 @@ If a probed local module is not installed, its dependent cases are recorded as `
     - `format(np.float64(0.5)) -> "0.5"`
   - direct scientific-stack blockers are now deterministic runtime-semantics issues (no current SIGSEGV in the latest probe):
     - latest `scipy_import` fails in `_ccallback_c` init with `_cyutility.__Pyx__Import` capsule-signature mismatch (`expected ... got (null)`).
-    - latest `pandas_*` fails in NumPy random extension init with `builtins.complex size changed ... Expected 32 ... got 24`.
+    - latest `pandas_*` fails in NumPy random extension init with `module 'numpy.random.bit_generator' has no attribute 'BitGenerator'`.
     - latest `matplotlib_*` still fails on import-stage assertion paths.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
   - `scipy_import`: `FAIL` (`_cyutility.__Pyx__Import` capsule signature/name mismatch path).
-  - `pandas_import` / `pandas_series_sum`: `FAIL` (`complex` object-size ABI/layout mismatch in NumPy random extension path).
+  - `pandas_import` / `pandas_series_sum`: `FAIL` (`numpy.random.bit_generator` publication gap: missing `BitGenerator` on module init path).
   - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (import-stage assertion paths still open post-NumPy bootstrap).
 - `PyNumber_Long` reduction-path blocker is closed via:
   - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and

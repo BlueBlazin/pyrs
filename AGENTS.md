@@ -72,7 +72,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `PyType_Ready` method-table population now uses descriptor construction (`PyDescr_NewMethod` / `PyDescr_NewClassMethod`) instead of short-lived cfunction wrappers.
   - thread-state compat now initializes a CPython-style exception-stack chain at the offset used by `PyThreadState_GetUnchecked` Cython call-sites (`tstate + 0x78`), removing prior `_cyutility` crash paths.
   - extension loader now reconciles module-instance mismatch returns from `PyInit_*` by syncing module globals/registry instead of failing with `returned unexpected module instance`.
-  - current direct scientific-stack blockers are runtime-semantic: `_cyutility.__Pyx__Import` capsule-signature mismatch and `PyComplexObject` layout/size mismatch (`expected 32, got 24`) in NumPy random extension paths.
+  - current direct scientific-stack blockers are runtime-semantic: `_cyutility.__Pyx__Import` capsule-signature mismatch and missing `numpy.random.bit_generator.BitGenerator` publication on NumPy random module init paths.
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:

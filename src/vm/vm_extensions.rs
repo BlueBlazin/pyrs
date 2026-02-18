@@ -603,6 +603,12 @@ struct CpythonFloatCompatObject {
 }
 
 #[repr(C)]
+struct CpythonComplexCompatObject {
+    ob_base: CpythonObjectHead,
+    cval: CpythonComplexValue,
+}
+
+#[repr(C)]
 struct CpythonCapsuleCompatObject {
     ob_base: CpythonObjectHead,
     pointer: *mut c_void,
@@ -2077,6 +2083,8 @@ fn initialize_cpython_compat_type_objects() {
         PyBool_Type.tp_itemsize = 4;
         PyFloat_Type.tp_basicsize = 24;
         PyFloat_Type.tp_itemsize = 0;
+        PyComplex_Type.tp_basicsize = std::mem::size_of::<CpythonComplexCompatObject>() as isize;
+        PyComplex_Type.tp_itemsize = 0;
         PyBytes_Type.tp_basicsize = 33;
         PyBytes_Type.tp_itemsize = 1;
         PyUnicode_Type.tp_basicsize = 64;
@@ -3382,6 +3390,7 @@ impl ModuleCapiContext {
             bytes_payload,
             class_state,
             float_value,
+            complex_value,
         ) = match self.objects.get(&handle).map(|slot| {
             (
                 slot.refcount.max(1) as isize,
@@ -3431,12 +3440,27 @@ impl ModuleCapiContext {
                     Value::Float(value) => Some(*value),
                     _ => None,
                 },
+                match &slot.value {
+                    Value::Complex { real, imag } => Some(CpythonComplexValue {
+                        real: *real,
+                        imag: *imag,
+                    }),
+                    _ => None,
+                },
             )
         }) {
             Some(state) => state,
-            None if capsule_state.is_some() => {
-                (1, std::ptr::null_mut(), None, None, None, None, None, None)
-            }
+            None if capsule_state.is_some() => (
+                1,
+                std::ptr::null_mut(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
             None => {
                 self.set_error(format!("invalid object handle {handle}"));
                 return std::ptr::null_mut();
@@ -3466,6 +3490,25 @@ impl ModuleCapiContext {
                 });
             }
             raw_capsule.cast::<CpythonCompatObject>()
+        } else if let Some(value) = complex_value {
+            // SAFETY: allocate storage for CPython complex-compatible header.
+            let raw_complex = unsafe { malloc(std::mem::size_of::<CpythonComplexCompatObject>()) }
+                .cast::<CpythonComplexCompatObject>();
+            if raw_complex.is_null() {
+                self.set_error("out of memory allocating CPython complex compat object");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: initialize complex header and payload fields.
+            unsafe {
+                raw_complex.write(CpythonComplexCompatObject {
+                    ob_base: CpythonObjectHead {
+                        ob_refcnt: refcount,
+                        ob_type,
+                    },
+                    cval: value,
+                });
+            }
+            raw_complex.cast::<CpythonCompatObject>()
         } else if let Some(value) = float_value {
             // SAFETY: allocate storage for CPython float-compatible header.
             let raw_float = unsafe { malloc(std::mem::size_of::<CpythonFloatCompatObject>()) }
