@@ -65,6 +65,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_import_runtime.rs`
   - CPython import helper substrate (`cpython_import_add_module_by_name`, inittab registry/lookup, exec-code-in-module flow)
   - shared import-state wiring used by `PyImport_*` C-API entrypoints
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_import_api.rs`
+  - exported `PyImport_*` C-API entrypoints (magic, module import/add/get, inittab, frozen/import-exec, importer/reload)
+  - delegates shared state/update logic to import runtime + module-name helper substrates
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_module_name_runtime.rs`
   - CPython module-name/value conversion helpers for `PyImport_*` and `PyModule_*` paths
   - short type-name derivation + optional pointer-to-value conversion helpers
@@ -142,6 +145,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
 - New CPython module-def/state helper behavior: `vm_extensions/cpython_module_runtime.rs`.
 - New CPython import helper behavior: `vm_extensions/cpython_import_runtime.rs`.
+- New CPython import C-API entrypoint behavior: `vm_extensions/cpython_import_api.rs`.
 - New CPython module-name/value helper behavior: `vm_extensions/cpython_module_name_runtime.rs`.
 - New CPython exception-name helper behavior: `vm_extensions/cpython_exception_name_runtime.rs`.
 - New CPython active-context call helper behavior: `vm_extensions/cpython_call_runtime.rs`.
