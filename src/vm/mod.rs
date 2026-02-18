@@ -3490,49 +3490,50 @@ impl Vm {
                 if !visited.insert(class.id()) {
                     continue;
                 }
-                let needs_object_base = match &*class.kind() {
+                let (class_name, mut bases) = match &*class.kind() {
                     Object::Class(class_data) => {
-                        class_data.name != "object"
-                            && class_data.name != "type"
-                            && class_data.bases.is_empty()
+                        (class_data.name.clone(), class_data.bases.clone())
                     }
-                    _ => false,
+                    _ => continue,
                 };
-                if !needs_object_base {
-                    continue;
+                if class_name != "object" && class_name != "type" && bases.is_empty() {
+                    bases.push(object_class.clone());
                 }
-                let bases = vec![object_class.clone()];
                 let mro = self.build_class_mro(&class, &bases).unwrap_or_else(|_| {
                     let mut fallback = vec![class.clone()];
-                    fallback.push(object_class.clone());
+                    for base in &bases {
+                        if !fallback.iter().any(|entry| entry.id() == base.id()) {
+                            fallback.push(base.clone());
+                        }
+                    }
                     fallback
                 });
-                if let Object::Class(class_data) = &mut *class.kind_mut() {
-                    class_data.bases = bases.clone();
-                    class_data
-                        .attrs
-                        .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
-                    class_data
-                        .attrs
-                        .entry("__qualname__".to_string())
-                        .or_insert_with(|| Value::Str(class_data.name.clone()));
-                    class_data
-                        .attrs
-                        .entry("__module__".to_string())
-                        .or_insert(Value::Str(module_name.clone()));
-                    class_data.attrs.insert(
-                        "__bases__".to_string(),
-                        self.heap.alloc_tuple(
-                            bases.iter().cloned().map(Value::Class).collect::<Vec<_>>(),
-                        ),
-                    );
-                    class_data.mro = mro.clone();
-                    class_data.attrs.insert(
-                        "__mro__".to_string(),
-                        self.heap
-                            .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
-                    );
-                }
+                let Object::Class(class_data) = &mut *class.kind_mut() else {
+                    continue;
+                };
+                class_data.bases = bases.clone();
+                class_data
+                    .attrs
+                    .insert("__name__".to_string(), Value::Str(class_data.name.clone()));
+                class_data
+                    .attrs
+                    .entry("__qualname__".to_string())
+                    .or_insert_with(|| Value::Str(class_data.name.clone()));
+                class_data
+                    .attrs
+                    .entry("__module__".to_string())
+                    .or_insert(Value::Str(module_name.clone()));
+                class_data.attrs.insert(
+                    "__bases__".to_string(),
+                    self.heap
+                        .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>()),
+                );
+                class_data.mro = mro.clone();
+                class_data.attrs.insert(
+                    "__mro__".to_string(),
+                    self.heap
+                        .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+                );
             }
         }
     }

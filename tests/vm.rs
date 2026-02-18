@@ -297,11 +297,13 @@ fn xml_elementtree_fromstring_smoke_uses_native_pyexpat() {
     let source = format!(
         "import sys\nsys.path = [{lib_path:?}]\nimport pyexpat\nimport xml.etree.ElementTree as ET\nroot = ET.fromstring('<a><b/></a>')\nmod_file = getattr(pyexpat, '__file__', None)\nok = (root.tag == 'a' and root[0].tag == 'b' and mod_file is None)\n"
     );
-    let module = parser::parse_module(&source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack("vm-xml-etree-fromstring", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -861,14 +863,8 @@ fn executes_module_annotations() {
     assert_eq!(
         dict_entries(vm.get_global("__annotations__")),
         Some(vec![
-            (
-                Value::Str("x".to_string()),
-                Value::Builtin(BuiltinFunction::Int)
-            ),
-            (
-                Value::Str("y".to_string()),
-                Value::Builtin(BuiltinFunction::Str)
-            ),
+            (Value::Str("x".to_string()), Value::Str("int".to_string())),
+            (Value::Str("y".to_string()), Value::Str("str".to_string())),
         ])
     );
 }
@@ -1196,17 +1192,11 @@ fn executes_function_annotations() {
     assert_eq!(
         dict_entries(vm.get_global("ann")),
         Some(vec![
-            (
-                Value::Str("x".to_string()),
-                Value::Builtin(BuiltinFunction::Int)
-            ),
-            (
-                Value::Str("y".to_string()),
-                Value::Builtin(BuiltinFunction::Str)
-            ),
+            (Value::Str("x".to_string()), Value::Str("int".to_string())),
+            (Value::Str("y".to_string()), Value::Str("str".to_string())),
             (
                 Value::Str("return".to_string()),
-                Value::Builtin(BuiltinFunction::Int)
+                Value::Str("int".to_string()),
             ),
         ])
     );
@@ -1214,7 +1204,7 @@ fn executes_function_annotations() {
         dict_entries(vm.get_global("out")),
         Some(vec![(
             Value::Str("z".to_string()),
-            Value::Builtin(BuiltinFunction::Int)
+            Value::Str("int".to_string())
         )])
     );
 }
@@ -3907,13 +3897,16 @@ data = pickletools.optimize(pickle.dumps(bytearray(b"xyz"), 0))
 loaded = pickle.loads(data)
 ok = (loaded == bytearray(b"xyz"))
 ok = ok and (b"bytearray" in data)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-pickle-bytearray-proto0", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -4665,13 +4658,16 @@ for pos in frame_positions:
     last = pos + 9
 out += pickled[last:]
 ok = (pickle.loads(out) == obj)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-pickle-bytearray-proto5-frameless", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -8812,13 +8808,16 @@ fn dataclass_decorator_accepts_keyword_only_form() {
 class Point:
     x: int
 ok = Point.__name__ == 'Point'
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-dataclass-keyword-only", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -8839,13 +8838,16 @@ ok = (\n\
     cjson.scanner.make_scanner.__module__ == '_json' and\n\
     py_scanner_mod in ('json.scanner', '_json')\n\
 )\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code =
-        compiler::compile_module_with_filename(&module, "<import_fresh_json>").expect("compile");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    let source = source.to_string();
+    run_with_large_stack("vm-import-fresh-json", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module_with_filename(&module, "<import_fresh_json>")
+            .expect("compile");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -12749,13 +12751,16 @@ ok = (dataclasses.is_dataclass(C)
       and as_tuple == (10, 20)
       and repl.y == 99
       and dataclasses.is_dataclass(made))
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-dataclasses-core-helpers", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -13777,13 +13782,16 @@ fn fractions_support_int_plus_fraction_via_radd() {
 x = 0 + Fraction(1, 2)
 y = Fraction(1, 3) + 0
 ok = (x.numerator == 1 and x.denominator == 2 and y.numerator == 1 and y.denominator == 3)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-fractions-int-radd", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -13794,13 +13802,16 @@ fn float_builtin_uses_fraction_dunder_float() {
     let source = r#"from fractions import Fraction
 value = float(Fraction(1, 2))
 ok = (value == 0.5)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-float-fraction-dunder-float", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -13942,13 +13953,16 @@ fn urllib_urlparse_common_path_smoke() {
     let source = r#"from urllib.parse import urlparse
 parsed = urlparse("https://example.com/x")
 ok = (parsed.scheme == "https" and parsed.netloc == "example.com" and parsed.path == "/x")
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-urllib-urlparse-common-path", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -13962,13 +13976,16 @@ class X:
     a: int
 x = X(1)
 ok = (x.a == 1 and hasattr(X, "__dataclass_fields__"))
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-dataclass-stdlib-decorator", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -14147,13 +14164,16 @@ fn ftplib_import_chain_works_with_ssl_baseline() {
     };
     let source = r#"import ftplib
 ok = (ftplib.FTP is not None)
-"#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+"#
+    .to_string();
+    run_with_large_stack("vm-ftplib-import-chain", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
