@@ -31,6 +31,12 @@ const CPY_PROXY_CLASS_NAME: &str = "__pyrs_cpython_proxy__";
 const CPY_PROXY_PTR_ATTR: &str = "__pyrs_cpython_proxy_ptr__";
 const CPY_PROXY_MARKER_ATTR: &str = "__pyrs_cpython_proxy_marker__";
 const CPY_EXCEPTION_TYPE_PTR_ATTR: &str = "__pyrs_cpython_exception_type_ptr__";
+const CPY_RICHCMP_LT: i32 = 0;
+const CPY_RICHCMP_LE: i32 = 1;
+const CPY_RICHCMP_EQ: i32 = 2;
+const CPY_RICHCMP_NE: i32 = 3;
+const CPY_RICHCMP_GT: i32 = 4;
+const CPY_RICHCMP_GE: i32 = 5;
 static TRACE_NUMPY_TYPEDICT_PTR: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     static CPYTHON_DESCRIPTOR_REGISTRY: RefCell<HashMap<usize, CpythonDescriptorKind>> =
@@ -147,6 +153,7 @@ use self::cpython_descriptor_method_api::{
     PyDescr_NewMember, PyDescr_NewMethod, PyMember_GetOne, PyMember_SetOne, PySlice_AdjustIndices,
     PySlice_GetIndices, PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack, PyWrapper_New,
     cpython_cfunction_tp_call, cpython_cfunction_tp_getattro, cpython_invoke_method_from_values,
+    cpython_method_descriptor_tp_call,
 };
 use self::cpython_dict_api::{
     _PyDict_GetItem_KnownHash, _PyDict_NewPresized, _PyDict_Pop, PyDict_Clear, PyDict_Contains,
@@ -699,6 +706,77 @@ struct CpythonMethodDef {
     ml_meth: Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void>,
     ml_flags: i32,
     ml_doc: *const c_char,
+}
+
+const CPY_SLOT_LT_NAME: &[u8] = b"__lt__\0";
+const CPY_SLOT_LE_NAME: &[u8] = b"__le__\0";
+const CPY_SLOT_EQ_NAME: &[u8] = b"__eq__\0";
+const CPY_SLOT_NE_NAME: &[u8] = b"__ne__\0";
+const CPY_SLOT_GT_NAME: &[u8] = b"__gt__\0";
+const CPY_SLOT_GE_NAME: &[u8] = b"__ge__\0";
+
+static mut CPY_SLOT_LT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_LT_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_lt),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_LE_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_LE_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_le),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_EQ_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_EQ_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_eq),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_NE_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_NE_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_ne),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_GT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_GT_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_gt),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_GE_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_GE_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_ge),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+
+#[repr(C)]
+struct CpythonDescrCompatObject {
+    ob_base: CpythonObjectHead,
+    d_type: *mut CpythonTypeObject,
+    d_name: *mut c_void,
+    d_qualname: *mut c_void,
+}
+
+#[repr(C)]
+struct CpythonMethodDescrCompatObject {
+    d_common: CpythonDescrCompatObject,
+    d_method: *mut CpythonMethodDef,
+    vectorcall: *mut c_void,
+}
+
+#[repr(C)]
+struct CpythonMemberDescrCompatObject {
+    d_common: CpythonDescrCompatObject,
+    d_member: *mut CpythonMemberDef,
+}
+
+#[repr(C)]
+struct CpythonGetSetDescrCompatObject {
+    d_common: CpythonDescrCompatObject,
+    d_getset: *mut CpythonGetSetDef,
 }
 
 #[repr(C)]
@@ -1254,6 +1332,98 @@ unsafe extern "C" fn cpython_object_tp_str(object: *mut c_void) -> *mut c_void {
     unsafe { cpython_object_tp_repr(object) }
 }
 
+fn cpython_slot_richcompare_method_def(attr_name: &str) -> Option<*mut CpythonMethodDef> {
+    match attr_name {
+        "__lt__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_LT_METHOD_DEF)),
+        "__le__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_LE_METHOD_DEF)),
+        "__eq__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_EQ_METHOD_DEF)),
+        "__ne__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_NE_METHOD_DEF)),
+        "__gt__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_GT_METHOD_DEF)),
+        "__ge__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_GE_METHOD_DEF)),
+        _ => None,
+    }
+}
+
+unsafe fn cpython_slot_richcompare_dunder_call(
+    args: *mut c_void,
+    op: i32,
+    opname: &str,
+) -> *mut c_void {
+    if args.is_null() {
+        cpython_set_error(format!(
+            "TypeError: descriptor '{opname}' requires an argument tuple"
+        ));
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `args` is expected to be a tuple pointer for METH_VARARGS call flow.
+    let argc = unsafe { PyTuple_Size(args) };
+    if argc < 0 {
+        return std::ptr::null_mut();
+    }
+    if argc != 2 {
+        cpython_set_error(format!(
+            "TypeError: descriptor '{opname}' expected 2 arguments, got {argc}"
+        ));
+        return std::ptr::null_mut();
+    }
+    // SAFETY: arg tuple size validated above.
+    let left = unsafe { PyTuple_GetItem(args, 0) };
+    // SAFETY: arg tuple size validated above.
+    let right = unsafe { PyTuple_GetItem(args, 1) };
+    if left.is_null() || right.is_null() {
+        return std::ptr::null_mut();
+    }
+    if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
+        return result;
+    }
+    let not_implemented = std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>();
+    // SAFETY: singleton is process-lifetime stable.
+    unsafe { Py_IncRef(not_implemented) };
+    not_implemented
+}
+
+unsafe extern "C" fn cpython_slot_dunder_lt(
+    _self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_LT, "__lt__") }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_le(
+    _self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_LE, "__le__") }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_eq(
+    _self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_EQ, "__eq__") }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_ne(
+    _self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_NE, "__ne__") }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_gt(
+    _self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_GT, "__gt__") }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_ge(
+    _self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_GE, "__ge__") }
+}
+
 unsafe extern "C" fn cpython_float_tp_new(
     subtype: *mut c_void,
     args: *mut c_void,
@@ -1414,6 +1584,8 @@ fn initialize_cpython_compat_type_objects() {
         PyBaseObject_Type.tp_str = cpython_object_tp_str as *mut c_void;
         PyCFunction_Type.tp_call = cpython_cfunction_tp_call as *mut c_void;
         PyCFunction_Type.tp_getattro = cpython_cfunction_tp_getattro as *mut c_void;
+        PyMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
+        PyClassMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
         PyFloat_Type.tp_new = cpython_float_tp_new as *mut c_void;
         PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
 
@@ -3963,34 +4135,141 @@ impl ModuleCapiContext {
             self.set_error("descriptor allocation missing descriptor type");
             return std::ptr::null_mut();
         }
-        // SAFETY: allocates C-compatible storage for descriptor object payload.
-        let raw = unsafe { malloc(std::mem::size_of::<CpythonCompatObject>()) }
-            .cast::<CpythonCompatObject>();
-        if raw.is_null() {
-            self.set_error("out of memory allocating CPython descriptor object");
-            return std::ptr::null_mut();
-        }
-        // SAFETY: raw points to writable CpythonCompatObject storage.
-        unsafe {
-            raw.write(CpythonCompatObject {
-                ob_base: CpythonVarObjectHead {
-                    ob_base: CpythonObjectHead {
-                        ob_refcnt: 1,
-                        ob_type: descriptor_type.cast(),
-                    },
-                    ob_size: 0,
-                },
-            });
-        }
-        let ptr = raw.cast::<c_void>();
-        self.cpython_allocations.push(raw);
-        self.cpython_owned_ptrs.insert(ptr as usize);
+        let (owner_type, name_ptr) = match descriptor_kind {
+            CpythonDescriptorKind::Method {
+                owner_type,
+                method_def,
+                ..
+            } => {
+                let method_name = if method_def.is_null() {
+                    std::ptr::null()
+                } else {
+                    // SAFETY: method metadata pointer is extension-owned.
+                    unsafe { (*method_def).ml_name }
+                };
+                (owner_type, method_name)
+            }
+            CpythonDescriptorKind::GetSet { owner_type, getset } => {
+                let getset_name = if getset.is_null() {
+                    std::ptr::null()
+                } else {
+                    // SAFETY: getset metadata pointer is extension-owned.
+                    unsafe { (*getset).name }
+                };
+                (owner_type, getset_name)
+            }
+            CpythonDescriptorKind::Member { owner_type, member } => {
+                let member_name = if member.is_null() {
+                    std::ptr::null()
+                } else {
+                    // SAFETY: member metadata pointer is extension-owned.
+                    unsafe { (*member).name }
+                };
+                (owner_type, member_name)
+            }
+        };
+        let name_object_ptr = if name_ptr.is_null() {
+            std::ptr::null_mut()
+        } else {
+            let name_value = unsafe { c_name_to_string(name_ptr) }
+                .ok()
+                .map(Value::Str)
+                .unwrap_or(Value::None);
+            self.alloc_cpython_ptr_for_value(name_value)
+        };
+        let descriptor_ptr = match descriptor_kind {
+            CpythonDescriptorKind::Method { method_def, .. } => {
+                // SAFETY: allocates C-compatible storage for method-descriptor payload.
+                let raw = unsafe { malloc(std::mem::size_of::<CpythonMethodDescrCompatObject>()) }
+                    .cast::<CpythonMethodDescrCompatObject>();
+                if raw.is_null() {
+                    self.set_error("out of memory allocating CPython method descriptor");
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: raw points to writable method-descriptor storage.
+                unsafe {
+                    raw.write(CpythonMethodDescrCompatObject {
+                        d_common: CpythonDescrCompatObject {
+                            ob_base: CpythonObjectHead {
+                                ob_refcnt: 1,
+                                ob_type: descriptor_type.cast(),
+                            },
+                            d_type: owner_type,
+                            d_name: name_object_ptr,
+                            d_qualname: std::ptr::null_mut(),
+                        },
+                        d_method: method_def,
+                        vectorcall: std::ptr::null_mut(),
+                    });
+                }
+                let raw_object = raw.cast::<CpythonCompatObject>();
+                self.cpython_allocations.push(raw_object);
+                raw.cast::<c_void>()
+            }
+            CpythonDescriptorKind::GetSet { getset, .. } => {
+                // SAFETY: allocates C-compatible storage for getset-descriptor payload.
+                let raw = unsafe { malloc(std::mem::size_of::<CpythonGetSetDescrCompatObject>()) }
+                    .cast::<CpythonGetSetDescrCompatObject>();
+                if raw.is_null() {
+                    self.set_error("out of memory allocating CPython getset descriptor");
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: raw points to writable getset-descriptor storage.
+                unsafe {
+                    raw.write(CpythonGetSetDescrCompatObject {
+                        d_common: CpythonDescrCompatObject {
+                            ob_base: CpythonObjectHead {
+                                ob_refcnt: 1,
+                                ob_type: descriptor_type.cast(),
+                            },
+                            d_type: owner_type,
+                            d_name: name_object_ptr,
+                            d_qualname: std::ptr::null_mut(),
+                        },
+                        d_getset: getset,
+                    });
+                }
+                let raw_object = raw.cast::<CpythonCompatObject>();
+                self.cpython_allocations.push(raw_object);
+                raw.cast::<c_void>()
+            }
+            CpythonDescriptorKind::Member { member, .. } => {
+                // SAFETY: allocates C-compatible storage for member-descriptor payload.
+                let raw = unsafe { malloc(std::mem::size_of::<CpythonMemberDescrCompatObject>()) }
+                    .cast::<CpythonMemberDescrCompatObject>();
+                if raw.is_null() {
+                    self.set_error("out of memory allocating CPython member descriptor");
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: raw points to writable member-descriptor storage.
+                unsafe {
+                    raw.write(CpythonMemberDescrCompatObject {
+                        d_common: CpythonDescrCompatObject {
+                            ob_base: CpythonObjectHead {
+                                ob_refcnt: 1,
+                                ob_type: descriptor_type.cast(),
+                            },
+                            d_type: owner_type,
+                            d_name: name_object_ptr,
+                            d_qualname: std::ptr::null_mut(),
+                        },
+                        d_member: member,
+                    });
+                }
+                let raw_object = raw.cast::<CpythonCompatObject>();
+                self.cpython_allocations.push(raw_object);
+                raw.cast::<c_void>()
+            }
+        };
+        self.cpython_owned_ptrs.insert(descriptor_ptr as usize);
         self.cpython_descriptors
-            .insert(ptr as usize, descriptor_kind);
+            .insert(descriptor_ptr as usize, descriptor_kind);
         CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| {
-            registry.borrow_mut().insert(ptr as usize, descriptor_kind);
+            registry
+                .borrow_mut()
+                .insert(descriptor_ptr as usize, descriptor_kind);
         });
-        ptr
+        descriptor_ptr
     }
 
     fn resolve_descriptor_attr_ptr(
@@ -4269,7 +4548,31 @@ impl ModuleCapiContext {
                 .unwrap_or(std::ptr::null_mut())
         };
         let expected_type = std::ptr::addr_of_mut!(PyType_Type).cast();
-        let is_type_object = object_type == expected_type;
+        let is_type_object = if object_type.is_null() {
+            false
+        } else if object_type == expected_type {
+            true
+        } else {
+            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            let type_align = std::mem::align_of::<CpythonTypeObject>();
+            let object_type_addr = object_type as usize;
+            if object_type_addr < MIN_VALID_PTR || (object_type_addr % type_align) != 0 {
+                false
+            } else {
+                let metatype = object_type.cast::<CpythonTypeObject>();
+                // SAFETY: `metatype` pointer shape is validated above.
+                let metatype_flags = unsafe { (*metatype).tp_flags };
+                if (metatype_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0 {
+                    true
+                } else {
+                    // SAFETY: subtype check has additional defensive guards in implementation.
+                    unsafe {
+                        PyType_IsSubtype(object_type.cast::<c_void>(), expected_type.cast::<c_void>())
+                            != 0
+                    }
+                }
+            }
+        };
         let trace_type_attr =
             attr_name == "type" && std::env::var_os("PYRS_TRACE_PROXY_TYPE_ATTR").is_some();
         let trace_lookup_branch = std::env::var_os("PYRS_TRACE_PROXY_LOOKUP_BRANCH").is_some();
@@ -4321,9 +4624,11 @@ impl ModuleCapiContext {
                         (*current).tp_getset,
                     )
                 };
+                // SAFETY: current points to a type object header.
+                let members_ptr = unsafe { (*current).tp_members };
                 eprintln!(
-                    "[cpy-proxy-attr] scan type={:p} name={} dict={:p} methods={:p} getset={:p} base={:p}",
-                    current, type_name, dict_ptr, methods_ptr, getset_ptr, base_ptr
+                    "[cpy-proxy-attr] scan type={:p} name={} dict={:p} methods={:p} getset={:p} members={:p} base={:p}",
+                    current, type_name, dict_ptr, methods_ptr, getset_ptr, members_ptr, base_ptr
                 );
             }
             if is_proxy_trace {
@@ -4451,155 +4756,276 @@ impl ModuleCapiContext {
                     current, dict_ptr
                 );
             }
-            // SAFETY: current points to a PyTypeObject-compatible header.
-            let methods_ptr = unsafe { (*current).tp_methods }.cast::<CpythonMethodDef>();
-            if !methods_ptr.is_null() {
-                let mut method = methods_ptr;
-                let mut traced_methods = 0usize;
-                loop {
-                    // SAFETY: methods table is terminated by null `ml_name`.
-                    let method_name_ptr = unsafe { (*method).ml_name };
-                    if method_name_ptr.is_null() {
-                        break;
-                    }
-                    // SAFETY: `ml_name` is NUL-terminated as part of CPython method-table ABI.
-                    let method_name = unsafe { CStr::from_ptr(method_name_ptr) }
-                        .to_str()
-                        .ok()
-                        .unwrap_or("");
-                    if trace_type_attr && traced_methods < 8 {
-                        eprintln!(
-                            "[cpy-proxy-attr] method candidate current={:p} name={}",
-                            current, method_name
-                        );
-                        traced_methods += 1;
-                    }
-                    if method_name == attr_name {
-                        let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
-                            method,
-                            object,
-                            std::ptr::null_mut(),
-                            current.cast::<c_void>(),
-                        );
-                        if is_proxy_trace {
-                            eprintln!(
-                                "[cpy-proxy] tp_methods lookup hit current={:p} method={} callable_ptr={:p}",
-                                current, attr_name, callable_ptr
-                            );
+            if !is_type_object {
+                // SAFETY: current points to a PyTypeObject-compatible header.
+                let methods_ptr = unsafe { (*current).tp_methods }.cast::<CpythonMethodDef>();
+                if !methods_ptr.is_null() {
+                    let mut method = methods_ptr;
+                    let mut traced_methods = 0usize;
+                    loop {
+                        // SAFETY: methods table is terminated by null `ml_name`.
+                        let method_name_ptr = unsafe { (*method).ml_name };
+                        if method_name_ptr.is_null() {
+                            break;
                         }
-                        if trace_lookup_branch {
+                        // SAFETY: `ml_name` is NUL-terminated as part of CPython method-table ABI.
+                        let method_name = unsafe { CStr::from_ptr(method_name_ptr) }
+                            .to_str()
+                            .ok()
+                            .unwrap_or("");
+                        if trace_type_attr && traced_methods < 8 {
                             eprintln!(
-                                "[proxy-lookup-branch] attr={} branch=tp_methods object={:p} current={:p} value_ptr={:p}",
-                                attr_name, object, current, callable_ptr
+                                "[cpy-proxy-attr] method candidate current={:p} name={}",
+                                current, method_name
                             );
+                            traced_methods += 1;
                         }
-                        return Some(callable_ptr);
+                        if method_name == attr_name {
+                            let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                                method,
+                                object,
+                                std::ptr::null_mut(),
+                                current.cast::<c_void>(),
+                            );
+                            if is_proxy_trace {
+                                eprintln!(
+                                    "[cpy-proxy] tp_methods lookup hit current={:p} method={} callable_ptr={:p}",
+                                    current, attr_name, callable_ptr
+                                );
+                            }
+                            if trace_lookup_branch {
+                                eprintln!(
+                                    "[proxy-lookup-branch] attr={} branch=tp_methods object={:p} current={:p} value_ptr={:p}",
+                                    attr_name, object, current, callable_ptr
+                                );
+                            }
+                            return Some(callable_ptr);
+                        }
+                        // SAFETY: method table entries are contiguous.
+                        method = unsafe { method.add(1) };
                     }
-                    // SAFETY: method table entries are contiguous.
-                    method = unsafe { method.add(1) };
                 }
-            }
-            // SAFETY: current points to a PyTypeObject-compatible header.
-            let getset_ptr = unsafe { (*current).tp_getset }.cast::<CpythonGetSetDef>();
-            if !getset_ptr.is_null() {
-                let mut getset = getset_ptr;
-                let mut traced_getsets = 0usize;
-                loop {
-                    // SAFETY: getset table is terminated by null `name`.
-                    let getset_name_ptr = unsafe { (*getset).name };
-                    if getset_name_ptr.is_null() {
-                        break;
-                    }
-                    // SAFETY: `name` is NUL-terminated as part of CPython getset ABI.
-                    let getset_name = unsafe { CStr::from_ptr(getset_name_ptr) }
-                        .to_str()
-                        .ok()
-                        .unwrap_or("");
-                    if trace_type_attr && traced_getsets < 12 {
-                        eprintln!(
-                            "[cpy-proxy-attr] getset candidate current={:p} name={}",
-                            current, getset_name
-                        );
-                        traced_getsets += 1;
-                    }
-                    if getset_name == attr_name {
-                        // SAFETY: getset entry layout follows CPython ABI.
-                        let getter = unsafe { (*getset).get };
-                        if !getter.is_null() {
-                            let get: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-                                // SAFETY: getter pointer follows CPython getset ABI.
-                                unsafe { std::mem::transmute(getter) };
-                            // SAFETY: closure value is provided by extension type definition.
-                            let closure = unsafe { (*getset).closure };
-                            let value_ptr = unsafe { get(object, closure) };
-                            if !value_ptr.is_null() {
-                                if is_proxy_trace {
-                                    eprintln!(
-                                        "[cpy-proxy] tp_getset lookup hit current={:p} name={} value_ptr={:p}",
-                                        current, attr_name, value_ptr
-                                    );
+                // SAFETY: current points to a PyTypeObject-compatible header.
+                let getset_ptr = unsafe { (*current).tp_getset }.cast::<CpythonGetSetDef>();
+                if !getset_ptr.is_null() {
+                    let mut getset = getset_ptr;
+                    let mut traced_getsets = 0usize;
+                    loop {
+                        // SAFETY: getset table is terminated by null `name`.
+                        let getset_name_ptr = unsafe { (*getset).name };
+                        if getset_name_ptr.is_null() {
+                            break;
+                        }
+                        // SAFETY: `name` is NUL-terminated as part of CPython getset ABI.
+                        let getset_name = unsafe { CStr::from_ptr(getset_name_ptr) }
+                            .to_str()
+                            .ok()
+                            .unwrap_or("");
+                        if trace_type_attr && traced_getsets < 12 {
+                            eprintln!(
+                                "[cpy-proxy-attr] getset candidate current={:p} name={}",
+                                current, getset_name
+                            );
+                            traced_getsets += 1;
+                        }
+                        if getset_name == attr_name {
+                            // SAFETY: getset entry layout follows CPython ABI.
+                            let getter = unsafe { (*getset).get };
+                            if !getter.is_null() {
+                                let get: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                                    // SAFETY: getter pointer follows CPython getset ABI.
+                                    unsafe { std::mem::transmute(getter) };
+                                // SAFETY: closure value is provided by extension type definition.
+                                let closure = unsafe { (*getset).closure };
+                                let value_ptr = unsafe { get(object, closure) };
+                                if !value_ptr.is_null() {
+                                    if is_proxy_trace {
+                                        eprintln!(
+                                            "[cpy-proxy] tp_getset lookup hit current={:p} name={} value_ptr={:p}",
+                                            current, attr_name, value_ptr
+                                        );
+                                    }
+                                    if trace_lookup_branch {
+                                        eprintln!(
+                                            "[proxy-lookup-branch] attr={} branch=tp_getset object={:p} current={:p} value_ptr={:p}",
+                                            attr_name, object, current, value_ptr
+                                        );
+                                    }
+                                    return Some(value_ptr);
                                 }
+                            }
+                        }
+                        // SAFETY: getset table entries are contiguous.
+                        getset = unsafe { getset.add(1) };
+                    }
+                }
+                // SAFETY: current points to a PyTypeObject-compatible header.
+                let (members_ptr, current_basicsize) = unsafe {
+                    (
+                        (*current).tp_members.cast::<CpythonMemberDef>(),
+                        (*current).tp_basicsize,
+                    )
+                };
+                if !members_ptr.is_null() {
+                    let mut member = members_ptr;
+                    let mut traced_members = 0usize;
+                    loop {
+                        // SAFETY: member table is terminated by null `name`.
+                        let member_name_ptr = unsafe { (*member).name };
+                        if member_name_ptr.is_null() {
+                            break;
+                        }
+                        // SAFETY: member name is NUL-terminated as part of CPython member ABI.
+                        let member_name = unsafe { CStr::from_ptr(member_name_ptr) }
+                            .to_str()
+                            .ok()
+                            .unwrap_or("");
+                        if trace_type_attr && traced_members < 12 {
+                            eprintln!(
+                                "[cpy-proxy-attr] member candidate current={:p} name={} kind={}",
+                                current,
+                                member_name,
+                                unsafe { (*member).member_type }
+                            );
+                            traced_members += 1;
+                        }
+                        if member_name == attr_name {
+                            // SAFETY: `member` points to a valid descriptor for `current`.
+                            let member_ref = unsafe { &*member };
+                            if let Some(value_ptr) =
+                                self.load_member_attr_ptr(object, member_ref, current_basicsize)
+                            {
                                 if trace_lookup_branch {
                                     eprintln!(
-                                        "[proxy-lookup-branch] attr={} branch=tp_getset object={:p} current={:p} value_ptr={:p}",
+                                        "[proxy-lookup-branch] attr={} branch=tp_members object={:p} current={:p} value_ptr={:p}",
                                         attr_name, object, current, value_ptr
                                     );
                                 }
                                 return Some(value_ptr);
                             }
                         }
+                        // SAFETY: member table entries are contiguous.
+                        member = unsafe { member.add(1) };
                     }
-                    // SAFETY: getset table entries are contiguous.
-                    getset = unsafe { getset.add(1) };
                 }
             }
-            // SAFETY: current points to a PyTypeObject-compatible header.
-            let (members_ptr, current_basicsize) = unsafe {
-                (
-                    (*current).tp_members.cast::<CpythonMemberDef>(),
-                    (*current).tp_basicsize,
-                )
-            };
-            if !members_ptr.is_null() {
-                let mut member = members_ptr;
-                let mut traced_members = 0usize;
-                loop {
-                    // SAFETY: member table is terminated by null `name`.
-                    let member_name_ptr = unsafe { (*member).name };
-                    if member_name_ptr.is_null() {
-                        break;
-                    }
-                    // SAFETY: member name is NUL-terminated as part of CPython member ABI.
-                    let member_name = unsafe { CStr::from_ptr(member_name_ptr) }
-                        .to_str()
-                        .ok()
-                        .unwrap_or("");
-                    if trace_type_attr && traced_members < 12 {
-                        eprintln!(
-                            "[cpy-proxy-attr] member candidate current={:p} name={} kind={}",
-                            current,
-                            member_name,
-                            unsafe { (*member).member_type }
-                        );
-                        traced_members += 1;
-                    }
-                    if member_name == attr_name {
-                        // SAFETY: `member` points to a valid descriptor for `current`.
-                        let member_ref = unsafe { &*member };
-                        if let Some(value_ptr) =
-                            self.load_member_attr_ptr(object, member_ref, current_basicsize)
-                        {
-                            if trace_lookup_branch {
-                                eprintln!(
-                                    "[proxy-lookup-branch] attr={} branch=tp_members object={:p} current={:p} value_ptr={:p}",
-                                    attr_name, object, current, value_ptr
-                                );
-                            }
-                            return Some(value_ptr);
+            if is_type_object {
+                // For class-level attribute lookup, materialize descriptor
+                // objects instead of invoking instance getters/setters.
+                let methods_ptr = unsafe { (*current).tp_methods }.cast::<CpythonMethodDef>();
+                if !methods_ptr.is_null() {
+                    let mut method = methods_ptr;
+                    loop {
+                        let method_name_ptr = unsafe { (*method).ml_name };
+                        if method_name_ptr.is_null() {
+                            break;
                         }
+                        let method_name = unsafe { CStr::from_ptr(method_name_ptr) }
+                            .to_str()
+                            .ok()
+                            .unwrap_or("");
+                        if method_name == attr_name {
+                            let descriptor = unsafe {
+                                PyDescr_NewMethod(
+                                    current.cast::<c_void>(),
+                                    method.cast::<c_void>(),
+                                )
+                            };
+                            if !descriptor.is_null() {
+                                if trace_lookup_branch {
+                                    eprintln!(
+                                        "[proxy-lookup-branch] attr={} branch=tp_methods_descriptor object={:p} current={:p} value_ptr={:p}",
+                                        attr_name, object, current, descriptor
+                                    );
+                                }
+                                return Some(descriptor);
+                            }
+                        }
+                        method = unsafe { method.add(1) };
                     }
-                    // SAFETY: member table entries are contiguous.
-                    member = unsafe { member.add(1) };
+                }
+                let getset_ptr = unsafe { (*current).tp_getset }.cast::<CpythonGetSetDef>();
+                if !getset_ptr.is_null() {
+                    let mut getset = getset_ptr;
+                    loop {
+                        let getset_name_ptr = unsafe { (*getset).name };
+                        if getset_name_ptr.is_null() {
+                            break;
+                        }
+                        let getset_name = unsafe { CStr::from_ptr(getset_name_ptr) }
+                            .to_str()
+                            .ok()
+                            .unwrap_or("");
+                        if getset_name == attr_name {
+                            let descriptor = unsafe {
+                                PyDescr_NewGetSet(
+                                    current.cast::<c_void>(),
+                                    getset.cast::<c_void>(),
+                                )
+                            };
+                            if !descriptor.is_null() {
+                                if trace_lookup_branch {
+                                    eprintln!(
+                                        "[proxy-lookup-branch] attr={} branch=tp_getset_descriptor object={:p} current={:p} value_ptr={:p}",
+                                        attr_name, object, current, descriptor
+                                    );
+                                }
+                                return Some(descriptor);
+                            }
+                        }
+                        getset = unsafe { getset.add(1) };
+                    }
+                }
+                let members_ptr = unsafe { (*current).tp_members }.cast::<CpythonMemberDef>();
+                if !members_ptr.is_null() {
+                    let mut member = members_ptr;
+                    loop {
+                        let member_name_ptr = unsafe { (*member).name };
+                        if member_name_ptr.is_null() {
+                            break;
+                        }
+                        let member_name = unsafe { CStr::from_ptr(member_name_ptr) }
+                            .to_str()
+                            .ok()
+                            .unwrap_or("");
+                        if member_name == attr_name {
+                            let descriptor = unsafe {
+                                PyDescr_NewMember(
+                                    current.cast::<c_void>(),
+                                    member.cast::<c_void>(),
+                                )
+                            };
+                            if !descriptor.is_null() {
+                                if trace_lookup_branch {
+                                    eprintln!(
+                                        "[proxy-lookup-branch] attr={} branch=tp_members_descriptor object={:p} current={:p} value_ptr={:p}",
+                                        attr_name, object, current, descriptor
+                                    );
+                                }
+                                return Some(descriptor);
+                            }
+                        }
+                        member = unsafe { member.add(1) };
+                    }
+                }
+                if let Some(method_def) = cpython_slot_richcompare_method_def(attr_name)
+                    && unsafe { !(*current).tp_richcompare.is_null() }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        object,
+                        std::ptr::null_mut(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch=tp_richcompare_slot_wrapper object={:p} current={:p} value_ptr={:p}",
+                                attr_name, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
                 }
             }
             // SAFETY: current points to a PyTypeObject-compatible header.

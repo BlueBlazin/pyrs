@@ -391,6 +391,7 @@ pub(super) fn cpython_call_object(
         } else {
             None
         };
+        let callable_desc_for_error = cpython_value_debug_tag(&callable);
         let arg_count = args.len();
         let kwarg_count = kwargs.len();
         if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
@@ -493,6 +494,14 @@ pub(super) fn cpython_call_object(
                     return std::ptr::null_mut();
                 }
                 let message = err.message;
+                if std::env::var_os("PYRS_TRACE_PROXY_NOT_CALLABLE").is_some()
+                    && message.contains("proxy object is not callable")
+                {
+                    eprintln!(
+                        "[proxy-not-callable] callable_ptr={:p} callable={} args={} kwargs={}",
+                        callable_ptr, callable_desc_for_error, arg_count, kwarg_count
+                    );
+                }
                 if let Some(exception_name) = cpython_exception_name_from_runtime_message(&message)
                 {
                     if trace_ufunc_errors && message.contains("_UFunc") {

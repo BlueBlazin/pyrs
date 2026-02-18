@@ -123,6 +123,21 @@ impl Vm {
                 }
             }
             ExtensionCallableKind::CpythonMethod { method_def } => {
+                if std::env::var_os("PYRS_TRACE_CPY_EXT_CALL").is_some() {
+                    let module_name = match &*entry.module.kind() {
+                        Object::Module(module_data) => module_data.name.clone(),
+                        _ => "<extension>".to_string(),
+                    };
+                    eprintln!(
+                        "[cpy-ext-call] id={} module={} name={} method_def={:p} args_len={} kwargs_len={}",
+                        function_id,
+                        module_name,
+                        entry.name,
+                        method_def as *mut CpythonMethodDef,
+                        args.len(),
+                        kwargs.len()
+                    );
+                }
                 if std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some() && entry.name == "copyto" {
                     let module_name = match &*entry.module.kind() {
                         Object::Module(module_data) => module_data.name.clone(),

@@ -26,6 +26,11 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     };
     let trace_reduce_attr =
         cpython_trace_numpy_reduce_enabled() && cpython_is_reduce_probe_name(&name);
+    let trace_numpy_dtype_attr =
+        std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_ATTR").is_some() && name == "dtype";
+    if trace_numpy_dtype_attr {
+        eprintln!("[numpy-dtype-attr] PyObject_GetAttrString object={:p}", object);
+    }
     if trace_reduce_attr {
         eprintln!(
             "[numpy-reduce] PyObject_GetAttrString object={:p} attr={}",
@@ -255,6 +260,20 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             return std::ptr::null_mut();
         }
     };
+    if trace_numpy_dtype_attr
+        && let Value::Module(module_obj) = &object_value
+        && let Object::Module(module_data) = &*module_obj.kind()
+    {
+        let mut keys = module_data.globals.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        eprintln!(
+            "[numpy-dtype-attr] module={} has_dtype={} globals_len={} keys={:?}",
+            module_data.name,
+            module_data.globals.contains_key("dtype"),
+            module_data.globals.len(),
+            keys
+        );
+    }
     if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
         let tag = cpython_value_debug_tag(&object_value);
         let (owned, known) = with_active_cpython_context_mut(|context| {

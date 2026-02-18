@@ -5,9 +5,10 @@ use std::sync::atomic::Ordering;
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    _Py_NoneStruct, CPY_PROXY_PTR_ATTR, CpythonCFunctionCompatObject, CpythonDescriptorKind,
-    CpythonGetSetDef, CpythonMemberDef, CpythonMethodDef, CpythonObjectHead, CpythonTypeObject,
-    METH_FASTCALL, METH_KEYWORDS, METH_METHOD, METH_NOARGS, METH_O, METH_VARARGS,
+    _Py_NoneStruct, CPY_PROXY_PTR_ATTR, CPYTHON_DESCRIPTOR_REGISTRY, CpythonCFunctionCompatObject,
+    CpythonDescriptorKind, CpythonGetSetDef, CpythonMemberDef, CpythonMethodDef,
+    CpythonObjectHead, CpythonTypeObject, METH_FASTCALL, METH_KEYWORDS, METH_METHOD, METH_NOARGS,
+    METH_O, METH_VARARGS,
     ModuleCapiContext, PY_MEMBER_READONLY, PY_MEMBER_RELATIVE_OFFSET, PY_MEMBER_T_BOOL,
     PY_MEMBER_T_BYTE, PY_MEMBER_T_CHAR, PY_MEMBER_T_DOUBLE, PY_MEMBER_T_FLOAT, PY_MEMBER_T_INT,
     PY_MEMBER_T_LONG, PY_MEMBER_T_LONGLONG, PY_MEMBER_T_NONE, PY_MEMBER_T_OBJECT,
@@ -54,6 +55,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     let trace_numpy_result_type = std::env::var_os("PYRS_TRACE_NUMPY_RESULT_TYPE").is_some();
     let trace_set_typedict = std::env::var_os("PYRS_TRACE_NUMPY_TYPEDICT").is_some();
     let trace_numpy_subtract = std::env::var_os("PYRS_TRACE_NUMPY_SUBTRACT").is_some();
+    let trace_method_precall = std::env::var_os("PYRS_TRACE_CPY_METHOD_PRECALL").is_some();
     let trace_array_function_dispatcher =
         std::env::var_os("PYRS_TRACE_ARRAY_FUNCTION_DISPATCHER").is_some();
     let method_name = if trace_calls
@@ -61,6 +63,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
         || trace_numpy_result_type
         || trace_set_typedict
         || trace_numpy_subtract
+        || trace_method_precall
         || trace_array_function_dispatcher
         || std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some()
     {
@@ -108,6 +111,36 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     }
     // SAFETY: method definition layout follows CPython ABI.
     let flags = unsafe { (*method_def).ml_flags };
+    if trace_method_precall {
+        eprintln!(
+            "[cpy-method-precall] name={} flags={} self={:p} class={:p} args_len={} kwargs_len={}",
+            method_name,
+            flags,
+            self_obj,
+            class_obj,
+            args.len(),
+            kwargs.len()
+        );
+    }
+    if std::env::var_os("PYRS_TRACE_ADD_DOCSTRING").is_some()
+        && method_name.contains("add_docstring")
+    {
+        let arg_tags = args
+            .iter()
+            .map(cpython_value_debug_tag)
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "[add-doc-call] name={} flags={} self={:p} class={:p} args_len={} kwargs_len={} args=[{}]",
+            method_name,
+            flags,
+            self_obj,
+            class_obj,
+            args.len(),
+            kwargs.len(),
+            arg_tags
+        );
+    }
     if std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some() && method_name == "copyto" {
         let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
         kw_names.sort();
@@ -1420,6 +1453,95 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
             context,
             method_def,
             self_obj,
+            class_obj,
+            positional,
+            keyword_args,
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_tp_call(
+    callable: *mut c_void,
+    args: *mut c_void,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if callable.is_null() {
+            context.set_error("method descriptor call received null callable");
+            return std::ptr::null_mut();
+        }
+        let descriptor_key = callable as usize;
+        let descriptor_kind = if let Some(kind) = context.cpython_descriptors.get(&descriptor_key) {
+            Some(*kind)
+        } else {
+            CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| registry.borrow().get(&descriptor_key).copied())
+        };
+        let Some(CpythonDescriptorKind::Method {
+            owner_type,
+            method_def,
+            class_method,
+        }) = descriptor_kind else {
+            context.set_error("descriptor call expected method descriptor");
+            return std::ptr::null_mut();
+        };
+        if owner_type.is_null() || method_def.is_null() {
+            context.set_error("descriptor call has invalid method metadata");
+            return std::ptr::null_mut();
+        }
+        let mut positional = match cpython_positional_args_from_tuple_object(args) {
+            Ok(values) => values,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let keyword_args = match cpython_keyword_args_from_dict_object(kwargs) {
+            Ok(values) => values,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        if positional.is_empty() {
+            context.set_error("descriptor call requires an explicit receiver argument");
+            return std::ptr::null_mut();
+        }
+        let receiver_value = positional.remove(0);
+        let receiver_ptr = context.alloc_cpython_ptr_for_value(receiver_value);
+        if receiver_ptr.is_null() {
+            context.set_error("failed to materialize descriptor receiver argument");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: receiver pointer was materialized above.
+        let receiver_type = unsafe {
+            receiver_ptr
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if receiver_type.is_null()
+            || unsafe { PyType_IsSubtype(receiver_type.cast::<c_void>(), owner_type.cast::<c_void>()) } == 0
+        {
+            context.set_error("descriptor receiver is not an instance/subclass of owner type");
+            return std::ptr::null_mut();
+        }
+        let flags = unsafe { (*method_def).ml_flags };
+        let class_obj = if class_method {
+            receiver_ptr
+        } else if (flags & METH_METHOD) != 0 {
+            owner_type.cast::<c_void>()
+        } else {
+            std::ptr::null_mut()
+        };
+        cpython_invoke_method_from_values(
+            context,
+            method_def,
+            receiver_ptr,
             class_obj,
             positional,
             keyword_args,

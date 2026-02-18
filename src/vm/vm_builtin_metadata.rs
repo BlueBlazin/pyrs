@@ -2866,14 +2866,14 @@ impl Vm {
             }
             Value::Instance(instance) => {
                 let receiver = Value::Instance(instance.clone());
+                if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
+                    let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
+                    return Ok(InternalCallOutcome::Value(value));
+                }
                 if let Some(call_target) =
                     self.lookup_bound_special_method(&receiver, "__call__")?
                 {
                     return self.call_internal(call_target, args, kwargs);
-                }
-                if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
-                    let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
-                    return Ok(InternalCallOutcome::Value(value));
                 }
                 return Err(RuntimeError::new("attempted to call non-function"));
             }
@@ -3488,6 +3488,11 @@ impl Vm {
                 class.clone(),
             )));
         } else if attr_name == "__new__" {
+            if is_cpython_proxy_class
+                && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
+            {
+                return Ok(AttrAccessOutcome::Value(proxy_attr));
+            }
             if self.class_namedtuple_fields(class).is_some() {
                 return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
                     BuiltinFunction::ObjectNew,
@@ -3496,6 +3501,11 @@ impl Vm {
             }
             Value::Builtin(BuiltinFunction::ObjectNew)
         } else if attr_name == "__init__" {
+            if is_cpython_proxy_class
+                && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
+            {
+                return Ok(AttrAccessOutcome::Value(proxy_attr));
+            }
             Value::Builtin(BuiltinFunction::ObjectInit)
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)

@@ -4935,6 +4935,14 @@ impl Vm {
                                 return Err(RuntimeError::new("import from expects module object"));
                             }
                         };
+                        if std::env::var_os("PYRS_TRACE_NUMPY_CORE_IMPORTFROM").is_some()
+                            && module_name == "numpy._core"
+                        {
+                            eprintln!(
+                                "[numpy-core-importfrom] attr={} module={}",
+                                attr_name, module_name
+                            );
+                        }
                         let attr = match self.load_attr_module(&module_obj, &attr_name) {
                             Ok(attr) => attr,
                             Err(load_err) => {

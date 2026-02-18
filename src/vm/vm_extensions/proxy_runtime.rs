@@ -1,19 +1,44 @@
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CString, c_void};
 
 use super::{
-    CPY_PROXY_PTR_ATTR, CpythonGetSetDef, CpythonMemberDef, CpythonMethodDef, CpythonNumberMethods,
-    CpythonObjectHead, CpythonTypeObject, ModuleCapiContext, ObjRef, Object,
-    ProxyAttrLookupReentryGuard, PyErr_GivenExceptionMatches, PyExc_IndexError, PyExc_TypeError,
-    PyNumber_Add, PyNumber_Float, PyNumber_Invert, PyNumber_Long, PyNumber_MatrixMultiply,
-    PyNumber_Multiply, PyNumber_Negative, PyNumber_Positive, PyNumber_Subtract,
-    PyNumber_TrueDivide, PyObject_CallObject, PyObject_GetAttrString, PyObject_GetItem,
-    PyObject_RichCompareBool, PyObject_SetItem, PyObject_Size, RuntimeError, Value, Vm,
-    c_name_to_string, cpython_is_type_object_ptr, cpython_set_active_context,
-    cpython_valid_type_ptr, cpython_value_debug_tag, is_cpython_proxy_class,
+    CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
+    ModuleCapiContext, ObjRef, Object, ProxyAttrLookupReentryGuard, PyErr_GivenExceptionMatches,
+    PyExc_IndexError, PyExc_TypeError, PyNumber_Add, PyNumber_Float, PyNumber_Invert,
+    PyNumber_Long, PyNumber_MatrixMultiply, PyNumber_Multiply, PyNumber_Negative,
+    PyNumber_Positive, PyNumber_Subtract, PyNumber_TrueDivide, PyObject_CallObject,
+    PyObject_GetAttrString, PyObject_GetItem, PyObject_RichCompareBool, PyObject_SetItem,
+    PyObject_Size, RuntimeError, Value, Vm, c_name_to_string, cpython_is_type_object_ptr,
+    cpython_set_active_context, cpython_valid_type_ptr, cpython_value_debug_tag,
+    is_cpython_proxy_class,
 };
 
 impl Vm {
+    fn cpython_proxy_class_repr_text(class_data: &crate::runtime::ClassObject) -> String {
+        let qualname = class_data
+            .attrs
+            .get("__qualname__")
+            .or_else(|| class_data.attrs.get("__name__"))
+            .and_then(|value| match value {
+                Value::Str(text) => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| class_data.name.clone());
+        let module = class_data
+            .attrs
+            .get("__module__")
+            .and_then(|value| match value {
+                Value::Str(text) if !text.is_empty() => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "builtins".to_string());
+        if module == "builtins" {
+            format!("<class '{qualname}'>")
+        } else {
+            format!("<class '{module}.{qualname}'>")
+        }
+    }
+
     pub(in crate::vm) fn cpython_proxy_raw_ptr_from_value(value: &Value) -> Option<*mut c_void> {
         match value {
             Value::Class(class_obj) => {
@@ -618,6 +643,12 @@ impl Vm {
         &mut self,
         target: &Value,
     ) -> Option<Result<String, RuntimeError>> {
+        if let Value::Class(class_obj) = target
+            && let Object::Class(class_data) = &*class_obj.kind()
+            && is_cpython_proxy_class(class_data)
+        {
+            return Some(Ok(Self::cpython_proxy_class_repr_text(class_data)));
+        }
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
         let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__str__", false)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
@@ -672,6 +703,12 @@ impl Vm {
         &mut self,
         target: &Value,
     ) -> Option<Result<String, RuntimeError>> {
+        if let Value::Class(class_obj) = target
+            && let Object::Class(class_data) = &*class_obj.kind()
+            && is_cpython_proxy_class(class_data)
+        {
+            return Some(Ok(Self::cpython_proxy_class_repr_text(class_data)));
+        }
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
         let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__repr__", false)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
@@ -991,84 +1028,6 @@ impl Vm {
             );
         }
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        if is_proxy_type_object {
-            let type_obj = raw_ptr.cast::<CpythonTypeObject>();
-            if !type_obj.is_null()
-                && (type_obj as usize) % std::mem::align_of::<CpythonTypeObject>() == 0
-            {
-                let mut getset = unsafe { (*type_obj).tp_getset.cast::<CpythonGetSetDef>() };
-                if !getset.is_null() {
-                    loop {
-                        if (getset as usize) % std::mem::align_of::<CpythonGetSetDef>() != 0 {
-                            break;
-                        }
-                        let getset_name_ptr = unsafe { (*getset).name };
-                        if getset_name_ptr.is_null() {
-                            break;
-                        }
-                        let getset_name = unsafe { CStr::from_ptr(getset_name_ptr) }
-                            .to_str()
-                            .ok()
-                            .unwrap_or("");
-                        if getset_name == attr_name {
-                            return Some(Value::None);
-                        }
-                        getset = unsafe { getset.add(1) };
-                    }
-                }
-                // NumPy and similar extensions call add_newdoc on class members
-                // that are represented by C-level member definitions. If the
-                // descriptor cannot be materialized in this runtime, return None
-                // instead of raising to preserve import progress.
-                let mut member = unsafe { (*type_obj).tp_members.cast::<CpythonMemberDef>() };
-                if !member.is_null() {
-                    loop {
-                        if (member as usize) % std::mem::align_of::<CpythonMemberDef>() != 0 {
-                            break;
-                        }
-                        let member_name_ptr = unsafe { (*member).name };
-                        if member_name_ptr.is_null() {
-                            break;
-                        }
-                        let member_name = unsafe { CStr::from_ptr(member_name_ptr) }
-                            .to_str()
-                            .ok()
-                            .unwrap_or("");
-                        if member_name == attr_name {
-                            return Some(Value::None);
-                        }
-                        member = unsafe { member.add(1) };
-                    }
-                }
-                let mut method = unsafe { (*type_obj).tp_methods.cast::<CpythonMethodDef>() };
-                if !method.is_null() {
-                    loop {
-                        if (method as usize) % std::mem::align_of::<CpythonMethodDef>() != 0 {
-                            break;
-                        }
-                        let method_name_ptr = unsafe { (*method).ml_name };
-                        if method_name_ptr.is_null() {
-                            break;
-                        }
-                        let method_name = unsafe { CStr::from_ptr(method_name_ptr) }
-                            .to_str()
-                            .ok()
-                            .unwrap_or("");
-                        if method_name == attr_name {
-                            return Some(Value::None);
-                        }
-                        method = unsafe { method.add(1) };
-                    }
-                }
-                if matches!(
-                    attr_name,
-                    "__lt__" | "__le__" | "__eq__" | "__ne__" | "__gt__" | "__ge__"
-                ) && !unsafe { (*type_obj).tp_richcompare }.is_null()
-                {
-                    return Some(Value::None);
-                }
-            }
-        }
         if !is_proxy_type_object
             && std::env::var_os("PYRS_ENABLE_PROXY_TP_DICT_FASTPATH").is_some()
             && !matches!(attr_name, "__repr__" | "__str__")

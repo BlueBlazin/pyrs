@@ -2548,7 +2548,7 @@ impl Vm {
         &mut self,
         value: &Value,
     ) -> Result<Option<String>, RuntimeError> {
-        if self.value_type_name_for_error(value) != "ndarray" {
+        if !matches!(value, Value::Instance(_)) || self.value_type_name_for_error(value) != "ndarray" {
             return Ok(None);
         }
         let tolist = match self.builtin_getattr(
