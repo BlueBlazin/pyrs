@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use crate::runtime::{BuiltinFunction, Object, Value};
+use crate::vm::ops::compare_order;
 use crate::vm::{InternalCallOutcome, dict_remove_value, dict_set_value_checked};
 
 use super::cpython_object_call_api::PyObject_IsTrue;
@@ -691,6 +692,21 @@ fn cpython_compare_op_symbol(op: i32) -> &'static str {
 
 fn cpython_direct_rich_compare(left: &Value, right: &Value, op: i32) -> Option<bool> {
     match (left, right) {
+        (
+            Value::Bool(_) | Value::Int(_) | Value::BigInt(_),
+            Value::Bool(_) | Value::Int(_) | Value::BigInt(_),
+        ) => {
+            let ordering = compare_order(left.clone(), right.clone()).ok()?;
+            Some(match op {
+                0 => ordering == std::cmp::Ordering::Less,
+                1 => ordering != std::cmp::Ordering::Greater,
+                2 => ordering == std::cmp::Ordering::Equal,
+                3 => ordering != std::cmp::Ordering::Equal,
+                4 => ordering == std::cmp::Ordering::Greater,
+                5 => ordering != std::cmp::Ordering::Less,
+                _ => return None,
+            })
+        }
         (Value::Str(lhs), Value::Str(rhs)) => {
             if op == 2
                 && std::env::var_os("PYRS_TRACE_CPY_STRING_EQ").is_some()
