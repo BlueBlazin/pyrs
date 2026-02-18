@@ -4,11 +4,12 @@ use std::ffi::c_void;
 use crate::runtime::{BuiltinFunction, Object, Value};
 use crate::vm::{InternalCallOutcome, dict_remove_value, dict_set_value_checked};
 
+use super::cpython_object_call_api::PyObject_IsTrue;
 use super::{
-    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, PyErr_Clear,
-    PyErr_ExceptionMatches, PyErr_Occurred, PyExc_AttributeError, PyExc_TypeError, PyLong_AsSsize_t,
-    PyObject_GetAttr, PyObject_GetAttrString, Py_DecRef, _Py_EllipsisObject, _Py_FalseStruct,
-    _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct, c_name_to_string,
+    _Py_EllipsisObject, _Py_FalseStruct, _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct,
+    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, Py_DecRef,
+    PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred, PyExc_AttributeError, PyExc_TypeError,
+    PyLong_AsSsize_t, PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string,
     cpython_builtin_type_name_for_ptr, cpython_call_builtin, cpython_call_object,
     cpython_error_message_indicates_missing_attribute, cpython_exception_value_from_ptr,
     cpython_lookup_interned_unicode_text, cpython_mapping_ass_subscript_slot,
@@ -19,7 +20,6 @@ use super::{
     cpython_value_debug_tag, cpython_value_from_ptr, is_truthy, value_to_int,
     with_active_cpython_context_mut,
 };
-use super::cpython_object_call_api::PyObject_IsTrue;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void) -> *mut c_void {
