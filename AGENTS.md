@@ -75,9 +75,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - capsule validity/name handling now includes external-capsule fallback for raw CPython capsule objects (`PyCapsule_GetName` / `PyCapsule_IsValid`) so Cython capsule-signature checks no longer fail with `got (null)`.
   - `include/pyrs_cpython_compat.h` now declares `PyLong_FromSsize_t` and `PyLong_AsSsize_t` explicitly to avoid implicit-declaration ABI drift in extension builds.
   - latest direct scientific-stack blockers are:
-    - `scipy_import`: native crash (exit `-10`) in `_ccallback_c` / `_cyutility` init path.
-    - `pandas_*`: missing `numpy.random.bit_generator.BitGenerator` publication on NumPy random module init paths.
-    - `matplotlib_*`: import-stage assertion failures.
+    - `numpy.random._generator` still fails through `numpy.random.mtrand` slot-exec with `NoneType has no attribute 'generate_state'` (current P0 random-stack blocker).
+    - `pandas_*`: blocked downstream because `numpy.random._generator` does not finish (`cannot import name 'Generator'`).
+    - `scipy_import` and `matplotlib_*`: still blocked downstream of NumPy-random init closure.
+  - closure landed this round:
+    - `PyType_FromSpec*` base-resolution now correctly handles `bases` tuples containing `Builtin(Type)` so Cython metatype construction no longer defaults to `object`.
+    - this removed the earlier random-stack gate `PyDescr_NewMethod expected type object` / shared-Cython-type `PyType_Check` failure.
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:
