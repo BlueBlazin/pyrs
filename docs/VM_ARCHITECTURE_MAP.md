@@ -56,6 +56,9 @@ This document defines the current structure and ownership boundaries for the VM 
   - CPython active-context bridge helpers (`with_active_cpython_context_mut`, `cpython_set_active_context`)
   - CPython pointer/error conversion helpers (`cpython_value_from_ptr*`, `cpython_set_error`, typed-error helpers)
   - builtin C-function bridge shim callback wiring (`cpython_builtin_cfunction_varargs_kwargs`)
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_contextvar_api.rs`
+  - exported `PyContextVar_*` C-API entrypoints (`PyContextVar_New`, `PyContextVar_Get`, `PyContextVar_Set`)
+  - delegates shared pointer/state behavior to active-context/runtime helpers
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_args_runtime.rs`
   - CPython tuple/dict argument conversion helpers (`cpython_positional_args_from_tuple_object`, `cpython_keyword_args_from_dict_object`)
   - shared argument normalization path used by CPython ABI call entrypoints and shims
@@ -142,6 +145,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New extension loader/exec phase behavior: `vm_extensions/loader_runtime.rs`.
 - New `ModuleCapiContext` state/capsule lifecycle behavior: `vm_extensions/module_context_state.rs`.
 - New CPython active-context pointer/error bridge behavior: `vm_extensions/cpython_context_runtime.rs`.
+- New CPython contextvar C-API entrypoint behavior: `vm_extensions/cpython_contextvar_api.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
 - New CPython module-def/state helper behavior: `vm_extensions/cpython_module_runtime.rs`.
 - New CPython import helper behavior: `vm_extensions/cpython_import_runtime.rs`.
