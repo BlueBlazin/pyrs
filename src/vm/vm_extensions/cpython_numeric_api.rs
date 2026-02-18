@@ -7,15 +7,15 @@ use crate::vm::{
     pos_value, pow_values, rshift_values, xor_values,
 };
 
-use super::{
-    CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
-    ModuleCapiContext, PyErr_Occurred, PyFloat_AsDouble, PyLong_AsSsize_t,
-    c_name_to_string, cpython_call_builtin, cpython_new_ptr_for_value, cpython_set_error,
-    cpython_try_binary_number_slot, cpython_value_debug_tag, cpython_value_from_ptr,
-    is_cpython_proxy_class, value_to_int, with_active_cpython_context_mut,
-};
 use super::cpython_numeric_runtime::{
     cpython_binary_numeric_op, cpython_binary_numeric_op_with_heap, cpython_unary_numeric_op,
+};
+use super::{
+    CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
+    ModuleCapiContext, PyErr_Occurred, PyFloat_AsDouble, PyLong_AsSsize_t, c_name_to_string,
+    cpython_call_builtin, cpython_new_ptr_for_value, cpython_set_error,
+    cpython_try_binary_number_slot, cpython_value_debug_tag, cpython_value_from_ptr,
+    is_cpython_proxy_class, value_to_int, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]

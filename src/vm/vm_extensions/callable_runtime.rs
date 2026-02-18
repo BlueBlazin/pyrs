@@ -198,5 +198,4 @@ impl Vm {
         };
         Ok(NativeCallResult::Value(result))
     }
-
 }

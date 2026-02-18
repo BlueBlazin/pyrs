@@ -1,6 +1,8 @@
 use std::ffi::c_void;
 
-use crate::extensions::{PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1, PyrsModuleStateFreeV1, PyrsObjectHandle};
+use crate::extensions::{
+    PyrsCapsuleDestructorV1, PyrsModuleStateFinalizeV1, PyrsModuleStateFreeV1, PyrsObjectHandle,
+};
 use crate::runtime::{Object, Value};
 use crate::vm::{ExtensionCapsuleRegistryEntry, ExtensionModuleStateEntry};
 
@@ -238,5 +240,4 @@ impl ModuleCapiContext {
         }
         Ok(())
     }
-
 }

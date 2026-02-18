@@ -14757,8 +14757,9 @@ PyInit_cpython_float_tp_new_probe(void)
     )
     .expect("source should be written");
 
-    let library_path =
-        temp_root.join(importable_module_library_filename("cpython_float_tp_new_probe"));
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_float_tp_new_probe",
+    ));
     compile_shared_extension_with_cpython_compat(&source_path, &library_path)
         .expect("cpython float-tp_new probe extension should build");
 

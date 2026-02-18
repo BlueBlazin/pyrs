@@ -5,7 +5,9 @@ use crate::vm::ExtensionModuleStateEntry;
 
 use super::{CpythonModuleDef, ModuleCapiContext, ObjRef, calloc, free};
 
-pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_module_state_free(state: *mut c_void) {
+pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_module_state_free(
+    state: *mut c_void,
+) {
     if state.is_null() {
         return;
     }

@@ -1,17 +1,17 @@
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 
 use crate::runtime::{Object, Value};
 
-use super::{
-    CpythonMethodDef, CpythonModuleDef, CpythonModuleDefSlot, CpythonObjectHead,
-    CpythonTypeObject, ExtensionCallableKind, PyErr_BadArgument, PyErr_BadInternalCall,
-    PyExc_SystemError, PyExc_TypeError, PyLong_FromLongLong, PyObject_SetAttrString, PyType_Ready,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Py_DecRef, Py_XDecRef, c_name_to_string,
-    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
-    cpython_value_debug_tag, with_active_cpython_context_mut,
-};
 use super::cpython_module_name_runtime::cpython_module_add_type_name;
 use super::cpython_module_runtime::{cpython_bind_module_def, cpython_new_module_data};
+use super::{
+    CpythonMethodDef, CpythonModuleDef, CpythonModuleDefSlot, CpythonObjectHead, CpythonTypeObject,
+    ExtensionCallableKind, Py_DecRef, Py_XDecRef, PyErr_BadArgument, PyErr_BadInternalCall,
+    PyExc_SystemError, PyExc_TypeError, PyLong_FromLongLong, PyObject_SetAttrString, PyType_Ready,
+    PyUnicode_AsUTF8, PyUnicode_FromString, c_name_to_string, cpython_new_ptr_for_value,
+    cpython_set_error, cpython_set_typed_error, cpython_value_debug_tag,
+    with_active_cpython_context_mut,
+};
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModuleDef_Init(module: *mut c_void) -> *mut c_void {

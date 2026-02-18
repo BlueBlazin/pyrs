@@ -5,15 +5,16 @@ use std::path::{Path, PathBuf};
 use crate::extensions::{
     CpythonExtensionInit, ExtensionEntrypoint, PYRS_CAPI_ABI_VERSION, PYRS_DYNAMIC_INIT_SYMBOL_V1,
     PYRS_EXTENSION_ABI_TAG, PYRS_EXTENSION_MANIFEST_SUFFIX, PyrsApiV1, SharedLibraryHandle,
-    load_dynamic_initializer, load_dynamic_symbol, parse_extension_manifest, path_is_shared_library,
+    load_dynamic_initializer, load_dynamic_symbol, parse_extension_manifest,
+    path_is_shared_library,
 };
 use crate::runtime::{Object, RuntimeError, Value};
 use crate::vm::ExtensionCapsuleRegistryEntry;
 
 use super::{
-    CpythonModuleDef, CpythonModuleDefSlot, ExtensionCallableKind, ExtensionInitScopeGuard,
-    ModuleCapiContext, ObjRef, PYRS_DATETIME_CAPI, PYRS_DATETIME_CAPSULE_NAME, PyType_Type, Vm,
-    _Py_NoneStruct, c_name_to_string, cpython_set_active_context,
+    _Py_NoneStruct, CpythonModuleDef, CpythonModuleDefSlot, ExtensionCallableKind,
+    ExtensionInitScopeGuard, ModuleCapiContext, ObjRef, PYRS_DATETIME_CAPI,
+    PYRS_DATETIME_CAPSULE_NAME, PyType_Type, Vm, c_name_to_string, cpython_set_active_context,
 };
 
 enum ExtensionExecutionPlan {
@@ -151,7 +152,6 @@ impl Vm {
         }
         Ok(())
     }
-
 
     fn set_extension_metadata(
         &mut self,

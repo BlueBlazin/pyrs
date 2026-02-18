@@ -4,9 +4,9 @@ use crate::runtime::{Object, Value};
 use crate::vm::Vm;
 
 use super::{
-    BYTES_BACKING_STORAGE_ATTR, ModuleCapiContext, STR_BACKING_STORAGE_ATTR,
-    PyErr_BadInternalCall, c_name_to_string, cpython_set_error, exception_type_is_subclass,
-    value_to_int, with_active_cpython_context_mut,
+    BYTES_BACKING_STORAGE_ATTR, ModuleCapiContext, PyErr_BadInternalCall, STR_BACKING_STORAGE_ATTR,
+    c_name_to_string, cpython_set_error, exception_type_is_subclass, value_to_int,
+    with_active_cpython_context_mut,
 };
 
 pub(in crate::vm::vm_extensions) fn cpython_exception_value_attr(value: &Value) -> Option<Value> {
@@ -41,7 +41,10 @@ impl CpythonUnicodeErrorFlavor {
     }
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_unicode_error_class_name_for_value(vm: &Vm, value: &Value) -> Option<String> {
+pub(in crate::vm::vm_extensions) fn cpython_unicode_error_class_name_for_value(
+    vm: &Vm,
+    value: &Value,
+) -> Option<String> {
     match value {
         Value::Exception(exception) => Some(exception.name.clone()),
         Value::ExceptionType(name) => Some(name.clone()),
@@ -81,7 +84,10 @@ pub(in crate::vm::vm_extensions) fn cpython_unicode_error_check_type(
     false
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_unicode_error_attr_value(value: &Value, attr: &str) -> Option<Value> {
+pub(in crate::vm::vm_extensions) fn cpython_unicode_error_attr_value(
+    value: &Value,
+    attr: &str,
+) -> Option<Value> {
     match value {
         Value::Exception(exception) => exception.attrs.borrow().get(attr).cloned(),
         Value::Instance(instance) => match &*instance.kind() {
@@ -211,7 +217,9 @@ pub(in crate::vm::vm_extensions) fn cpython_unicode_error_index_attr(
     Some(number as isize)
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_unicode_error_string_length(value: &Value) -> Option<usize> {
+pub(in crate::vm::vm_extensions) fn cpython_unicode_error_string_length(
+    value: &Value,
+) -> Option<usize> {
     match value {
         Value::Str(text) => Some(text.chars().count()),
         Value::Instance(instance) => match &*instance.kind() {
@@ -227,7 +235,9 @@ pub(in crate::vm::vm_extensions) fn cpython_unicode_error_string_length(value: &
     }
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_unicode_error_bytes_length(value: &Value) -> Option<usize> {
+pub(in crate::vm::vm_extensions) fn cpython_unicode_error_bytes_length(
+    value: &Value,
+) -> Option<usize> {
     match value {
         Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
             Object::Bytes(values) => Some(values.len()),
@@ -249,7 +259,10 @@ pub(in crate::vm::vm_extensions) fn cpython_unicode_error_bytes_length(value: &V
     }
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_unicode_error_adjust_start(start: isize, objlen: isize) -> isize {
+pub(in crate::vm::vm_extensions) fn cpython_unicode_error_adjust_start(
+    start: isize,
+    objlen: isize,
+) -> isize {
     if objlen <= 0 {
         return 0;
     }
@@ -262,7 +275,10 @@ pub(in crate::vm::vm_extensions) fn cpython_unicode_error_adjust_start(start: is
     start
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_unicode_error_adjust_end(end: isize, objlen: isize) -> isize {
+pub(in crate::vm::vm_extensions) fn cpython_unicode_error_adjust_end(
+    end: isize,
+    objlen: isize,
+) -> isize {
     if objlen <= 0 {
         return 0;
     }

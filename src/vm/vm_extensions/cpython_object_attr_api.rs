@@ -1,16 +1,15 @@
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 
 use crate::runtime::{Object, Value};
 
 use super::{
-    BuiltinFunction, CPY_PROXY_PTR_ATTR, CpythonObjectHead, CpythonTypeObject,
-    PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
-    PyExc_AttributeError, PyExc_TypeError, Py_DecRef, Py_IncRef, c_name_to_string,
+    BuiltinFunction, CPY_PROXY_PTR_ATTR, CpythonObjectHead, CpythonTypeObject, Py_DecRef,
+    Py_IncRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
+    PyExc_AttributeError, PyExc_TypeError, PyObject_DelItem, PyObject_IsInstance, c_name_to_string,
     cpython_call_builtin, cpython_error_message_indicates_missing_attribute,
     cpython_is_reduce_probe_name, cpython_new_ptr_for_value, cpython_set_error,
     cpython_set_typed_error, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
     cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
-    PyObject_DelItem, PyObject_IsInstance,
 };
 
 #[unsafe(no_mangle)]

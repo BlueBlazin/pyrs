@@ -6,9 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::bytecode::CodeObject;
 use crate::runtime::{Object, Value};
 
-use super::{
-    ModuleCapiContext, ObjRef, dict_remove_value, dict_set_value_checked,
-};
+use super::{ModuleCapiContext, ObjRef, dict_remove_value, dict_set_value_checked};
 
 pub(in crate::vm::vm_extensions) fn cpython_import_add_module_by_name(
     context: &mut ModuleCapiContext,
@@ -33,10 +31,11 @@ pub(in crate::vm::vm_extensions) fn cpython_import_add_module_by_name(
     Ok(module)
 }
 
-pub(in crate::vm::vm_extensions) type CpythonInittabInitFunc = unsafe extern "C" fn() -> *mut c_void;
+pub(in crate::vm::vm_extensions) type CpythonInittabInitFunc =
+    unsafe extern "C" fn() -> *mut c_void;
 
-pub(in crate::vm::vm_extensions) fn cpython_inittab_registry(
-) -> &'static Mutex<HashMap<String, CpythonInittabInitFunc>> {
+pub(in crate::vm::vm_extensions) fn cpython_inittab_registry()
+-> &'static Mutex<HashMap<String, CpythonInittabInitFunc>> {
     static REGISTRY: OnceLock<Mutex<HashMap<String, CpythonInittabInitFunc>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }

@@ -2224,13 +2224,19 @@ impl Vm {
                                 ));
                             }
                         };
-                    if matches!(index_value, Value::Int(_) | Value::Bool(_) | Value::BigInt(_)) {
+                    if matches!(
+                        index_value,
+                        Value::Int(_) | Value::Bool(_) | Value::BigInt(_)
+                    ) {
                         return value_to_bigint(index_value);
                     }
                 }
                 if let Some(proxy_index) = self.cpython_proxy_long(&other)
                     && let Ok(index_value) = proxy_index
-                    && matches!(index_value, Value::Int(_) | Value::Bool(_) | Value::BigInt(_))
+                    && matches!(
+                        index_value,
+                        Value::Int(_) | Value::Bool(_) | Value::BigInt(_)
+                    )
                 {
                     return value_to_bigint(index_value);
                 }
@@ -5605,7 +5611,9 @@ impl Vm {
             Ok(_) | Err(_) => {}
         }
         match self.builtin_float(vec![value.clone()], HashMap::new()) {
-            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => Ok(Some(normalized)),
+            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => {
+                Ok(Some(normalized))
+            }
             Ok(_) | Err(_) => {
                 if self.value_type_name_for_error(value) == "bool"
                     && let Ok(normalized) = self.builtin_bool(vec![value.clone()], HashMap::new())

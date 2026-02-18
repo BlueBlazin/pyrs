@@ -83,6 +83,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_attr_api.rs`
   - exported `PyObject_*` attribute/introspection C-API entrypoints (`Get/Set/DelAttr*`, `Type`, `HasAttr*`, `GetOptionalAttrString`, generic attr/dict helpers)
   - shared native-slot fallback (`tp_getattro`/`tp_setattro`) + CPython-style missing-attribute error handling
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_bytes_api.rs`
+  - exported `PyBytes_*` / `_PyBytes_Join` / `PyByteArray_*` C-API entrypoints (construction, concat, repr/decode, size/data access, resize, buffer-based concat)
+  - shared bytes/bytearray storage interop with CPython layout mirrors and buffer-release error semantics
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_args_runtime.rs`
   - CPython tuple/dict argument conversion helpers (`cpython_positional_args_from_tuple_object`, `cpython_keyword_args_from_dict_object`)
   - shared argument normalization path used by CPython ABI call entrypoints and shims
@@ -181,6 +184,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython dict C-API entrypoint behavior: `vm_extensions/cpython_dict_api.rs`.
 - New CPython set C-API entrypoint behavior: `vm_extensions/cpython_set_api.rs`.
 - New CPython object-attr C-API entrypoint behavior: `vm_extensions/cpython_object_attr_api.rs`.
+- New CPython bytes/bytearray C-API entrypoint behavior: `vm_extensions/cpython_bytes_api.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
 - New CPython module-def/state helper behavior: `vm_extensions/cpython_module_runtime.rs`.
 - New CPython module C-API entrypoint behavior: `vm_extensions/cpython_module_api.rs`.
@@ -206,5 +210,5 @@ This document defines the current structure and ownership boundaries for the VM 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
 - Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
-- Next decomposition slice target: move CPython C-API entrypoint clusters that still live in `vm_extensions.rs` (numeric/object/import surfaces) into focused `vm_extensions/*_api.rs` modules.
+- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (object core call/vectorcall/hash/compare, long/float, unicode) into focused `vm_extensions/*_api.rs` modules.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.

@@ -10,7 +10,10 @@ use super::{
     cpython_getattr_in_context, cpython_set_error, value_to_int, with_active_cpython_context_mut,
 };
 
-pub(in crate::vm::vm_extensions) fn cpython_codec_required_name(name: *const c_char, api_name: &str) -> Result<String, String> {
+pub(in crate::vm::vm_extensions) fn cpython_codec_required_name(
+    name: *const c_char,
+    api_name: &str,
+) -> Result<String, String> {
     // SAFETY: C-API caller provides NUL-terminated string for non-null pointers.
     unsafe { c_name_to_string(name) }.map_err(|err| format!("{api_name} {err}"))
 }
@@ -57,7 +60,9 @@ pub(in crate::vm::vm_extensions) fn cpython_codec_call_callable_in_context(
     cpython_call_internal_in_context(context, callable, args, HashMap::new())
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_codec_module_in_context(context: &mut ModuleCapiContext) -> Result<ObjRef, String> {
+pub(in crate::vm::vm_extensions) fn cpython_codec_module_in_context(
+    context: &mut ModuleCapiContext,
+) -> Result<ObjRef, String> {
     if context.vm.is_null() {
         return Err("missing VM context for codecs module".to_string());
     }
@@ -174,7 +179,10 @@ pub(in crate::vm::vm_extensions) fn cpython_codec_error_info(
     Ok((value, type_name, end))
 }
 
-pub(in crate::vm::vm_extensions) fn cpython_codec_handler_tuple_result(replacement: String, end: i64) -> *mut c_void {
+pub(in crate::vm::vm_extensions) fn cpython_codec_handler_tuple_result(
+    replacement: String,
+    end: i64,
+) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
             context.set_error("missing VM context for codec error handler");
@@ -277,7 +285,9 @@ static mut PYCODEC_NAMEREPLACE_ERRORS_METHOD_DEF: CpythonMethodDef = CpythonMeth
     ml_doc: c"PyCodec namereplace error handler".as_ptr(),
 };
 
-pub(in crate::vm::vm_extensions) fn cpython_codec_builtin_handler_method_def(name: &str) -> Option<*mut CpythonMethodDef> {
+pub(in crate::vm::vm_extensions) fn cpython_codec_builtin_handler_method_def(
+    name: &str,
+) -> Option<*mut CpythonMethodDef> {
     match name {
         "strict" => Some(std::ptr::addr_of_mut!(PYCODEC_STRICT_ERRORS_METHOD_DEF)),
         "ignore" => Some(std::ptr::addr_of_mut!(PYCODEC_IGNORE_ERRORS_METHOD_DEF)),
@@ -315,4 +325,3 @@ pub(in crate::vm::vm_extensions) fn cpython_codec_builtin_handler_ptr(
     }
     Ok(ptr)
 }
-

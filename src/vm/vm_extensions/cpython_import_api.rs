@@ -1,18 +1,18 @@
 use std::collections::HashMap;
-use std::ffi::{c_char, c_long, c_void, CString};
+use std::ffi::{CString, c_char, c_long, c_void};
 
 use crate::runtime::{BuiltinFunction, Object, Value};
 
-use super::{
-    InternalCallOutcome, PyErr_WarnEx, PyExc_DeprecationWarning, c_name_to_string,
-    cpython_set_error, cpython_value_from_ptr, dict_get_value, with_active_cpython_context_mut,
-};
 use super::cpython_import_runtime::{
     CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
     cpython_import_from_inittab, cpython_inittab_registry,
 };
 use super::cpython_module_name_runtime::{
     cpython_module_name_from_object, cpython_optional_value_from_ptr,
+};
+use super::{
+    InternalCallOutcome, PyErr_WarnEx, PyExc_DeprecationWarning, c_name_to_string,
+    cpython_set_error, cpython_value_from_ptr, dict_get_value, with_active_cpython_context_mut,
 };
 
 const PYC_MAGIC_NUMBER_TOKEN: c_long = 0x0A0D0E2B;
