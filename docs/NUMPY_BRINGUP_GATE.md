@@ -113,6 +113,7 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - `numpy_import`: `PASS`
   - `numpy_ndarray_sum`: `PASS` (`int(np.array([1,2,3]).sum()) == 6`)
   - `numpy_numerictypes_core`: `PASS` (`int8`/`float64`/`bool_` publication baseline)
+  - foreign `PyLong` compact-layout decoding now follows CPython 3.14 `longintrepr.h` semantics (including compact zero/sign handling), fixing the prior NumPy regression where `np.dtype('int64').itemsize` and `np.iinfo(np.int64).bits` collapsed to `0`.
 - NumPy import warning cleanup checkpoint:
   - proxy class `__flags__` now reflects CPython `tp_flags` for extension-backed types (instead of always returning `PY_TPFLAGS_HEAPTYPE`), which removed the prior `_add_newdocs_scalars` warning flood during `import numpy`.
 - Open direct-mode blocker:

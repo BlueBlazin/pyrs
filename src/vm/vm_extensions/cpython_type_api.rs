@@ -260,6 +260,12 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
     let status = unsafe { init_fn(object, args, kwargs) };
     if status < 0 {
         if std::env::var_os("PYRS_TRACE_TYPE_INIT_FAILURE").is_some() {
+            let mut last_error = String::new();
+            let _ = with_active_cpython_context_mut(|context| {
+                if let Some(err) = context.last_error.as_ref() {
+                    last_error = err.clone();
+                }
+            });
             let callable_name =
                 unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
             let object_type_name = unsafe {
@@ -272,8 +278,8 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
                     .unwrap_or_else(|| "<null>".to_string())
             };
             eprintln!(
-                "[cpy-type-call] init-failed callable={} object_type={} tp_init={:p}",
-                callable_name, object_type_name, init_slot
+                "[cpy-type-call] init-failed callable={} object_type={} tp_init={:p} last_error={}",
+                callable_name, object_type_name, init_slot, last_error
             );
         }
         unsafe { Py_DecRef(object) };

@@ -903,33 +903,17 @@ unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
     if !is_long {
         return None;
     }
-    // CPython 3.14 long layout uses lv_tag low bits for sign and high bits for ndigits.
+    // CPython 3.14 long layout:
+    // - low 2 bits: sign (0 positive, 1 zero, 2 negative)
+    // - bit 2: compact flag
+    // - upper bits: ndigits for non-compact values
+    // See Include/cpython/longintrepr.h.
     let raw = object.cast::<CpythonForeignLongObject>();
     // SAFETY: layout matches CPython long object memory representation.
     let lv_tag = unsafe { (*raw).long_value.lv_tag };
-    let sign_bits = lv_tag & 0x3;
-    if sign_bits == 1 {
-        return Some(0);
-    }
-    let sign = if sign_bits == 2 { -1i128 } else { 1i128 };
-    let ndigits = lv_tag >> 3;
-    if ndigits == 0 {
-        return Some(0);
-    }
-    // SAFETY: CPython allocates at least `ndigits` digits for normalized longs.
+    // SAFETY: layout matches CPython long object memory representation.
     let digits = unsafe { (*raw).long_value.ob_digit.as_ptr() };
-    let mut acc: i128 = 0;
-    for idx in 0..ndigits {
-        // SAFETY: `idx < ndigits` within normalized digit buffer.
-        let digit = unsafe { *digits.add(idx) } as i128;
-        let shift = 30usize.saturating_mul(idx);
-        if shift >= 126 {
-            return None;
-        }
-        acc = acc.checked_add(digit.checked_shl(shift as u32)?)?;
-    }
-    let signed = if sign < 0 { -acc } else { acc };
-    i64::try_from(signed).ok()
+    cpython_foreign_long_payload_to_i64(lv_tag, digits)
 }
 
 unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
@@ -953,26 +937,94 @@ unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
     if !is_long {
         return None;
     }
-    // CPython 3.14 long layout uses lv_tag low bits for sign and high bits for ndigits.
+    // CPython 3.14 long layout:
+    // - low 2 bits: sign (0 positive, 1 zero, 2 negative)
+    // - bit 2: compact flag
+    // - upper bits: ndigits for non-compact values
+    // See Include/cpython/longintrepr.h.
     let raw = object.cast::<CpythonForeignLongObject>();
     // SAFETY: layout matches CPython long object memory representation.
     let lv_tag = unsafe { (*raw).long_value.lv_tag };
-    let sign_bits = lv_tag & 0x3;
+    // SAFETY: layout matches CPython long object memory representation.
+    let digits = unsafe { (*raw).long_value.ob_digit.as_ptr() };
+    cpython_foreign_long_payload_to_u64(lv_tag, digits)
+}
+
+fn cpython_foreign_long_payload_to_i64(lv_tag: usize, digits: *const u32) -> Option<i64> {
+    const PY_LONG_SIGN_MASK: usize = 0x3;
+    const PY_LONG_NON_SIZE_BITS: usize = 3;
+    if lv_tag < (2usize << PY_LONG_NON_SIZE_BITS) {
+        let sign_bits = lv_tag & PY_LONG_SIGN_MASK;
+        let compact_digits = lv_tag >> PY_LONG_NON_SIZE_BITS;
+        if compact_digits == 0 {
+            return (sign_bits == 1).then_some(0);
+        }
+        let sign = 1i128 - (sign_bits as i128);
+        if sign == 0 || sign < -1 || sign > 1 {
+            return None;
+        }
+        // SAFETY: compact longs expose payload in `ob_digit[0]`.
+        let compact = unsafe { *digits } as i128;
+        let value = sign.checked_mul(compact)?;
+        return i64::try_from(value).ok();
+    }
+    let sign_bits = lv_tag & PY_LONG_SIGN_MASK;
     if sign_bits == 1 {
         return Some(0);
     }
-    if sign_bits == 2 {
+    if sign_bits > 2 {
         return None;
     }
-    let ndigits = lv_tag >> 3;
+    let sign = if sign_bits == 2 { -1i128 } else { 1i128 };
+    let ndigits = lv_tag >> PY_LONG_NON_SIZE_BITS;
     if ndigits == 0 {
         return Some(0);
     }
-    // SAFETY: CPython allocates at least `ndigits` digits for normalized longs.
-    let digits = unsafe { (*raw).long_value.ob_digit.as_ptr() };
+    let mut acc: i128 = 0;
+    for idx in 0..ndigits {
+        // SAFETY: caller passes CPython long digit storage.
+        let digit = unsafe { *digits.add(idx) } as i128;
+        let shift = 30usize.saturating_mul(idx);
+        if shift >= 126 {
+            return None;
+        }
+        acc = acc.checked_add(digit.checked_shl(shift as u32)?)?;
+    }
+    let signed = if sign < 0 { -acc } else { acc };
+    i64::try_from(signed).ok()
+}
+
+fn cpython_foreign_long_payload_to_u64(lv_tag: usize, digits: *const u32) -> Option<u64> {
+    const PY_LONG_SIGN_MASK: usize = 0x3;
+    const PY_LONG_NON_SIZE_BITS: usize = 3;
+    if lv_tag < (2usize << PY_LONG_NON_SIZE_BITS) {
+        let sign_bits = lv_tag & PY_LONG_SIGN_MASK;
+        let compact_digits = lv_tag >> PY_LONG_NON_SIZE_BITS;
+        if compact_digits == 0 {
+            return (sign_bits == 1).then_some(0);
+        }
+        let sign = 1isize - (sign_bits as isize);
+        if sign <= 0 {
+            return (sign == 0).then_some(0);
+        }
+        // SAFETY: compact longs expose payload in `ob_digit[0]`.
+        let compact = unsafe { *digits } as u64;
+        return Some(compact);
+    }
+    let sign_bits = lv_tag & PY_LONG_SIGN_MASK;
+    if sign_bits == 1 {
+        return Some(0);
+    }
+    if sign_bits > 2 || sign_bits == 2 {
+        return None;
+    }
+    let ndigits = lv_tag >> PY_LONG_NON_SIZE_BITS;
+    if ndigits == 0 {
+        return Some(0);
+    }
     let mut acc: u128 = 0;
     for idx in 0..ndigits {
-        // SAFETY: `idx < ndigits` within normalized digit buffer.
+        // SAFETY: caller passes CPython long digit storage.
         let digit = unsafe { *digits.add(idx) } as u128;
         let shift = 30usize.saturating_mul(idx);
         if shift >= 128 {
@@ -981,6 +1033,86 @@ unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
         acc = acc.checked_add(digit.checked_shl(shift as u32)?)?;
     }
     u64::try_from(acc).ok()
+}
+
+#[cfg(test)]
+mod long_payload_tests {
+    use super::{cpython_foreign_long_payload_to_i64, cpython_foreign_long_payload_to_u64};
+
+    #[test]
+    fn compact_long_payload_decodes_zero_positive_and_negative() {
+        // CPython 3.14 compact tags:
+        // zero: sign=1, ndigits=0 -> 0x5
+        // +8:   sign=0, ndigits=1 -> 0xc
+        // -7:   sign=2, ndigits=1 -> 0xe
+        let zero_digits = [0xFFFF_FFFFu32];
+        assert_eq!(
+            cpython_foreign_long_payload_to_i64(0x5, zero_digits.as_ptr()),
+            Some(0)
+        );
+        assert_eq!(
+            cpython_foreign_long_payload_to_u64(0x5, zero_digits.as_ptr()),
+            Some(0)
+        );
+
+        let positive_digits = [8u32];
+        assert_eq!(
+            cpython_foreign_long_payload_to_i64(0xC, positive_digits.as_ptr()),
+            Some(8)
+        );
+        assert_eq!(
+            cpython_foreign_long_payload_to_u64(0xC, positive_digits.as_ptr()),
+            Some(8)
+        );
+
+        let negative_digits = [7u32];
+        assert_eq!(
+            cpython_foreign_long_payload_to_i64(0xE, negative_digits.as_ptr()),
+            Some(-7)
+        );
+        assert_eq!(
+            cpython_foreign_long_payload_to_u64(0xE, negative_digits.as_ptr()),
+            None
+        );
+    }
+
+    #[test]
+    fn compact_long_payload_rejects_invalid_zero_ndigits_tags() {
+        let digits = [0xFFFF_FFFFu32];
+        assert_eq!(cpython_foreign_long_payload_to_i64(0x0, digits.as_ptr()), None);
+        assert_eq!(cpython_foreign_long_payload_to_u64(0x0, digits.as_ptr()), None);
+    }
+
+    #[test]
+    fn non_compact_long_payload_decodes_multi_digit_values() {
+        // ndigits=2, sign=0 => 0x10 => (1 << 30)
+        let digits = [0u32, 1u32];
+        assert_eq!(
+            cpython_foreign_long_payload_to_i64(0x10, digits.as_ptr()),
+            Some(1_i64 << 30)
+        );
+        assert_eq!(
+            cpython_foreign_long_payload_to_u64(0x10, digits.as_ptr()),
+            Some(1_u64 << 30)
+        );
+
+        // ndigits=2, sign=2 => 0x12 => -(1 << 30)
+        assert_eq!(
+            cpython_foreign_long_payload_to_i64(0x12, digits.as_ptr()),
+            Some(-(1_i64 << 30))
+        );
+        assert_eq!(cpython_foreign_long_payload_to_u64(0x12, digits.as_ptr()), None);
+    }
+
+    #[test]
+    fn non_compact_long_payload_rejects_large_overflowing_shift() {
+        // ndigits=5, sign=0 => 0x28; idx=4 would shift by 120 (still valid),
+        // set idx=5 by encoding ndigits=6 to cross i64/u64-safe bounds.
+        let digits = [1u32, 1u32, 1u32, 1u32, 1u32, 1u32];
+        let lv_tag = 6usize << 3;
+        assert_eq!(cpython_foreign_long_payload_to_i64(lv_tag, digits.as_ptr()), None);
+        assert_eq!(cpython_foreign_long_payload_to_u64(lv_tag, digits.as_ptr()), None);
+    }
 }
 
 macro_rules! for_each_cpython_exception_symbol {
@@ -3077,6 +3209,19 @@ impl ModuleCapiContext {
         }
         if let Some(text) = cpython_lookup_interned_unicode_text(object) {
             return Some(Value::Str(text));
+        }
+        if !self.owns_cpython_allocation_ptr(object) {
+            // Decode foreign PyLongObject payloads lazily, after owned/runtime-cached
+            // pointer lookups, so we do not reinterpret pyrs-owned int layouts.
+            if let Some(value) = unsafe { cpython_foreign_long_to_i64(object) } {
+                return Some(Value::Int(value));
+            }
+            if let Some(value) = unsafe { cpython_foreign_long_to_u64(object) } {
+                if let Ok(signed) = i64::try_from(value) {
+                    return Some(Value::Int(signed));
+                }
+                return Some(Value::BigInt(Box::new(BigInt::from_u64(value))));
+            }
         }
         None
     }

@@ -81,6 +81,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - closure landed this round:
     - `PyType_FromSpec*` base-resolution now correctly handles `bases` tuples containing `Builtin(Type)` so Cython metatype construction no longer defaults to `object`.
     - this removed the earlier random-stack gate `PyDescr_NewMethod expected type object` / shared-Cython-type `PyType_Check` failure.
+    - foreign `PyLong` compact payload decoding now matches CPython 3.14 (`Include/cpython/longintrepr.h`) and no longer mis-decodes compact integer payloads:
+      - `np.dtype('int64').itemsize` now resolves to `8` (was regressed to `0`),
+      - `np.iinfo(np.int64).bits` now resolves to `64` (was regressed to `0`).
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:
