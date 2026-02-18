@@ -62,6 +62,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_eval_api.rs`
   - exported `PyEval_*` frame/global/locals/function-descriptor C-API entrypoints
   - delegates shared frame/module lookup behavior to active-context/runtime helpers
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_eval_os_marshal_api.rs`
+  - exported eval/thread-lock/system utility + marshal C-API entrypoints (`PyErr_CheckSignals`, `PyGILState_*`, `PyEval_*` eval-entrys, `PyOS_*`, `PyMarshal_*`)
+  - keeps marshal encode/decode and libc number/string parsing bridges out of the monolith
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_gc_alloc_api.rs`
   - exported object allocator/GC C-API entrypoints (`PyObject_Malloc/Calloc/Realloc/Free`, `PyObject_GC_*`, `PyGC_*`)
   - shared VM GC state toggle/collect wiring and object trackedness checks
@@ -161,6 +164,12 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_unicode_error_api.rs`
   - exported `PyUnicode*Error_*` C-API entrypoints (`PyUnicodeDecodeError_Create`, `Get/SetEncoding|Object|Start|End|Reason`)
   - delegates shared behavior to `cpython_unicode_error_runtime.rs` and active-context helpers
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_unicode_api.rs`
+  - exported unicode/codec/path-translation/buffer-adjacent C-API entrypoints (`PyUnicode_*`, `PyBuffer_Release`, `PyCallable_Check`, `PyIndex_Check`)
+  - keeps unicode codec dispatch/formatting/indexing and FS encode/decode paths isolated from `vm_extensions.rs`
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_sys_thread_api.rs`
+  - exported `PySys_*` and `PyThread_*` C-API entrypoints plus sys warn/xoption helper flows
+  - isolates sys module global mutation and thread lock/TLS/TSS helper registries from `vm_extensions.rs`
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_numeric_runtime.rs`
   - CPython numeric op helper substrate (`cpython_unary_numeric_op`, `cpython_binary_numeric_op`, `cpython_binary_numeric_op_with_heap`)
   - shared pointer->value->numeric-dispatch conversion paths used by `PyNumber_*` entrypoints
@@ -216,6 +225,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython active-context pointer/error bridge behavior: `vm_extensions/cpython_context_runtime.rs`.
 - New CPython contextvar C-API entrypoint behavior: `vm_extensions/cpython_contextvar_api.rs`.
 - New CPython eval C-API entrypoint behavior: `vm_extensions/cpython_eval_api.rs`.
+- New CPython eval/system/marshal C-API entrypoint behavior: `vm_extensions/cpython_eval_os_marshal_api.rs`.
 - New CPython object allocator/GC C-API entrypoint behavior: `vm_extensions/cpython_gc_alloc_api.rs`.
 - New CPython iter C-API entrypoint behavior: `vm_extensions/cpython_iter_api.rs`.
 - New CPython capsule C-API entrypoint behavior: `vm_extensions/cpython_capsule_api.rs`.
@@ -249,6 +259,8 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython codec C-API entrypoint behavior: `vm_extensions/cpython_codec_api.rs`.
 - New CPython unicode-error helper behavior: `vm_extensions/cpython_unicode_error_runtime.rs`.
 - New CPython unicode-error C-API entrypoint behavior: `vm_extensions/cpython_unicode_error_api.rs`.
+- New CPython unicode C-API entrypoint behavior: `vm_extensions/cpython_unicode_api.rs`.
+- New CPython sys/thread C-API entrypoint behavior: `vm_extensions/cpython_sys_thread_api.rs`.
 - New CPython numeric-op helper behavior: `vm_extensions/cpython_numeric_runtime.rs`.
 - New CPython numeric C-API entrypoint behavior: `vm_extensions/cpython_numeric_api.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
@@ -262,5 +274,5 @@ This document defines the current structure and ownership boundaries for the VM 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
 - Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
-- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (unicode + error/warnings/eval/sys/thread utility clusters) into focused `vm_extensions/*_api.rs` modules.
+- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (sequence/mapping + descriptor/method + error/warnings clusters) into focused `vm_extensions/*_api.rs` modules.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.
