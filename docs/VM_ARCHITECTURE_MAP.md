@@ -209,6 +209,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_type_exports.rs`
   - CPython exported type statics and type-name wiring (`Py*_Type`, `_PyWeakref_*`, `PY_LONG_NUMBER_METHODS`)
   - keeps ABI export/static-layout declarations separate from runtime dispatch logic
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_type_layout.rs`
+  - CPython type-layout structs/constants (`CpythonTypeObject`, `CpythonNumberMethods`, member/type-slot constants)
+  - isolates shared C-struct ABI layout/state constants from extension execution flow
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_datetime_runtime.rs`
   - datetime capsule bootstrap/static (`datetime.datetime_CAPI`) and constructor stubs
   - isolates datetime capsule glue from loader/runtime dispatch code paths
@@ -310,6 +313,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython string/wide-string conversion helper behavior: `vm_extensions/cpython_string_runtime.rs`.
 - New CPython keepalive symbol-retention behavior: `vm_extensions/cpython_keepalive_exports.rs`.
 - New CPython exported type/static-layout behavior: `vm_extensions/cpython_type_exports.rs`.
+- New CPython shared type-layout struct/constant behavior: `vm_extensions/cpython_type_layout.rs`.
 - New datetime capsule bootstrap/static behavior: `vm_extensions/cpython_datetime_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.

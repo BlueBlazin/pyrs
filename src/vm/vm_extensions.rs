@@ -86,6 +86,7 @@ mod cpython_thread_runtime;
 mod cpython_tuple_api;
 mod cpython_type_api;
 mod cpython_type_exports;
+mod cpython_type_layout;
 mod cpython_unicode_api;
 mod cpython_unicode_error_api;
 mod cpython_unicode_error_runtime;
@@ -397,6 +398,7 @@ use self::cpython_type_api::{
     PyType_Modified, PyType_Ready, cpython_is_type_object_ptr, cpython_type_tp_call,
 };
 use self::cpython_type_exports::*;
+use self::cpython_type_layout::*;
 use self::cpython_unicode_api::{
     PyBuffer_Release, PyCallable_Check, PyIndex_Check, PyUnicode_Append, PyUnicode_AppendAndDel,
     PyUnicode_AsASCIIString, PyUnicode_AsCharmapString, PyUnicode_AsDecodedObject,
@@ -771,185 +773,6 @@ struct CpythonModuleDefSlot {
     slot: i32,
     value: *mut c_void,
 }
-
-#[repr(C)]
-pub struct CpythonTypeObject {
-    ob_refcnt: isize,
-    ob_type: *mut c_void,
-    ob_size: isize,
-    tp_name: *const c_char,
-    tp_basicsize: isize,
-    tp_itemsize: isize,
-    tp_dealloc: *mut c_void,
-    tp_vectorcall_offset: isize,
-    tp_getattr: *mut c_void,
-    tp_setattr: *mut c_void,
-    tp_as_async: *mut c_void,
-    tp_repr: *mut c_void,
-    tp_as_number: *mut c_void,
-    tp_as_sequence: *mut c_void,
-    tp_as_mapping: *mut c_void,
-    tp_hash: *mut c_void,
-    tp_call: *mut c_void,
-    tp_str: *mut c_void,
-    tp_getattro: *mut c_void,
-    tp_setattro: *mut c_void,
-    tp_as_buffer: *mut c_void,
-    tp_flags: usize,
-    tp_doc: *const c_char,
-    tp_traverse: *mut c_void,
-    tp_clear: *mut c_void,
-    tp_richcompare: *mut c_void,
-    tp_weaklistoffset: isize,
-    tp_iter: *mut c_void,
-    tp_iternext: *mut c_void,
-    tp_methods: *mut c_void,
-    tp_members: *mut c_void,
-    tp_getset: *mut c_void,
-    tp_base: *mut CpythonTypeObject,
-    tp_dict: *mut c_void,
-    tp_descr_get: *mut c_void,
-    tp_descr_set: *mut c_void,
-    tp_dictoffset: isize,
-    tp_init: *mut c_void,
-    tp_alloc: *mut c_void,
-    tp_new: *mut c_void,
-    tp_free: *mut c_void,
-    tp_is_gc: *mut c_void,
-    tp_bases: *mut c_void,
-    tp_mro: *mut c_void,
-    tp_cache: *mut c_void,
-    tp_subclasses: *mut c_void,
-    tp_weaklist: *mut c_void,
-    tp_del: *mut c_void,
-    tp_version_tag: u32,
-    tp_finalize: *mut c_void,
-    tp_vectorcall: *mut c_void,
-    tp_watched: u8,
-    tp_versions_used: u16,
-}
-
-#[repr(C)]
-struct CpythonNumberMethods {
-    nb_add: *mut c_void,
-    nb_subtract: *mut c_void,
-    nb_multiply: *mut c_void,
-    nb_remainder: *mut c_void,
-    nb_divmod: *mut c_void,
-    nb_power: *mut c_void,
-    nb_negative: *mut c_void,
-    nb_positive: *mut c_void,
-    nb_absolute: *mut c_void,
-    nb_bool: *mut c_void,
-    nb_invert: *mut c_void,
-    nb_lshift: *mut c_void,
-    nb_rshift: *mut c_void,
-    nb_and: *mut c_void,
-    nb_xor: *mut c_void,
-    nb_or: *mut c_void,
-    nb_int: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
-    nb_reserved: *mut c_void,
-    nb_float: *mut c_void,
-    nb_inplace_add: *mut c_void,
-    nb_inplace_subtract: *mut c_void,
-    nb_inplace_multiply: *mut c_void,
-    nb_inplace_remainder: *mut c_void,
-    nb_inplace_power: *mut c_void,
-    nb_inplace_lshift: *mut c_void,
-    nb_inplace_rshift: *mut c_void,
-    nb_inplace_and: *mut c_void,
-    nb_inplace_xor: *mut c_void,
-    nb_inplace_or: *mut c_void,
-    nb_floor_divide: *mut c_void,
-    nb_true_divide: *mut c_void,
-    nb_inplace_floor_divide: *mut c_void,
-    nb_inplace_true_divide: *mut c_void,
-    nb_index: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
-    nb_matrix_multiply: *mut c_void,
-    nb_inplace_matrix_multiply: *mut c_void,
-}
-
-#[repr(C)]
-struct CpythonMappingMethods {
-    mp_length: *mut c_void,
-    mp_subscript: *mut c_void,
-    mp_ass_subscript: *mut c_void,
-}
-
-#[repr(C)]
-struct CpythonSequenceMethods {
-    sq_length: *mut c_void,
-    sq_concat: *mut c_void,
-    sq_repeat: *mut c_void,
-    sq_item: *mut c_void,
-    was_sq_slice: *mut c_void,
-    sq_ass_item: *mut c_void,
-    was_sq_ass_slice: *mut c_void,
-    sq_contains: *mut c_void,
-    sq_inplace_concat: *mut c_void,
-    sq_inplace_repeat: *mut c_void,
-}
-
-#[repr(C)]
-pub struct CpythonComplexValue {
-    real: f64,
-    imag: f64,
-}
-
-const PY_MEMBER_T_SHORT: c_int = 0;
-const PY_MEMBER_T_INT: c_int = 1;
-const PY_MEMBER_T_LONG: c_int = 2;
-const PY_MEMBER_T_FLOAT: c_int = 3;
-const PY_MEMBER_T_DOUBLE: c_int = 4;
-const PY_MEMBER_T_STRING: c_int = 5;
-const PY_MEMBER_T_OBJECT: c_int = 6;
-const PY_MEMBER_T_CHAR: c_int = 7;
-const PY_MEMBER_T_BYTE: c_int = 8;
-const PY_MEMBER_T_UBYTE: c_int = 9;
-const PY_MEMBER_T_USHORT: c_int = 10;
-const PY_MEMBER_T_UINT: c_int = 11;
-const PY_MEMBER_T_ULONG: c_int = 12;
-const PY_MEMBER_T_STRING_INPLACE: c_int = 13;
-const PY_MEMBER_T_BOOL: c_int = 14;
-const PY_MEMBER_T_OBJECT_EX: c_int = 16;
-const PY_MEMBER_T_LONGLONG: c_int = 17;
-const PY_MEMBER_T_ULONGLONG: c_int = 18;
-const PY_MEMBER_T_PYSSIZET: c_int = 19;
-const PY_MEMBER_T_NONE: c_int = 20;
-const PY_MEMBER_READONLY: c_int = 1;
-const PY_MEMBER_RELATIVE_OFFSET: c_int = 8;
-const PY_TYPE_SLOT_TP_ALLOC: c_int = 47;
-const PY_TYPE_SLOT_TP_BASE: c_int = 48;
-const PY_TYPE_SLOT_TP_BASES: c_int = 49;
-const PY_TYPE_SLOT_TP_CALL: c_int = 50;
-const PY_TYPE_SLOT_TP_CLEAR: c_int = 51;
-const PY_TYPE_SLOT_TP_DEALLOC: c_int = 52;
-const PY_TYPE_SLOT_TP_DEL: c_int = 53;
-const PY_TYPE_SLOT_TP_DESCR_GET: c_int = 54;
-const PY_TYPE_SLOT_TP_DESCR_SET: c_int = 55;
-const PY_TYPE_SLOT_TP_DOC: c_int = 56;
-const PY_TYPE_SLOT_TP_GETATTR: c_int = 57;
-const PY_TYPE_SLOT_TP_GETATTRO: c_int = 58;
-const PY_TYPE_SLOT_TP_HASH: c_int = 59;
-const PY_TYPE_SLOT_TP_INIT: c_int = 60;
-const PY_TYPE_SLOT_TP_IS_GC: c_int = 61;
-const PY_TYPE_SLOT_TP_ITER: c_int = 62;
-const PY_TYPE_SLOT_TP_ITERNEXT: c_int = 63;
-const PY_TYPE_SLOT_TP_METHODS: c_int = 64;
-const PY_TYPE_SLOT_TP_NEW: c_int = 65;
-const PY_TYPE_SLOT_TP_REPR: c_int = 66;
-const PY_TYPE_SLOT_TP_RICHCOMPARE: c_int = 67;
-const PY_TYPE_SLOT_TP_SETATTR: c_int = 68;
-const PY_TYPE_SLOT_TP_SETATTRO: c_int = 69;
-const PY_TYPE_SLOT_TP_STR: c_int = 70;
-const PY_TYPE_SLOT_TP_TRAVERSE: c_int = 71;
-const PY_TYPE_SLOT_TP_MEMBERS: c_int = 72;
-const PY_TYPE_SLOT_TP_GETSET: c_int = 73;
-const PY_TYPE_SLOT_TP_FREE: c_int = 74;
-const PY_TYPE_SLOT_TP_FINALIZE: c_int = 80;
-const PY_TYPE_SLOT_TP_VECTORCALL: c_int = 82;
-const PY_TYPE_SLOT_TP_TOKEN: c_int = 83;
-const PY_TYPE_SLOT_MAX: c_int = 83;
 
 static PYBYTES_ASSTRING_MISMATCH_BT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
