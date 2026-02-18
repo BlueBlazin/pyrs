@@ -89,6 +89,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_numeric_runtime.rs`
   - CPython numeric op helper substrate (`cpython_unary_numeric_op`, `cpython_binary_numeric_op`, `cpython_binary_numeric_op_with_heap`)
   - shared pointer->value->numeric-dispatch conversion paths used by `PyNumber_*` entrypoints
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_numeric_api.rs`
+  - exported `PyNumber_*` C-API entrypoints (numeric predicates, binary/unary/in-place ops, conversion helpers)
+  - delegates shared dispatch/conversion behavior to numeric runtime/context helper modules
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -147,6 +150,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython unicode-error helper behavior: `vm_extensions/cpython_unicode_error_runtime.rs`.
 - New CPython unicode-error C-API entrypoint behavior: `vm_extensions/cpython_unicode_error_api.rs`.
 - New CPython numeric-op helper behavior: `vm_extensions/cpython_numeric_runtime.rs`.
+- New CPython numeric C-API entrypoint behavior: `vm_extensions/cpython_numeric_api.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
