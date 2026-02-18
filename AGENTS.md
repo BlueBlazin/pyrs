@@ -68,6 +68,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - REPL responsiveness (2026-02-17):
   - completion-state refresh now skips single-expression submissions, reducing post-expression prompt latency after large imports (e.g. NumPy).
   - completion graph building now skips CPython proxy class/instance expansion, avoiding deep recursive symbol-walk overhead after scientific-stack imports.
+- Scientific-stack native-extension bring-up (2026-02-18):
+  - `PyType_Ready` method-table population now uses descriptor construction (`PyDescr_NewMethod` / `PyDescr_NewClassMethod`) instead of short-lived cfunction wrappers.
+  - thread-state compat now initializes a CPython-style exception-stack chain at the offset used by `PyThreadState_GetUnchecked` Cython call-sites (`tstate + 0x78`), removing prior `_cyutility` crash paths.
+  - extension loader now reconciles module-instance mismatch returns from `PyInit_*` by syncing module globals/registry instead of failing with `returned unexpected module instance`.
+  - current direct scientific-stack blockers are runtime-semantic: `_cyutility.__Pyx__Import` capsule-signature mismatch and `PyComplexObject` layout/size mismatch (`expected 32, got 24`) in NumPy random extension paths.
 - Top-stdlib common-usecase gate: `26/26` import, `26/26` smoke.
 - Extended stdlib probe: `50/50` import, `50/50` smoke (`perf/stdlib_compat_extended_latest.json`).
 - Extension scaffolding checkpoint:

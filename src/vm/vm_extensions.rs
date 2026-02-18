@@ -33,6 +33,10 @@ const CPY_PROXY_PTR_ATTR: &str = "__pyrs_cpython_proxy_ptr__";
 const CPY_PROXY_MARKER_ATTR: &str = "__pyrs_cpython_proxy_marker__";
 const CPY_EXCEPTION_TYPE_PTR_ATTR: &str = "__pyrs_cpython_exception_type_ptr__";
 static TRACE_NUMPY_TYPEDICT_PTR: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static CPYTHON_DESCRIPTOR_REGISTRY: RefCell<HashMap<usize, CpythonDescriptorKind>> =
+        RefCell::new(HashMap::new());
+}
 mod callable_runtime;
 mod capi_v1;
 mod cpython_args_runtime;
@@ -2132,19 +2136,40 @@ thread_local! {
 
 const CPYTHON_THREAD_STATE_COMPAT_SIZE: usize = 4096;
 
+#[repr(C)]
+struct CpythonErrStackItemCompat {
+    exc_value: *mut c_void,
+    previous_item: *mut CpythonErrStackItemCompat,
+}
+
 #[repr(C, align(16))]
 struct CpythonThreadStateCompat {
     prev: *mut c_void,
     next: *mut c_void,
     interp: *mut c_void,
-    _bytes: [u8; CPYTHON_THREAD_STATE_COMPAT_SIZE - (3 * std::mem::size_of::<*mut c_void>())],
+    _pad_to_exc_info: [u8; 0x78 - (3 * std::mem::size_of::<*mut c_void>())],
+    exc_info: *mut CpythonErrStackItemCompat,
+    exc_state: CpythonErrStackItemCompat,
+    _bytes: [u8; CPYTHON_THREAD_STATE_COMPAT_SIZE
+        - (0x78
+            + std::mem::size_of::<*mut c_void>()
+            + std::mem::size_of::<CpythonErrStackItemCompat>())],
 }
 
 static mut MAIN_THREAD_STATE_STORAGE: CpythonThreadStateCompat = CpythonThreadStateCompat {
     prev: std::ptr::null_mut(),
     next: std::ptr::null_mut(),
     interp: std::ptr::null_mut(),
-    _bytes: [0; CPYTHON_THREAD_STATE_COMPAT_SIZE - (3 * std::mem::size_of::<*mut c_void>())],
+    _pad_to_exc_info: [0; 0x78 - (3 * std::mem::size_of::<*mut c_void>())],
+    exc_info: std::ptr::null_mut(),
+    exc_state: CpythonErrStackItemCompat {
+        exc_value: std::ptr::null_mut(),
+        previous_item: std::ptr::null_mut(),
+    },
+    _bytes: [0; CPYTHON_THREAD_STATE_COMPAT_SIZE
+        - (0x78
+            + std::mem::size_of::<*mut c_void>()
+            + std::mem::size_of::<CpythonErrStackItemCompat>())],
 };
 static CURRENT_THREAD_STATE_PTR: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_THREAD_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
@@ -2227,11 +2252,28 @@ struct CpythonInternedUnicodeRegistry {
     by_ptr: HashMap<usize, String>,
 }
 
-fn cpython_main_thread_state_ptr() -> usize {
-    // SAFETY: main thread-state storage is process-global static memory.
-    unsafe {
-        MAIN_THREAD_STATE_STORAGE.interp = cpython_main_interpreter_state_ptr() as *mut c_void;
+fn cpython_init_thread_state_compat(
+    state: *mut CpythonThreadStateCompat,
+    interp: *mut c_void,
+) -> *mut CpythonThreadStateCompat {
+    if state.is_null() {
+        return std::ptr::null_mut();
     }
+    // SAFETY: caller provides a writable thread-state compatibility pointer.
+    unsafe {
+        (*state).interp = interp;
+        (*state).exc_state.exc_value = std::ptr::null_mut();
+        (*state).exc_state.previous_item = std::ptr::null_mut();
+        (*state).exc_info = std::ptr::addr_of_mut!((*state).exc_state);
+    }
+    state
+}
+
+fn cpython_main_thread_state_ptr() -> usize {
+    cpython_init_thread_state_compat(
+        std::ptr::addr_of_mut!(MAIN_THREAD_STATE_STORAGE),
+        cpython_main_interpreter_state_ptr() as *mut c_void,
+    );
     (&raw mut MAIN_THREAD_STATE_STORAGE) as usize
 }
 
@@ -2726,6 +2768,9 @@ impl Drop for ModuleCapiContext {
                     vm.extension_cpython_ptr_by_object_id.remove(&object_id);
                 }
             }
+            CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| {
+                registry.borrow_mut().remove(&(raw as usize));
+            });
             // SAFETY: pointers were allocated via C allocator in this context.
             unsafe {
                 free(raw.cast());
@@ -2800,6 +2845,15 @@ impl Drop for ModuleCapiContext {
 }
 
 impl ModuleCapiContext {
+    fn is_probable_c_string_pointer(ptr: *const c_char) -> bool {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if ptr.is_null() {
+            return false;
+        }
+        let addr = ptr as usize;
+        addr >= MIN_VALID_PTR
+    }
+
     fn is_probable_type_object_without_metatype(object: *mut c_void) -> bool {
         const MIN_VALID_PTR: usize = 0x1_0000_0000;
         if object.is_null() {
@@ -2816,10 +2870,7 @@ impl ModuleCapiContext {
                 return false;
             };
             let tp_name = (*ty).tp_name;
-            if tp_name.is_null() {
-                return false;
-            }
-            if c_name_to_string(tp_name).is_err() {
+            if !Self::is_probable_c_string_pointer(tp_name) {
                 return false;
             }
             let basicsize = (*ty).tp_basicsize;
@@ -2860,10 +2911,7 @@ impl ModuleCapiContext {
                 return false;
             }
             let tp_name = (*type_ptr).tp_name;
-            if tp_name.is_null() {
-                return false;
-            }
-            c_name_to_string(tp_name).is_ok()
+            Self::is_probable_c_string_pointer(tp_name)
         }
     }
 
@@ -2940,6 +2988,7 @@ impl ModuleCapiContext {
         let allowed = [
             std::ptr::addr_of_mut!(PyCFunction_Type),
             std::ptr::addr_of_mut!(PyMethodDescr_Type),
+            std::ptr::addr_of_mut!(PyClassMethodDescr_Type),
             std::ptr::addr_of_mut!(PyGetSetDescr_Type),
             std::ptr::addr_of_mut!(PyMemberDescr_Type),
             std::ptr::addr_of_mut!(PyWrapperDescr_Type),
@@ -4654,6 +4703,9 @@ impl ModuleCapiContext {
         self.cpython_owned_ptrs.insert(ptr as usize);
         self.cpython_descriptors
             .insert(ptr as usize, descriptor_kind);
+        CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| {
+            registry.borrow_mut().insert(ptr as usize, descriptor_kind);
+        });
         ptr
     }
 
@@ -4664,10 +4716,15 @@ impl ModuleCapiContext {
         object_type: *mut CpythonTypeObject,
         is_type_object: bool,
     ) -> Option<*mut c_void> {
-        let descriptor_kind = self
-            .cpython_descriptors
-            .get(&(descriptor_ptr as usize))
-            .copied()?;
+        let descriptor_key = descriptor_ptr as usize;
+        let descriptor_kind = if let Some(kind) = self.cpython_descriptors.get(&descriptor_key) {
+            *kind
+        } else {
+            let kind = CPYTHON_DESCRIPTOR_REGISTRY
+                .with(|registry| registry.borrow().get(&descriptor_key).copied())?;
+            self.cpython_descriptors.insert(descriptor_key, kind);
+            kind
+        };
         match descriptor_kind {
             CpythonDescriptorKind::Method {
                 owner_type,

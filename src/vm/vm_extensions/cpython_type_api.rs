@@ -4,10 +4,10 @@ use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 use crate::runtime::{Object, Value};
 
 use super::{
-    _PyObject_New, _PyObject_NewVar, CpythonHeapTypeInfo, CpythonObjectHead, CpythonTypeObject,
-    CpythonTypeSpec, ModuleCapiContext, PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS,
-    PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
-    PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
+    _PyObject_New, _PyObject_NewVar, CpythonHeapTypeInfo, CpythonMethodDef, CpythonObjectHead,
+    CpythonTypeObject, CpythonTypeSpec, ModuleCapiContext, PY_TPFLAGS_BASETYPE,
+    PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE,
+    PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
     PY_TPFLAGS_TUPLE_SUBCLASS, PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS,
     PY_TYPE_SLOT_MAX, PY_TYPE_SLOT_TP_ALLOC, PY_TYPE_SLOT_TP_BASE, PY_TYPE_SLOT_TP_BASES,
     PY_TYPE_SLOT_TP_CALL, PY_TYPE_SLOT_TP_CLEAR, PY_TYPE_SLOT_TP_DEALLOC, PY_TYPE_SLOT_TP_DEL,
@@ -18,7 +18,8 @@ use super::{
     PY_TYPE_SLOT_TP_METHODS, PY_TYPE_SLOT_TP_NEW, PY_TYPE_SLOT_TP_REPR,
     PY_TYPE_SLOT_TP_RICHCOMPARE, PY_TYPE_SLOT_TP_SETATTR, PY_TYPE_SLOT_TP_SETATTRO,
     PY_TYPE_SLOT_TP_STR, PY_TYPE_SLOT_TP_TOKEN, PY_TYPE_SLOT_TP_TRAVERSE,
-    PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type, PyDict_New,
+    PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type,
+    PyDescr_NewClassMethod, PyDescr_NewMethod, PyDict_New, PyDict_SetItemString,
     PyErr_BadInternalCall, PyExc_MemoryError, PyExc_SystemError, PyExc_TypeError,
     PyModule_GetState, PyObject_Free, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Size,
     PyType_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
@@ -29,6 +30,40 @@ use super::{
 
 unsafe extern "C" {
     fn calloc(nmemb: usize, size: usize) -> *mut c_void;
+}
+
+const METH_CLASS: c_int = 0x0010;
+
+unsafe fn cpython_type_populate_method_descriptors(ty: *mut CpythonTypeObject) -> i32 {
+    // SAFETY: caller passes a non-null type pointer.
+    let mut method = unsafe { (*ty).tp_methods.cast::<CpythonMethodDef>() };
+    if method.is_null() {
+        return 0;
+    }
+    loop {
+        // SAFETY: method table is terminated by null ml_name.
+        let method_name_ptr = unsafe { (*method).ml_name };
+        if method_name_ptr.is_null() {
+            break;
+        }
+        let flags = unsafe { (*method).ml_flags };
+        let descriptor = if (flags & METH_CLASS) != 0 {
+            unsafe { PyDescr_NewClassMethod(ty.cast::<c_void>(), method.cast()) }
+        } else {
+            unsafe { PyDescr_NewMethod(ty.cast::<c_void>(), method.cast()) }
+        };
+        if descriptor.is_null() {
+            return -1;
+        }
+        let status = unsafe { PyDict_SetItemString((*ty).tp_dict, method_name_ptr, descriptor) };
+        unsafe { Py_DecRef(descriptor) };
+        if status != 0 {
+            return -1;
+        }
+        // SAFETY: contiguous method table entries.
+        method = unsafe { method.add(1) };
+    }
+    0
 }
 
 pub(super) unsafe extern "C" fn cpython_type_tp_call(
@@ -186,7 +221,10 @@ pub(super) fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
         return true;
     }
     // SAFETY: object_type and type_type are validated non-null pointers.
-    unsafe { PyType_IsSubtype(object_type, type_type) != 0 }
+    if unsafe { PyType_IsSubtype(object_type, type_type) != 0 } {
+        return true;
+    }
+    ModuleCapiContext::is_probable_type_object_without_metatype(ptr)
 }
 
 fn cpython_type_ptr_from_value(value: &Value) -> Option<*mut CpythonTypeObject> {
@@ -1097,6 +1135,9 @@ pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
                 }
             }
             (*ty).tp_mro = mro_tuple;
+        }
+        if cpython_type_populate_method_descriptors(ty) != 0 {
+            return -1;
         }
         if !base.is_null() {
             let inherited_subclass_bits = (*base).tp_flags

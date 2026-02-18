@@ -12,10 +12,10 @@ use super::{
     PyBytes_FromStringAndSize, PyErr_BadInternalCall, PyExc_SystemError, PyLong_FromLong,
     PyTuple_New, PyUnicode_FromStringAndSize, calloc, cpython_bind_module_def,
     cpython_current_thread_state_ptr, cpython_get_or_init_constant_ptr,
-    cpython_interpreter_state_allocations, cpython_is_known_interpreter_state_ptr,
-    cpython_is_known_thread_state_ptr, cpython_main_interpreter_state_ptr,
-    cpython_main_thread_state_ptr, cpython_set_error, cpython_set_typed_error,
-    cpython_thread_state_allocations, free, vm_current_thread_ident,
+    cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
+    cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
+    cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr, cpython_set_error,
+    cpython_set_typed_error, cpython_thread_state_allocations, free, vm_current_thread_ident,
     with_active_cpython_context_mut,
 };
 
@@ -45,10 +45,10 @@ pub unsafe extern "C" fn PyThreadState_New(interp: *mut c_void) -> *mut c_void {
         cpython_set_error("PyThreadState_New failed to allocate thread state");
         return std::ptr::null_mut();
     }
-    // SAFETY: allocation size matches compatibility struct and points to writable memory.
-    unsafe {
-        let state = raw as *mut CpythonThreadStateCompat;
-        (*state).interp = interp;
+    let state = cpython_init_thread_state_compat(raw as *mut CpythonThreadStateCompat, interp);
+    if state.is_null() {
+        cpython_set_error("PyThreadState_New failed to initialize thread state");
+        return std::ptr::null_mut();
     }
     if let Ok(mut set) = cpython_thread_state_allocations().lock() {
         set.insert(raw);

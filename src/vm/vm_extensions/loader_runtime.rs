@@ -571,16 +571,19 @@ impl Vm {
             if returned_module.id() != module.id() {
                 if trace_slots {
                     eprintln!(
-                        "[ext-load] module={} unexpected_module_instance returned_id={} expected_id={}",
+                        "[ext-load] module={} reconcile_module_instance returned_id={} expected_id={}",
                         module_name,
                         returned_module.id(),
                         module.id()
                     );
                 }
-                return Err(RuntimeError::new(format!(
-                    "extension '{}' initializer '{}' returned unexpected module instance",
-                    module_name, resolved_symbol
-                )));
+                self.modules
+                    .insert(module_name.to_string(), returned_module.clone());
+                if let Object::Module(returned_data) = &*returned_module.kind()
+                    && let Object::Module(current_data) = &mut *module.kind_mut()
+                {
+                    current_data.globals = returned_data.globals.clone();
+                }
             }
         }
 

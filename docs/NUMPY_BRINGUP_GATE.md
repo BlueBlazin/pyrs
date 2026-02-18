@@ -121,18 +121,23 @@ If a probed local module is not installed, its dependent cases are recorded as `
     - `str(np.float64(0.5)) -> "0.5"`
     - `repr(np.float64(0.5)) -> "np.float64(0.5)"`
     - `format(np.float64(0.5)) -> "0.5"`
-  - direct scientific-stack blockers have moved past missing-symbol churn and are now primarily runtime semantics:
-    - latest `scipy_import` fails with `KeyError ... PyDict_DelItem key not found` during `_cyutility` init.
-    - latest `pandas_*` / `matplotlib_*` probes remain red on downstream runtime semantics.
+  - direct scientific-stack blockers are now deterministic runtime-semantics issues (no current SIGSEGV in the latest probe):
+    - latest `scipy_import` fails in `_ccallback_c` init with `_cyutility.__Pyx__Import` capsule-signature mismatch (`expected ... got (null)`).
+    - latest `pandas_*` fails in NumPy random extension init with `builtins.complex size changed ... Expected 32 ... got 24`.
+    - latest `matplotlib_*` still fails on import-stage assertion paths.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
-  - `scipy_import`: `FAIL` (current lane-B blocker set includes remaining private CPython symbol closure for scipy extension modules)
-  - `pandas_import` / `pandas_series_sum`: `FAIL` (pandas path currently hits deep-import/runtime stack failures after NumPy bootstrap)
-  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (import-stage assertion paths still open post-NumPy bootstrap)
+  - `scipy_import`: `FAIL` (`_cyutility.__Pyx__Import` capsule signature/name mismatch path).
+  - `pandas_import` / `pandas_series_sum`: `FAIL` (`complex` object-size ABI/layout mismatch in NumPy random extension path).
+  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (import-stage assertion paths still open post-NumPy bootstrap).
 - `PyNumber_Long` reduction-path blocker is closed via:
   - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and
   - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.
 - Extension-init failure reporting now preserves the first meaningful per-module `Py_mod_exec` failure across retry attempts, preventing fallback noise like `cannot load module more than once per process` from masking the root blocker.
 - Recent direct-mode bring-up deltas:
+  - Cython thread-state exception-stack access no longer crashes on direct imports:
+    - thread-state compat now publishes an initialized `_PyErr_StackItem` chain at the CPython offset used by `PyThreadState_GetUnchecked` consumers (e.g., SciPy `_cyutility`).
+  - CPython extension init path now reconciles module-instance mismatch returns:
+    - when `PyInit_*` returns a different module object than the pre-created import target, the loader now syncs globals and modules registry instead of failing with `returned unexpected module instance`.
   - NumPy scalar construction/formatting root-cause closure:
     - `PyFloat_Type.tp_new` now implements CPython-style constructor behavior (base + subtype allocation path), fixing zero-initialized scalar results in NumPy float constructors.
     - `PyUnicode_FromFormat` / `PyBytes_FromFormatV` now support object format specifiers `%S`, `%R`, `%A`.
