@@ -383,6 +383,7 @@ PyObject *PyImport_ReloadModule(PyObject *module);
 
 PyObject *PyLong_FromLong(long long value);
 PyObject *PyLong_FromLongLong(long long value);
+PyObject *PyLong_FromSsize_t(long long value);
 PyObject *PyLong_FromSize_t(size_t value);
 PyObject *PyLong_FromInt32(int32_t value);
 PyObject *PyLong_FromUInt32(uint32_t value);
@@ -392,6 +393,7 @@ PyObject *PyLong_FromString(const char *value, char **pend, int base);
 PyObject *PyLong_GetInfo(void);
 long long PyLong_AsLong(PyObject *object);
 long long PyLong_AsLongLong(PyObject *object);
+long long PyLong_AsSsize_t(PyObject *object);
 int PyLong_AsInt(PyObject *object);
 int PyLong_AsInt32(PyObject *object, int32_t *value);
 int PyLong_AsUInt32(PyObject *object, uint32_t *value);

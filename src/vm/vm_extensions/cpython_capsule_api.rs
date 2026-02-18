@@ -74,6 +74,52 @@ unsafe fn cpython_external_capsule_pointer(
     Ok(Some(pointer))
 }
 
+unsafe fn cpython_external_capsule_name(capsule: *mut c_void) -> Option<*const c_char> {
+    if capsule.is_null() {
+        return None;
+    }
+    // SAFETY: caller provides an object pointer from extension code; we only inspect
+    // the capsule-compatible object header and return `None` on type mismatch.
+    let raw = capsule.cast::<CpythonCapsuleCompatObject>();
+    let ty = unsafe { (*raw).ob_base.ob_type };
+    if ty != std::ptr::addr_of_mut!(PyCapsule_Type).cast() {
+        return None;
+    }
+    // SAFETY: `raw` points to a capsule-compatible object.
+    Some(unsafe { (*raw).name })
+}
+
+unsafe fn cpython_external_capsule_is_valid(capsule: *mut c_void, name: *const c_char) -> bool {
+    if capsule.is_null() {
+        return false;
+    }
+    // SAFETY: caller provides an object pointer from extension code; we only inspect
+    // the capsule-compatible object header and return false on type mismatch.
+    let raw = capsule.cast::<CpythonCapsuleCompatObject>();
+    let ty = unsafe { (*raw).ob_base.ob_type };
+    if ty != std::ptr::addr_of_mut!(PyCapsule_Type).cast() {
+        return false;
+    }
+    // SAFETY: `raw` points to a capsule-compatible object.
+    let pointer = unsafe { (*raw).pointer };
+    if pointer.is_null() {
+        return false;
+    }
+    // SAFETY: `raw` points to a capsule-compatible object.
+    let capsule_name = unsafe { (*raw).name };
+    match (capsule_name.is_null(), name.is_null()) {
+        (true, true) => true,
+        (false, false) => {
+            // SAFETY: both pointers are non-null and expected NUL-terminated by C-API contract.
+            let actual = unsafe { CStr::from_ptr(capsule_name) };
+            // SAFETY: both pointers are non-null and expected NUL-terminated by C-API contract.
+            let requested = unsafe { CStr::from_ptr(name) };
+            actual.to_bytes() == requested.to_bytes()
+        }
+        _ => false,
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyCapsule_New(
     pointer: *mut c_void,
@@ -279,6 +325,10 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
 pub unsafe extern "C" fn PyCapsule_GetName(capsule: *mut c_void) -> *const c_char {
     with_active_cpython_context_mut(|context| {
         let Some(handle) = context.cpython_handle_from_ptr(capsule) else {
+            let external_name = unsafe { cpython_external_capsule_name(capsule) };
+            if let Some(name) = external_name {
+                return name;
+            }
             context.set_error("PyCapsule_GetName received unknown object pointer");
             return std::ptr::null();
         };
@@ -464,6 +514,9 @@ pub unsafe extern "C" fn PyCapsule_IsValid(capsule: *mut c_void, name: *const c_
     }
     match with_active_cpython_context_mut(|context| {
         let Some(handle) = context.cpython_handle_from_ptr(capsule) else {
+            if unsafe { cpython_external_capsule_is_valid(capsule, name) } {
+                return 1;
+            }
             if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_VALID").is_some() {
                 let raw_type = if capsule.is_null() {
                     std::ptr::null_mut()

@@ -6,7 +6,7 @@ use std::sync::{Condvar, Mutex, Once, OnceLock};
 
 use super::{
     BYTES_BACKING_STORAGE_ATTR, ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome,
-    NativeCallResult, ObjRef, STR_BACKING_STORAGE_ATTR, Vm, dict_contains_key_checked,
+    NativeCallResult, ObjRef, STR_BACKING_STORAGE_ATTR, Vm, add_values, dict_contains_key_checked,
     dict_get_value, dict_remove_value, dict_set_value_checked, exception_type_is_subclass,
     is_truthy, memoryview_bounds, value_to_int, vm_current_thread_ident,
 };
@@ -1982,6 +1982,13 @@ unsafe extern "C" fn cpython_float_tp_new(
     new_obj
 }
 
+unsafe extern "C" fn cpython_long_nb_add_slot(
+    left: *mut c_void,
+    right: *mut c_void,
+) -> *mut c_void {
+    cpython_numeric_runtime::cpython_binary_numeric_op_with_heap(left, right, add_values)
+}
+
 fn initialize_cpython_compat_type_objects() {
     static INIT: Once = Once::new();
     INIT.call_once(|| unsafe {
@@ -2079,8 +2086,10 @@ fn initialize_cpython_compat_type_objects() {
         PyType_Type.tp_itemsize = 40;
         PyLong_Type.tp_basicsize = 24;
         PyLong_Type.tp_itemsize = 4;
+        PyLong_Type.tp_as_number = std::ptr::addr_of_mut!(PY_LONG_NUMBER_METHODS).cast();
         PyBool_Type.tp_basicsize = 24;
         PyBool_Type.tp_itemsize = 4;
+        PyBool_Type.tp_as_number = std::ptr::addr_of_mut!(PY_LONG_NUMBER_METHODS).cast();
         PyFloat_Type.tp_basicsize = 24;
         PyFloat_Type.tp_itemsize = 0;
         PyComplex_Type.tp_basicsize = std::mem::size_of::<CpythonComplexCompatObject>() as isize;
@@ -8826,6 +8835,45 @@ const fn empty_type(name: *const c_char) -> CpythonTypeObject {
         tp_versions_used: 0,
     }
 }
+
+static mut PY_LONG_NUMBER_METHODS: CpythonNumberMethods = CpythonNumberMethods {
+    nb_add: cpython_long_nb_add_slot as *mut c_void,
+    nb_subtract: std::ptr::null_mut(),
+    nb_multiply: std::ptr::null_mut(),
+    nb_remainder: std::ptr::null_mut(),
+    nb_divmod: std::ptr::null_mut(),
+    nb_power: std::ptr::null_mut(),
+    nb_negative: std::ptr::null_mut(),
+    nb_positive: std::ptr::null_mut(),
+    nb_absolute: std::ptr::null_mut(),
+    nb_bool: std::ptr::null_mut(),
+    nb_invert: std::ptr::null_mut(),
+    nb_lshift: std::ptr::null_mut(),
+    nb_rshift: std::ptr::null_mut(),
+    nb_and: std::ptr::null_mut(),
+    nb_xor: std::ptr::null_mut(),
+    nb_or: std::ptr::null_mut(),
+    nb_int: None,
+    nb_reserved: std::ptr::null_mut(),
+    nb_float: std::ptr::null_mut(),
+    nb_inplace_add: std::ptr::null_mut(),
+    nb_inplace_subtract: std::ptr::null_mut(),
+    nb_inplace_multiply: std::ptr::null_mut(),
+    nb_inplace_remainder: std::ptr::null_mut(),
+    nb_inplace_power: std::ptr::null_mut(),
+    nb_inplace_lshift: std::ptr::null_mut(),
+    nb_inplace_rshift: std::ptr::null_mut(),
+    nb_inplace_and: std::ptr::null_mut(),
+    nb_inplace_xor: std::ptr::null_mut(),
+    nb_inplace_or: std::ptr::null_mut(),
+    nb_floor_divide: std::ptr::null_mut(),
+    nb_true_divide: std::ptr::null_mut(),
+    nb_inplace_floor_divide: std::ptr::null_mut(),
+    nb_inplace_true_divide: std::ptr::null_mut(),
+    nb_index: None,
+    nb_matrix_multiply: std::ptr::null_mut(),
+    nb_inplace_matrix_multiply: std::ptr::null_mut(),
+};
 
 static PY_TYPE_NAME_OBJECT: &[u8; 7] = b"object\0";
 static PY_TYPE_NAME_TYPE: &[u8; 5] = b"type\0";

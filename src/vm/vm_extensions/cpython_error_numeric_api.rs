@@ -1066,6 +1066,9 @@ fn cpython_safe_type_name(type_ptr: *mut CpythonTypeObject) -> Option<String> {
     if type_ptr.is_null() {
         return None;
     }
+    if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(type_ptr as usize) {
+        return Some(name);
+    }
     // SAFETY: caller provides a candidate type pointer; this function performs
     // conservative pointer checks before touching foreign string memory.
     unsafe {
@@ -1114,7 +1117,13 @@ pub(in crate::vm::vm_extensions) fn cpython_exception_type_ptr(ptr: *mut c_void)
 pub(in crate::vm::vm_extensions) fn cpython_exception_class_name_from_ptr(
     ptr: *mut c_void,
 ) -> Option<String> {
+    if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(ptr as usize) {
+        return Some(name);
+    }
     let type_ptr = cpython_exception_type_ptr(ptr);
+    if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(type_ptr as usize) {
+        return Some(name);
+    }
     if type_ptr.is_null() || !cpython_ptr_is_type_object(type_ptr) {
         return None;
     }
@@ -1143,6 +1152,10 @@ fn cpython_type_inherits_exception_name(type_ptr: *mut c_void, expected_name: &s
     let mut depth = 0usize;
     let mut current = type_ptr.cast::<CpythonTypeObject>();
     while !current.is_null() && depth < 128 {
+        if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(current as usize)
+        {
+            return name == expected_name;
+        }
         if !cpython_ptr_is_type_object(current.cast()) {
             return false;
         }
