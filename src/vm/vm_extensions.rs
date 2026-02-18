@@ -10,7 +10,6 @@ use super::{
     dict_get_value, dict_remove_value, dict_set_value_checked, exception_type_is_subclass,
     is_truthy, memoryview_bounds, value_to_int, vm_current_thread_ident,
 };
-use crate::bytecode::cpython::PyObject as CpythonMarshalObject;
 use crate::extensions::{
     PYRS_CAPI_ABI_VERSION, PYRS_TYPE_BOOL, PYRS_TYPE_BYTES, PYRS_TYPE_DICT, PYRS_TYPE_FLOAT,
     PYRS_TYPE_INT, PYRS_TYPE_LIST, PYRS_TYPE_NONE, PYRS_TYPE_STR, PYRS_TYPE_TUPLE, PyrsApiV1,
@@ -20,7 +19,7 @@ use crate::extensions::{
 };
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, NativeMethodKind,
-    NativeMethodObject, Object, RuntimeError, SliceValue, Value,
+    NativeMethodObject, Object, RuntimeError, Value,
 };
 
 #[cfg(windows)]
@@ -48,6 +47,7 @@ mod cpython_codec_api;
 mod cpython_codec_runtime;
 mod cpython_context_runtime;
 mod cpython_contextvar_api;
+mod cpython_datetime_runtime;
 mod cpython_descriptor_method_api;
 mod cpython_dict_api;
 mod cpython_error_numeric_api;
@@ -62,6 +62,7 @@ mod cpython_iter_api;
 mod cpython_keepalive_exports;
 mod cpython_list_api;
 mod cpython_long_float_api;
+mod cpython_marshal_runtime;
 mod cpython_mem_api;
 mod cpython_module_api;
 mod cpython_module_name_runtime;
@@ -84,6 +85,7 @@ mod cpython_thread_interp_api;
 mod cpython_thread_runtime;
 mod cpython_tuple_api;
 mod cpython_type_api;
+mod cpython_type_exports;
 mod cpython_unicode_api;
 mod cpython_unicode_error_api;
 mod cpython_unicode_error_runtime;
@@ -137,6 +139,7 @@ use self::cpython_context_runtime::{
     cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
 use self::cpython_contextvar_api::{PyContextVar_Get, PyContextVar_New, PyContextVar_Set};
+use self::cpython_datetime_runtime::{PYRS_DATETIME_CAPI, PYRS_DATETIME_CAPSULE_NAME};
 use self::cpython_descriptor_method_api::{
     PyCFunction_Call, PyCFunction_GetFlags, PyCFunction_GetFunction, PyCFunction_GetSelf,
     PyCFunction_New, PyCFunction_NewEx, PyCMethod_New, PyDescr_NewClassMethod, PyDescr_NewGetSet,
@@ -234,6 +237,9 @@ use self::cpython_long_float_api::{
     PyLong_FromUInt32, PyLong_FromUInt64, PyLong_FromUnicodeObject, PyLong_FromUnsignedLong,
     PyLong_FromUnsignedLongLong, PyLong_FromUnsignedNativeBytes, PyLong_FromVoidPtr,
     PyLong_GetInfo,
+};
+use self::cpython_marshal_runtime::{
+    cpython_marshal_object_to_value, value_to_cpython_marshal_object,
 };
 use self::cpython_mem_api::{
     PyMem_Calloc, PyMem_Free, PyMem_Malloc, PyMem_RawCalloc, PyMem_RawFree, PyMem_RawMalloc,
@@ -390,6 +396,7 @@ use self::cpython_type_api::{
     PyType_GetName, PyType_GetQualName, PyType_GetSlot, PyType_GetTypeDataSize, PyType_IsSubtype,
     PyType_Modified, PyType_Ready, cpython_is_type_object_ptr, cpython_type_tp_call,
 };
+use self::cpython_type_exports::*;
 use self::cpython_unicode_api::{
     PyBuffer_Release, PyCallable_Check, PyIndex_Check, PyUnicode_Append, PyUnicode_AppendAndDel,
     PyUnicode_AsASCIIString, PyUnicode_AsCharmapString, PyUnicode_AsDecodedObject,
@@ -766,49 +773,6 @@ struct CpythonModuleDefSlot {
 }
 
 #[repr(C)]
-struct CpythonDateTimeCapi {
-    date_type: *mut c_void,
-    datetime_type: *mut c_void,
-    time_type: *mut c_void,
-    delta_type: *mut c_void,
-    tzinfo_type: *mut c_void,
-    timezone_utc: *mut c_void,
-    date_from_date: unsafe extern "C" fn(i32, i32, i32, *mut c_void) -> *mut c_void,
-    datetime_from_date_and_time: unsafe extern "C" fn(
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        *mut c_void,
-        *mut c_void,
-    ) -> *mut c_void,
-    time_from_time:
-        unsafe extern "C" fn(i32, i32, i32, i32, *mut c_void, *mut c_void) -> *mut c_void,
-    delta_from_delta: unsafe extern "C" fn(i32, i32, i32, i32, *mut c_void) -> *mut c_void,
-    timezone_from_timezone: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
-    datetime_from_timestamp:
-        unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void,
-    date_from_timestamp: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
-    datetime_from_date_and_time_and_fold: unsafe extern "C" fn(
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        i32,
-        *mut c_void,
-        i32,
-        *mut c_void,
-    ) -> *mut c_void,
-    time_from_time_and_fold:
-        unsafe extern "C" fn(i32, i32, i32, i32, *mut c_void, i32, *mut c_void) -> *mut c_void,
-}
-
-#[repr(C)]
 pub struct CpythonTypeObject {
     ob_refcnt: isize,
     ob_type: *mut c_void,
@@ -932,7 +896,6 @@ pub struct CpythonComplexValue {
     imag: f64,
 }
 
-const PYRS_DATETIME_CAPSULE_NAME: &str = "datetime.datetime_CAPI";
 const PY_MEMBER_T_SHORT: c_int = 0;
 const PY_MEMBER_T_INT: c_int = 1;
 const PY_MEMBER_T_LONG: c_int = 2;
@@ -987,122 +950,6 @@ const PY_TYPE_SLOT_TP_FINALIZE: c_int = 80;
 const PY_TYPE_SLOT_TP_VECTORCALL: c_int = 82;
 const PY_TYPE_SLOT_TP_TOKEN: c_int = 83;
 const PY_TYPE_SLOT_MAX: c_int = 83;
-
-unsafe extern "C" fn datetime_capi_unimplemented() -> *mut c_void {
-    cpython_set_error("datetime C-API constructor is not implemented");
-    std::ptr::null_mut()
-}
-
-unsafe extern "C" fn datetime_capi_date_from_date(
-    _year: i32,
-    _month: i32,
-    _day: i32,
-    _typ: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_datetime_from_date_and_time(
-    _year: i32,
-    _month: i32,
-    _day: i32,
-    _hour: i32,
-    _minute: i32,
-    _second: i32,
-    _microsecond: i32,
-    _tzinfo: *mut c_void,
-    _typ: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_time_from_time(
-    _hour: i32,
-    _minute: i32,
-    _second: i32,
-    _microsecond: i32,
-    _tzinfo: *mut c_void,
-    _typ: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_delta_from_delta(
-    _days: i32,
-    _seconds: i32,
-    _microseconds: i32,
-    _normalize: i32,
-    _typ: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_timezone_from_timezone(
-    _offset: *mut c_void,
-    _name: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_datetime_from_timestamp(
-    _typ: *mut c_void,
-    _args: *mut c_void,
-    _kwargs: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_date_from_timestamp(
-    _typ: *mut c_void,
-    _args: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_datetime_from_date_and_time_and_fold(
-    _year: i32,
-    _month: i32,
-    _day: i32,
-    _hour: i32,
-    _minute: i32,
-    _second: i32,
-    _microsecond: i32,
-    _tzinfo: *mut c_void,
-    _fold: i32,
-    _typ: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-unsafe extern "C" fn datetime_capi_time_from_time_and_fold(
-    _hour: i32,
-    _minute: i32,
-    _second: i32,
-    _microsecond: i32,
-    _tzinfo: *mut c_void,
-    _fold: i32,
-    _typ: *mut c_void,
-) -> *mut c_void {
-    unsafe { datetime_capi_unimplemented() }
-}
-
-static mut PYRS_DATETIME_CAPI: CpythonDateTimeCapi = CpythonDateTimeCapi {
-    date_type: std::ptr::null_mut(),
-    datetime_type: std::ptr::null_mut(),
-    time_type: std::ptr::null_mut(),
-    delta_type: std::ptr::null_mut(),
-    tzinfo_type: std::ptr::null_mut(),
-    timezone_utc: std::ptr::null_mut(),
-    date_from_date: datetime_capi_date_from_date,
-    datetime_from_date_and_time: datetime_capi_datetime_from_date_and_time,
-    time_from_time: datetime_capi_time_from_time,
-    delta_from_delta: datetime_capi_delta_from_delta,
-    timezone_from_timezone: datetime_capi_timezone_from_timezone,
-    datetime_from_timestamp: datetime_capi_datetime_from_timestamp,
-    date_from_timestamp: datetime_capi_date_from_timestamp,
-    datetime_from_date_and_time_and_fold: datetime_capi_datetime_from_date_and_time_and_fold,
-    time_from_time_and_fold: datetime_capi_time_from_time_and_fold,
-};
 
 static PYBYTES_ASSTRING_MISMATCH_BT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -7453,393 +7300,6 @@ const METH_O: c_int = 0x0008;
 const METH_FASTCALL: c_int = 0x0080;
 const METH_METHOD: c_int = 0x0200;
 
-const fn empty_type(name: *const c_char) -> CpythonTypeObject {
-    CpythonTypeObject {
-        ob_refcnt: 1,
-        ob_type: std::ptr::null_mut(),
-        ob_size: 0,
-        tp_name: name,
-        tp_basicsize: std::mem::size_of::<CpythonCompatObject>() as isize,
-        tp_itemsize: 0,
-        tp_dealloc: std::ptr::null_mut(),
-        tp_vectorcall_offset: 0,
-        tp_getattr: std::ptr::null_mut(),
-        tp_setattr: std::ptr::null_mut(),
-        tp_as_async: std::ptr::null_mut(),
-        tp_repr: std::ptr::null_mut(),
-        tp_as_number: std::ptr::null_mut(),
-        tp_as_sequence: std::ptr::null_mut(),
-        tp_as_mapping: std::ptr::null_mut(),
-        tp_hash: std::ptr::null_mut(),
-        tp_call: std::ptr::null_mut(),
-        tp_str: std::ptr::null_mut(),
-        tp_getattro: std::ptr::null_mut(),
-        tp_setattro: std::ptr::null_mut(),
-        tp_as_buffer: std::ptr::null_mut(),
-        tp_flags: EMPTY_TYPE_FLAGS,
-        tp_doc: std::ptr::null(),
-        tp_traverse: std::ptr::null_mut(),
-        tp_clear: std::ptr::null_mut(),
-        tp_richcompare: std::ptr::null_mut(),
-        tp_weaklistoffset: 0,
-        tp_iter: std::ptr::null_mut(),
-        tp_iternext: std::ptr::null_mut(),
-        tp_methods: std::ptr::null_mut(),
-        tp_members: std::ptr::null_mut(),
-        tp_getset: std::ptr::null_mut(),
-        tp_base: std::ptr::null_mut(),
-        tp_dict: std::ptr::null_mut(),
-        tp_descr_get: std::ptr::null_mut(),
-        tp_descr_set: std::ptr::null_mut(),
-        tp_dictoffset: 0,
-        tp_init: std::ptr::null_mut(),
-        tp_alloc: std::ptr::null_mut(),
-        tp_new: std::ptr::null_mut(),
-        tp_free: std::ptr::null_mut(),
-        tp_is_gc: std::ptr::null_mut(),
-        tp_bases: std::ptr::null_mut(),
-        tp_mro: std::ptr::null_mut(),
-        tp_cache: std::ptr::null_mut(),
-        tp_subclasses: std::ptr::null_mut(),
-        tp_weaklist: std::ptr::null_mut(),
-        tp_del: std::ptr::null_mut(),
-        tp_version_tag: 0,
-        tp_finalize: std::ptr::null_mut(),
-        tp_vectorcall: std::ptr::null_mut(),
-        tp_watched: 0,
-        tp_versions_used: 0,
-    }
-}
-
-static mut PY_LONG_NUMBER_METHODS: CpythonNumberMethods = CpythonNumberMethods {
-    nb_add: cpython_long_nb_add_slot as *mut c_void,
-    nb_subtract: std::ptr::null_mut(),
-    nb_multiply: std::ptr::null_mut(),
-    nb_remainder: std::ptr::null_mut(),
-    nb_divmod: std::ptr::null_mut(),
-    nb_power: std::ptr::null_mut(),
-    nb_negative: std::ptr::null_mut(),
-    nb_positive: std::ptr::null_mut(),
-    nb_absolute: std::ptr::null_mut(),
-    nb_bool: std::ptr::null_mut(),
-    nb_invert: std::ptr::null_mut(),
-    nb_lshift: std::ptr::null_mut(),
-    nb_rshift: std::ptr::null_mut(),
-    nb_and: std::ptr::null_mut(),
-    nb_xor: std::ptr::null_mut(),
-    nb_or: std::ptr::null_mut(),
-    nb_int: None,
-    nb_reserved: std::ptr::null_mut(),
-    nb_float: std::ptr::null_mut(),
-    nb_inplace_add: std::ptr::null_mut(),
-    nb_inplace_subtract: std::ptr::null_mut(),
-    nb_inplace_multiply: std::ptr::null_mut(),
-    nb_inplace_remainder: std::ptr::null_mut(),
-    nb_inplace_power: std::ptr::null_mut(),
-    nb_inplace_lshift: std::ptr::null_mut(),
-    nb_inplace_rshift: std::ptr::null_mut(),
-    nb_inplace_and: std::ptr::null_mut(),
-    nb_inplace_xor: std::ptr::null_mut(),
-    nb_inplace_or: std::ptr::null_mut(),
-    nb_floor_divide: std::ptr::null_mut(),
-    nb_true_divide: std::ptr::null_mut(),
-    nb_inplace_floor_divide: std::ptr::null_mut(),
-    nb_inplace_true_divide: std::ptr::null_mut(),
-    nb_index: None,
-    nb_matrix_multiply: std::ptr::null_mut(),
-    nb_inplace_matrix_multiply: std::ptr::null_mut(),
-};
-
-static PY_TYPE_NAME_OBJECT: &[u8; 7] = b"object\0";
-static PY_TYPE_NAME_TYPE: &[u8; 5] = b"type\0";
-static PY_TYPE_NAME_BOOL: &[u8; 5] = b"bool\0";
-static PY_TYPE_NAME_BYTEARRAY: &[u8; 10] = b"bytearray\0";
-static PY_TYPE_NAME_BYTEARRAY_ITER: &[u8; 19] = b"bytearray_iterator\0";
-static PY_TYPE_NAME_BYTES: &[u8; 6] = b"bytes\0";
-static PY_TYPE_NAME_BYTES_ITER: &[u8; 15] = b"bytes_iterator\0";
-static PY_TYPE_NAME_CALL_ITER: &[u8; 18] = b"callable_iterator\0";
-static PY_TYPE_NAME_CFUNCTION: &[u8; 27] = b"builtin_function_or_method\0";
-static PY_TYPE_NAME_CAPSULE: &[u8; 8] = b"capsule\0";
-static PY_TYPE_NAME_CLASSMETHOD_DESCR: &[u8; 18] = b"classmethod_descr\0";
-static PY_TYPE_NAME_COMPLEX: &[u8; 8] = b"complex\0";
-static PY_TYPE_NAME_DICT_PROXY: &[u8; 10] = b"dictproxy\0";
-static PY_TYPE_NAME_DICT_ITEMS: &[u8; 11] = b"dict_items\0";
-static PY_TYPE_NAME_DICT_ITER_ITEM: &[u8; 18] = b"dict_itemiterator\0";
-static PY_TYPE_NAME_DICT_ITER_KEY: &[u8; 17] = b"dict_keyiterator\0";
-static PY_TYPE_NAME_DICT_ITER_VALUE: &[u8; 19] = b"dict_valueiterator\0";
-static PY_TYPE_NAME_DICT_KEYS: &[u8; 10] = b"dict_keys\0";
-static PY_TYPE_NAME_DICT_REV_ITER_ITEM: &[u8; 25] = b"dict_reverseitemiterator\0";
-static PY_TYPE_NAME_DICT_REV_ITER_KEY: &[u8; 24] = b"dict_reversekeyiterator\0";
-static PY_TYPE_NAME_DICT_REV_ITER_VALUE: &[u8; 26] = b"dict_reversevalueiterator\0";
-static PY_TYPE_NAME_DICT: &[u8; 5] = b"dict\0";
-static PY_TYPE_NAME_DICT_VALUES: &[u8; 12] = b"dict_values\0";
-static PY_TYPE_NAME_ELLIPSIS: &[u8; 9] = b"ellipsis\0";
-static PY_TYPE_NAME_ENUM: &[u8; 5] = b"enum\0";
-static PY_TYPE_NAME_FILTER: &[u8; 7] = b"filter\0";
-static PY_TYPE_NAME_FLOAT: &[u8; 6] = b"float\0";
-static PY_TYPE_NAME_FROZENSET: &[u8; 10] = b"frozenset\0";
-static PY_TYPE_NAME_GETSET_DESCR: &[u8; 13] = b"getset_descr\0";
-static PY_TYPE_NAME_GENERIC_ALIAS: &[u8; 19] = b"types.GenericAlias\0";
-static PY_TYPE_NAME_LIST: &[u8; 5] = b"list\0";
-static PY_TYPE_NAME_LIST_ITER: &[u8; 14] = b"list_iterator\0";
-static PY_TYPE_NAME_LIST_REV_ITER: &[u8; 21] = b"list_reverseiterator\0";
-static PY_TYPE_NAME_LONG: &[u8; 4] = b"int\0";
-static PY_TYPE_NAME_LONG_RANGE_ITER: &[u8; 19] = b"longrange_iterator\0";
-static PY_TYPE_NAME_MAP: &[u8; 4] = b"map\0";
-static PY_TYPE_NAME_MEMBER_DESCR: &[u8; 13] = b"member_descr\0";
-static PY_TYPE_NAME_MEMORYVIEW: &[u8; 11] = b"memoryview\0";
-static PY_TYPE_NAME_METHOD: &[u8; 7] = b"method\0";
-static PY_TYPE_NAME_METHOD_DESCR: &[u8; 13] = b"method_descr\0";
-static PY_TYPE_NAME_MODULE_DEF: &[u8; 10] = b"moduledef\0";
-static PY_TYPE_NAME_MODULE: &[u8; 7] = b"module\0";
-static PY_TYPE_NAME_NONE: &[u8; 9] = b"NoneType\0";
-static PY_TYPE_NAME_PROPERTY: &[u8; 9] = b"property\0";
-static PY_TYPE_NAME_RANGE_ITER: &[u8; 15] = b"range_iterator\0";
-static PY_TYPE_NAME_RANGE: &[u8; 6] = b"range\0";
-static PY_TYPE_NAME_REVERSED: &[u8; 9] = b"reversed\0";
-static PY_TYPE_NAME_SEQ_ITER: &[u8; 9] = b"iterator\0";
-static PY_TYPE_NAME_SET: &[u8; 4] = b"set\0";
-static PY_TYPE_NAME_SET_ITER: &[u8; 13] = b"set_iterator\0";
-static PY_TYPE_NAME_SLICE: &[u8; 6] = b"slice\0";
-static PY_TYPE_NAME_SUPER: &[u8; 6] = b"super\0";
-static PY_TYPE_NAME_TRACEBACK: &[u8; 10] = b"traceback\0";
-static PY_TYPE_NAME_TUPLE: &[u8; 6] = b"tuple\0";
-static PY_TYPE_NAME_TUPLE_ITER: &[u8; 15] = b"tuple_iterator\0";
-static PY_TYPE_NAME_UNICODE: &[u8; 4] = b"str\0";
-static PY_TYPE_NAME_UNICODE_ITER: &[u8; 13] = b"str_iterator\0";
-static PY_TYPE_NAME_WEAKREF_CALLABLE_PROXY: &[u8; 26] = b"weakref.CallableProxyType\0";
-static PY_TYPE_NAME_WEAKREF_PROXY: &[u8; 18] = b"weakref.ProxyType\0";
-static PY_TYPE_NAME_WEAKREF_REF: &[u8; 22] = b"weakref.ReferenceType\0";
-static PY_TYPE_NAME_WRAPPER_DESCR: &[u8; 19] = b"wrapper_descriptor\0";
-static PY_TYPE_NAME_ZIP: &[u8; 4] = b"zip\0";
-
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyBaseObject_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_OBJECT.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyType_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_TYPE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyBool_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_BOOL.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyByteArrayIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_BYTEARRAY_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyByteArray_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_BYTEARRAY.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyBytesIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_BYTES_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyBytes_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_BYTES.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyCallIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_CALL_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyCFunction_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_CFUNCTION.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyCapsule_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_CAPSULE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyClassMethodDescr_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_CLASSMETHOD_DESCR.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyComplex_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_COMPLEX.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictItems_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_ITEMS.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictIterItem_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_ITER_ITEM.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictIterKey_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_ITER_KEY.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictIterValue_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_ITER_VALUE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictKeys_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_KEYS.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictProxy_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_PROXY.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictRevIterItem_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_REV_ITER_ITEM.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictRevIterKey_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_REV_ITER_KEY.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictRevIterValue_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_REV_ITER_VALUE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDict_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_DICT.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyDictValues_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_DICT_VALUES.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyEllipsis_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_ELLIPSIS.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyEnum_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_ENUM.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyFilter_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_FILTER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyFloat_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_FLOAT.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyFrozenSet_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_FROZENSET.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyGetSetDescr_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_GETSET_DESCR.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut Py_GenericAliasType: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_GENERIC_ALIAS.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyList_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_LIST.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyListIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_LIST_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyListRevIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_LIST_REV_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyLong_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_LONG.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyLongRangeIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_LONG_RANGE_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyMap_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_MAP.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyMemberDescr_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_MEMBER_DESCR.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyMemoryView_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_MEMORYVIEW.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyMethod_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_METHOD.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyMethodDescr_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_METHOD_DESCR.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyModuleDef_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_MODULE_DEF.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyModule_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_MODULE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyNone_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_NONE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyProperty_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_PROPERTY.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyRangeIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_RANGE_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyRange_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_RANGE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyReversed_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_REVERSED.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PySeqIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_SEQ_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PySet_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_SET.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PySetIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_SET_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PySlice_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_SLICE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PySuper_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_SUPER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyTraceBack_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_TRACEBACK.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyTuple_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_TUPLE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyTupleIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_TUPLE_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyUnicode_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_UNICODE.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyUnicodeIter_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_UNICODE_ITER.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut _PyWeakref_CallableProxyType: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_WEAKREF_CALLABLE_PROXY.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut _PyWeakref_ProxyType: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_WEAKREF_PROXY.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut _PyWeakref_RefType: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_WEAKREF_REF.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyWrapperDescr_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_WRAPPER_DESCR.as_ptr().cast());
-#[unsafe(no_mangle)]
-#[used]
-pub static mut PyZip_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_ZIP.as_ptr().cast());
-
 unsafe extern "C" {
     fn PyTuple_Pack(size: isize, ...) -> *mut c_void;
     fn Py_BuildValue(format: *const c_char, ...) -> *mut c_void;
@@ -7947,154 +7407,6 @@ unsafe extern "C" {
     fn PySys_FormatStdout(format: *const c_char, ...);
     fn PySys_FormatStderr(format: *const c_char, ...);
     fn PySys_Audit(event: *const c_char, format: *const c_char, ...) -> i32;
-}
-
-fn value_to_cpython_marshal_object(value: &Value) -> Result<CpythonMarshalObject, String> {
-    match value {
-        Value::None => Ok(CpythonMarshalObject::None),
-        Value::Bool(value) => Ok(CpythonMarshalObject::Bool(*value)),
-        Value::Int(value) => Ok(CpythonMarshalObject::Int(*value)),
-        Value::BigInt(value) => value
-            .to_i64()
-            .map(CpythonMarshalObject::Int)
-            .ok_or_else(|| "cannot marshal bigint values outside i64 range".to_string()),
-        Value::Float(value) => Ok(CpythonMarshalObject::Float(*value)),
-        Value::Complex { real, imag } => Ok(CpythonMarshalObject::Complex {
-            real: *real,
-            imag: *imag,
-        }),
-        Value::Str(value) => Ok(CpythonMarshalObject::Str(value.clone())),
-        Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
-            Object::Bytes(payload) => Ok(CpythonMarshalObject::Bytes(payload.clone())),
-            _ => Err("invalid bytes object storage".to_string()),
-        },
-        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
-            Object::Tuple(items) => items
-                .iter()
-                .map(value_to_cpython_marshal_object)
-                .collect::<Result<Vec<_>, _>>()
-                .map(CpythonMarshalObject::Tuple),
-            _ => Err("invalid tuple object storage".to_string()),
-        },
-        Value::List(list_obj) => match &*list_obj.kind() {
-            Object::List(items) => items
-                .iter()
-                .map(value_to_cpython_marshal_object)
-                .collect::<Result<Vec<_>, _>>()
-                .map(CpythonMarshalObject::List),
-            _ => Err("invalid list object storage".to_string()),
-        },
-        Value::Dict(dict_obj) => match &*dict_obj.kind() {
-            Object::Dict(entries) => entries
-                .iter()
-                .map(|(key, value)| {
-                    Ok((
-                        value_to_cpython_marshal_object(key)?,
-                        value_to_cpython_marshal_object(value)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, String>>()
-                .map(CpythonMarshalObject::Dict),
-            _ => Err("invalid dict object storage".to_string()),
-        },
-        Value::Set(set_obj) => match &*set_obj.kind() {
-            Object::Set(entries) => entries
-                .iter()
-                .map(value_to_cpython_marshal_object)
-                .collect::<Result<Vec<_>, _>>()
-                .map(CpythonMarshalObject::Set),
-            _ => Err("invalid set object storage".to_string()),
-        },
-        Value::FrozenSet(set_obj) => match &*set_obj.kind() {
-            Object::FrozenSet(entries) => entries
-                .iter()
-                .map(value_to_cpython_marshal_object)
-                .collect::<Result<Vec<_>, _>>()
-                .map(CpythonMarshalObject::FrozenSet),
-            _ => Err("invalid frozenset object storage".to_string()),
-        },
-        Value::Slice(slice) => Ok(CpythonMarshalObject::Slice {
-            lower: slice
-                .lower
-                .map(|value| Box::new(CpythonMarshalObject::Int(value))),
-            upper: slice
-                .upper
-                .map(|value| Box::new(CpythonMarshalObject::Int(value))),
-            step: slice
-                .step
-                .map(|value| Box::new(CpythonMarshalObject::Int(value))),
-        }),
-        _ => Err("marshal unsupported value type".to_string()),
-    }
-}
-
-fn cpython_marshal_object_to_value(
-    object: &CpythonMarshalObject,
-    vm: &mut Vm,
-) -> Result<Value, String> {
-    match object {
-        CpythonMarshalObject::Null => Ok(Value::None),
-        CpythonMarshalObject::None => Ok(Value::None),
-        CpythonMarshalObject::Bool(value) => Ok(Value::Bool(*value)),
-        CpythonMarshalObject::Int(value) => Ok(Value::Int(*value)),
-        CpythonMarshalObject::Float(value) => Ok(Value::Float(*value)),
-        CpythonMarshalObject::Complex { real, imag } => Ok(Value::Complex {
-            real: *real,
-            imag: *imag,
-        }),
-        CpythonMarshalObject::Str(value) => Ok(Value::Str(value.clone())),
-        CpythonMarshalObject::Bytes(bytes) => Ok(vm.heap.alloc_bytes(bytes.clone())),
-        CpythonMarshalObject::Tuple(items) => items
-            .iter()
-            .map(|item| cpython_marshal_object_to_value(item, vm))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|items| vm.heap.alloc_tuple(items)),
-        CpythonMarshalObject::List(items) => items
-            .iter()
-            .map(|item| cpython_marshal_object_to_value(item, vm))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|items| vm.heap.alloc_list(items)),
-        CpythonMarshalObject::Dict(entries) => entries
-            .iter()
-            .map(|(key, value)| {
-                Ok((
-                    cpython_marshal_object_to_value(key, vm)?,
-                    cpython_marshal_object_to_value(value, vm)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, String>>()
-            .map(|entries| vm.heap.alloc_dict(entries)),
-        CpythonMarshalObject::Set(items) => items
-            .iter()
-            .map(|item| cpython_marshal_object_to_value(item, vm))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|items| vm.heap.alloc_set(items)),
-        CpythonMarshalObject::FrozenSet(items) => items
-            .iter()
-            .map(|item| cpython_marshal_object_to_value(item, vm))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|items| vm.heap.alloc_frozenset(items)),
-        CpythonMarshalObject::Slice { lower, upper, step } => {
-            let parse_int =
-                |value: &Option<Box<CpythonMarshalObject>>| -> Result<Option<i64>, String> {
-                    match value {
-                        None => Ok(None),
-                        Some(value) => match value.as_ref() {
-                            CpythonMarshalObject::Int(value) => Ok(Some(*value)),
-                            _ => Err("marshal slice bounds must decode to int".to_string()),
-                        },
-                    }
-                };
-            Ok(Value::Slice(Box::new(SliceValue {
-                lower: parse_int(lower)?,
-                upper: parse_int(upper)?,
-                step: parse_int(step)?,
-            })))
-        }
-        CpythonMarshalObject::Code(_) => {
-            Err("marshal code objects are not supported in C-API decode".to_string())
-        }
-    }
 }
 
 unsafe fn capi_module_insert_value(

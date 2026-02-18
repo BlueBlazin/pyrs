@@ -80,6 +80,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_long_float_api.rs`
   - exported `PyLong_*` / `PyBool_FromLong` / `PyFloat_*` C-API entrypoints (constructors, parse helpers, native-bytes conversions, `PyLong_GetInfo`)
   - shared bigint/two's-complement conversion wiring and typed-error parity for numeric C-API surfaces
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_marshal_runtime.rs`
+  - marshal encode/decode conversion helpers (`value_to_cpython_marshal_object`, `cpython_marshal_object_to_value`)
+  - isolates marshal translation between VM `Value` and CPython marshal IR from the main extension module
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_mem_api.rs`
   - exported memory allocator C-API entrypoints (`PyMem_Raw*`, `PyMem_*`)
   - shared allocator forwarding + CPython-allocation ownership guard behavior
@@ -203,6 +206,12 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_keepalive_exports.rs`
   - CPython symbol-retention exports (`KEEP*` static references) for ABI surfaces that must survive dead-stripping
   - isolated from executable runtime paths so linker/export policy does not bloat `/Users/$USER/pyrs/src/vm/vm_extensions.rs`
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_type_exports.rs`
+  - CPython exported type statics and type-name wiring (`Py*_Type`, `_PyWeakref_*`, `PY_LONG_NUMBER_METHODS`)
+  - keeps ABI export/static-layout declarations separate from runtime dispatch logic
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_datetime_runtime.rs`
+  - datetime capsule bootstrap/static (`datetime.datetime_CAPI`) and constructor stubs
+  - isolates datetime capsule glue from loader/runtime dispatch code paths
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -258,6 +267,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython capsule C-API entrypoint behavior: `vm_extensions/cpython_capsule_api.rs`.
 - New CPython list C-API entrypoint behavior: `vm_extensions/cpython_list_api.rs`.
 - New CPython long/float C-API entrypoint behavior: `vm_extensions/cpython_long_float_api.rs`.
+- New marshal encode/decode conversion behavior: `vm_extensions/cpython_marshal_runtime.rs`.
 - New CPython memory allocator C-API entrypoint behavior: `vm_extensions/cpython_mem_api.rs`.
 - New CPython tuple C-API entrypoint behavior: `vm_extensions/cpython_tuple_api.rs`.
 - New CPython dict C-API entrypoint behavior: `vm_extensions/cpython_dict_api.rs`.
@@ -299,6 +309,8 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython thread/interpreter registry helper behavior: `vm_extensions/cpython_thread_runtime.rs`.
 - New CPython string/wide-string conversion helper behavior: `vm_extensions/cpython_string_runtime.rs`.
 - New CPython keepalive symbol-retention behavior: `vm_extensions/cpython_keepalive_exports.rs`.
+- New CPython exported type/static-layout behavior: `vm_extensions/cpython_type_exports.rs`.
+- New datetime capsule bootstrap/static behavior: `vm_extensions/cpython_datetime_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
