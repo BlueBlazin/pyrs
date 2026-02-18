@@ -127,7 +127,8 @@ use self::cpython_module_api::{
     PyModule_Add, PyModule_AddFunctions, PyModule_AddIntConstant, PyModule_AddObject,
     PyModule_AddObjectRef, PyModule_AddStringConstant, PyModule_AddType, PyModule_Create2,
     PyModule_ExecDef, PyModule_FromDefAndSpec2, PyModule_GetDef, PyModule_GetDict,
-    PyModule_GetState, PyModule_New, PyModule_NewObject, PyModuleDef_Init,
+    PyModule_GetFilename, PyModule_GetFilenameObject, PyModule_GetName, PyModule_GetNameObject,
+    PyModule_GetState, PyModule_New, PyModule_NewObject, PyModule_SetDocString, PyModuleDef_Init,
 };
 use self::cpython_module_runtime::cpython_bind_module_def;
 use self::cpython_numeric_api::{
@@ -8302,98 +8303,7 @@ pub unsafe extern "C" fn PyLong_FromUnicodeObject(object: *mut c_void, base: i32
     }
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyModule_SetDocString(module: *mut c_void, doc: *const c_char) -> i32 {
-    let value = if doc.is_null() {
-        cpython_new_ptr_for_value(Value::None)
-    } else {
-        unsafe { PyUnicode_FromString(doc) }
-    };
-    if value.is_null() {
-        return -1;
-    }
-    let status = unsafe { PyObject_SetAttrString(module, c"__doc__".as_ptr(), value) };
-    unsafe { Py_DecRef(value) };
-    status
-}
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyModule_GetNameObject(module: *mut c_void) -> *mut c_void {
-    with_active_cpython_context_mut(|context| {
-        let module_obj = match context.cpython_module_obj_from_ptr(module) {
-            Ok(module_obj) => module_obj,
-            Err(_) => {
-                let _ = unsafe { PyErr_BadArgument() };
-                return std::ptr::null_mut();
-            }
-        };
-        let module_name = match &*module_obj.kind() {
-            Object::Module(module_data) => module_data.globals.get("__name__").cloned(),
-            _ => None,
-        };
-        match module_name {
-            Some(Value::Str(name)) => context.alloc_cpython_ptr_for_value(Value::Str(name)),
-            _ => {
-                cpython_set_typed_error(unsafe { PyExc_SystemError }, "nameless module");
-                std::ptr::null_mut()
-            }
-        }
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyModule_GetName(module: *mut c_void) -> *const c_char {
-    let name_obj = unsafe { PyModule_GetNameObject(module) };
-    if name_obj.is_null() {
-        return std::ptr::null();
-    }
-    let utf8 = unsafe { PyUnicode_AsUTF8(name_obj) };
-    unsafe { Py_DecRef(name_obj) };
-    utf8
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyModule_GetFilenameObject(module: *mut c_void) -> *mut c_void {
-    with_active_cpython_context_mut(|context| {
-        let module_obj = match context.cpython_module_obj_from_ptr(module) {
-            Ok(module_obj) => module_obj,
-            Err(_) => {
-                let _ = unsafe { PyErr_BadArgument() };
-                return std::ptr::null_mut();
-            }
-        };
-        let file_value = match &*module_obj.kind() {
-            Object::Module(module_data) => module_data.globals.get("__file__").cloned(),
-            _ => None,
-        };
-        match file_value {
-            Some(Value::Str(path)) => context.alloc_cpython_ptr_for_value(Value::Str(path)),
-            _ => {
-                cpython_set_typed_error(unsafe { PyExc_SystemError }, "module filename missing");
-                std::ptr::null_mut()
-            }
-        }
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyModule_GetFilename(module: *mut c_void) -> *const c_char {
-    let filename_obj = unsafe { PyModule_GetFilenameObject(module) };
-    if filename_obj.is_null() {
-        return std::ptr::null();
-    }
-    let utf8 = unsafe { PyUnicode_AsUTF8(filename_obj) };
-    unsafe { Py_DecRef(filename_obj) };
-    utf8
-}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_FromString(
