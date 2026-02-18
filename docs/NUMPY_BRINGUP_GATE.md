@@ -116,23 +116,20 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - foreign `PyLong` compact-layout decoding now follows CPython 3.14 `longintrepr.h` semantics (including compact zero/sign handling), fixing the prior NumPy regression where `np.dtype('int64').itemsize` and `np.iinfo(np.int64).bits` collapsed to `0`.
 - NumPy import warning cleanup checkpoint:
   - proxy class `__flags__` now reflects CPython `tp_flags` for extension-backed types (instead of always returning `PY_TPFLAGS_HEAPTYPE`), which removed the prior `_add_newdocs_scalars` warning flood during `import numpy`.
-- Open direct-mode blocker:
-  - `ndarray` rendering still relies on a stability fallback (`tolist()`-derived `array([...])`) instead of full NumPy `arrayprint` parity.
-  - scalar baseline parity for `np.float64` is now closed for core paths:
-    - `str(np.float64(0.5)) -> "0.5"`
-    - `repr(np.float64(0.5)) -> "np.float64(0.5)"`
-    - `format(np.float64(0.5)) -> "0.5"`
-  - NumPy random init has advanced past prior metatype/type-object blockers:
-    - `_cython_3_2_4._common_types_metatype` now resolves bases tuples containing `Builtin(Type)` to `PyType_Type`, removing the earlier `PyDescr_NewMethod expected type object` / shared-type `PyType_Check` gate.
-  - current P0 blocker in random stack:
-    - `numpy.random.mtrand` `Py_mod_exec` currently fails with `NoneType has no attribute 'generate_state'` (extension attr dispatch on a `None` target during random-state bootstrap).
-  - direct scientific-stack blockers currently include:
-    - latest `pandas_*` still fails due `numpy.random._generator` not completing (`Generator` import missing while `mtrand` init fails).
-    - latest `scipy_import` / `matplotlib_*` remain blocked downstream of NumPy-random extension-init closure.
-- Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
-  - `scipy_import`: `FAIL` (native crash / process exit `-10`).
-  - `pandas_import` / `pandas_series_sum`: `FAIL` (`numpy.random.bit_generator` publication gap: missing `BitGenerator` on module init path).
-  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (import-stage assertion paths still open post-NumPy bootstrap).
+- Current direct-mode NumPy baseline:
+  - `numpy_import`: `PASS`
+  - `numpy_ndarray_sum`: `PASS`
+  - `numpy_numerictypes_core`: `PASS`
+  - `np.arange(0, 10, 0.5)` now returns and renders an `array([...])` string (instead of proxy-instance placeholders).
+  - metatype-backed type objects (for example `numpy.dtype`) now resolve class attributes through type-object semantics (not metatype-only lookup), which unblocked `dtype.alignment` and `dtype.__ge__` bring-up blockers.
+  - proxy class `str`/`repr` now use class-safe rendering (`<class 'module.name'>`) and no longer route through ndarray-only rendering logic.
+- Latest optional scientific-stack probe (`--include-scientific-stack`) remains red:
+  - `scipy_import`: `FAIL` (process exit `-10`)
+  - `pandas_import` / `pandas_series_sum`: `FAIL` (process exit `-5`)
+  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (import assertion path)
+- Next P0 focus after NumPy baseline pass:
+  - root-cause the `scipy`/`pandas` native crash exits (`SIGBUS`/`SIGTRAP` class failures) with targeted native traces,
+  - then close `matplotlib` import assertion parity.
 - `PyNumber_Long` reduction-path blocker is closed via:
   - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and
   - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.

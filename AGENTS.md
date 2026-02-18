@@ -74,10 +74,19 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension loader now reconciles module-instance mismatch returns from `PyInit_*` by syncing module globals/registry instead of failing with `returned unexpected module instance`.
   - capsule validity/name handling now includes external-capsule fallback for raw CPython capsule objects (`PyCapsule_GetName` / `PyCapsule_IsValid`) so Cython capsule-signature checks no longer fail with `got (null)`.
   - `include/pyrs_cpython_compat.h` now declares `PyLong_FromSsize_t` and `PyLong_AsSsize_t` explicitly to avoid implicit-declaration ABI drift in extension builds.
-  - latest direct scientific-stack blockers are:
-    - `numpy.random._generator` still fails through `numpy.random.mtrand` slot-exec with `NoneType has no attribute 'generate_state'` (current P0 random-stack blocker).
-    - `pandas_*`: blocked downstream because `numpy.random._generator` does not finish (`cannot import name 'Generator'`).
-    - `scipy_import` and `matplotlib_*`: still blocked downstream of NumPy-random init closure.
+  - direct NumPy baseline is now green in direct mode (`perf/numpy_gate_direct_latest.json`):
+    - `numpy_import`: `PASS`
+    - `numpy_ndarray_sum`: `PASS`
+    - `numpy_numerictypes_core`: `PASS`
+    - `np.arange(0, 10, 0.5)` now renders as `array([...])` instead of proxy placeholders.
+  - latest optional scientific-stack blockers are now:
+    - `scipy_import`: process exit `-10` (native crash class failure).
+    - `pandas_import` / `pandas_series_sum`: process exit `-5` (native crash class failure).
+    - `matplotlib_import` / `matplotlib_pyplot_smoke`: import assertion path failure.
+  - root-cause closures landed in this slice:
+    - type-object attr lookup now treats metatype-backed type objects as type objects (not metatype-only), unblocking `numpy.dtype` class attrs like `alignment`.
+    - proxy type-object rich-compare dunder fallback (`__lt__/__le__/__eq__/__ne__/__gt__/__ge__`) now materializes callable wrappers from `tp_richcompare`, unblocking `numpy.dtype.__ge__` class-attr probes.
+    - ndarray pretty-print path now runs only for ndarray instances (not proxy classes), fixing `print(type(np.arange(...)))` runtime failures.
   - closure landed this round:
     - `PyType_FromSpec*` base-resolution now correctly handles `bases` tuples containing `Builtin(Type)` so Cython metatype construction no longer defaults to `object`.
     - this removed the earlier random-stack gate `PyDescr_NewMethod expected type object` / shared-Cython-type `PyType_Check` failure.
