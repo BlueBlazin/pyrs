@@ -1,0 +1,1077 @@
+use std::ffi::{c_char, c_void, CString};
+
+use crate::runtime::{Object, Value};
+
+use super::{
+    BuiltinFunction, CPY_PROXY_PTR_ATTR, CpythonObjectHead, CpythonTypeObject,
+    PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
+    PyExc_AttributeError, PyExc_TypeError, Py_DecRef, Py_IncRef, c_name_to_string,
+    cpython_call_builtin, cpython_error_message_indicates_missing_attribute,
+    cpython_is_reduce_probe_name, cpython_new_ptr_for_value, cpython_set_error,
+    cpython_set_typed_error, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
+    cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
+    PyObject_DelItem, PyObject_IsInstance,
+};
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GetAttrString(
+    object: *mut c_void,
+    name: *const c_char,
+) -> *mut c_void {
+    let name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let trace_reduce_attr =
+        cpython_trace_numpy_reduce_enabled() && cpython_is_reduce_probe_name(&name);
+    if trace_reduce_attr {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetAttrString object={:p} attr={}",
+            object, name
+        );
+    }
+    let trace_numpy_attr = std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some()
+        && matches!(
+            name.as_str(),
+            "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base"
+        );
+    let trace_proxy_getattr = std::env::var_os("PYRS_TRACE_PROXY_GETATTR").is_some()
+        && matches!(name.as_str(), "__repr__" | "__str__");
+    if !object.is_null() {
+        let native_result = with_active_cpython_context_mut(|context| {
+            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            if (object as usize) < MIN_VALID_PTR {
+                return None;
+            }
+            let is_proxy_trace = name == "__array_finalize__"
+                && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some();
+            if (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0 {
+                if is_proxy_trace {
+                    eprintln!(
+                        "[cpy-proxy] native getattr skip: unaligned object_ptr={:p}",
+                        object
+                    );
+                }
+                return None;
+            }
+            let is_owned = context.owns_cpython_allocation_ptr(object);
+            let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
+            if is_proxy_trace {
+                eprintln!(
+                    "[cpy-proxy] native getattr check object_ptr={:p} owned={} known_compat={}",
+                    object, is_owned, is_known_compat
+                );
+            }
+            if is_known_compat && is_owned {
+                return None;
+            }
+            // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
+            let type_ptr = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if is_proxy_trace {
+                eprintln!("[cpy-proxy] native getattr type_ptr={:p}", type_ptr);
+            }
+            if type_ptr.is_null() {
+                return None;
+            }
+            if (type_ptr as usize) < MIN_VALID_PTR {
+                return None;
+            }
+            if (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0 {
+                if is_proxy_trace {
+                    eprintln!(
+                        "[cpy-proxy] native getattr skip: unaligned type_ptr={:p}",
+                        type_ptr
+                    );
+                }
+                return None;
+            }
+            if !is_owned && is_proxy_trace {
+                eprintln!(
+                    "[cpy-proxy] native getattr external object_ptr={:p} attempting slot dispatch",
+                    object
+                );
+            }
+            // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
+            let tp_getattro = unsafe { (*type_ptr).tp_getattro };
+            if is_proxy_trace {
+                eprintln!(
+                    "[cpy-proxy] native getattr slots tp_getattro={:p}",
+                    tp_getattro
+                );
+            }
+            if !tp_getattro.is_null()
+                && tp_getattro != PyObject_GetAttr as *mut c_void
+                && tp_getattro != PyObject_GenericGetAttr as *mut c_void
+            {
+                if trace_proxy_getattr {
+                    eprintln!(
+                        "[proxy-getattr] branch=tp_getattro object={:p} attr={} tp_getattro={:p}",
+                        object, name, tp_getattro
+                    );
+                }
+                let name_ptr = context.alloc_cpython_ptr_for_value(Value::Str(name.clone()));
+                if name_ptr.is_null() {
+                    return Some(std::ptr::null_mut());
+                }
+                let getattro: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    // SAFETY: tp_getattro follows the CPython `PyObject* (*)(PyObject*,PyObject*)` ABI.
+                    unsafe { std::mem::transmute(tp_getattro) };
+                return Some(unsafe { getattro(object, name_ptr) });
+            }
+            // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
+            let tp_getattr = unsafe { (*type_ptr).tp_getattr };
+            if is_proxy_trace {
+                eprintln!(
+                    "[cpy-proxy] native getattr slots tp_getattr={:p}",
+                    tp_getattr
+                );
+            }
+            if !tp_getattr.is_null() {
+                if trace_proxy_getattr {
+                    eprintln!(
+                        "[proxy-getattr] branch=tp_getattr object={:p} attr={} tp_getattr={:p}",
+                        object, name, tp_getattr
+                    );
+                }
+                let name_cstr = match context.scratch_c_string_ptr(&name) {
+                    Ok(ptr) => ptr,
+                    Err(err) => {
+                        context.set_error(err);
+                        return Some(std::ptr::null_mut());
+                    }
+                };
+                let getattr: unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void =
+                    // SAFETY: tp_getattr follows the CPython `char*` getattr ABI.
+                    unsafe { std::mem::transmute(tp_getattr) };
+                return Some(unsafe { getattr(object, name_cstr) });
+            }
+            if let Some(result) = context.lookup_type_attr_via_tp_dict(object, &name) {
+                if trace_proxy_getattr {
+                    eprintln!(
+                        "[proxy-getattr] branch=tp_dict object={:p} attr={} result={:p}",
+                        object, name, result
+                    );
+                }
+                if is_proxy_trace {
+                    eprintln!(
+                        "[cpy-proxy] native getattr tp_dict hit object_ptr={:p} result_ptr={:p}",
+                        object, result
+                    );
+                }
+                return Some(result);
+            }
+            if is_proxy_trace {
+                eprintln!("[cpy-proxy] native getattr no native path hit; falling back");
+            }
+            if trace_proxy_getattr {
+                eprintln!(
+                    "[proxy-getattr] branch=fallback object={:p} attr={}",
+                    object, name
+                );
+            }
+            None
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            Some(std::ptr::null_mut())
+        });
+        if let Some(result) = native_result {
+            if trace_proxy_getattr {
+                eprintln!(
+                    "[proxy-getattr] native-result object={:p} attr={} result={:p}",
+                    object, name, result
+                );
+            }
+            if trace_reduce_attr {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttrString native-result object={:p} attr={} result={:p}",
+                    object, name, result
+                );
+            }
+            if trace_numpy_attr {
+                eprintln!(
+                    "[numpy-init] PyObject_GetAttrString object={:p} name={} native_result={:p}",
+                    object, name, result
+                );
+            }
+            return result;
+        }
+    }
+    let object_value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            if let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
+                context
+                    .lookup_type_attr_via_tp_dict(object, &name)
+                    .filter(|ptr| !ptr.is_null())
+            }) {
+                return attr_ptr;
+            }
+            let (type_ptr, tp_getattro, tp_getattr, owned) =
+                with_active_cpython_context_mut(|context| {
+                    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                    // SAFETY: best-effort diagnostics for unknown-pointer failures.
+                    let type_ptr = unsafe {
+                        object
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .unwrap_or(std::ptr::null_mut())
+                    };
+                    // SAFETY: type_ptr is either null or points to a type object header.
+                    let (tp_getattro, tp_getattr) = if type_ptr.is_null()
+                        || (type_ptr as usize) < MIN_VALID_PTR
+                        || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+                    {
+                        (std::ptr::null_mut(), std::ptr::null_mut())
+                    } else {
+                        unsafe { ((*type_ptr).tp_getattro, (*type_ptr).tp_getattr) }
+                    };
+                    (
+                        type_ptr,
+                        tp_getattro,
+                        tp_getattr,
+                        context.owns_cpython_allocation_ptr(object),
+                    )
+                })
+                .unwrap_or((
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    false,
+                ));
+            cpython_set_error(format!(
+                "{err} (PyObject_GetAttrString object={:p} attr={} owned={} type_ptr={:p} tp_getattro={:p} tp_getattr={:p})",
+                object, name, owned, type_ptr, tp_getattro, tp_getattr
+            ));
+            return std::ptr::null_mut();
+        }
+    };
+    if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+        let tag = cpython_value_debug_tag(&object_value);
+        let (owned, known) = with_active_cpython_context_mut(|context| {
+            (
+                context.owns_cpython_allocation_ptr(object),
+                context.cpython_handle_from_ptr(object).is_some(),
+            )
+        })
+        .unwrap_or((false, false));
+        eprintln!(
+            "[cpy-api] PyObject_GetAttrString object_ptr={:p} object={} attr={} owned={} known={}",
+            object, tag, name, owned, known
+        );
+    }
+    if name == "__array_finalize__" && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+        match &object_value {
+            Value::Class(class_obj) => {
+                if let Object::Class(class_data) = &*class_obj.kind() {
+                    eprintln!(
+                        "[cpy-proxy] getattr __array_finalize__ object_ptr={:p} class={} id={} raw_ptr_attr={:?}",
+                        object,
+                        class_data.name,
+                        class_obj.id(),
+                        class_data.attrs.get(CPY_PROXY_PTR_ATTR)
+                    );
+                }
+            }
+            other => {
+                eprintln!(
+                    "[cpy-proxy] getattr __array_finalize__ non-class object_ptr={:p} tag={}",
+                    object,
+                    cpython_value_debug_tag(other)
+                );
+            }
+        }
+    }
+    let object_value_for_debug = object_value.clone();
+    match cpython_call_builtin(
+        BuiltinFunction::GetAttr,
+        vec![object_value, Value::Str(name.clone())],
+    ) {
+        Ok(value) => {
+            let ptr = cpython_new_ptr_for_value(value);
+            if trace_reduce_attr {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttrString builtin-result object={:p} attr={} result={:p}",
+                    object, name, ptr
+                );
+            }
+            if trace_numpy_attr {
+                eprintln!(
+                    "[numpy-init] PyObject_GetAttrString object={:p} name={} builtin_result={:p}",
+                    object, name, ptr
+                );
+            }
+            ptr
+        }
+        Err(err) => {
+            if trace_reduce_attr {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttrString error object={:p} attr={} err={}",
+                    object, name, err
+                );
+            }
+            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+                && err.contains("attribute access unsupported type")
+            {
+                eprintln!(
+                    "[cpy-attr-debug] getattr unsupported object_ptr={:p} object_tag={} attr={}",
+                    object,
+                    cpython_value_debug_tag(&object_value_for_debug),
+                    name
+                );
+            }
+            cpython_set_error(err.clone());
+            if trace_numpy_attr {
+                eprintln!(
+                    "[numpy-init] PyObject_GetAttrString object={:p} name={} error={}",
+                    object, name, err
+                );
+            }
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
+    let trace_reduce_attr_name = if cpython_trace_numpy_reduce_enabled() {
+        with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_ptr_or_proxy(name)
+                .and_then(|value| match value {
+                    Value::Str(text) if cpython_is_reduce_probe_name(&text) => Some(text),
+                    _ => None,
+                })
+        })
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetAttr object={:p} name_ptr={:p} attr={}",
+            object, name, attr_name
+        );
+    }
+    if !object.is_null() {
+        let native_result = with_active_cpython_context_mut(|context| {
+            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            if (object as usize) < MIN_VALID_PTR {
+                return None;
+            }
+            if (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0 {
+                return None;
+            }
+            let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
+            let is_owned = context.owns_cpython_allocation_ptr(object);
+            if is_known_compat && is_owned {
+                return None;
+            }
+            // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
+            let type_ptr = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if type_ptr.is_null() {
+                return None;
+            }
+            if (type_ptr as usize) < MIN_VALID_PTR {
+                return None;
+            }
+            if (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0 {
+                return None;
+            }
+            let attr_name =
+                context
+                    .cpython_value_from_ptr(name)
+                    .and_then(|candidate| match candidate {
+                        Value::Str(text) => Some(text),
+                        _ => None,
+                    });
+            // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
+            let tp_getattro = unsafe { (*type_ptr).tp_getattro };
+            if tp_getattro.is_null()
+                || tp_getattro == PyObject_GetAttr as *mut c_void
+                || tp_getattro == PyObject_GenericGetAttr as *mut c_void
+            {
+                if let Some(attr_name) = attr_name.as_ref()
+                    && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
+                {
+                    return Some(result);
+                }
+                return None;
+            }
+            let getattro: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                // SAFETY: tp_getattro follows the CPython `PyObject* (*)(PyObject*,PyObject*)` ABI.
+                unsafe { std::mem::transmute(tp_getattro) };
+            Some(unsafe { getattro(object, name) })
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            Some(std::ptr::null_mut())
+        });
+        if let Some(result) = native_result {
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr native-result object={:p} attr={} result={:p}",
+                    object, attr_name, result
+                );
+            }
+            return result;
+        }
+    }
+    let object_value = match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => value,
+        Err(err) => {
+            let (type_ptr, tp_getattro, owned) = with_active_cpython_context_mut(|context| {
+                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                // SAFETY: best-effort diagnostics for unknown-pointer failures.
+                let type_ptr = unsafe {
+                    object
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .unwrap_or(std::ptr::null_mut())
+                };
+                let tp_getattro = if type_ptr.is_null()
+                    || (type_ptr as usize) < MIN_VALID_PTR
+                    || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+                {
+                    std::ptr::null_mut()
+                } else {
+                    // SAFETY: type_ptr is non-null and points to a type object header.
+                    unsafe { (*type_ptr).tp_getattro }
+                };
+                (
+                    type_ptr,
+                    tp_getattro,
+                    context.owns_cpython_allocation_ptr(object),
+                )
+            })
+            .unwrap_or((std::ptr::null_mut(), std::ptr::null_mut(), false));
+            cpython_set_error(format!(
+                "{err} (PyObject_GetAttr object={:p} name_ptr={:p} owned={} type_ptr={:p} tp_getattro={:p})",
+                object, name, owned, type_ptr, tp_getattro
+            ));
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr error object={:p} attr={} err={}",
+                    object, attr_name, err
+                );
+            }
+            return std::ptr::null_mut();
+        }
+    };
+    let name_value = match cpython_value_from_ptr(name) {
+        Ok(value) => value,
+        Err(err) => {
+            let native_fallback = with_active_cpython_context_mut(|context| {
+                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                if object.is_null() || name.is_null() {
+                    return None;
+                }
+                if (object as usize) < MIN_VALID_PTR
+                    || (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+                {
+                    return None;
+                }
+                // SAFETY: best-effort C-ABI slot lookup using object header.
+                let type_ptr = unsafe {
+                    object
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .unwrap_or(std::ptr::null_mut())
+                };
+                if type_ptr.is_null()
+                    || (type_ptr as usize) < MIN_VALID_PTR
+                    || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+                {
+                    return None;
+                }
+                // SAFETY: validated `type_ptr` access.
+                let tp_getattro = unsafe { (*type_ptr).tp_getattro };
+                if tp_getattro.is_null()
+                    || tp_getattro == PyObject_GetAttr as *mut c_void
+                    || tp_getattro == PyObject_GenericGetAttr as *mut c_void
+                {
+                    return None;
+                }
+                if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
+                    eprintln!(
+                        "[cpy-api] PyObject_GetAttr native-fallback object={:p} name={:p} tp_getattro={:p}",
+                        object, name, tp_getattro
+                    );
+                }
+                let getattro: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    // SAFETY: `tp_getattro` follows the CPython getattro ABI.
+                    unsafe { std::mem::transmute(tp_getattro) };
+                // Keep context pointer in scope for fallback call.
+                let _ = context;
+                Some(unsafe { getattro(object, name) })
+            })
+            .unwrap_or_else(|fallback_err| {
+                cpython_set_error(fallback_err);
+                None
+            });
+            if let Some(result) = native_fallback {
+                return result;
+            }
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::GetAttr, vec![object_value, name_value]) {
+        Ok(value) => {
+            let ptr = cpython_new_ptr_for_value(value);
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr builtin-result object={:p} attr={} result={:p}",
+                    object, attr_name, ptr
+                );
+            }
+            ptr
+        }
+        Err(err) => {
+            if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
+                eprintln!(
+                    "[numpy-reduce] PyObject_GetAttr builtin-error object={:p} attr={} err={}",
+                    object, attr_name, err
+                );
+            }
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GenericGetAttr(
+    object: *mut c_void,
+    name: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyObject_GetAttr(object, name) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GenericSetAttr(
+    object: *mut c_void,
+    name: *mut c_void,
+    value: *mut c_void,
+) -> i32 {
+    let object_value = match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let name_value = match cpython_value_from_ptr_or_proxy(name) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+
+    let object_value_for_debug = object_value.clone();
+    let name_value_for_debug = name_value.clone();
+    let result = if value.is_null() {
+        cpython_call_builtin(BuiltinFunction::DelAttr, vec![object_value, name_value])
+    } else {
+        let attr_value = match cpython_value_from_ptr_or_proxy(value) {
+            Ok(value) => value,
+            Err(err) => {
+                cpython_set_error(err);
+                return -1;
+            }
+        };
+        cpython_call_builtin(
+            BuiltinFunction::SetAttr,
+            vec![object_value, name_value, attr_value],
+        )
+    };
+    match result {
+        Ok(_) => 0,
+        Err(err) => {
+            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+                && err.contains("attribute assignment unsupported type")
+            {
+                eprintln!(
+                    "[cpy-attr-debug] setattr unsupported object_ptr={:p} object_tag={} attr={}",
+                    object,
+                    cpython_value_debug_tag(&object_value_for_debug),
+                    cpython_value_debug_tag(&name_value_for_debug)
+                );
+            }
+            cpython_set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GenericGetDict(
+    object: *mut c_void,
+    _context: *mut c_void,
+) -> *mut c_void {
+    unsafe { PyObject_GetAttrString(object, c"__dict__".as_ptr()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GenericSetDict(
+    object: *mut c_void,
+    value: *mut c_void,
+    _context: *mut c_void,
+) -> i32 {
+    if value.is_null() {
+        cpython_set_error("PyObject_GenericSetDict does not support deleting __dict__");
+        return -1;
+    }
+    unsafe { PyObject_SetAttrString(object, c"__dict__".as_ptr(), value) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_SetAttrString(
+    object: *mut c_void,
+    name: *const c_char,
+    value: *mut c_void,
+) -> i32 {
+    if !object.is_null() {
+        let native_status = with_active_cpython_context_mut(|context| {
+            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            if (object as usize) < MIN_VALID_PTR {
+                return None;
+            }
+            if (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0 {
+                return None;
+            }
+            let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
+            let is_owned = context.owns_cpython_allocation_ptr(object);
+            if is_known_compat && is_owned {
+                return None;
+            }
+            let attr_name = match unsafe { c_name_to_string(name) } {
+                Ok(name) => name,
+                Err(err) => {
+                    context.set_error(err);
+                    return Some(-1);
+                }
+            };
+            // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
+            let type_ptr = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if type_ptr.is_null() {
+                return None;
+            }
+            if (type_ptr as usize) < MIN_VALID_PTR {
+                return None;
+            }
+            if (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0 {
+                return None;
+            }
+            // SAFETY: type pointer is non-null and follows CPython type layout.
+            let tp_setattro = unsafe { (*type_ptr).tp_setattro };
+            if !tp_setattro.is_null() {
+                let attr_name_ptr =
+                    context.alloc_cpython_ptr_for_value(Value::Str(attr_name.clone()));
+                if attr_name_ptr.is_null() {
+                    context.set_error("PyObject_SetAttrString failed to materialize attr name");
+                    return Some(-1);
+                }
+                let setattro: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> i32 =
+                    // SAFETY: tp_setattro follows CPython setattro ABI.
+                    unsafe { std::mem::transmute(tp_setattro) };
+                return Some(unsafe { setattro(object, attr_name_ptr, value) });
+            }
+            // SAFETY: type pointer is non-null and follows CPython type layout.
+            let tp_setattr = unsafe { (*type_ptr).tp_setattr };
+            if !tp_setattr.is_null() {
+                let c_name = match CString::new(attr_name.as_str()) {
+                    Ok(name) => name,
+                    Err(_) => {
+                        context.set_error("attribute name contains interior NUL byte");
+                        return Some(-1);
+                    }
+                };
+                let setattr: unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void) -> i32 =
+                    // SAFETY: tp_setattr follows CPython setattr ABI.
+                    unsafe { std::mem::transmute(tp_setattr) };
+                return Some(unsafe { setattr(object, c_name.as_ptr(), value) });
+            }
+            None
+        })
+        .unwrap_or_else(|err| {
+            cpython_set_error(err);
+            Some(-1)
+        });
+        if let Some(status) = native_status {
+            return status;
+        }
+    }
+    let object_value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let name = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let value = match cpython_value_from_ptr(value) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    match cpython_call_builtin(
+        BuiltinFunction::SetAttr,
+        vec![object_value, Value::Str(name), value],
+    ) {
+        Ok(_) => 0,
+        Err(err) => {
+            cpython_set_error(err);
+            -1
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_SetAttr(
+    object: *mut c_void,
+    name: *mut c_void,
+    value: *mut c_void,
+) -> i32 {
+    if value.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { PyObject_GenericSetAttr(object, name, value) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_DelAttr(object: *mut c_void, name: *mut c_void) -> i32 {
+    unsafe { PyObject_GenericSetAttr(object, name, std::ptr::null_mut()) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_DelAttrString(object: *mut c_void, name: *const c_char) -> i32 {
+    let name_text = match unsafe { c_name_to_string(name) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let name_obj = cpython_new_ptr_for_value(Value::Str(name_text));
+    if name_obj.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_DelAttr(object, name_obj) };
+    unsafe { Py_DecRef(name_obj) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_DelItemString(object: *mut c_void, key: *const c_char) -> i32 {
+    let key_text = match unsafe { c_name_to_string(key) } {
+        Ok(text) => text,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let key_obj = cpython_new_ptr_for_value(Value::Str(key_text));
+    if key_obj.is_null() {
+        return -1;
+    }
+    let status = unsafe { PyObject_DelItem(object, key_obj) };
+    unsafe { Py_DecRef(key_obj) };
+    status
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_Type(object: *mut c_void) -> *mut c_void {
+    if object.is_null() {
+        cpython_set_error("PyObject_Type received null object");
+        return std::ptr::null_mut();
+    }
+    let type_ptr = unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type)
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        cpython_set_error("PyObject_Type encountered object without type");
+        return std::ptr::null_mut();
+    }
+    unsafe { Py_IncRef(type_ptr.cast()) };
+    type_ptr.cast()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyObject_Type(object: *mut c_void) -> *mut c_void {
+    unsafe { PyObject_Type(object) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GetTypeData(
+    object: *mut c_void,
+    cls: *mut c_void,
+) -> *mut c_void {
+    if object.is_null() || cls.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let is_instance = unsafe { PyObject_IsInstance(object, cls) };
+    if is_instance < 0 {
+        return std::ptr::null_mut();
+    }
+    if is_instance == 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_TypeError },
+            "PyObject_GetTypeData called for unrelated type",
+        );
+        return std::ptr::null_mut();
+    }
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HasAttrString(object: *mut c_void, name: *const c_char) -> i32 {
+    let status = unsafe { PyObject_HasAttrStringWithError(object, name) };
+    if status < 0 {
+        unsafe { PyErr_Clear() };
+        0
+    } else {
+        status
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HasAttr(object: *mut c_void, name: *mut c_void) -> i32 {
+    let status = unsafe { PyObject_HasAttrWithError(object, name) };
+    if status < 0 {
+        unsafe { PyErr_Clear() };
+        0
+    } else {
+        status
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HasAttrWithError(object: *mut c_void, name: *mut c_void) -> i32 {
+    let trace_enabled = cpython_trace_numpy_reduce_enabled();
+    let mut trace_name: Option<String> = None;
+    if trace_enabled
+        && let Ok(value) = cpython_value_from_ptr(name)
+        && let Value::Str(text) = value
+    {
+        trace_name = Some(text);
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrWithError object={:p} name_ptr={:p} attr={}",
+            object,
+            name,
+            trace_name.as_deref().unwrap_or("<unmapped>")
+        );
+    }
+    let attr = unsafe { PyObject_GetAttr(object, name) };
+    if !attr.is_null() {
+        unsafe { Py_DecRef(attr) };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrWithError hit object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
+        }
+        return 1;
+    }
+    if unsafe { PyErr_Occurred() }.is_null() {
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrWithError miss-noerr object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
+        }
+        return 0;
+    }
+    if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0
+        || cpython_error_message_indicates_missing_attribute()
+    {
+        unsafe { PyErr_Clear() };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrWithError miss object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<unmapped>")
+            );
+        }
+        return 0;
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrWithError error object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<unmapped>")
+        );
+    }
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_HasAttrStringWithError(
+    object: *mut c_void,
+    name: *const c_char,
+) -> i32 {
+    let trace_enabled = cpython_trace_numpy_reduce_enabled();
+    let trace_name = unsafe { c_name_to_string(name) }.ok();
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrStringWithError object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    let attr = unsafe { PyObject_GetAttrString(object, name) };
+    if !attr.is_null() {
+        unsafe { Py_DecRef(attr) };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrStringWithError hit object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
+        }
+        return 1;
+    }
+    if unsafe { PyErr_Occurred() }.is_null() {
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrStringWithError miss-noerr object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
+        }
+        return 0;
+    }
+    if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0
+        || cpython_error_message_indicates_missing_attribute()
+    {
+        unsafe { PyErr_Clear() };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_HasAttrStringWithError miss object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
+        }
+        return 0;
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_HasAttrStringWithError error object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    -1
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GetOptionalAttrString(
+    object: *mut c_void,
+    name: *const c_char,
+    result: *mut *mut c_void,
+) -> i32 {
+    if result.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    unsafe { *result = std::ptr::null_mut() };
+    let trace_enabled = cpython_trace_numpy_reduce_enabled();
+    let trace_name = unsafe { c_name_to_string(name) }.ok();
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetOptionalAttrString object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    let value = unsafe { PyObject_GetAttrString(object, name) };
+    if !value.is_null() {
+        unsafe {
+            *result = value;
+        }
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttrString hit object={:p} attr={} result={:p}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>"),
+                value
+            );
+        }
+        return 1;
+    }
+    if unsafe { PyErr_Occurred() }.is_null() {
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttrString miss-noerr object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
+        }
+        return 0;
+    }
+    if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0
+        || cpython_error_message_indicates_missing_attribute()
+    {
+        unsafe { PyErr_Clear() };
+        if trace_enabled {
+            eprintln!(
+                "[numpy-reduce] PyObject_GetOptionalAttrString miss object={:p} attr={}",
+                object,
+                trace_name.as_deref().unwrap_or("<invalid>")
+            );
+        }
+        return 0;
+    }
+    if trace_enabled {
+        eprintln!(
+            "[numpy-reduce] PyObject_GetOptionalAttrString error object={:p} attr={}",
+            object,
+            trace_name.as_deref().unwrap_or("<invalid>")
+        );
+    }
+    -1
+}

@@ -80,6 +80,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_set_api.rs`
   - exported `PySet_*` / `PyFrozenSet_New` C-API entrypoints (`new`, `size`, `contains`, `add`, `discard`, `clear`, `pop`)
   - delegates set/frozenset method semantics to native set runtime dispatch
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_attr_api.rs`
+  - exported `PyObject_*` attribute/introspection C-API entrypoints (`Get/Set/DelAttr*`, `Type`, `HasAttr*`, `GetOptionalAttrString`, generic attr/dict helpers)
+  - shared native-slot fallback (`tp_getattro`/`tp_setattro`) + CPython-style missing-attribute error handling
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_args_runtime.rs`
   - CPython tuple/dict argument conversion helpers (`cpython_positional_args_from_tuple_object`, `cpython_keyword_args_from_dict_object`)
   - shared argument normalization path used by CPython ABI call entrypoints and shims
@@ -177,6 +180,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython tuple C-API entrypoint behavior: `vm_extensions/cpython_tuple_api.rs`.
 - New CPython dict C-API entrypoint behavior: `vm_extensions/cpython_dict_api.rs`.
 - New CPython set C-API entrypoint behavior: `vm_extensions/cpython_set_api.rs`.
+- New CPython object-attr C-API entrypoint behavior: `vm_extensions/cpython_object_attr_api.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
 - New CPython module-def/state helper behavior: `vm_extensions/cpython_module_runtime.rs`.
 - New CPython module C-API entrypoint behavior: `vm_extensions/cpython_module_api.rs`.
