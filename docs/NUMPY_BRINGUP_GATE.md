@@ -120,7 +120,8 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - `numpy_import`: `PASS`
   - `numpy_ndarray_sum`: `PASS`
   - `numpy_numerictypes_core`: `PASS`
-  - `np.arange(0, 10, 0.5)` now returns and renders an `array([...])` string (instead of proxy-instance placeholders).
+  - `np.arange(0, 10, 0.5)` no longer falls back to proxy-instance placeholders for `repr/str`; NumPy's `arrayprint` path now executes directly.
+  - root-cause fix: `PyObject_SetAttrString` now accepts foreign extension value pointers through proxy conversion (`cpython_value_from_ptr_or_proxy`) instead of rejecting them as unknown pointers during `_multiarray_umath._populate_finfo_constants`.
   - metatype-backed type objects (for example `numpy.dtype`) now resolve class attributes through type-object semantics (not metatype-only lookup), which unblocked `dtype.alignment` and `dtype.__ge__` bring-up blockers.
   - proxy class `str`/`repr` now use class-safe rendering (`<class 'module.name'>`) and no longer route through ndarray-only rendering logic.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) remains red:
