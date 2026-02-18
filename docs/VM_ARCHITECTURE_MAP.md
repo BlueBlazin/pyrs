@@ -62,6 +62,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_eval_api.rs`
   - exported `PyEval_*` frame/global/locals/function-descriptor C-API entrypoints
   - delegates shared frame/module lookup behavior to active-context/runtime helpers
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_gc_alloc_api.rs`
+  - exported object allocator/GC C-API entrypoints (`PyObject_Malloc/Calloc/Realloc/Free`, `PyObject_GC_*`, `PyGC_*`)
+  - shared VM GC state toggle/collect wiring and object trackedness checks
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_iter_api.rs`
   - exported `PyIter_*` C-API entrypoints (`PyIter_Check`, `PyIter_NextItem`, `PyIter_Send`, `PyIter_Next`)
   - shared iterator/StopIteration compatibility helpers (`cpython_*iterator*_for_capi`, active-exception probes/clears)
@@ -189,6 +192,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython active-context pointer/error bridge behavior: `vm_extensions/cpython_context_runtime.rs`.
 - New CPython contextvar C-API entrypoint behavior: `vm_extensions/cpython_contextvar_api.rs`.
 - New CPython eval C-API entrypoint behavior: `vm_extensions/cpython_eval_api.rs`.
+- New CPython object allocator/GC C-API entrypoint behavior: `vm_extensions/cpython_gc_alloc_api.rs`.
 - New CPython iter C-API entrypoint behavior: `vm_extensions/cpython_iter_api.rs`.
 - New CPython capsule C-API entrypoint behavior: `vm_extensions/cpython_capsule_api.rs`.
 - New CPython list C-API entrypoint behavior: `vm_extensions/cpython_list_api.rs`.
@@ -226,5 +230,5 @@ This document defines the current structure and ownership boundaries for the VM 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
 - Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
-- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (object print/gc/lifecycle and unicode) into focused `vm_extensions/*_api.rs` modules.
+- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (object print/lifecycle and unicode) into focused `vm_extensions/*_api.rs` modules.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.
