@@ -80,6 +80,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_unicode_error_runtime.rs`
   - CPython unicode-error helper substrate (`cpython_unicode_error_*`, `CpythonUnicodeErrorFlavor`)
   - shared unicode-error C-API getter/setter and validation logic used by `PyUnicode*Error_*` entrypoints
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_numeric_runtime.rs`
+  - CPython numeric op helper substrate (`cpython_unary_numeric_op`, `cpython_binary_numeric_op`, `cpython_binary_numeric_op_with_heap`)
+  - shared pointer->value->numeric-dispatch conversion paths used by `PyNumber_*` entrypoints
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -135,6 +138,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython active-context call helper behavior: `vm_extensions/cpython_call_runtime.rs`.
 - New CPython codec helper behavior: `vm_extensions/cpython_codec_runtime.rs`.
 - New CPython unicode-error helper behavior: `vm_extensions/cpython_unicode_error_runtime.rs`.
+- New CPython numeric-op helper behavior: `vm_extensions/cpython_numeric_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 

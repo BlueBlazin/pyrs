@@ -61,6 +61,7 @@ mod cpython_exception_name_runtime;
 mod cpython_call_runtime;
 mod cpython_codec_runtime;
 mod cpython_unicode_error_runtime;
+mod cpython_numeric_runtime;
 
 use self::cpython_args_runtime::{
     cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
@@ -87,6 +88,9 @@ use self::cpython_unicode_error_runtime::{
     cpython_unicode_error_get_end_common, cpython_unicode_error_get_object_common,
     cpython_unicode_error_get_reason_common, cpython_unicode_error_get_start_common,
     cpython_unicode_error_set_index_common, cpython_unicode_error_set_reason_common,
+};
+use self::cpython_numeric_runtime::{
+    cpython_binary_numeric_op, cpython_binary_numeric_op_with_heap, cpython_unary_numeric_op,
 };
 use self::cpython_import_runtime::{
     CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
@@ -7670,87 +7674,6 @@ unsafe fn capi_context_mut<'a>(module_ctx: *mut c_void) -> Option<&'a mut Module
 }
 
 
-fn cpython_unary_numeric_op(
-    object: *mut c_void,
-    op: impl FnOnce(Value) -> Result<Value, RuntimeError>,
-) -> *mut c_void {
-    let value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            return std::ptr::null_mut();
-        }
-    };
-    match op(value) {
-        Ok(value) => cpython_new_ptr_for_value(value),
-        Err(err) => {
-            cpython_set_error(err.message);
-            std::ptr::null_mut()
-        }
-    }
-}
-
-fn cpython_binary_numeric_op(
-    left: *mut c_void,
-    right: *mut c_void,
-    op: impl FnOnce(Value, Value) -> Result<Value, RuntimeError>,
-) -> *mut c_void {
-    let left = match cpython_value_from_ptr(left) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            return std::ptr::null_mut();
-        }
-    };
-    let right = match cpython_value_from_ptr(right) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            return std::ptr::null_mut();
-        }
-    };
-    match op(left, right) {
-        Ok(value) => cpython_new_ptr_for_value(value),
-        Err(err) => {
-            cpython_set_error(err.message);
-            std::ptr::null_mut()
-        }
-    }
-}
-
-fn cpython_binary_numeric_op_with_heap(
-    left: *mut c_void,
-    right: *mut c_void,
-    op: impl FnOnce(Value, Value, &crate::runtime::Heap) -> Result<Value, RuntimeError>,
-) -> *mut c_void {
-    with_active_cpython_context_mut(|context| {
-        if context.vm.is_null() {
-            context.set_error("missing VM context for numeric operation");
-            return std::ptr::null_mut();
-        }
-        let Some(left) = context.cpython_value_from_ptr(left) else {
-            context.set_error("unknown left operand pointer");
-            return std::ptr::null_mut();
-        };
-        let Some(right) = context.cpython_value_from_ptr(right) else {
-            context.set_error("unknown right operand pointer");
-            return std::ptr::null_mut();
-        };
-        // SAFETY: VM pointer is valid for active context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        match op(left, right, &vm.heap) {
-            Ok(value) => context.alloc_cpython_ptr_for_value(value),
-            Err(err) => {
-                context.set_error(err.message);
-                std::ptr::null_mut()
-            }
-        }
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        std::ptr::null_mut()
-    })
-}
 
 fn cpython_valid_type_ptr(type_ptr: *mut CpythonTypeObject) -> bool {
     const MIN_VALID_PTR: usize = 0x1_0000_0000;
