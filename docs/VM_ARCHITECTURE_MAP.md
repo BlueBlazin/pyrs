@@ -95,6 +95,12 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_sequence_mapping_api.rs`
   - exported `PySequence_*` / `PyMapping_*` / `PySeqIter_New` / `PyCallIter_New` C-API entrypoints
   - owns shared slice-index normalization helpers used across sequence/mapping/object-item C-API surfaces
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_descriptor_method_api.rs`
+  - exported descriptor/method/slice C-API entrypoints (`PyDescr_*`, `PyCFunction_*`, `PyCMethod_New`, `PyWrapper_New`, `PySlice_*`)
+  - owns C-function descriptor invoke/bind runtime paths and member/getset descriptor conversion behavior
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_error_numeric_api.rs`
+  - exported legacy numeric + error C-API entrypoints (`PyFloat_AsDouble`, `PyLong_As*`, `PyComplex_*`, `PyStructSequence_*`, `PyErr_*`)
+  - owns exception matching/normalization helpers and error-state bridge behavior shared by remaining VM extension entrypoints
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_call_api.rs`
   - exported call/iterator/vectorcall/object-core C-API entrypoints (`PyObject_IsTrue/Not/Str/Repr/ASCII`, `PyObject_GetIter/GetAIter`, `PyObject_Call*`, `PyObject_Vectorcall*`, `PyMethod_New`, `PyCode_New*`)
   - shared vectorcall decode/materialization and managed-dict/finalizer helper behavior
@@ -239,6 +245,8 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython dict C-API entrypoint behavior: `vm_extensions/cpython_dict_api.rs`.
 - New CPython set C-API entrypoint behavior: `vm_extensions/cpython_set_api.rs`.
 - New CPython sequence/mapping/iterator C-API entrypoint behavior: `vm_extensions/cpython_sequence_mapping_api.rs`.
+- New CPython descriptor/method/slice C-API entrypoint behavior: `vm_extensions/cpython_descriptor_method_api.rs`.
+- New CPython legacy numeric + error C-API entrypoint behavior: `vm_extensions/cpython_error_numeric_api.rs`.
 - New CPython object-core call/vectorcall C-API entrypoint behavior: `vm_extensions/cpython_object_call_api.rs`.
 - New CPython object item/hash/compare C-API entrypoint behavior: `vm_extensions/cpython_object_item_compare_api.rs`.
 - New CPython object buffer/memoryview C-API entrypoint behavior: `vm_extensions/cpython_object_buffer_api.rs`.
@@ -278,5 +286,5 @@ This document defines the current structure and ownership boundaries for the VM 
 ## Current Follow-Up Decomposition Targets
 - Move large free-function clusters currently still in `mod.rs` into focused helper modules by domain (regex/codecs/formatting/time utilities).
 - Continue decomposing `/Users/$USER/pyrs/src/vm/vm_extensions.rs` into focused submodules (proxy runtime, ABI symbol surfaces, extension loader phases) without `include!` chunking.
-- Next decomposition slice target: move remaining CPython C-API entrypoint clusters still in `vm_extensions.rs` (descriptor/method + error/warnings clusters) into focused `vm_extensions/*_api.rs` modules.
+- Next decomposition slice target: split the remaining non-entrypoint support substrate in `/Users/$USER/pyrs/src/vm/vm_extensions.rs` (global CPython symbol/type bootstrap, keep-symbol references, extension type/static layouts) into focused runtime/helper modules.
 - Continue reducing clone-heavy hot paths identified in `/Users/$USER/pyrs/docs/CLONE_AUDIT.md`.
