@@ -4,19 +4,19 @@ use std::sync::atomic::Ordering;
 use crate::runtime::{ModuleObject, Value};
 
 use super::{
-    CPYTHON_CONSTANT_EMPTY_BYTES_PTR, CPYTHON_CONSTANT_EMPTY_STR_PTR, CPYTHON_CONSTANT_EMPTY_TUPLE_PTR,
-    CPYTHON_CONSTANT_ONE_PTR, CPYTHON_CONSTANT_ZERO_PTR, CPYTHON_IS_INITIALIZED,
-    CPYTHON_THREAD_STATE_COMPAT_SIZE, CURRENT_THREAD_STATE_PTR, CpythonModuleDef,
-    CpythonObjectHead, CpythonThreadStateCompat, Object, PyBytes_FromStringAndSize,
-    PyErr_BadInternalCall, PyExc_SystemError, PyLong_FromLong, PyTuple_New,
-    PyUnicode_FromStringAndSize, Py_IncRef, _Py_EllipsisObject, _Py_FalseStruct,
-    _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct, cpython_bind_module_def,
+    _Py_EllipsisObject, _Py_FalseStruct, _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct,
+    CPYTHON_CONSTANT_EMPTY_BYTES_PTR, CPYTHON_CONSTANT_EMPTY_STR_PTR,
+    CPYTHON_CONSTANT_EMPTY_TUPLE_PTR, CPYTHON_CONSTANT_ONE_PTR, CPYTHON_CONSTANT_ZERO_PTR,
+    CPYTHON_IS_INITIALIZED, CPYTHON_THREAD_STATE_COMPAT_SIZE, CURRENT_THREAD_STATE_PTR,
+    CpythonModuleDef, CpythonObjectHead, CpythonThreadStateCompat, Object, Py_IncRef,
+    PyBytes_FromStringAndSize, PyErr_BadInternalCall, PyExc_SystemError, PyLong_FromLong,
+    PyTuple_New, PyUnicode_FromStringAndSize, calloc, cpython_bind_module_def,
     cpython_current_thread_state_ptr, cpython_get_or_init_constant_ptr,
     cpython_interpreter_state_allocations, cpython_is_known_interpreter_state_ptr,
     cpython_is_known_thread_state_ptr, cpython_main_interpreter_state_ptr,
     cpython_main_thread_state_ptr, cpython_set_error, cpython_set_typed_error,
     cpython_thread_state_allocations, free, vm_current_thread_ident,
-    with_active_cpython_context_mut, calloc,
+    with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]

@@ -4,10 +4,10 @@ use std::ffi::{c_char, c_int, c_void};
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    InternalCallOutcome, ModuleCapiContext, ObjRef, PyErr_BadInternalCall, PyErr_Occurred,
-    PyExc_EOFError, PyExc_SystemError, PyExc_TypeError, PyLong_FromLong, PyObject_CallObject,
-    PyObject_CallOneArg, PyObject_GetAttrString, PyObject_Str, PyUnicode_AsUTF8,
-    PyUnicode_FromString, Py_DecRef, Vm, c_name_to_string, cpython_new_bytes_ptr,
+    InternalCallOutcome, ModuleCapiContext, ObjRef, Py_DecRef, PyErr_BadInternalCall,
+    PyErr_Occurred, PyExc_EOFError, PyExc_SystemError, PyExc_TypeError, PyLong_FromLong,
+    PyObject_CallObject, PyObject_CallOneArg, PyObject_GetAttrString, PyObject_Str,
+    PyUnicode_AsUTF8, PyUnicode_FromString, Vm, c_name_to_string, cpython_new_bytes_ptr,
     cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error, cpython_value_from_ptr,
     with_active_cpython_context_mut,
 };
@@ -350,7 +350,10 @@ pub unsafe extern "C" fn PyTraceBack_Print(tb: *mut c_void, file: *mut c_void) -
     status
 }
 
-pub(super) fn cpython_is_exception_instance(context: &ModuleCapiContext, instance: &ObjRef) -> bool {
+pub(super) fn cpython_is_exception_instance(
+    context: &ModuleCapiContext,
+    instance: &ObjRef,
+) -> bool {
     if context.vm.is_null() {
         return false;
     }

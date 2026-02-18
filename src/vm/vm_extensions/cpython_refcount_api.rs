@@ -1,7 +1,7 @@
 use std::ffi::{CStr, c_char, c_int, c_void};
 
 use super::{
-    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, _PyObject_NewVar,
+    _PyObject_NewVar, CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead,
     cpython_is_interned_unicode_ptr, cpython_set_error, with_active_cpython_context_mut,
 };
 
@@ -150,4 +150,3 @@ pub unsafe extern "C" fn _PyObject_GC_Resize(object: *mut c_void, nitems: isize)
     }
     object
 }
-

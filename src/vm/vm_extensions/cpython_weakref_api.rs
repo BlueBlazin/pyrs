@@ -4,8 +4,8 @@ use std::ffi::{c_int, c_void};
 use crate::runtime::{BuiltinFunction, NativeMethodKind, Object, Value};
 
 use super::{
-    ModuleCapiContext, PyCallable_Check, PyErr_BadInternalCall, PyExc_TypeError, Py_DecRef,
-    _Py_NoneStruct, cpython_call_internal_in_context, cpython_set_error, cpython_set_typed_error,
+    _Py_NoneStruct, ModuleCapiContext, Py_DecRef, PyCallable_Check, PyErr_BadInternalCall,
+    PyExc_TypeError, cpython_call_internal_in_context, cpython_set_error, cpython_set_typed_error,
     with_active_cpython_context_mut,
 };
 

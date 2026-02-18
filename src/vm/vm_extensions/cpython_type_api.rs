@@ -4,8 +4,8 @@ use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 use crate::runtime::{Object, Value};
 
 use super::{
-    CpythonHeapTypeInfo, CpythonObjectHead, CpythonTypeObject, CpythonTypeSpec, ModuleCapiContext,
-    PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS,
+    _PyObject_New, _PyObject_NewVar, CpythonHeapTypeInfo, CpythonObjectHead, CpythonTypeObject,
+    CpythonTypeSpec, ModuleCapiContext, PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS,
     PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
     PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
     PY_TPFLAGS_TUPLE_SUBCLASS, PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS,
@@ -13,16 +13,15 @@ use super::{
     PY_TYPE_SLOT_TP_CALL, PY_TYPE_SLOT_TP_CLEAR, PY_TYPE_SLOT_TP_DEALLOC, PY_TYPE_SLOT_TP_DEL,
     PY_TYPE_SLOT_TP_DESCR_GET, PY_TYPE_SLOT_TP_DESCR_SET, PY_TYPE_SLOT_TP_DOC,
     PY_TYPE_SLOT_TP_FINALIZE, PY_TYPE_SLOT_TP_FREE, PY_TYPE_SLOT_TP_GETATTR,
-    PY_TYPE_SLOT_TP_GETATTRO, PY_TYPE_SLOT_TP_GETSET, PY_TYPE_SLOT_TP_HASH,
-    PY_TYPE_SLOT_TP_INIT, PY_TYPE_SLOT_TP_IS_GC, PY_TYPE_SLOT_TP_ITER,
-    PY_TYPE_SLOT_TP_ITERNEXT, PY_TYPE_SLOT_TP_MEMBERS, PY_TYPE_SLOT_TP_METHODS,
-    PY_TYPE_SLOT_TP_NEW, PY_TYPE_SLOT_TP_REPR, PY_TYPE_SLOT_TP_RICHCOMPARE,
-    PY_TYPE_SLOT_TP_SETATTR, PY_TYPE_SLOT_TP_SETATTRO, PY_TYPE_SLOT_TP_STR,
-    PY_TYPE_SLOT_TP_TOKEN, PY_TYPE_SLOT_TP_TRAVERSE, PY_TYPE_SLOT_TP_VECTORCALL,
-    PyBaseObject_Type, PyDict_New, PyErr_BadInternalCall, PyExc_SystemError,
-    PyExc_TypeError, PyExc_MemoryError, PyModule_GetState, PyObject_Free, PyTuple_GetItem,
-    PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyType_Type, Py_DecRef, Py_IncRef, Py_XIncRef,
-    _PyObject_New, _PyObject_NewVar, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
+    PY_TYPE_SLOT_TP_GETATTRO, PY_TYPE_SLOT_TP_GETSET, PY_TYPE_SLOT_TP_HASH, PY_TYPE_SLOT_TP_INIT,
+    PY_TYPE_SLOT_TP_IS_GC, PY_TYPE_SLOT_TP_ITER, PY_TYPE_SLOT_TP_ITERNEXT, PY_TYPE_SLOT_TP_MEMBERS,
+    PY_TYPE_SLOT_TP_METHODS, PY_TYPE_SLOT_TP_NEW, PY_TYPE_SLOT_TP_REPR,
+    PY_TYPE_SLOT_TP_RICHCOMPARE, PY_TYPE_SLOT_TP_SETATTR, PY_TYPE_SLOT_TP_SETATTRO,
+    PY_TYPE_SLOT_TP_STR, PY_TYPE_SLOT_TP_TOKEN, PY_TYPE_SLOT_TP_TRAVERSE,
+    PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type, PyDict_New,
+    PyErr_BadInternalCall, PyExc_MemoryError, PyExc_SystemError, PyExc_TypeError,
+    PyModule_GetState, PyObject_Free, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Size,
+    PyType_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
     cpython_heap_type_registry, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_set_error, cpython_set_typed_error,
     cpython_value_from_ptr, free, with_active_cpython_context_mut,
@@ -1152,4 +1151,3 @@ pub unsafe extern "C" fn PyType_GenericNew(
         unsafe { std::mem::transmute(alloc) };
     unsafe { alloc_fn(subtype, 0) }
 }
-

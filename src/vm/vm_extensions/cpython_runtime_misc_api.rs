@@ -4,8 +4,8 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
 use crate::cli;
-use crate::{compiler, parser};
 use crate::runtime::Value;
+use crate::{compiler, parser};
 
 use super::{
     CPYTHON_ARGC, CPYTHON_ARGV, CPYTHON_BUILD_INFO_TEXT, CPYTHON_COMPILER_TEXT,
@@ -718,7 +718,6 @@ pub unsafe extern "C" fn Py_NewInterpreter() -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_EndInterpreter(_state: *mut c_void) {}
-
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _PyErr_BadInternalCall(_filename: *const c_char, _lineno: i32) {
