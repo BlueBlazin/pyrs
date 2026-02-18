@@ -121,10 +121,13 @@ If a probed local module is not installed, its dependent cases are recorded as `
     - `str(np.float64(0.5)) -> "0.5"`
     - `repr(np.float64(0.5)) -> "np.float64(0.5)"`
     - `format(np.float64(0.5)) -> "0.5"`
-  - direct scientific-stack blockers currently include native-extension memory corruption / crash paths:
-    - latest `scipy_import` exits with `-10` (native crash in `_ccallback_c` / `_cyutility` init path).
-    - latest `pandas_*` still fails in NumPy random extension init with `module 'numpy.random.bit_generator' has no attribute 'BitGenerator'`.
-    - latest `matplotlib_*` still fails on import-stage assertion paths.
+  - NumPy random init has advanced past prior metatype/type-object blockers:
+    - `_cython_3_2_4._common_types_metatype` now resolves bases tuples containing `Builtin(Type)` to `PyType_Type`, removing the earlier `PyDescr_NewMethod expected type object` / shared-type `PyType_Check` gate.
+  - current P0 blocker in random stack:
+    - `numpy.random.mtrand` `Py_mod_exec` currently fails with `NoneType has no attribute 'generate_state'` (extension attr dispatch on a `None` target during random-state bootstrap).
+  - direct scientific-stack blockers currently include:
+    - latest `pandas_*` still fails due `numpy.random._generator` not completing (`Generator` import missing while `mtrand` init fails).
+    - latest `scipy_import` / `matplotlib_*` remain blocked downstream of NumPy-random extension-init closure.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) is still red:
   - `scipy_import`: `FAIL` (native crash / process exit `-10`).
   - `pandas_import` / `pandas_series_sum`: `FAIL` (`numpy.random.bit_generator` publication gap: missing `BitGenerator` on module init path).
