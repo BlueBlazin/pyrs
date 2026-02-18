@@ -150,8 +150,55 @@ impl Vm {
                         0isize,
                     )
                 };
+                let owns_ptr = call_ctx.owns_cpython_allocation_ptr(raw_ptr);
+                let mapped_tag = call_ctx
+                    .cpython_value_from_ptr(raw_ptr)
+                    .map(|value| {
+                        let base_tag = cpython_value_debug_tag(&value);
+                        match value {
+                            Value::Instance(instance_obj) => match &*instance_obj.kind() {
+                                Object::Instance(instance_data) => match &*instance_data.class.kind()
+                                {
+                                    Object::Class(class_data) => {
+                                        let is_proxy = is_cpython_proxy_class(class_data);
+                                        format!("{base_tag}({} proxy={is_proxy})", class_data.name)
+                                    }
+                                    _ => base_tag,
+                                },
+                                _ => base_tag,
+                            },
+                            Value::Class(class_obj) => match &*class_obj.kind() {
+                                Object::Class(class_data) => {
+                                    let is_proxy = is_cpython_proxy_class(class_data);
+                                    format!("{base_tag}({} proxy={is_proxy})", class_data.name)
+                                }
+                                _ => base_tag,
+                            },
+                            _ => base_tag,
+                        }
+                    })
+                    .unwrap_or_else(|| "<none>".to_string());
+                let mapped_expected_type_ptr = call_ctx
+                    .cpython_value_from_ptr(raw_ptr)
+                    .and_then(|value| match value {
+                        Value::Instance(instance_obj) => match &*instance_obj.kind() {
+                            Object::Instance(instance_data) => {
+                                ModuleCapiContext::cpython_proxy_raw_ptr_from_value(
+                                    &Value::Class(instance_data.class.clone()),
+                                )
+                            }
+                            _ => None,
+                        },
+                        Value::Class(class_obj) => {
+                            ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&Value::Class(
+                                class_obj,
+                            ))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(std::ptr::null_mut());
                 eprintln!(
-                    "[cpy-proxy-call-fail] proxy={} ptr={:p} type={:p} type_name={} tp_call={:p} tp_vectorcall_offset={} args={} kwargs={}",
+                    "[cpy-proxy-call-fail] proxy={} ptr={:p} type={:p} type_name={} tp_call={:p} tp_vectorcall_offset={} args={} kwargs={} owns_ptr={} mapped={} mapped_expected_type={:p}",
                     cpython_value_debug_tag(proxy_value),
                     raw_ptr,
                     type_ptr,
@@ -159,7 +206,10 @@ impl Vm {
                     tp_call,
                     tp_vectorcall_offset,
                     args.len(),
-                    kwargs.len()
+                    kwargs.len(),
+                    owns_ptr,
+                    mapped_tag,
+                    mapped_expected_type_ptr
                 );
             }
             let detail = call_ctx
@@ -1176,20 +1226,35 @@ impl Vm {
             );
         }
         if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+            let proxy_tag = cpython_value_debug_tag(proxy_value);
+            let (attr_type_ptr, attr_type_name) = unsafe {
+                let type_ptr = attr_ptr
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut());
+                let type_name = if type_ptr.is_null() {
+                    "<null>".to_string()
+                } else {
+                    c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+                };
+                (type_ptr, type_name)
+            };
             eprintln!(
-                "[proxy-attr-map] source=getattr target={:p} attr={} value_ptr={:p}",
-                raw_ptr, attr_name, attr_ptr
+                "[proxy-attr-map] source=getattr target={:p} target_tag={} attr={} value_ptr={:p} type={:p} type_name={}",
+                raw_ptr, proxy_tag, attr_name, attr_ptr, attr_type_ptr, attr_type_name
             );
         }
         let mapped = call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr);
         if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+            let proxy_tag = cpython_value_debug_tag(proxy_value);
             let mapped_tag = mapped
                 .as_ref()
                 .map(cpython_value_debug_tag)
                 .unwrap_or_else(|| "<none>".to_string());
             eprintln!(
-                "[proxy-attr-map] source=getattr_mapped target={:p} attr={} value_ptr={:p} mapped={}",
-                raw_ptr, attr_name, attr_ptr, mapped_tag
+                "[proxy-attr-map] source=getattr_mapped target={:p} target_tag={} attr={} value_ptr={:p} mapped={}",
+                raw_ptr, proxy_tag, attr_name, attr_ptr, mapped_tag
             );
         }
         mapped

@@ -7534,6 +7534,32 @@ impl Vm {
         if name == "__class__" {
             return self.load_dunder_class_attr(&target);
         }
+        if name == "generate_state"
+            && std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
+        {
+            let target_tag = match &target {
+                Value::None => "None".to_string(),
+                Value::Class(_) => "Class".to_string(),
+                Value::Instance(_) => "Instance".to_string(),
+                Value::Builtin(_) => "Builtin".to_string(),
+                Value::Module(_) => "Module".to_string(),
+                Value::Function(_) => "Function".to_string(),
+                Value::BoundMethod(_) => "BoundMethod".to_string(),
+                _ => "Other".to_string(),
+            };
+            let stack = self
+                .frames
+                .iter()
+                .rev()
+                .take(10)
+                .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                .collect::<Vec<_>>()
+                .join(" <- ");
+            eprintln!(
+                "[getattr-generate-state] target={} stack={}",
+                target_tag, stack
+            );
+        }
 
         let looked_up = match target {
             Value::Module(module) => self.load_attr_module(&module, &name),

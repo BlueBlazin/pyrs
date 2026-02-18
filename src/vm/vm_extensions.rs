@@ -3484,13 +3484,50 @@ impl ModuleCapiContext {
             }
             self.sync_value_from_cpython_storage(handle, object);
             self.refresh_external_proxy_instance_type(handle, object);
-            return self.object_value(handle);
+            if let Some(value) = self.object_value(handle) {
+                if self.external_proxy_mapping_is_stale(&value, object) {
+                    if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+                        eprintln!(
+                            "[cpy-proxy] stale mapping reset object_ptr={:p} value_tag={}",
+                            object,
+                            cpython_value_debug_tag(&value)
+                        );
+                    }
+                    self.cpython_objects_by_ptr.remove(&(object as usize));
+                    if self
+                        .cpython_ptr_by_handle
+                        .get(&handle)
+                        .is_some_and(|ptr| *ptr == object)
+                    {
+                        self.cpython_ptr_by_handle.remove(&handle);
+                    }
+                    if !self.vm.is_null() {
+                        // SAFETY: VM pointer is valid for active C-API context lifetime.
+                        let vm = unsafe { &mut *self.vm };
+                        vm.extension_cpython_ptr_values.remove(&(object as usize));
+                    }
+                    return self.cpython_value_from_ptr_or_proxy(object);
+                }
+                return Some(value);
+            }
+            return None;
         }
         if !self.vm.is_null() {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
             if let Some(value) = vm.extension_cpython_ptr_values.get(&raw).cloned() {
+                if self.external_proxy_mapping_is_stale(&value, object) {
+                    if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
+                        eprintln!(
+                            "[cpy-proxy] stale vm-cache reset object_ptr={:p} value_tag={}",
+                            object,
+                            cpython_value_debug_tag(&value)
+                        );
+                    }
+                    vm.extension_cpython_ptr_values.remove(&raw);
+                } else {
                 return Some(value);
+                }
             }
         }
         if let Some(text) = cpython_lookup_interned_unicode_text(object) {
@@ -3579,6 +3616,39 @@ impl ModuleCapiContext {
             && let Object::Instance(instance_data_mut) = &mut *instance_mut.kind_mut()
         {
             instance_data_mut.class = updated_class;
+        }
+    }
+
+    fn external_proxy_mapping_is_stale(&self, value: &Value, object: *mut c_void) -> bool {
+        if object.is_null() || self.vm.is_null() || self.owns_cpython_allocation_ptr(object) {
+            return false;
+        }
+        // SAFETY: best-effort header probe for external PyObject*.
+        let current_type_ptr = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<c_void>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if current_type_ptr.is_null() {
+            return false;
+        }
+        match value {
+            Value::Instance(instance_obj) => {
+                let Object::Instance(instance_data) = &*instance_obj.kind() else {
+                    return false;
+                };
+                let expected_type_ptr =
+                    Self::cpython_proxy_raw_ptr_from_value(&Value::Class(instance_data.class.clone()));
+                expected_type_ptr.is_some_and(|expected| expected != current_type_ptr)
+            }
+            Value::Class(class_obj) => {
+                let expected_type_ptr =
+                    Self::cpython_proxy_raw_ptr_from_value(&Value::Class(class_obj.clone()));
+                expected_type_ptr.is_some_and(|expected| expected != object)
+            }
+            _ => false,
         }
     }
 
@@ -4646,6 +4716,63 @@ impl ModuleCapiContext {
         Ok(unsafe { object.cast::<u8>().add(member.offset as usize) })
     }
 
+    fn external_mapping_get_item_string(&mut self, mapping_ptr: *mut c_void, key: &str) -> *mut c_void {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if mapping_ptr.is_null()
+            || (mapping_ptr as usize) < MIN_VALID_PTR
+            || (mapping_ptr as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+        {
+            return std::ptr::null_mut();
+        }
+        let key_c_name = match CString::new(key) {
+            Ok(name) => name,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let key_ptr = unsafe { PyUnicode_FromString(key_c_name.as_ptr()) };
+        if key_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: best-effort foreign object header probe.
+        let type_ptr = unsafe {
+            mapping_ptr
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if type_ptr.is_null()
+            || (type_ptr as usize) < MIN_VALID_PTR
+            || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: `type_ptr` points at candidate PyTypeObject layout.
+        let mapping = unsafe { (*type_ptr).tp_as_mapping.cast::<CpythonMappingMethods>() };
+        if mapping.is_null()
+            || (mapping as usize) < MIN_VALID_PTR
+            || (mapping as usize) % std::mem::align_of::<CpythonMappingMethods>() != 0
+        {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: mapping table follows CPython ABI for external objects.
+        let mp_subscript = unsafe { (*mapping).mp_subscript };
+        if mp_subscript.is_null() {
+            return std::ptr::null_mut();
+        }
+        let subscript: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            // SAFETY: `mp_subscript` follows `binaryfunc` ABI for mapping subscripts.
+            unsafe { std::mem::transmute(mp_subscript) };
+        // SAFETY: external mapping slot call with validated mapping pointer + key object.
+        let value_ptr = unsafe { subscript(mapping_ptr, key_ptr) };
+        // SAFETY: `key_ptr` is a temporary strong reference created above.
+        unsafe { Py_DecRef(key_ptr) };
+        if value_ptr.is_null() {
+            // PyDict_GetItem-style probes suppress lookup exceptions.
+            unsafe { PyErr_Clear() };
+        }
+        value_ptr
+    }
+
     fn lookup_type_attr_via_tp_dict(
         &mut self,
         object: *mut c_void,
@@ -4754,64 +4881,14 @@ impl ModuleCapiContext {
                     current, dict_ptr, base_ptr
                 );
             }
+            let dict_is_owned = !dict_ptr.is_null() && self.owns_cpython_allocation_ptr(dict_ptr);
             if !dict_ptr.is_null()
-                && let Some(Value::Dict(dict_obj)) = self.cpython_value_from_ptr(dict_ptr)
-                && let Some(value) = dict_get_value(&dict_obj, &key)
-            {
-                if let Some(raw_descriptor_ptr) = Self::cpython_proxy_raw_ptr_from_value(&value)
-                    && let Some(bound_ptr) = self.resolve_descriptor_attr_ptr(
-                        raw_descriptor_ptr,
-                        object,
-                        object_type.cast(),
-                        is_type_object,
-                    )
-                {
-                    if is_proxy_trace {
-                        eprintln!(
-                            "[cpy-proxy] tp_dict descriptor hit current={:p} dict={:p} descriptor_ptr={:p} bound_ptr={:p}",
-                            current, dict_ptr, raw_descriptor_ptr, bound_ptr
-                        );
-                    }
-                    if trace_lookup_branch {
-                        eprintln!(
-                            "[proxy-lookup-branch] attr={} branch=dict_descriptor object={:p} current={:p} value_ptr={:p}",
-                            attr_name, object, current, bound_ptr
-                        );
-                    }
-                    return Some(bound_ptr);
-                }
-                if is_proxy_trace {
-                    eprintln!(
-                        "[cpy-proxy] tp_dict lookup hit current={:p} dict={:p} value_tag={}",
-                        current,
-                        dict_ptr,
-                        cpython_value_debug_tag(&value)
-                    );
-                }
-                if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
-                    eprintln!(
-                        "[proxy-attr-map] source=tp_dict_value target={:p} attr={} value_tag={}",
-                        object,
-                        attr_name,
-                        cpython_value_debug_tag(&value)
-                    );
-                }
-                let value_ptr = self.alloc_cpython_ptr_for_value(value.clone());
-                if trace_lookup_branch {
-                    eprintln!(
-                        "[proxy-lookup-branch] attr={} branch=dict_value object={:p} current={:p} value_ptr={:p}",
-                        attr_name, object, current, value_ptr
-                    );
-                }
-                return Some(value_ptr);
-            } else if !dict_ptr.is_null()
-                && let Ok(attr_c_name) = CString::new(attr_name)
+                && !dict_is_owned
             {
                 // External tp_dict pointers are common for proxied native types.
                 // Probe through the C-API dictionary surface so slot-wrapper descriptors
                 // materialized by PyType_Ready are visible here.
-                let external_value_ptr =
-                    unsafe { PyDict_GetItemString(dict_ptr, attr_c_name.as_ptr()) };
+                let external_value_ptr = self.external_mapping_get_item_string(dict_ptr, attr_name);
                 if !external_value_ptr.is_null() {
                     // SAFETY: best-effort descriptor probe on external tp_dict entry.
                     let descriptor_type = unsafe {
@@ -4865,6 +4942,56 @@ impl ModuleCapiContext {
                         attr_name, object, current
                     );
                 }
+            } else if !dict_ptr.is_null()
+                && let Some(Value::Dict(dict_obj)) = self.cpython_value_from_ptr(dict_ptr)
+                && let Some(value) = dict_get_value(&dict_obj, &key)
+            {
+                if let Some(raw_descriptor_ptr) = Self::cpython_proxy_raw_ptr_from_value(&value)
+                    && let Some(bound_ptr) = self.resolve_descriptor_attr_ptr(
+                        raw_descriptor_ptr,
+                        object,
+                        object_type.cast(),
+                        is_type_object,
+                    )
+                {
+                    if is_proxy_trace {
+                        eprintln!(
+                            "[cpy-proxy] tp_dict descriptor hit current={:p} dict={:p} descriptor_ptr={:p} bound_ptr={:p}",
+                            current, dict_ptr, raw_descriptor_ptr, bound_ptr
+                        );
+                    }
+                    if trace_lookup_branch {
+                        eprintln!(
+                            "[proxy-lookup-branch] attr={} branch=dict_descriptor object={:p} current={:p} value_ptr={:p}",
+                            attr_name, object, current, bound_ptr
+                        );
+                    }
+                    return Some(bound_ptr);
+                }
+                if is_proxy_trace {
+                    eprintln!(
+                        "[cpy-proxy] tp_dict lookup hit current={:p} dict={:p} value_tag={}",
+                        current,
+                        dict_ptr,
+                        cpython_value_debug_tag(&value)
+                    );
+                }
+                if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                    eprintln!(
+                        "[proxy-attr-map] source=tp_dict_value target={:p} attr={} value_tag={}",
+                        object,
+                        attr_name,
+                        cpython_value_debug_tag(&value)
+                    );
+                }
+                let value_ptr = self.alloc_cpython_ptr_for_value(value.clone());
+                if trace_lookup_branch {
+                    eprintln!(
+                        "[proxy-lookup-branch] attr={} branch=dict_value object={:p} current={:p} value_ptr={:p}",
+                        attr_name, object, current, value_ptr
+                    );
+                }
+                return Some(value_ptr);
             } else if is_proxy_trace && !dict_ptr.is_null() {
                 eprintln!(
                     "[cpy-proxy] tp_dict lookup miss current={:p} dict_ptr={:p}",
@@ -5515,6 +5642,18 @@ impl ModuleCapiContext {
         {
             return None;
         }
+        let trace_seed_calls = if std::env::var_os("PYRS_TRACE_NUMPY_SEED_CALLS").is_some() {
+            // SAFETY: `type_ptr` is validated above.
+            let type_name = unsafe {
+                c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+            };
+            type_name.contains("SeedSequence")
+                || type_name.contains("BitGenerator")
+                || type_name.contains("MT19937")
+                || type_name.contains("RandomState")
+        } else {
+            false
+        };
         let trace_numpy_ufunc_call = std::env::var_os("PYRS_TRACE_NUMPY_UFUNC_CALL").is_some();
         if trace_numpy_ufunc_call {
             // SAFETY: `type_ptr` was validated above.
@@ -5600,7 +5739,23 @@ impl ModuleCapiContext {
                 kwargs.len()
             );
         }
-        Some(unsafe { call(callable, args_ptr, kwargs_ptr) })
+        let result = unsafe { call(callable, args_ptr, kwargs_ptr) };
+        if trace_seed_calls {
+            let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+            let type_name = unsafe {
+                c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+            };
+            eprintln!(
+                "[cpy-seed-call] callable={:p} type={} args={} kwargs={} result={:p} is_none_result={}",
+                callable,
+                type_name,
+                args.len(),
+                kwargs.len(),
+                result,
+                result == none_ptr
+            );
+        }
+        Some(result)
     }
 
     fn identity_object_id(value: &Value) -> Option<u64> {

@@ -5,7 +5,8 @@ use crate::runtime::{Object, Value};
 use super::{
     BuiltinFunction, CPY_PROXY_PTR_ATTR, CpythonObjectHead, CpythonTypeObject, Py_DecRef,
     Py_IncRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
-    PyExc_AttributeError, PyExc_TypeError, PyObject_DelItem, PyObject_IsInstance, c_name_to_string,
+    PyExc_AttributeError, PyExc_TypeError, PyObject_DelItem, PyObject_IsInstance, _Py_NoneStruct,
+    c_name_to_string,
     cpython_call_builtin, cpython_error_message_indicates_missing_attribute,
     cpython_is_reduce_probe_name, cpython_new_ptr_for_value, cpython_set_error,
     cpython_set_typed_error, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
@@ -42,8 +43,42 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             name.as_str(),
             "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base"
         );
+    let trace_seed_attrs = std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some()
+        && matches!(
+            name.as_str(),
+            "BitGenerator" | "SeedSequence" | "SeedlessSeedSequence" | "generate_state"
+        );
     let trace_proxy_getattr = std::env::var_os("PYRS_TRACE_PROXY_GETATTR").is_some()
         && matches!(name.as_str(), "__repr__" | "__str__");
+    let trace_dot_getattr =
+        std::env::var_os("PYRS_TRACE_PROXY_GETATTR_DOT").is_some() && name == "dot";
+    let trace_generate_state =
+        std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some() && name == "generate_state";
+    if trace_generate_state {
+        let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
+        let target_kind = with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_ptr_or_proxy(object)
+                .map(|value| match value {
+                    Value::None => "None".to_string(),
+                    Value::Class(_) => "Class".to_string(),
+                    Value::Instance(_) => "Instance".to_string(),
+                    Value::Builtin(_) => "Builtin".to_string(),
+                    Value::Module(_) => "Module".to_string(),
+                    Value::Function(_) => "Function".to_string(),
+                    Value::BoundMethod(_) => "BoundMethod".to_string(),
+                    _ => "Other".to_string(),
+                })
+                .unwrap_or_else(|| "<unresolved>".to_string())
+        })
+        .unwrap_or_else(|_| "<no-context>".to_string());
+        eprintln!(
+            "[cpy-getattr-generate-state] object={:p} is_none_ptr={} target_kind={}",
+            object,
+            object == none_ptr,
+            target_kind
+        );
+    }
     if !object.is_null() {
         let native_result = with_active_cpython_context_mut(|context| {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -113,10 +148,22 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     tp_getattro
                 );
             }
-            if !tp_getattro.is_null()
-                && tp_getattro != PyObject_GetAttr as *mut c_void
-                && tp_getattro != PyObject_GenericGetAttr as *mut c_void
-            {
+            if !tp_getattro.is_null() {
+                // For foreign objects, call tp_getattro even when it resolves to
+                // generic object attribute lookup so CPython instance-dict semantics
+                // (e.g. module attrs like numpy.dot) stay authoritative.
+                let is_generic_getattro = tp_getattro == PyObject_GetAttr as *mut c_void
+                    || tp_getattro == PyObject_GenericGetAttr as *mut c_void;
+                if is_owned && is_generic_getattro {
+                    // Keep owned-compat objects on the internal fallback path to avoid
+                    // recursive/self-referential generic getattr behavior.
+                } else {
+                if trace_dot_getattr {
+                    eprintln!(
+                        "[proxy-getattr-dot] branch=tp_getattro object={:p} is_owned={} is_known_compat={} tp_getattro={:p} generic={}",
+                        object, is_owned, is_known_compat, tp_getattro, is_generic_getattro
+                    );
+                }
                 if trace_proxy_getattr {
                     eprintln!(
                         "[proxy-getattr] branch=tp_getattro object={:p} attr={} tp_getattro={:p}",
@@ -131,6 +178,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     // SAFETY: tp_getattro follows the CPython `PyObject* (*)(PyObject*,PyObject*)` ABI.
                     unsafe { std::mem::transmute(tp_getattro) };
                 return Some(unsafe { getattro(object, name_ptr) });
+                }
             }
             // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
             let tp_getattr = unsafe { (*type_ptr).tp_getattr };
@@ -141,6 +189,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 );
             }
             if !tp_getattr.is_null() {
+                if trace_dot_getattr {
+                    eprintln!(
+                        "[proxy-getattr-dot] branch=tp_getattr object={:p} is_owned={} is_known_compat={} tp_getattr={:p}",
+                        object, is_owned, is_known_compat, tp_getattr
+                    );
+                }
                 if trace_proxy_getattr {
                     eprintln!(
                         "[proxy-getattr] branch=tp_getattr object={:p} attr={} tp_getattr={:p}",
@@ -160,6 +214,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 return Some(unsafe { getattr(object, name_cstr) });
             }
             if let Some(result) = context.lookup_type_attr_via_tp_dict(object, &name) {
+                if trace_dot_getattr {
+                    eprintln!(
+                        "[proxy-getattr-dot] branch=tp_dict object={:p} is_owned={} is_known_compat={} result={:p}",
+                        object, is_owned, is_known_compat, result
+                    );
+                }
                 if trace_proxy_getattr {
                     eprintln!(
                         "[proxy-getattr] branch=tp_dict object={:p} attr={} result={:p}",
@@ -177,6 +237,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             if is_proxy_trace {
                 eprintln!("[cpy-proxy] native getattr no native path hit; falling back");
             }
+            if trace_dot_getattr {
+                eprintln!(
+                    "[proxy-getattr-dot] branch=fallback object={:p} is_owned={} is_known_compat={}",
+                    object, is_owned, is_known_compat
+                );
+            }
             if trace_proxy_getattr {
                 eprintln!(
                     "[proxy-getattr] branch=fallback object={:p} attr={}",
@@ -190,6 +256,38 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if trace_seed_attrs {
+                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                let valid_result_ptr = !result.is_null()
+                    && (result as usize) >= MIN_VALID_PTR
+                    && (result as usize) % std::mem::align_of::<usize>() == 0;
+                let (result_type_ptr, result_type_name) = if valid_result_ptr {
+                    // SAFETY: pointer provenance guarded by null/min-address/alignment checks.
+                    unsafe {
+                        let type_ptr = result
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .unwrap_or(std::ptr::null_mut());
+                        let valid_type_ptr = !type_ptr.is_null()
+                            && (type_ptr as usize) >= MIN_VALID_PTR
+                            && (type_ptr as usize) % std::mem::align_of::<usize>() == 0;
+                        let type_name = if !valid_type_ptr {
+                            "<invalid-type>".to_string()
+                        } else {
+                            c_name_to_string((*type_ptr).tp_name)
+                                .unwrap_or_else(|_| "<invalid>".to_string())
+                        };
+                        (type_ptr, type_name)
+                    }
+                } else {
+                    (std::ptr::null_mut(), "<invalid-ptr>".to_string())
+                };
+                eprintln!(
+                    "[numpy-seed-attr] source=native object={:p} attr={} result_ptr={:p} type={:p} type_name={}",
+                    object, name, result, result_type_ptr, result_type_name
+                );
+            }
             if trace_proxy_getattr {
                 eprintln!(
                     "[proxy-getattr] native-result object={:p} attr={} result={:p}",
@@ -372,6 +470,43 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
+    let trace_generate_state = std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
+        && with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_ptr_or_proxy(name)
+                .and_then(|value| match value {
+                    Value::Str(text) => Some(text == "generate_state"),
+                    _ => None,
+                })
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if trace_generate_state {
+        let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
+        let target_kind = with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_ptr_or_proxy(object)
+                .map(|value| match value {
+                    Value::None => "None".to_string(),
+                    Value::Class(_) => "Class".to_string(),
+                    Value::Instance(_) => "Instance".to_string(),
+                    Value::Builtin(_) => "Builtin".to_string(),
+                    Value::Module(_) => "Module".to_string(),
+                    Value::Function(_) => "Function".to_string(),
+                    Value::BoundMethod(_) => "BoundMethod".to_string(),
+                    _ => "Other".to_string(),
+                })
+                .unwrap_or_else(|| "<unresolved>".to_string())
+        })
+        .unwrap_or_else(|_| "<no-context>".to_string());
+        eprintln!(
+            "[cpy-getattr] attr=generate_state object={:p} name_ptr={:p} is_none_ptr={} target_kind={}",
+            object,
+            name,
+            object == none_ptr,
+            target_kind
+        );
+    }
     let trace_reduce_attr_name = if cpython_trace_numpy_reduce_enabled() {
         with_active_cpython_context_mut(|context| {
             context
