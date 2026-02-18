@@ -74,6 +74,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_module_runtime.rs`
   - CPython module-def/runtime helpers (`cpython_bind_module_def`, `cpython_new_module_data`)
   - module-state allocation/free bridge used by CPython module creation/exec paths
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_module_api.rs`
+  - exported `PyModule_*` C-API entrypoints (create/from-spec/exec/get/new/add/add-constants/add-functions/add-type/get-dict)
+  - delegates module-def binding/state setup and name normalization to module runtime/helper substrates
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_import_runtime.rs`
   - CPython import helper substrate (`cpython_import_add_module_by_name`, inittab registry/lookup, exec-code-in-module flow)
   - shared import-state wiring used by `PyImport_*` C-API entrypoints
@@ -160,6 +163,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython capsule C-API entrypoint behavior: `vm_extensions/cpython_capsule_api.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
 - New CPython module-def/state helper behavior: `vm_extensions/cpython_module_runtime.rs`.
+- New CPython module C-API entrypoint behavior: `vm_extensions/cpython_module_api.rs`.
 - New CPython import helper behavior: `vm_extensions/cpython_import_runtime.rs`.
 - New CPython import C-API entrypoint behavior: `vm_extensions/cpython_import_api.rs`.
 - New CPython module-name/value helper behavior: `vm_extensions/cpython_module_name_runtime.rs`.
