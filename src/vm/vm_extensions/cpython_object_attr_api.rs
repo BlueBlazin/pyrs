@@ -822,15 +822,19 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             return status;
         }
     }
-    let object_value = match cpython_value_from_ptr(object) {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            return -1;
-        }
-    };
-    let value = match cpython_value_from_ptr(value) {
-        Ok(value) => value,
+    let (object_value, value) = match with_active_cpython_context_mut(|context| {
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_SetAttrString received unknown object pointer");
+            return None;
+        };
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(value) else {
+            context.set_error("PyObject_SetAttrString received unknown value pointer");
+            return None;
+        };
+        Some((object_value, value))
+    }) {
+        Ok(Some(pair)) => pair,
+        Ok(None) => return -1,
         Err(err) => {
             cpython_set_error(err);
             return -1;

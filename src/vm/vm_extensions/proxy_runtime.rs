@@ -3,9 +3,9 @@ use std::ffi::{CString, c_void};
 
 use super::{
     CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
-    ModuleCapiContext, ObjRef, Object, ProxyAttrLookupReentryGuard, PyErr_GivenExceptionMatches,
-    PyExc_IndexError, PyExc_TypeError, PyNumber_Add, PyNumber_Float, PyNumber_Invert,
-    PyNumber_Long, PyNumber_MatrixMultiply, PyNumber_Multiply, PyNumber_Negative,
+    ModuleCapiContext, ObjRef, Object, ProxyAttrLookupReentryGuard, Py_DecRef, PyErr_Clear,
+    PyErr_GivenExceptionMatches, PyExc_IndexError, PyExc_TypeError, PyNumber_Add, PyNumber_Float,
+    PyNumber_Invert, PyNumber_Long, PyNumber_MatrixMultiply, PyNumber_Multiply, PyNumber_Negative,
     PyNumber_Positive, PyNumber_Subtract, PyNumber_TrueDivide, PyObject_CallObject,
     PyObject_GetAttrString, PyObject_GetItem, PyObject_RichCompareBool, PyObject_SetItem,
     PyObject_Size, RuntimeError, Value, Vm, c_name_to_string, cpython_is_type_object_ptr,
@@ -14,6 +14,27 @@ use super::{
 };
 
 impl Vm {
+    unsafe fn cpython_proxy_call_dunder_zeroarg(
+        target_ptr: *mut c_void,
+        method_name: &str,
+    ) -> *mut c_void {
+        let Ok(c_name) = CString::new(method_name) else {
+            return std::ptr::null_mut();
+        };
+        // SAFETY: target pointer is a candidate external PyObject*.
+        let method_ptr = unsafe { PyObject_GetAttrString(target_ptr, c_name.as_ptr()) };
+        if method_ptr.is_null() {
+            // SAFETY: clear lookup errors so caller can continue with fallbacks.
+            unsafe { PyErr_Clear() };
+            return std::ptr::null_mut();
+        }
+        // SAFETY: call with NULL args matches CPython "no-args" invocation.
+        let result = unsafe { PyObject_CallObject(method_ptr, std::ptr::null_mut()) };
+        // SAFETY: PyObject_GetAttrString returns a new reference.
+        unsafe { Py_DecRef(method_ptr) };
+        result
+    }
+
     fn cpython_proxy_class_repr_text(class_data: &crate::runtime::ClassObject) -> String {
         let qualname = class_data
             .attrs
@@ -657,6 +678,8 @@ impl Vm {
         let result_ptr = if target_ptr.is_null() {
             std::ptr::null_mut()
         } else {
+            // First try direct slot, then Python-level dunder fallback.
+            let mut rendered = std::ptr::null_mut();
             // SAFETY: target pointer is a candidate PyObject* for slot reads.
             let type_ptr = unsafe {
                 target_ptr
@@ -665,21 +688,26 @@ impl Vm {
                     .map(|head| head.ob_type.cast::<CpythonTypeObject>())
                     .unwrap_or(std::ptr::null_mut())
             };
-            if type_ptr.is_null() {
-                std::ptr::null_mut()
-            } else {
-                // SAFETY: `type_ptr` is a candidate type object and `tp_str` is read-only.
+            if !type_ptr.is_null() {
+                // SAFETY: slot pointer read on candidate type object.
                 let slot = unsafe { (*type_ptr).tp_str };
-                if slot.is_null() {
-                    std::ptr::null_mut()
-                } else {
-                    // SAFETY: `tp_str` follows the CPython unary reprfunc ABI.
+                if !slot.is_null() {
+                    // SAFETY: `tp_str` follows unary reprfunc ABI.
                     let str_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
                         unsafe { std::mem::transmute(slot) };
-                    // SAFETY: slot function pointer and target pointer come from CPython object metadata.
-                    unsafe { str_fn(target_ptr) }
+                    // SAFETY: slot function pointer and object pointer are CPython-compatible.
+                    rendered = unsafe { str_fn(target_ptr) };
                 }
             }
+            if rendered.is_null() {
+                // SAFETY: fallback uses standard attribute call flow for zero-arg dunder.
+                rendered = unsafe { Self::cpython_proxy_call_dunder_zeroarg(target_ptr, "__str__") };
+            }
+            if rendered.is_null() {
+                // SAFETY: CPython str() may fall back to __repr__.
+                rendered = unsafe { Self::cpython_proxy_call_dunder_zeroarg(target_ptr, "__repr__") };
+            }
+            rendered
         };
         cpython_set_active_context(previous_context);
         if target_ptr.is_null() {
@@ -688,7 +716,7 @@ impl Vm {
             )));
         }
         if result_ptr.is_null() {
-            return Some(Err(RuntimeError::new("proxy str() slot not available")));
+            return Some(Err(RuntimeError::new("proxy str() failed")));
         }
         Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
             Some(Value::Str(text)) => Ok(text),
@@ -717,6 +745,8 @@ impl Vm {
         let result_ptr = if target_ptr.is_null() {
             std::ptr::null_mut()
         } else {
+            // First try direct repr slot, then Python-level __repr__ dunder.
+            let mut rendered = std::ptr::null_mut();
             // SAFETY: target pointer is a candidate PyObject* for slot reads.
             let type_ptr = unsafe {
                 target_ptr
@@ -725,21 +755,23 @@ impl Vm {
                     .map(|head| head.ob_type.cast::<CpythonTypeObject>())
                     .unwrap_or(std::ptr::null_mut())
             };
-            if type_ptr.is_null() {
-                std::ptr::null_mut()
-            } else {
-                // SAFETY: `type_ptr` is a candidate type object and `tp_repr` is read-only.
+            if !type_ptr.is_null() {
+                // SAFETY: slot pointer read on candidate type object.
                 let slot = unsafe { (*type_ptr).tp_repr };
-                if slot.is_null() {
-                    std::ptr::null_mut()
-                } else {
-                    // SAFETY: `tp_repr` follows the CPython unary reprfunc ABI.
+                if !slot.is_null() {
+                    // SAFETY: `tp_repr` follows unary reprfunc ABI.
                     let repr_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
                         unsafe { std::mem::transmute(slot) };
-                    // SAFETY: slot function pointer and target pointer come from CPython object metadata.
-                    unsafe { repr_fn(target_ptr) }
+                    // SAFETY: slot function pointer and object pointer are CPython-compatible.
+                    rendered = unsafe { repr_fn(target_ptr) };
                 }
             }
+            if rendered.is_null() {
+                // SAFETY: fallback uses standard attribute call flow for zero-arg dunder.
+                rendered =
+                    unsafe { Self::cpython_proxy_call_dunder_zeroarg(target_ptr, "__repr__") };
+            }
+            rendered
         };
         cpython_set_active_context(previous_context);
         if target_ptr.is_null() {
@@ -748,7 +780,7 @@ impl Vm {
             )));
         }
         if result_ptr.is_null() {
-            return Some(Err(RuntimeError::new("proxy repr() slot not available")));
+            return Some(Err(RuntimeError::new("proxy repr() failed")));
         }
         Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
             Some(Value::Str(text)) => Ok(text),

@@ -109,6 +109,21 @@ fn cpython_lib_path() -> Option<PathBuf> {
     None
 }
 
+fn numpy_site_packages_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PYRS_NUMPY_SITE_PACKAGES") {
+        let path = PathBuf::from(path);
+        if path.join("numpy/__init__.py").is_file() {
+            return Some(path);
+        }
+    }
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidate = workspace.join(".venv-ext314/lib/python3.14/site-packages");
+    if candidate.join("numpy/__init__.py").is_file() {
+        return Some(candidate);
+    }
+    None
+}
+
 fn run_with_large_stack<F>(name: &str, f: F)
 where
     F: FnOnce() + Send + 'static,
@@ -13206,6 +13221,30 @@ except ModuleNotFoundError:
         let code = compiler::compile_module(&module).expect("compile should succeed");
         let mut vm = Vm::new();
         vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let Some(site_packages) = numpy_site_packages_path() else {
+        return;
+    };
+    run_with_large_stack("vm-numpy-float-repr", move || {
+        let source = r#"import numpy as np
+x = np.arange(0, 10, 0.5)
+text = repr(x)
+ok = ("array([" in text and "<ndarray instance>" not in text and "e+00" in text)
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.add_module_path(site_packages);
         vm.execute(&code).expect("execution should succeed");
         assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
     });

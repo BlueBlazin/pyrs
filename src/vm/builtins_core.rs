@@ -307,9 +307,6 @@ impl Vm {
         let value = args.remove(0);
         let is_proxy = Self::cpython_proxy_raw_ptr_from_value(&value).is_some();
         if is_proxy {
-            if let Some(array_repr) = self.numpy_array_repr_via_arrayprint(&value)? {
-                return Ok(Value::Str(array_repr));
-            }
             match self.cpython_proxy_repr(&value) {
                 Some(Ok(text)) => return Ok(Value::Str(text)),
                 Some(Err(_)) | None => return Ok(Value::Str(format_value(&value))),
@@ -2466,9 +2463,6 @@ impl Vm {
         if encoding.is_none() && errors.is_none() {
             let is_proxy = Self::cpython_proxy_raw_ptr_from_value(&object).is_some();
             if is_proxy {
-                if let Some(array_repr) = self.numpy_array_repr_via_arrayprint(&object)? {
-                    return Ok(Value::Str(array_repr));
-                }
                 match self.cpython_proxy_str(&object) {
                     Some(Ok(text)) => return Ok(Value::Str(text)),
                     Some(Err(_)) | None => return Ok(Value::Str(format_value(&object))),
@@ -2542,33 +2536,6 @@ impl Vm {
             }
             _ => Err(RuntimeError::new("decoding str is not supported")),
         }
-    }
-
-    fn numpy_array_repr_via_arrayprint(
-        &mut self,
-        value: &Value,
-    ) -> Result<Option<String>, RuntimeError> {
-        if !matches!(value, Value::Instance(_)) || self.value_type_name_for_error(value) != "ndarray" {
-            return Ok(None);
-        }
-        let tolist = match self.builtin_getattr(
-            vec![value.clone(), Value::Str("tolist".to_string())],
-            HashMap::new(),
-        ) {
-            Ok(callable) => callable,
-            Err(_) => return Ok(None),
-        };
-        let list_value = match self.call_internal(tolist, Vec::new(), HashMap::new())? {
-            InternalCallOutcome::Value(value) => value,
-            InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception("ndarray.tolist() failed"));
-            }
-        };
-        let rendered_list = match self.builtin_repr(vec![list_value], HashMap::new())? {
-            Value::Str(text) => text,
-            _ => return Ok(None),
-        };
-        Ok(Some(format!("array({rendered_list})")))
     }
 
     fn parse_bytes_constructor_args(
