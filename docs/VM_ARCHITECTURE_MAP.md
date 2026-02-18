@@ -185,6 +185,21 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_numeric_api.rs`
   - exported `PyNumber_*` C-API entrypoints (numeric predicates, binary/unary/in-place ops, conversion helpers)
   - delegates shared dispatch/conversion behavior to numeric runtime/context helper modules
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_bigint_runtime.rs`
+  - CPython bigint/two's-complement helper substrate (`cpython_bigint_*`, endian resolution)
+  - shared by `PyLong_*` conversion/parsing paths to keep numeric byte/bit transforms out of `/Users/$USER/pyrs/src/vm/vm_extensions.rs`
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_slot_runtime.rs`
+  - CPython slot-dispatch helper substrate (`tp_richcompare`, number/mapping/sequence slot probes, object call bridge)
+  - shared by object/numeric/unicode C-API entrypoints for slot fallback and codec-call normalization
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_value_runtime.rs`
+  - CPython value/type mapping and debug-tag helpers (`value -> PyType*`, builtin class-pointer mapping, ufunc debug summaries)
+  - shared by proxy/call/descriptor surfaces and type-pointer compatibility paths
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_thread_runtime.rs`
+  - CPython thread/interpreter registry + wide-string storage helpers (`ThreadState` compat, interned-unicode registry, TLS/TSS maps, pending-call queues)
+  - shared by `PyThread*`, `PyInterpreterState*`, runtime misc, and unicode intern helpers
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_string_runtime.rs`
+  - CPython C-string/wide-string conversion helpers (`c_name_to_string`, `cpython_wide_ptr_to_string`, wide-unit encode/decode)
+  - shared by unicode/runtime-misc/sys/thread C-API entrypoints
 
 ### Core method helpers
 - `/Users/$USER/pyrs/src/vm/vm_runtime_methods.rs`
@@ -275,6 +290,11 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython sys/thread C-API entrypoint behavior: `vm_extensions/cpython_sys_thread_api.rs`.
 - New CPython numeric-op helper behavior: `vm_extensions/cpython_numeric_runtime.rs`.
 - New CPython numeric C-API entrypoint behavior: `vm_extensions/cpython_numeric_api.rs`.
+- New CPython bigint conversion helper behavior: `vm_extensions/cpython_bigint_runtime.rs`.
+- New CPython slot/call fallback helper behavior: `vm_extensions/cpython_slot_runtime.rs`.
+- New CPython value/type/debug helper behavior: `vm_extensions/cpython_value_runtime.rs`.
+- New CPython thread/interpreter registry helper behavior: `vm_extensions/cpython_thread_runtime.rs`.
+- New CPython string/wide-string conversion helper behavior: `vm_extensions/cpython_string_runtime.rs`.
 - Shared VM helper for multiple domains: `vm_runtime_methods.rs`.
 - Native stdlib substrate behavior: matching module in `/Users/$USER/pyrs/src/vm/stdlib/`.
 
