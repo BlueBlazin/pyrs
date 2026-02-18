@@ -894,6 +894,13 @@ fn cpython_bytes_storage_bytes(len: usize) -> usize {
 }
 
 #[inline]
+fn cpython_long_storage_bytes(ndigits: usize) -> usize {
+    std::mem::size_of::<CpythonObjectHead>()
+        .saturating_add(std::mem::size_of::<usize>())
+        .saturating_add(ndigits.max(1).saturating_mul(std::mem::size_of::<u32>()))
+}
+
+#[inline]
 unsafe fn cpython_tuple_items_ptr(tuple: *mut c_void) -> *mut *mut c_void {
     // SAFETY: caller guarantees `tuple` points to writable tuple-compatible storage.
     unsafe {
@@ -913,6 +920,23 @@ unsafe fn cpython_bytes_data_ptr(object: *mut c_void) -> *mut c_char {
             .add(std::mem::size_of::<CpythonVarObjectHead>() + std::mem::size_of::<isize>())
             .cast::<c_char>()
     }
+}
+
+#[inline]
+unsafe fn cpython_long_digits_ptr(object: *mut c_void) -> *mut u32 {
+    // SAFETY: caller guarantees `object` points to long-compatible storage.
+    unsafe {
+        object
+            .cast::<u8>()
+            .add(std::mem::size_of::<CpythonObjectHead>() + std::mem::size_of::<usize>())
+            .cast::<u32>()
+    }
+}
+
+#[inline]
+unsafe fn cpython_long_lv_tag_ptr(object: *mut c_void) -> *mut usize {
+    // SAFETY: caller guarantees `object` points to long-compatible storage.
+    unsafe { object.cast::<u8>().add(std::mem::size_of::<CpythonObjectHead>()).cast::<usize>() }
 }
 
 type CpythonVectorcallFn =
@@ -1111,6 +1135,89 @@ fn cpython_foreign_long_payload_to_u64(lv_tag: usize, digits: *const u32) -> Opt
         acc = acc.checked_add(digit.checked_shl(shift as u32)?)?;
     }
     u64::try_from(acc).ok()
+}
+
+fn cpython_long_digits_from_u64(mut magnitude: u64) -> Vec<u32> {
+    const PY_LONG_SHIFT: u32 = 30;
+    const PY_LONG_MASK: u64 = (1u64 << PY_LONG_SHIFT) - 1;
+    let mut digits = Vec::new();
+    while magnitude != 0 {
+        digits.push((magnitude & PY_LONG_MASK) as u32);
+        magnitude >>= PY_LONG_SHIFT;
+    }
+    digits
+}
+
+fn cpython_long_digits_from_abs_le_bytes(bytes: &[u8]) -> Vec<u32> {
+    const PY_LONG_BASE: u64 = 1u64 << 30;
+    if bytes.is_empty() || bytes.iter().all(|byte| *byte == 0) {
+        return Vec::new();
+    }
+    let mut limbs32 = Vec::with_capacity(bytes.len().div_ceil(4));
+    for chunk in bytes.chunks(4) {
+        let mut limb = 0u32;
+        for (idx, byte) in chunk.iter().enumerate() {
+            limb |= (*byte as u32) << (idx * 8);
+        }
+        limbs32.push(limb);
+    }
+    while limbs32.last().is_some_and(|limb| *limb == 0) {
+        limbs32.pop();
+    }
+    let mut digits30 = Vec::new();
+    while !limbs32.is_empty() {
+        let mut rem = 0u64;
+        for idx in (0..limbs32.len()).rev() {
+            let wide = (rem << 32) | (limbs32[idx] as u64);
+            limbs32[idx] = (wide / PY_LONG_BASE) as u32;
+            rem = wide % PY_LONG_BASE;
+        }
+        digits30.push(rem as u32);
+        while limbs32.last().is_some_and(|limb| *limb == 0) {
+            limbs32.pop();
+        }
+    }
+    digits30
+}
+
+fn cpython_long_payload_from_value(value: &Value) -> Option<(usize, Vec<u32>)> {
+    const PY_LONG_SIGN_ZERO: usize = 1;
+    const PY_LONG_SIGN_NEGATIVE: usize = 2;
+    const PY_LONG_NON_SIZE_BITS: usize = 3;
+    let (sign_bits, mut digits) = match value {
+        Value::Int(raw) => {
+            if *raw == 0 {
+                (PY_LONG_SIGN_ZERO, Vec::new())
+            } else {
+                let sign_bits = if *raw < 0 { PY_LONG_SIGN_NEGATIVE } else { 0 };
+                (sign_bits, cpython_long_digits_from_u64(raw.unsigned_abs()))
+            }
+        }
+        Value::BigInt(raw) => {
+            if raw.is_zero() {
+                (PY_LONG_SIGN_ZERO, Vec::new())
+            } else {
+                let sign_bits = if raw.is_negative() {
+                    PY_LONG_SIGN_NEGATIVE
+                } else {
+                    0
+                };
+                (
+                    sign_bits,
+                    cpython_long_digits_from_abs_le_bytes(&raw.to_abs_le_bytes()),
+                )
+            }
+        }
+        _ => return None,
+    };
+    while digits.last().is_some_and(|digit| *digit == 0) {
+        digits.pop();
+    }
+    if digits.is_empty() {
+        return Some((PY_LONG_SIGN_ZERO, Vec::new()));
+    }
+    let ndigits = digits.len();
+    Some(((ndigits << PY_LONG_NON_SIZE_BITS) | sign_bits, digits))
 }
 
 #[cfg(test)]
@@ -2698,6 +2805,7 @@ impl ModuleCapiContext {
         let (
             refcount,
             ob_type,
+            long_payload,
             tuple_items,
             list_items,
             dict_len,
@@ -2709,6 +2817,7 @@ impl ModuleCapiContext {
             (
                 slot.refcount.max(1) as isize,
                 cpython_type_for_value(&slot.value),
+                cpython_long_payload_from_value(&slot.value),
                 match &slot.value {
                     Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                         Object::Tuple(items) => Some(items.clone()),
@@ -2774,6 +2883,7 @@ impl ModuleCapiContext {
                 None,
                 None,
                 None,
+                None,
             ),
             None => {
                 self.set_error(format!("invalid object handle {handle}"));
@@ -2804,6 +2914,28 @@ impl ModuleCapiContext {
                 });
             }
             raw_capsule.cast::<CpythonCompatObject>()
+        } else if let Some((lv_tag, digits)) = long_payload.as_ref() {
+            let storage_bytes = cpython_long_storage_bytes(digits.len());
+            // SAFETY: allocate storage for CPython long-compatible header + digits.
+            let raw_long = unsafe { malloc(storage_bytes) };
+            if raw_long.is_null() {
+                self.set_error("out of memory allocating CPython long compat object");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: `raw_long` is writable long-compatible storage.
+            unsafe {
+                let head = raw_long.cast::<CpythonObjectHead>();
+                (*head).ob_refcnt = refcount;
+                (*head).ob_type = ob_type;
+                *cpython_long_lv_tag_ptr(raw_long) = *lv_tag;
+                let digits_ptr = cpython_long_digits_ptr(raw_long);
+                if digits.is_empty() {
+                    *digits_ptr = 0;
+                } else {
+                    std::ptr::copy_nonoverlapping(digits.as_ptr(), digits_ptr, digits.len());
+                }
+            }
+            raw_long.cast::<CpythonCompatObject>()
         } else if let Some(value) = complex_value {
             // SAFETY: allocate storage for CPython complex-compatible header.
             let raw_complex = unsafe { malloc(std::mem::size_of::<CpythonComplexCompatObject>()) }
@@ -5931,6 +6063,7 @@ impl ModuleCapiContext {
             },
             _ => None,
         };
+        let long_payload = cpython_long_payload_from_value(&slot.value);
         let bytes_payload = match &slot.value {
             Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
                 Object::Bytes(values) => Some(values.clone()),
@@ -5946,6 +6079,17 @@ impl ModuleCapiContext {
         unsafe {
             (*raw).ob_base.ob_base.ob_refcnt = slot.refcount.max(1) as isize;
             (*raw).ob_base.ob_base.ob_type = cpython_type_for_value(&slot.value);
+            if let Some((lv_tag, digits)) = long_payload.as_ref() {
+                let raw_long = raw.cast::<c_void>();
+                *cpython_long_lv_tag_ptr(raw_long) = *lv_tag;
+                let digits_ptr = cpython_long_digits_ptr(raw_long);
+                if digits.is_empty() {
+                    *digits_ptr = 0;
+                } else {
+                    std::ptr::copy_nonoverlapping(digits.as_ptr(), digits_ptr, digits.len());
+                }
+                return;
+            }
             if let Some(bytes) = bytes_payload.as_ref() {
                 let raw_bytes = raw.cast::<CpythonBytesCompatObject>();
                 (*raw_bytes).ob_base.ob_size = bytes.len() as isize;
