@@ -5993,15 +5993,11 @@ impl ModuleCapiContext {
     }
 
     fn sync_cpython_refcount(&mut self, handle: PyrsObjectHandle) {
-        self.sync_cpython_storage(handle);
+        self.sync_cpython_storage_inner(handle, true);
     }
 
     fn sync_cpython_storage_from_value(&mut self, handle: PyrsObjectHandle) {
         self.sync_cpython_storage_inner(handle, false);
-    }
-
-    fn sync_cpython_storage(&mut self, handle: PyrsObjectHandle) {
-        self.sync_cpython_storage_inner(handle, true);
     }
 
     fn sync_cpython_storage_inner(&mut self, handle: PyrsObjectHandle, pull_from_raw: bool) {
