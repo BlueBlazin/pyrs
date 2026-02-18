@@ -107,6 +107,9 @@ This document defines the current structure and ownership boundaries for the VM 
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_runtime_misc_api.rs`
   - exported CPython runtime/misc C-API entrypoints (`Py_Repr*`, `Py_AddPendingCall`/`Py_MakePendingCalls`/`Py_AtExit`, version/build/platform getters, path/config wide-char APIs, `Py_{Initialize,Finalize,Main,BytesMain,CompileString,Exit}`, fatal-error APIs, `_PyErr_BadInternalCall`, `_Py_HashDouble`, `_PyUnicode_Is*`)
   - shared pending-call queue/atexit lifecycle, path-config storage, and compile/CLI bridge behavior
+- `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_refcount_api.rs`
+  - exported refcount/internal GC C-API entrypoints (`Py_{IncRef,DecRef,XIncRef,XDecRef}`, `_Py_{IncRef,DecRef,SetRefcnt,NegativeRefcount,CheckRecursiveCall}`, `_PyObject_GC_{NewVar,Resize}`)
+  - shared CPython header-refcount mutation and active-context handle decref/incref synchronization behavior
 - `/Users/$USER/pyrs/src/vm/vm_extensions/cpython_object_attr_api.rs`
   - exported `PyObject_*` attribute/introspection C-API entrypoints (`Get/Set/DelAttr*`, `Type`, `HasAttr*`, `GetOptionalAttrString`, generic attr/dict helpers)
   - shared native-slot fallback (`tp_getattro`/`tp_setattro`) + CPython-style missing-attribute error handling
@@ -219,6 +222,7 @@ This document defines the current structure and ownership boundaries for the VM 
 - New CPython object lifecycle C-API entrypoint behavior: `vm_extensions/cpython_object_lifecycle_api.rs`.
 - New CPython weakref C-API entrypoint behavior: `vm_extensions/cpython_weakref_api.rs`.
 - New CPython runtime/misc C-API entrypoint behavior: `vm_extensions/cpython_runtime_misc_api.rs`.
+- New CPython refcount/internal-GC C-API entrypoint behavior: `vm_extensions/cpython_refcount_api.rs`.
 - New CPython object-attr C-API entrypoint behavior: `vm_extensions/cpython_object_attr_api.rs`.
 - New CPython bytes/bytearray C-API entrypoint behavior: `vm_extensions/cpython_bytes_api.rs`.
 - New CPython C-API arg conversion behavior: `vm_extensions/cpython_args_runtime.rs`.
