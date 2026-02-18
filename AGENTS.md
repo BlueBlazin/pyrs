@@ -83,6 +83,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `scipy_import`: process exit `-10` (native crash class failure).
     - `pandas_import` / `pandas_series_sum`: process exit `-5` (native crash class failure).
     - `matplotlib_import` / `matplotlib_pyplot_smoke`: import assertion path failure.
+  - additional NumPy P0 blocker:
+    - `import numpy.random` currently fails in `numpy.random.mtrand` with
+      `NoneType has no attribute 'generate_state'`.
+    - core direction: class-level extension `tp_init` dispatch parity (`BitGenerator.__init__`)
+      must be closed so `_seed_seq` initialization happens before `MT19937` state setup.
   - root-cause closures landed in this slice:
     - type-object attr lookup now treats metatype-backed type objects as type objects (not metatype-only), unblocking `numpy.dtype` class attrs like `alignment`.
     - proxy type-object rich-compare dunder fallback (`__lt__/__le__/__eq__/__ne__/__gt__/__ge__`) now materializes callable wrappers from `tp_richcompare`, unblocking `numpy.dtype.__ge__` class-attr probes.
