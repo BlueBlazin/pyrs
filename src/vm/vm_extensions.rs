@@ -21,9 +21,9 @@ use crate::extensions::{
     PyrsWritableBufferViewV1,
 };
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, InstanceObject,
-    IteratorKind, IteratorObject, ModuleObject, NativeMethodKind, NativeMethodObject, Object,
-    RuntimeError, SliceValue, Value,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, IteratorKind,
+    IteratorObject, ModuleObject, NativeMethodKind, NativeMethodObject, Object, RuntimeError,
+    SliceValue, Value,
 };
 use crate::{compiler, parser};
 
@@ -47,62 +47,41 @@ const CPY_PROXY_PTR_ATTR: &str = "__pyrs_cpython_proxy_ptr__";
 const CPY_PROXY_MARKER_ATTR: &str = "__pyrs_cpython_proxy_marker__";
 const CPY_EXCEPTION_TYPE_PTR_ATTR: &str = "__pyrs_cpython_exception_type_ptr__";
 static TRACE_NUMPY_TYPEDICT_PTR: AtomicUsize = AtomicUsize::new(0);
-mod capi_v1;
-mod proxy_runtime;
 mod callable_runtime;
-mod loader_runtime;
-mod module_context_state;
-mod cpython_context_runtime;
+mod capi_v1;
 mod cpython_args_runtime;
-mod cpython_module_runtime;
+mod cpython_call_runtime;
+mod cpython_codec_api;
+mod cpython_codec_runtime;
+mod cpython_context_runtime;
+mod cpython_exception_name_runtime;
 mod cpython_import_runtime;
 mod cpython_module_name_runtime;
-mod cpython_exception_name_runtime;
-mod cpython_call_runtime;
-mod cpython_codec_runtime;
-mod cpython_codec_api;
-mod cpython_unicode_error_runtime;
+mod cpython_module_runtime;
 mod cpython_numeric_runtime;
+mod cpython_unicode_error_api;
+mod cpython_unicode_error_runtime;
+mod loader_runtime;
+mod module_context_state;
+mod proxy_runtime;
 
 use self::cpython_args_runtime::{
     cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
 };
-use self::cpython_module_runtime::{
-    cpython_bind_module_def, cpython_new_module_data,
-};
-use self::cpython_module_name_runtime::{
-    cpython_module_add_type_name, cpython_module_name_from_object, cpython_optional_value_from_ptr,
-};
-use self::cpython_exception_name_runtime::{
-    cpython_exception_name_from_runtime_message, cpython_exception_name_parts,
-};
 use self::cpython_call_runtime::{cpython_call_internal_in_context, cpython_getattr_in_context};
+use self::cpython_codec_api::{
+    PyCodec_BackslashReplaceErrors, PyCodec_Decode, PyCodec_Decoder, PyCodec_Encode,
+    PyCodec_Encoder, PyCodec_IgnoreErrors, PyCodec_IncrementalDecoder, PyCodec_IncrementalEncoder,
+    PyCodec_KnownEncoding, PyCodec_LookupError, PyCodec_NameReplaceErrors, PyCodec_Register,
+    PyCodec_RegisterError, PyCodec_ReplaceErrors, PyCodec_StreamReader, PyCodec_StreamWriter,
+    PyCodec_StrictErrors, PyCodec_Unregister, PyCodec_XMLCharRefReplaceErrors,
+};
 use self::cpython_codec_runtime::{
     cpython_codec_builtin_handler_ptr, cpython_codec_call_callable_in_context,
     cpython_codec_error_info, cpython_codec_handler_tuple_result,
     cpython_codec_lookup_attr_in_context, cpython_codec_module_in_context,
     cpython_codec_optional_name, cpython_codec_required_name,
     cpython_codec_stream_fallback_in_context,
-};
-use self::cpython_codec_api::{
-    PyCodec_BackslashReplaceErrors, PyCodec_Decode, PyCodec_Decoder, PyCodec_Encoder, PyCodec_IgnoreErrors,
-    PyCodec_IncrementalDecoder, PyCodec_IncrementalEncoder, PyCodec_KnownEncoding,
-    PyCodec_LookupError, PyCodec_NameReplaceErrors, PyCodec_Register, PyCodec_RegisterError,
-    PyCodec_ReplaceErrors, PyCodec_StreamReader, PyCodec_StreamWriter, PyCodec_StrictErrors,
-    PyCodec_Unregister, PyCodec_XMLCharRefReplaceErrors, PyCodec_Encode,
-};
-use self::cpython_unicode_error_runtime::{
-    CpythonUnicodeErrorFlavor, cpython_exception_value_attr, cpython_unicode_error_get_encoding_common,
-    cpython_unicode_error_get_end_common, cpython_unicode_error_get_object_common,
-    cpython_unicode_error_get_reason_common, cpython_unicode_error_get_start_common,
-    cpython_unicode_error_set_index_common, cpython_unicode_error_set_reason_common,
-};
-use self::cpython_numeric_runtime::{
-    cpython_binary_numeric_op, cpython_binary_numeric_op_with_heap, cpython_unary_numeric_op,
-};
-use self::cpython_import_runtime::{
-    CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
-    cpython_import_from_inittab, cpython_inittab_registry,
 };
 use self::cpython_context_runtime::{
     cpython_builtin_cfunction_varargs_kwargs, cpython_call_builtin,
@@ -111,6 +90,32 @@ use self::cpython_context_runtime::{
     cpython_set_error, cpython_set_typed_error, cpython_trace_numpy_reduce_enabled,
     cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
+use self::cpython_exception_name_runtime::{
+    cpython_exception_name_from_runtime_message, cpython_exception_name_parts,
+};
+use self::cpython_import_runtime::{
+    CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
+    cpython_import_from_inittab, cpython_inittab_registry,
+};
+use self::cpython_module_name_runtime::{
+    cpython_module_add_type_name, cpython_module_name_from_object, cpython_optional_value_from_ptr,
+};
+use self::cpython_module_runtime::{cpython_bind_module_def, cpython_new_module_data};
+use self::cpython_numeric_runtime::{
+    cpython_binary_numeric_op, cpython_binary_numeric_op_with_heap, cpython_unary_numeric_op,
+};
+use self::cpython_unicode_error_api::{
+    PyUnicodeDecodeError_Create, PyUnicodeDecodeError_GetEncoding, PyUnicodeDecodeError_GetEnd,
+    PyUnicodeDecodeError_GetObject, PyUnicodeDecodeError_GetReason, PyUnicodeDecodeError_GetStart,
+    PyUnicodeDecodeError_SetEnd, PyUnicodeDecodeError_SetReason, PyUnicodeDecodeError_SetStart,
+    PyUnicodeEncodeError_GetEncoding, PyUnicodeEncodeError_GetEnd, PyUnicodeEncodeError_GetObject,
+    PyUnicodeEncodeError_GetReason, PyUnicodeEncodeError_GetStart, PyUnicodeEncodeError_SetEnd,
+    PyUnicodeEncodeError_SetReason, PyUnicodeEncodeError_SetStart, PyUnicodeTranslateError_GetEnd,
+    PyUnicodeTranslateError_GetObject, PyUnicodeTranslateError_GetReason,
+    PyUnicodeTranslateError_GetStart, PyUnicodeTranslateError_SetEnd,
+    PyUnicodeTranslateError_SetReason, PyUnicodeTranslateError_SetStart,
+};
+use self::cpython_unicode_error_runtime::cpython_exception_value_attr;
 
 thread_local! {
     static PROXY_REFRESH_ACTIVE: Cell<bool> = const { Cell::new(false) };
@@ -7681,8 +7686,6 @@ unsafe fn capi_context_mut<'a>(module_ctx: *mut c_void) -> Option<&'a mut Module
     Some(unsafe { &mut *(module_ctx as *mut ModuleCapiContext) })
 }
 
-
-
 fn cpython_valid_type_ptr(type_ptr: *mut CpythonTypeObject) -> bool {
     const MIN_VALID_PTR: usize = 0x1_0000_0000;
     if type_ptr.is_null() {
@@ -8195,12 +8198,10 @@ fn cpython_call_object(
     })
 }
 
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModuleDef_Init(module: *mut c_void) -> *mut c_void {
     module
 }
-
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> *mut c_void {
@@ -8245,7 +8246,6 @@ pub unsafe extern "C" fn PyModule_Create2(module: *mut c_void, _apiver: i32) -> 
         }
     }
 }
-
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyModule_FromDefAndSpec2(
@@ -14532,7 +14532,6 @@ pub unsafe extern "C" fn PyNumber_ToBase(object: *mut c_void, base: i32) -> *mut
     }
 }
 
-
 const PYC_MAGIC_NUMBER_TOKEN: c_long = 0x0A0D0E2B;
 
 #[unsafe(no_mangle)]
@@ -15594,7 +15593,6 @@ pub unsafe extern "C" fn PyIter_Check(object: *mut c_void) -> i32 {
     })
     .unwrap_or(0)
 }
-
 
 fn cpython_value_is_exception_name(vm: &Vm, value: &Value, expected: &str) -> bool {
     match value {
@@ -31978,269 +31976,6 @@ pub unsafe extern "C" fn PyFile_WriteString(text: *const c_char, file: *mut c_vo
     let status = unsafe { PyFile_WriteObject(value, file, 1) };
     unsafe { Py_DecRef(value) };
     status
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_Create(
-    encoding: *const c_char,
-    object: *const c_char,
-    length: isize,
-    start: isize,
-    end: isize,
-    reason: *const c_char,
-) -> *mut c_void {
-    if length < 0 {
-        cpython_set_typed_error(
-            unsafe { PyExc_SystemError },
-            "PyUnicodeDecodeError_Create received negative length",
-        );
-        return std::ptr::null_mut();
-    }
-    if encoding.is_null() || reason.is_null() {
-        cpython_set_typed_error(
-            unsafe { PyExc_SystemError },
-            "PyUnicodeDecodeError_Create received null encoding or reason",
-        );
-        return std::ptr::null_mut();
-    }
-    if object.is_null() && length > 0 {
-        cpython_set_typed_error(
-            unsafe { PyExc_SystemError },
-            "PyUnicodeDecodeError_Create received null object with non-zero length",
-        );
-        return std::ptr::null_mut();
-    }
-    let encoding_text = match unsafe { c_name_to_string(encoding) } {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(format!(
-                "PyUnicodeDecodeError_Create invalid encoding: {err}"
-            ));
-            return std::ptr::null_mut();
-        }
-    };
-    let reason_text = match unsafe { c_name_to_string(reason) } {
-        Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(format!("PyUnicodeDecodeError_Create invalid reason: {err}"));
-            return std::ptr::null_mut();
-        }
-    };
-    let payload = if length == 0 {
-        Vec::new()
-    } else {
-        // SAFETY: `object` is validated non-null above for non-zero `length`.
-        unsafe { std::slice::from_raw_parts(object.cast::<u8>(), length as usize).to_vec() }
-    };
-    with_active_cpython_context_mut(|context| {
-        if context.vm.is_null() {
-            context.set_error("PyUnicodeDecodeError_Create missing VM context");
-            return std::ptr::null_mut();
-        }
-        // SAFETY: VM pointer is valid while C-API context is active.
-        let vm = unsafe { &mut *context.vm };
-        let object_value = vm.heap.alloc_bytes(payload);
-        let start_value = Value::Int(start as i64);
-        let end_value = Value::Int(end as i64);
-        let exception = ExceptionObject::new("UnicodeDecodeError".to_string(), None);
-        {
-            let mut attrs = exception.attrs.borrow_mut();
-            attrs.insert("encoding".to_string(), Value::Str(encoding_text.clone()));
-            attrs.insert("object".to_string(), object_value.clone());
-            attrs.insert("start".to_string(), start_value.clone());
-            attrs.insert("end".to_string(), end_value.clone());
-            attrs.insert("reason".to_string(), Value::Str(reason_text.clone()));
-            attrs.insert(
-                "args".to_string(),
-                vm.heap.alloc_tuple(vec![
-                    Value::Str(encoding_text),
-                    object_value,
-                    start_value,
-                    end_value,
-                    Value::Str(reason_text),
-                ]),
-            );
-        }
-        context.alloc_cpython_ptr_for_value(Value::Exception(Box::new(exception)))
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        std::ptr::null_mut()
-    })
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_GetEncoding(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_encoding_common(self_obj, CpythonUnicodeErrorFlavor::Encode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_GetEncoding(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_encoding_common(self_obj, CpythonUnicodeErrorFlavor::Decode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_GetObject(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_object_common(self_obj, CpythonUnicodeErrorFlavor::Encode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_GetObject(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_object_common(self_obj, CpythonUnicodeErrorFlavor::Decode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeTranslateError_GetObject(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_object_common(self_obj, CpythonUnicodeErrorFlavor::Translate)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_GetStart(
-    self_obj: *mut c_void,
-    start: *mut isize,
-) -> c_int {
-    cpython_unicode_error_get_start_common(self_obj, start, CpythonUnicodeErrorFlavor::Encode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_GetStart(
-    self_obj: *mut c_void,
-    start: *mut isize,
-) -> c_int {
-    cpython_unicode_error_get_start_common(self_obj, start, CpythonUnicodeErrorFlavor::Decode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeTranslateError_GetStart(
-    self_obj: *mut c_void,
-    start: *mut isize,
-) -> c_int {
-    cpython_unicode_error_get_start_common(self_obj, start, CpythonUnicodeErrorFlavor::Translate)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_SetStart(
-    self_obj: *mut c_void,
-    start: isize,
-) -> c_int {
-    cpython_unicode_error_set_index_common(
-        self_obj,
-        "start",
-        start,
-        CpythonUnicodeErrorFlavor::Encode,
-    )
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_SetStart(
-    self_obj: *mut c_void,
-    start: isize,
-) -> c_int {
-    cpython_unicode_error_set_index_common(
-        self_obj,
-        "start",
-        start,
-        CpythonUnicodeErrorFlavor::Decode,
-    )
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeTranslateError_SetStart(
-    self_obj: *mut c_void,
-    start: isize,
-) -> c_int {
-    cpython_unicode_error_set_index_common(
-        self_obj,
-        "start",
-        start,
-        CpythonUnicodeErrorFlavor::Translate,
-    )
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_GetEnd(
-    self_obj: *mut c_void,
-    end: *mut isize,
-) -> c_int {
-    cpython_unicode_error_get_end_common(self_obj, end, CpythonUnicodeErrorFlavor::Encode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_GetEnd(
-    self_obj: *mut c_void,
-    end: *mut isize,
-) -> c_int {
-    cpython_unicode_error_get_end_common(self_obj, end, CpythonUnicodeErrorFlavor::Decode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeTranslateError_GetEnd(
-    self_obj: *mut c_void,
-    end: *mut isize,
-) -> c_int {
-    cpython_unicode_error_get_end_common(self_obj, end, CpythonUnicodeErrorFlavor::Translate)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_SetEnd(self_obj: *mut c_void, end: isize) -> c_int {
-    cpython_unicode_error_set_index_common(self_obj, "end", end, CpythonUnicodeErrorFlavor::Encode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_SetEnd(self_obj: *mut c_void, end: isize) -> c_int {
-    cpython_unicode_error_set_index_common(self_obj, "end", end, CpythonUnicodeErrorFlavor::Decode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeTranslateError_SetEnd(
-    self_obj: *mut c_void,
-    end: isize,
-) -> c_int {
-    cpython_unicode_error_set_index_common(
-        self_obj,
-        "end",
-        end,
-        CpythonUnicodeErrorFlavor::Translate,
-    )
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_GetReason(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_reason_common(self_obj, CpythonUnicodeErrorFlavor::Encode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_GetReason(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_reason_common(self_obj, CpythonUnicodeErrorFlavor::Decode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeTranslateError_GetReason(self_obj: *mut c_void) -> *mut c_void {
-    cpython_unicode_error_get_reason_common(self_obj, CpythonUnicodeErrorFlavor::Translate)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeEncodeError_SetReason(
-    self_obj: *mut c_void,
-    reason: *const c_char,
-) -> c_int {
-    cpython_unicode_error_set_reason_common(self_obj, reason, CpythonUnicodeErrorFlavor::Encode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeDecodeError_SetReason(
-    self_obj: *mut c_void,
-    reason: *const c_char,
-) -> c_int {
-    cpython_unicode_error_set_reason_common(self_obj, reason, CpythonUnicodeErrorFlavor::Decode)
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnicodeTranslateError_SetReason(
-    self_obj: *mut c_void,
-    reason: *const c_char,
-) -> c_int {
-    cpython_unicode_error_set_reason_common(self_obj, reason, CpythonUnicodeErrorFlavor::Translate)
 }
 
 #[unsafe(no_mangle)]
