@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 
-use crate::runtime::{Object, Value};
+use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     _PyObject_New, _PyObject_NewVar, CpythonHeapTypeInfo, CpythonMethodDef, CpythonObjectHead,
@@ -25,7 +25,7 @@ use super::{
     PyType_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
     cpython_heap_type_registry, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_set_error, cpython_set_typed_error,
-    cpython_value_from_ptr, free, with_active_cpython_context_mut,
+    cpython_value_debug_tag, cpython_value_from_ptr, free, with_active_cpython_context_mut,
 };
 
 unsafe extern "C" {
@@ -33,6 +33,101 @@ unsafe extern "C" {
 }
 
 const METH_CLASS: c_int = 0x0010;
+
+fn cpython_build_type_from_three_arg_call(
+    positional: &[Value],
+    keywords: &HashMap<String, Value>,
+) -> *mut c_void {
+    if !keywords.is_empty() {
+        cpython_set_error("TypeError: type() takes no keyword arguments");
+        return std::ptr::null_mut();
+    }
+    let [name_value, bases_value, namespace_value] = positional else {
+        cpython_set_error("TypeError: type() takes 1 or 3 arguments");
+        return std::ptr::null_mut();
+    };
+    let Value::Str(name) = name_value else {
+        cpython_set_error("TypeError: type() argument 1 must be str");
+        return std::ptr::null_mut();
+    };
+    let namespace_entries = match namespace_value {
+        Value::Dict(dict_obj) => match &*dict_obj.kind() {
+            Object::Dict(entries) => entries.clone(),
+            _ => {
+                cpython_set_error("TypeError: type() argument 3 must be dict");
+                return std::ptr::null_mut();
+            }
+        },
+        _ => {
+            cpython_set_error("TypeError: type() argument 3 must be dict");
+            return std::ptr::null_mut();
+        }
+    };
+    let owned_name = match CString::new(name.as_str()) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(format!("invalid type name: {err}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let bases_ptr = cpython_new_ptr_for_value(bases_value.clone());
+    if bases_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let mut spec = CpythonTypeSpec {
+        name: owned_name.as_ptr(),
+        basicsize: 0,
+        itemsize: -1,
+        flags: 0,
+        slots: std::ptr::null_mut(),
+    };
+    let type_obj = cpython_type_from_spec_impl(
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::addr_of_mut!(spec).cast::<c_void>(),
+        bases_ptr,
+    );
+    if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some() {
+        eprintln!(
+            "[cpy-type-build] three-arg name={} bases_ptr={:p} type_obj={:p}",
+            name, bases_ptr, type_obj
+        );
+    }
+    if type_obj.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `type_obj` is a ready type object produced by `cpython_type_from_spec_impl`.
+    let type_dict = unsafe { (*type_obj.cast::<CpythonTypeObject>()).tp_dict };
+    if type_dict.is_null() {
+        cpython_set_error("type() produced type without dictionary");
+        return std::ptr::null_mut();
+    }
+    for (key, value) in namespace_entries {
+        let Value::Str(key_name) = key else {
+            cpython_set_error("TypeError: type() argument 3 contains non-string key");
+            return std::ptr::null_mut();
+        };
+        let key_cstr = match CString::new(key_name.as_str()) {
+            Ok(value) => value,
+            Err(err) => {
+                cpython_set_error(format!("invalid class attribute name: {err}"));
+                return std::ptr::null_mut();
+            }
+        };
+        let value_ptr = cpython_new_ptr_for_value(value);
+        if value_ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: `type_dict` is a dict object and key/value pointers are valid PyObject*.
+        let status = unsafe { PyDict_SetItemString(type_dict, key_cstr.as_ptr(), value_ptr) };
+        // SAFETY: `PyDict_SetItemString` takes a borrowed reference.
+        unsafe { Py_DecRef(value_ptr) };
+        if status != 0 {
+            return std::ptr::null_mut();
+        }
+    }
+    type_obj
+}
 
 unsafe fn cpython_type_populate_method_descriptors(ty: *mut CpythonTypeObject) -> i32 {
     // SAFETY: caller passes a non-null type pointer.
@@ -105,6 +200,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
             cpython_set_error("TypeError: type() takes 1 or 3 arguments");
             return std::ptr::null_mut();
         }
+        return cpython_build_type_from_three_arg_call(&positional, &keywords);
     }
     let ty = callable.cast::<CpythonTypeObject>();
     // SAFETY: callable points to a PyTypeObject-compatible struct.
@@ -163,6 +259,23 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
         unsafe { std::mem::transmute(init_slot) };
     let status = unsafe { init_fn(object, args, kwargs) };
     if status < 0 {
+        if std::env::var_os("PYRS_TRACE_TYPE_INIT_FAILURE").is_some() {
+            let callable_name =
+                unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
+            let object_type_name = unsafe {
+                object_type
+                    .cast::<CpythonTypeObject>()
+                    .as_ref()
+                    .map(|raw| {
+                        c_name_to_string(raw.tp_name).unwrap_or_else(|_| "<unnamed>".to_string())
+                    })
+                    .unwrap_or_else(|| "<null>".to_string())
+            };
+            eprintln!(
+                "[cpy-type-call] init-failed callable={} object_type={} tp_init={:p}",
+                callable_name, object_type_name, init_slot
+            );
+        }
         unsafe { Py_DecRef(object) };
         return std::ptr::null_mut();
     }
@@ -217,13 +330,23 @@ pub(super) fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
     if object_type.is_null() {
         return ModuleCapiContext::is_probable_type_object_without_metatype(ptr);
     }
-    if object_type == type_type {
+    let object_metatype = object_type.cast::<CpythonTypeObject>();
+    // SAFETY: object_type was loaded from a non-null object header above.
+    let metatype_flags = unsafe {
+        object_metatype
+            .as_ref()
+            .map(|ty| ty.tp_flags)
+            .unwrap_or_default()
+    };
+    if object_type == type_type || (metatype_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0 {
         return true;
     }
     // SAFETY: object_type and type_type are validated non-null pointers.
     if unsafe { PyType_IsSubtype(object_type, type_type) != 0 } {
         return true;
     }
+    // Some extension-defined metatypes arrive with incomplete fast-subclass flags.
+    // Fall back to conservative structural checks so ready heap types are not rejected.
     ModuleCapiContext::is_probable_type_object_without_metatype(ptr)
 }
 
@@ -234,6 +357,7 @@ fn cpython_type_ptr_from_value(value: &Value) -> Option<*mut CpythonTypeObject> 
         return Some(raw.cast::<CpythonTypeObject>());
     }
     match value {
+        Value::Builtin(BuiltinFunction::Type) => Some(std::ptr::addr_of_mut!(PyType_Type)),
         Value::Class(class_obj) => {
             let Object::Class(class_data) = &*class_obj.kind() else {
                 return None;
@@ -257,11 +381,26 @@ fn cpython_resolve_type_base_from_arg(
         return Ok(bases.cast::<CpythonTypeObject>());
     }
     let value = cpython_value_from_ptr(bases)?;
+    if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some() {
+        eprintln!(
+            "[cpy-type-build] resolve-bases ptr={:p} value={}",
+            bases,
+            cpython_value_debug_tag(&value)
+        );
+    }
     match value {
         Value::Tuple(tuple_obj) => {
             let Object::Tuple(items) = &*tuple_obj.kind() else {
                 return Ok(default);
             };
+            if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some() {
+                let summary = items
+                    .iter()
+                    .map(cpython_value_debug_tag)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!("[cpy-type-build] resolve-bases tuple=[{}]", summary);
+            }
             for item in items {
                 if let Some(base) = cpython_type_ptr_from_value(item) {
                     return Ok(base);
@@ -476,6 +615,22 @@ fn cpython_type_from_spec_impl(
             return std::ptr::null_mut();
         }
     };
+    if std::env::var_os("PYRS_TRACE_CPY_TYPE_BUILD").is_some()
+        && (full_name.contains("cython_function_or_method")
+            || full_name.contains("_common_types_metatype"))
+    {
+        // SAFETY: base is a resolved type pointer.
+        let base_name = unsafe { c_name_to_string((*base).tp_name) }
+            .unwrap_or_else(|_| "<invalid>".to_string());
+        eprintln!(
+            "[cpy-type-build] from-spec name={} metaclass={:p} bases_arg={:p} resolved_base={:p} base_name={}",
+            full_name,
+            metaclass_ptr,
+            bases,
+            base,
+            base_name
+        );
+    }
     let (default_module_name, qualname) = cpython_split_type_name(&full_name);
     let (module_name, module_def_ptr) =
         match cpython_module_name_and_def_for_type_creation(module, default_module_name) {
@@ -1152,6 +1307,9 @@ pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
         }
         (*ty).tp_flags |= PY_TPFLAGS_READY;
     }
+    let _ = with_active_cpython_context_mut(|context| {
+        context.register_owned_type_ptr(ty.cast::<c_void>());
+    });
     0
 }
 

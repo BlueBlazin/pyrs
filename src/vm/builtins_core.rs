@@ -3965,6 +3965,24 @@ impl Vm {
                 _ => false,
             };
             if !allow_extra {
+                if std::env::var_os("PYRS_TRACE_OBJECT_INIT").is_some() {
+                    let class_name = match &args[0] {
+                        Value::Instance(instance) => match &*instance.kind() {
+                            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                                Object::Class(class_data) => class_data.name.clone(),
+                                _ => "<non-class>".to_string(),
+                            },
+                            _ => "<non-instance>".to_string(),
+                        },
+                        other => self.value_type_name_for_error(other),
+                    };
+                    eprintln!(
+                        "[object-init] rejecting extra args class={} argc={} kwargs={}",
+                        class_name,
+                        args.len(),
+                        kwargs.len()
+                    );
+                }
                 return Err(RuntimeError::new(
                     "object.__init__() takes exactly one argument",
                 ));
@@ -4194,6 +4212,38 @@ impl Vm {
             || self.class_has_builtin_complex_base(class)
         {
             return true;
+        }
+        if let Object::Class(class_data) = &*class.kind()
+            && class_data
+                .attrs
+                .contains_key("__pyrs_cpython_proxy_ptr__")
+        {
+            return true;
+        }
+        if self
+            .extension_cpython_ptr_by_object_id
+            .contains_key(&class.id())
+        {
+            if std::env::var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+                && let Object::Class(class_data) = &*class.kind()
+            {
+                eprintln!(
+                    "[object-init-class] class={} id={} allow=extension-map",
+                    class_data.name,
+                    class.id()
+                );
+            }
+            return true;
+        }
+        if std::env::var_os("PYRS_TRACE_OBJECT_INIT_CLASS").is_some()
+            && let Object::Class(class_data) = &*class.kind()
+        {
+            eprintln!(
+                "[object-init-class] class={} id={} allow=fallback new_attr={}",
+                class_data.name,
+                class.id(),
+                !matches!(new_attr, None | Some(Value::Builtin(BuiltinFunction::ObjectNew)))
+            );
         }
         !matches!(
             new_attr,
@@ -7540,6 +7590,13 @@ impl Vm {
                     Err(self.runtime_error_from_active_exception("getattr() failed"))
                 }
                 Err(err) => Err(err),
+            },
+            Value::None => match name.as_str() {
+                "__doc__" => Ok(Value::Str("None".to_string())),
+                _ => Err(RuntimeError::new(format!(
+                    "NoneType has no attribute '{}'",
+                    name
+                ))),
             },
             Value::List(list) => self.load_attr_list_method(list, &name),
             Value::Tuple(tuple) => self.load_attr_tuple_method(tuple, &name),

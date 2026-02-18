@@ -248,9 +248,30 @@ pub unsafe extern "C" fn PyModule_GetState(module: *mut c_void) -> *mut c_void {
         };
         // SAFETY: VM pointer is valid for active context lifetime.
         let vm = unsafe { &mut *context.vm };
-        vm.extension_module_state_registry
+        let state_ptr = vm
+            .extension_module_state_registry
             .get(&module_obj.id())
-            .map_or(std::ptr::null_mut(), |entry| entry.state as *mut c_void)
+            .map_or(std::ptr::null_mut(), |entry| entry.state as *mut c_void);
+        if std::env::var_os("PYRS_TRACE_CPY_MODSTATE").is_some() {
+            let module_name = match &*module_obj.kind() {
+                Object::Module(module_data) => module_data
+                    .globals
+                    .get("__name__")
+                    .and_then(|value| match value {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "<unnamed>".to_string()),
+                _ => "<invalid>".to_string(),
+            };
+            eprintln!(
+                "[cpy-modstate] get module={}#{} state={:p}",
+                module_name,
+                module_obj.id(),
+                state_ptr
+            );
+        }
+        state_ptr
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);

@@ -122,6 +122,7 @@ pub unsafe extern "C" fn PyObject_SetItem(
             context.set_error("PyObject_SetItem missing VM context");
             return -1;
         }
+        let module_target = context.module_dict_module_for_ptr(object);
         // Prefer native mapping assign slot for external/proxy objects.
         if !object.is_null()
             // SAFETY: pointer shape checks + slot reads guard this fast-path.
@@ -156,15 +157,59 @@ pub unsafe extern "C" fn PyObject_SetItem(
             context.set_error("PyObject_SetItem received unknown value pointer");
             return -1;
         };
+        let trace_pyx_capi_enabled = std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some();
+        let trace_pyx_capi_item =
+            trace_pyx_capi_enabled && matches!(&key_value, Value::Str(name) if name == "__pyx_capi__");
+        let trace_module_dict_set = trace_pyx_capi_enabled && module_target.is_some();
+        if trace_module_dict_set {
+            eprintln!(
+                "[pyx-capi] module-dict-set object={:p} key={} value_tag={}",
+                object,
+                cpython_value_debug_tag(&key_value),
+                cpython_value_debug_tag(&item_value)
+            );
+        }
+        if trace_pyx_capi_item {
+            eprintln!(
+                "[pyx-capi] PyObject_SetItem object={:p} target={} module_dict={} value_tag={}",
+                object,
+                cpython_value_debug_tag(&target),
+                module_target.is_some(),
+                cpython_value_debug_tag(&item_value)
+            );
+        }
         match &target {
             Value::Dict(dict_obj) => {
+                let key_for_module = key_value.clone();
+                let item_for_module = item_value.clone();
                 return match dict_set_value_checked(dict_obj, key_value, item_value) {
-                    Ok(()) => 0,
+                    Ok(()) => {
+                        if let Some(module_obj) = module_target
+                            && let Value::Str(name) = key_for_module
+                            && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+                        {
+                            module_data.globals.insert(name, item_for_module);
+                        }
+                        if trace_pyx_capi_item {
+                            eprintln!(
+                                "[pyx-capi] PyObject_SetItem dict-path object={:p} status=0",
+                                object
+                            );
+                        }
+                        0
+                    }
                     Err(err) => {
+                        if trace_pyx_capi_item {
+                            eprintln!(
+                                "[pyx-capi] PyObject_SetItem dict-path object={:p} status=-1 err={}",
+                                object, err.message
+                            );
+                        }
                         context.set_error(err.message);
                         -1
                     }
-                };
+                }
+                ;
             }
             Value::List(list_obj) => {
                 if let Ok(raw_idx) = value_to_int(key_value.clone()) {
@@ -326,6 +371,7 @@ pub unsafe extern "C" fn PyObject_DelItem(object: *mut c_void, key: *mut c_void)
             context.set_error("PyObject_DelItem missing VM context");
             return -1;
         }
+        let module_target = context.module_dict_module_for_ptr(object);
         let object_handle = context.cpython_handle_from_ptr(object);
         let Some(target) = context.cpython_value_from_ptr_or_proxy(object) else {
             context.set_error("PyObject_DelItem received unknown object pointer");
@@ -338,6 +384,12 @@ pub unsafe extern "C" fn PyObject_DelItem(object: *mut c_void, key: *mut c_void)
         match &target {
             Value::Dict(dict_obj) => {
                 if dict_remove_value(dict_obj, &key_value).is_some() {
+                    if let Some(module_obj) = module_target
+                        && let Value::Str(name) = &key_value
+                        && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+                    {
+                        module_data.globals.remove(name);
+                    }
                     return 0;
                 }
                 context.set_error("dict key not found");
@@ -475,20 +527,61 @@ pub unsafe extern "C" fn PyObject_DelItem(object: *mut c_void, key: *mut c_void)
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_Size(object: *mut c_void) -> isize {
-    let value = match cpython_value_from_ptr(object) {
+    let size = with_active_cpython_context_mut(|context| {
+        if !object.is_null()
+            && (object as usize) >= 0x1_0000_0000
+            && (object as usize) % std::mem::align_of::<usize>() == 0
+        {
+            // SAFETY: pointer shape validated above; slot calls follow CPython slot ABI.
+            unsafe {
+                if let Some(head) = object.cast::<CpythonObjectHead>().as_ref() {
+                    let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+                    if !type_ptr.is_null() {
+                        let as_mapping = (*type_ptr).tp_as_mapping.cast::<super::CpythonMappingMethods>();
+                        if !as_mapping.is_null() {
+                            let mp_length = (*as_mapping).mp_length;
+                            if !mp_length.is_null() {
+                                let len_fn: unsafe extern "C" fn(*mut c_void) -> isize =
+                                    std::mem::transmute(mp_length);
+                                return len_fn(object);
+                            }
+                        }
+                        let as_sequence =
+                            (*type_ptr).tp_as_sequence.cast::<super::CpythonSequenceMethods>();
+                        if !as_sequence.is_null() {
+                            let sq_length = (*as_sequence).sq_length;
+                            if !sq_length.is_null() {
+                                let len_fn: unsafe extern "C" fn(*mut c_void) -> isize =
+                                    std::mem::transmute(sq_length);
+                                return len_fn(object);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let value = match cpython_value_from_ptr(object) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return -1;
+            }
+        };
+        match cpython_call_builtin(BuiltinFunction::Len, vec![value]) {
+            Ok(Value::Int(size)) => size as isize,
+            Ok(Value::BigInt(big)) => big.to_i64().unwrap_or(-1) as isize,
+            Ok(_) => {
+                context.set_error("PyObject_Size expected integer len() result");
+                -1
+            }
+            Err(err) => {
+                context.set_error(err);
+                -1
+            }
+        }
+    });
+    match size {
         Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            return -1;
-        }
-    };
-    match cpython_call_builtin(BuiltinFunction::Len, vec![value]) {
-        Ok(Value::Int(size)) => size as isize,
-        Ok(Value::BigInt(big)) => big.to_i64().unwrap_or(-1) as isize,
-        Ok(_) => {
-            cpython_set_error("PyObject_Size expected integer len() result");
-            -1
-        }
         Err(err) => {
             cpython_set_error(err);
             -1

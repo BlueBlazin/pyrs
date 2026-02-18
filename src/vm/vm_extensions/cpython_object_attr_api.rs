@@ -329,6 +329,15 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     name
                 );
             }
+            if std::env::var_os("PYRS_TRACE_CPY_ATTR_ERRORS").is_some() {
+                eprintln!(
+                    "[cpy-attr-error] getattr object_ptr={:p} object_tag={} attr={} err={}",
+                    object,
+                    cpython_value_debug_tag(&object_value_for_debug),
+                    name,
+                    err
+                );
+            }
             cpython_set_error(err.clone());
             if trace_numpy_attr {
                 eprintln!(
@@ -589,6 +598,37 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
 
     let object_value_for_debug = object_value.clone();
     let name_value_for_debug = name_value.clone();
+    let trace_common_setattr = std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some()
+        && matches!(
+            &object_value_for_debug,
+            Value::Module(module_obj)
+                if matches!(
+                    &*module_obj.kind(),
+                    Object::Module(module_data)
+                        if matches!(
+                            module_data.globals.get("__name__"),
+                            Some(Value::Str(name)) if name == "numpy.random._common"
+                        )
+                )
+        )
+        && !value.is_null();
+    if trace_common_setattr {
+        let (module_id, module_ptr) = match &object_value_for_debug {
+            Value::Module(module_obj) => (module_obj.id(), object),
+            _ => (0, object),
+        };
+        let name_debug = match &name_value_for_debug {
+            Value::Str(text) => format!("Str({text})"),
+            other => cpython_value_debug_tag(other),
+        };
+        eprintln!(
+            "[pyx-capi] GenericSetAttr module=numpy.random._common id={} object={:p} name={} value_ptr={:p}",
+            module_id,
+            module_ptr,
+            name_debug,
+            value
+        );
+    }
     let result = if value.is_null() {
         cpython_call_builtin(BuiltinFunction::DelAttr, vec![object_value, name_value])
     } else {
@@ -605,8 +645,34 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
         )
     };
     match result {
-        Ok(_) => 0,
+        Ok(_) => {
+            let _ = with_active_cpython_context_mut(|context| {
+                if let Value::Module(module_obj) = &object_value_for_debug
+                    && let Value::Str(attr_name) = &name_value_for_debug
+                {
+                    if value.is_null() {
+                        let _ = context.sync_module_dict_del(module_obj, attr_name);
+                    } else if let Some(attr_value) = context.cpython_value_from_ptr_or_proxy(value)
+                    {
+                        let _ = context.sync_module_dict_set(module_obj, attr_name, &attr_value);
+                    }
+                }
+            });
+            if trace_common_setattr {
+                eprintln!(
+                    "[pyx-capi] GenericSetAttr module=numpy.random._common status=0 object={:p}",
+                    object
+                );
+            }
+            0
+        }
         Err(err) => {
+            if trace_common_setattr {
+                eprintln!(
+                    "[pyx-capi] GenericSetAttr module=numpy.random._common status=-1 object={:p} err={}",
+                    object, err
+                );
+            }
             if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
                 && err.contains("attribute assignment unsupported type")
             {
@@ -650,7 +716,18 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
     name: *const c_char,
     value: *mut c_void,
 ) -> i32 {
+    let value_ptr = value;
+    let name_text = match unsafe { c_name_to_string(name) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let trace_pyx_capi_attr =
+        std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() && name_text == "__pyx_capi__";
     if !object.is_null() {
+        let attr_name = name_text.clone();
         let native_status = with_active_cpython_context_mut(|context| {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
             if (object as usize) < MIN_VALID_PTR {
@@ -664,13 +741,6 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             if is_known_compat && is_owned {
                 return None;
             }
-            let attr_name = match unsafe { c_name_to_string(name) } {
-                Ok(name) => name,
-                Err(err) => {
-                    context.set_error(err);
-                    return Some(-1);
-                }
-            };
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
             let type_ptr = unsafe {
                 object
@@ -724,18 +794,17 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             Some(-1)
         });
         if let Some(status) = native_status {
+            if trace_pyx_capi_attr {
+                eprintln!(
+                    "[pyx-capi] PyObject_SetAttrString native object={:p} value={:p} status={}",
+                    object, value, status
+                );
+            }
             return status;
         }
     }
     let object_value = match cpython_value_from_ptr(object) {
         Ok(value) => value,
-        Err(err) => {
-            cpython_set_error(err);
-            return -1;
-        }
-    };
-    let name = match unsafe { c_name_to_string(name) } {
-        Ok(name) => name,
         Err(err) => {
             cpython_set_error(err);
             return -1;
@@ -748,12 +817,55 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             return -1;
         }
     };
+    let object_tag = if trace_pyx_capi_attr {
+        Some(cpython_value_debug_tag(&object_value))
+    } else {
+        None
+    };
+    let value_tag = if trace_pyx_capi_attr {
+        Some(cpython_value_debug_tag(&value))
+    } else {
+        None
+    };
+    let object_value_for_sync = object_value.clone();
+    let name_text_for_sync = name_text.clone();
+    let value_for_sync = value.clone();
     match cpython_call_builtin(
         BuiltinFunction::SetAttr,
-        vec![object_value, Value::Str(name), value],
+        vec![object_value, Value::Str(name_text), value],
     ) {
-        Ok(_) => 0,
+        Ok(_) => {
+            let _ = with_active_cpython_context_mut(|context| {
+                if let Value::Module(module_obj) = &object_value_for_sync {
+                    let _ = context.sync_module_dict_set(
+                        module_obj,
+                        &name_text_for_sync,
+                        &value_for_sync,
+                    );
+                }
+            });
+            if trace_pyx_capi_attr {
+                eprintln!(
+                    "[pyx-capi] PyObject_SetAttrString builtin object={:p} value={:p} object_tag={} value_tag={} status=0",
+                    object,
+                    value_ptr,
+                    object_tag.unwrap_or_default(),
+                    value_tag.unwrap_or_default()
+                );
+            }
+            0
+        }
         Err(err) => {
+            if trace_pyx_capi_attr {
+                eprintln!(
+                    "[pyx-capi] PyObject_SetAttrString builtin object={:p} value={:p} object_tag={} value_tag={} status=-1 err={}",
+                    object,
+                    value_ptr,
+                    object_tag.unwrap_or_default(),
+                    value_tag.unwrap_or_default(),
+                    err
+                );
+            }
             cpython_set_error(err);
             -1
         }
@@ -770,7 +882,29 @@ pub unsafe extern "C" fn PyObject_SetAttr(
         unsafe { PyErr_BadInternalCall() };
         return -1;
     }
-    unsafe { PyObject_GenericSetAttr(object, name, value) }
+    let trace_pyx_capi = if std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() {
+        with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_ptr_or_proxy(name)
+                .and_then(|value| match value {
+                    Value::Str(text) if text == "__pyx_capi__" => Some(text),
+                    _ => None,
+                })
+        })
+        .ok()
+        .flatten()
+        .is_some()
+    } else {
+        false
+    };
+    let status = unsafe { PyObject_GenericSetAttr(object, name, value) };
+    if trace_pyx_capi {
+        eprintln!(
+            "[pyx-capi] PyObject_SetAttr object={:p} name={:p} value={:p} status={}",
+            object, name, value, status
+        );
+    }
+    status
 }
 
 #[unsafe(no_mangle)]

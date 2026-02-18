@@ -149,11 +149,11 @@ use self::cpython_descriptor_method_api::{
     cpython_cfunction_tp_call, cpython_cfunction_tp_getattro, cpython_invoke_method_from_values,
 };
 use self::cpython_dict_api::{
-    _PyDict_GetItem_KnownHash, _PyDict_Pop, PyDict_Clear, PyDict_Contains, PyDict_ContainsString,
-    PyDict_Copy, PyDict_DelItem, PyDict_DelItemString, PyDict_GetItem, PyDict_GetItemRef,
-    PyDict_GetItemString, PyDict_GetItemStringRef, PyDict_GetItemWithError, PyDict_Items,
-    PyDict_Keys, PyDict_Merge, PyDict_MergeFromSeq2, PyDict_New, PyDict_Next, PyDict_Pop,
-    PyDict_PopString, PyDict_SetDefault, PyDict_SetDefaultRef, PyDict_SetItem,
+    _PyDict_GetItem_KnownHash, _PyDict_NewPresized, _PyDict_Pop, PyDict_Clear, PyDict_Contains,
+    PyDict_ContainsString, PyDict_Copy, PyDict_DelItem, PyDict_DelItemString, PyDict_GetItem,
+    PyDict_GetItemRef, PyDict_GetItemString, PyDict_GetItemStringRef, PyDict_GetItemWithError,
+    PyDict_Items, PyDict_Keys, PyDict_Merge, PyDict_MergeFromSeq2, PyDict_New, PyDict_Next,
+    PyDict_Pop, PyDict_PopString, PyDict_SetDefault, PyDict_SetDefaultRef, PyDict_SetItem,
     PyDict_SetItemString, PyDict_Size, PyDict_Update, PyDict_Values, PyDictProxy_New,
 };
 use self::cpython_error_numeric_api::{
@@ -232,7 +232,7 @@ use self::cpython_list_api::{
     PyList_Sort,
 };
 use self::cpython_long_float_api::{
-    PyBool_FromLong, PyFloat_FromDouble, PyFloat_FromString, PyLong_AsNativeBytes,
+    _PyLong_Copy, PyBool_FromLong, PyFloat_FromDouble, PyFloat_FromString, PyLong_AsNativeBytes,
     PyLong_FromInt32, PyLong_FromInt64, PyLong_FromLong, PyLong_FromLongLong,
     PyLong_FromNativeBytes, PyLong_FromSize_t, PyLong_FromSsize_t, PyLong_FromString,
     PyLong_FromUInt32, PyLong_FromUInt64, PyLong_FromUnicodeObject, PyLong_FromUnsignedLong,
@@ -528,13 +528,6 @@ fn is_cpython_proxy_class(class_data: &ClassObject) -> bool {
         class_data.attrs.get(CPY_PROXY_MARKER_ATTR),
         Some(Value::Bool(true))
     ) || class_data.name == CPY_PROXY_CLASS_NAME
-}
-
-fn cpython_type_name_parts(tp_name: &str) -> (String, Option<String>) {
-    match tp_name.rsplit_once('.') {
-        Some((module, name)) => (name.to_string(), Some(module.to_string())),
-        None => (tp_name.to_string(), None),
-    }
 }
 
 struct CapiObjectSlot {
@@ -2010,6 +2003,7 @@ impl ModuleCapiContext {
             return false;
         }
         let allowed = [
+            std::ptr::addr_of_mut!(PyType_Type),
             std::ptr::addr_of_mut!(PyCFunction_Type),
             std::ptr::addr_of_mut!(PyMethodDescr_Type),
             std::ptr::addr_of_mut!(PyClassMethodDescr_Type),
@@ -3178,10 +3172,17 @@ impl ModuleCapiContext {
         } else if object_type == expected_type {
             true
         } else {
-            // SAFETY: `object_type`/`expected_type` are candidate type pointers; subtype test
-            // is guarded internally against null/unaligned/invalid pointers.
-            unsafe {
-                PyType_IsSubtype(object_type.cast::<c_void>(), expected_type.cast::<c_void>()) != 0
+            // SAFETY: `object_type` is a non-null candidate metatype pointer here.
+            let metatype_flags = unsafe { (*object_type).tp_flags };
+            if (metatype_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0 {
+                true
+            } else {
+                // SAFETY: `object_type`/`expected_type` are candidate type pointers; subtype test
+                // is guarded internally against null/unaligned/invalid pointers.
+                unsafe {
+                    PyType_IsSubtype(object_type.cast::<c_void>(), expected_type.cast::<c_void>())
+                        != 0
+                }
             }
         };
         if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
@@ -3338,12 +3339,57 @@ impl ModuleCapiContext {
             );
         }
         let (proxy_name, proxy_module) = if is_type_object {
-            // SAFETY: `object` is a candidate type object in this branch.
-            let type_name = unsafe {
-                c_name_to_string((*object.cast::<CpythonTypeObject>()).tp_name)
-                    .unwrap_or_else(|_| CPY_PROXY_CLASS_NAME.to_string())
-            };
-            cpython_type_name_parts(&type_name)
+            let heap_type_name = cpython_heap_type_registry().lock().ok().and_then(|registry| {
+                registry.get(&(object as usize)).map(|info| {
+                    let module = if info.module_name.is_empty()
+                        || info.module_name == "builtins"
+                        || info.module_name == "__main__"
+                    {
+                        None
+                    } else {
+                        Some(info.module_name.clone())
+                    };
+                    (info.qualname.clone(), module)
+                })
+            });
+            if let Some((name, module)) = heap_type_name {
+                if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                    eprintln!(
+                        "[cpy-owned-type] proxy-name source=heap-registry ptr={:p} name={} module={}",
+                        object,
+                        name,
+                        module.as_deref().unwrap_or("<none>")
+                    );
+                }
+                (name, module)
+            } else if self.owns_cpython_allocation_ptr(object) {
+                // SAFETY: owned pointers were allocated in this runtime and keep stable type layout.
+                let type_name = unsafe {
+                    c_name_to_string((*object.cast::<CpythonTypeObject>()).tp_name).ok()
+                };
+                if let Some(type_name) = type_name {
+                    if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                        eprintln!(
+                            "[cpy-owned-type] proxy-name source=owned-tp_name ptr={:p} tp_name={}",
+                            object, type_name
+                        );
+                    }
+                    match type_name.rsplit_once('.') {
+                        Some((module, name)) => (name.to_string(), Some(module.to_string())),
+                        None => (type_name, None),
+                    }
+                } else {
+                    (
+                        format!("{CPY_PROXY_CLASS_NAME}_type_{:x}", object as usize),
+                        None,
+                    )
+                }
+            } else {
+                (
+                    format!("{CPY_PROXY_CLASS_NAME}_type_{:x}", object as usize),
+                    None,
+                )
+            }
         } else {
             (CPY_PROXY_CLASS_NAME.to_string(), None)
         };
@@ -3480,6 +3526,26 @@ impl ModuleCapiContext {
         if owns_allocation && !Self::owned_pointer_allows_proxy_fallback(object) {
             // Unknown owned pointers are not safe to treat as proxy-backed objects.
             // Restrict owned-pointer fallback to known descriptor/cfunction surfaces.
+            if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                // SAFETY: diagnostic only; pointer checks already performed above.
+                let object_type = unsafe {
+                    object
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .unwrap_or(std::ptr::null_mut())
+                };
+                let metatype_flags = if object_type.is_null() {
+                    0usize
+                } else {
+                    // SAFETY: diagnostic only on non-null candidate metatype pointer.
+                    unsafe { (*object_type).tp_flags }
+                };
+                eprintln!(
+                    "[cpy-owned-type] proxy-fallback-reject ptr={:p} object_type={:p} metatype_flags=0x{:x}",
+                    object, object_type, metatype_flags
+                );
+            }
             return None;
         }
         if !owns_allocation {
@@ -3577,6 +3643,20 @@ impl ModuleCapiContext {
         };
         dict_set_value_checked(dict_obj, Value::Str(key.to_string()), value.clone())
             .map_err(|err| err.message)
+    }
+
+    fn sync_module_dict_del(&mut self, module: &ObjRef, key: &str) -> Result<(), String> {
+        let Some(dict_handle) = self.module_dict_handle_for_module(module) else {
+            return Ok(());
+        };
+        let Some(slot) = self.objects.get(&dict_handle) else {
+            return Ok(());
+        };
+        let Value::Dict(dict_obj) = &slot.value else {
+            return Ok(());
+        };
+        let _ = dict_remove_value(dict_obj, &Value::Str(key.to_string()));
+        Ok(())
     }
 
     fn alloc_aux_buffer(&mut self, size: usize) -> *mut c_void {
@@ -5365,6 +5445,91 @@ impl ModuleCapiContext {
 
     fn owns_cpython_allocation_ptr(&self, ptr: *mut c_void) -> bool {
         self.cpython_owned_ptrs.contains(&(ptr as usize))
+    }
+
+    fn refresh_owned_type_proxy_name(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() {
+            return;
+        }
+        // SAFETY: caller only invokes this for pointers registered as owned type objects.
+        let Ok(type_name) =
+            (unsafe { c_name_to_string((*ptr.cast::<CpythonTypeObject>()).tp_name) })
+        else {
+            return;
+        };
+        let (name, module_name) = match type_name.rsplit_once('.') {
+            Some((module, short)) => (short.to_string(), Some(module.to_string())),
+            None => (type_name, None),
+        };
+        let Some(handle) = self.cpython_objects_by_ptr.get(&(ptr as usize)).copied() else {
+            if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                eprintln!("[cpy-owned-type] refresh-name ptr={:p} status=no-handle", ptr);
+            }
+            return;
+        };
+        let updated_class = {
+            let Some(slot) = self.objects.get_mut(&handle) else {
+                if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                    eprintln!(
+                        "[cpy-owned-type] refresh-name ptr={:p} handle={} status=missing-slot",
+                        ptr, handle
+                    );
+                }
+                return;
+            };
+            let Value::Class(class_obj) = &mut slot.value else {
+                if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                    eprintln!(
+                        "[cpy-owned-type] refresh-name ptr={:p} handle={} status=non-class",
+                        ptr, handle
+                    );
+                }
+                return;
+            };
+            if let Object::Class(class_data) = &mut *class_obj.kind_mut() {
+                class_data.name = name.clone();
+                class_data
+                    .attrs
+                    .insert("__name__".to_string(), Value::Str(name.clone()));
+                class_data
+                    .attrs
+                    .insert("__qualname__".to_string(), Value::Str(name.clone()));
+                if let Some(module_name) = module_name.clone() {
+                    class_data
+                        .attrs
+                        .insert("__module__".to_string(), Value::Str(module_name));
+                }
+            }
+            if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+                eprintln!(
+                    "[cpy-owned-type] refresh-name ptr={:p} handle={} status=updated name={} module={}",
+                    ptr,
+                    handle,
+                    name,
+                    module_name.as_deref().unwrap_or("<none>")
+                );
+            }
+            class_obj.clone()
+        };
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.extension_cpython_ptr_values
+                .insert(ptr as usize, Value::Class(updated_class));
+        }
+    }
+
+    pub(super) fn register_owned_type_ptr(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() {
+            return;
+        }
+        let inserted = self.cpython_owned_ptrs.insert(ptr as usize);
+        if inserted {
+            self.refresh_owned_type_proxy_name(ptr);
+        }
+        if inserted && std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
+            eprintln!("[cpy-owned-type] register ptr={:p}", ptr);
+        }
     }
 
     fn pin_owned_cpython_allocation_for_vm(&mut self, ptr: *mut c_void) {

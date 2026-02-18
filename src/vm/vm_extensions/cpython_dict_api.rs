@@ -33,6 +33,11 @@ pub unsafe extern "C" fn PyDict_New() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyDict_NewPresized(_minused: isize) -> *mut c_void {
+    unsafe { PyDict_New() }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyDict_Size(dict: *mut c_void) -> isize {
     match cpython_value_from_ptr(dict) {
         Ok(Value::Dict(dict_obj)) => match &*dict_obj.kind() {
@@ -71,6 +76,19 @@ pub unsafe extern "C" fn PyDict_SetItem(
         if let Some(target) = context.cpython_value_from_ptr(dict)
             && let Value::Dict(dict_obj) = target
         {
+            let module_trace = module_target
+                .as_ref()
+                .and_then(|module_obj| match &*module_obj.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("__name__")
+                        .and_then(|value| match value {
+                            Value::Str(name) => Some(format!("{}#{}", name, module_obj.id())),
+                            _ => Some(format!("<unnamed>#{}", module_obj.id())),
+                        }),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "-".to_string());
             let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
                 context.set_error("PyDict_SetItem received unknown key pointer");
                 return -1;
@@ -93,8 +111,9 @@ pub unsafe extern "C" fn PyDict_SetItem(
             }
             if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
                 eprintln!(
-                    "[cpy-dict-set] dict={:p} key_ptr={:p} key={} value_ptr={:p} value_tag={}",
+                    "[cpy-dict-set] dict={:p} module={} key_ptr={:p} key={} value_ptr={:p} value_tag={}",
                     dict,
+                    module_trace,
                     key,
                     cpython_debug_compare_value(&key_value),
                     value,
@@ -327,9 +346,23 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
         let saved_current_error = context.current_error;
         let saved_last_error = context.last_error.clone();
         let saved_first_error = context.first_error.clone();
+        let module_target = context.module_dict_module_for_ptr(dict);
 
         if let Some(target) = context.cpython_value_from_ptr(dict) {
             if let Value::Dict(dict_obj) = target {
+                let module_trace = module_target
+                    .as_ref()
+                    .and_then(|module_obj| match &*module_obj.kind() {
+                        Object::Module(module_data) => module_data
+                            .globals
+                            .get("__name__")
+                            .and_then(|value| match value {
+                                Value::Str(name) => Some(format!("{}#{}", name, module_obj.id())),
+                                _ => Some(format!("<unnamed>#{}", module_obj.id())),
+                            }),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "-".to_string());
                 let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
                     context.current_error = saved_current_error;
                     context.last_error = saved_last_error.clone();
@@ -352,8 +385,9 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                 }
                 if std::env::var_os("PYRS_TRACE_CPY_DICT").is_some() {
                     eprintln!(
-                        "[cpy-dict-get] dict={:p} key_ptr={:p} key={}",
+                        "[cpy-dict-get] dict={:p} module={} key_ptr={:p} key={}",
                         dict,
+                        module_trace,
                         key,
                         cpython_debug_compare_value(&key_value)
                     );

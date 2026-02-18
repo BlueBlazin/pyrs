@@ -8,7 +8,7 @@ use super::{
     cpython_bigint_from_value, cpython_bigint_to_twos_complement_le, cpython_call_builtin,
     cpython_new_ptr_for_value, cpython_required_signed_bytes_for_bigint,
     cpython_required_unsigned_bytes_for_bigint, cpython_set_error, cpython_set_typed_error,
-    cpython_value_from_ptr, with_active_cpython_context_mut,
+    cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -76,6 +76,26 @@ pub unsafe extern "C" fn PyLong_FromUnsignedLongLong(value: u64) -> *mut c_void 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyLong_FromVoidPtr(value: *mut c_void) -> *mut c_void {
     unsafe { PyLong_FromUnsignedLongLong(value as usize as u64) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyLong_Copy(object: *mut c_void) -> *mut c_void {
+    let value = match cpython_value_from_ptr_or_proxy(object) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match value {
+        Value::Int(int_value) => cpython_new_ptr_for_value(Value::Int(int_value)),
+        Value::BigInt(bigint) => cpython_new_ptr_for_value(Value::BigInt(bigint)),
+        Value::Bool(flag) => cpython_new_ptr_for_value(Value::Int(if flag { 1 } else { 0 })),
+        _ => {
+            cpython_set_error("_PyLong_Copy expected int-compatible object");
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[unsafe(no_mangle)]

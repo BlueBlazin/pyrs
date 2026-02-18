@@ -689,6 +689,19 @@ pub unsafe extern "C" fn PyCFunction_New(
     unsafe { PyCFunction_NewEx(method_def, self_obj, std::ptr::null_mut()) }
 }
 
+fn cpython_descriptor_owner_is_type(
+    context: &mut ModuleCapiContext,
+    type_obj: *mut c_void,
+) -> bool {
+    if cpython_ptr_is_type_object(type_obj) {
+        return true;
+    }
+    matches!(
+        context.cpython_value_from_ptr_or_proxy(type_obj),
+        Some(Value::Class(_))
+    )
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyDescr_NewMethod(
     type_obj: *mut c_void,
@@ -699,7 +712,64 @@ pub unsafe extern "C" fn PyDescr_NewMethod(
             context.set_error("bad internal call");
             return std::ptr::null_mut();
         }
-        if !cpython_ptr_is_type_object(type_obj) {
+        if !cpython_descriptor_owner_is_type(context, type_obj) {
+            if std::env::var_os("PYRS_TRACE_CPY_DESCR_TYPE_CHECK").is_some() {
+                // SAFETY: diagnostics for candidate type pointer during descriptor creation.
+                unsafe {
+                    let object_type = type_obj
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .unwrap_or(std::ptr::null_mut());
+                    let (
+                        metatype_flags,
+                        metatype_name,
+                        metatype_base,
+                        metatype_ob_type,
+                        metatype_is_subtype_of_type,
+                    ) =
+                        if object_type.is_null() {
+                            (
+                                0usize,
+                                "<null>".to_string(),
+                                std::ptr::null_mut(),
+                                std::ptr::null_mut(),
+                                0,
+                            )
+                        } else {
+                            (
+                                (*object_type).tp_flags,
+                                c_name_to_string((*object_type).tp_name)
+                                    .unwrap_or_else(|_| "<invalid>".to_string()),
+                                (*object_type).tp_base.cast::<c_void>(),
+                                (*object_type).ob_type,
+                                PyType_IsSubtype(
+                                    object_type.cast::<c_void>(),
+                                    std::ptr::addr_of_mut!(super::PyType_Type).cast::<c_void>(),
+                                ),
+                            )
+                        };
+                    let tp_name = if type_obj.is_null() {
+                        "<null>".to_string()
+                    } else {
+                        c_name_to_string((*type_obj.cast::<CpythonTypeObject>()).tp_name)
+                            .unwrap_or_else(|_| "<invalid>".to_string())
+                    };
+                    eprintln!(
+                        "[cpy-descr] PyDescr_NewMethod non-type type_obj={:p} tp_name={} object_type={:p} metatype_name={} metatype_base={:p} metatype_ob_type={:p} metatype_is_subtype_of_type={} metatype_flags=0x{:x} PyType_Type={:p} PyBaseObject_Type={:p}",
+                        type_obj,
+                        tp_name,
+                        object_type,
+                        metatype_name,
+                        metatype_base,
+                        metatype_ob_type,
+                        metatype_is_subtype_of_type,
+                        metatype_flags,
+                        std::ptr::addr_of_mut!(super::PyType_Type).cast::<c_void>(),
+                        std::ptr::addr_of_mut!(super::PyBaseObject_Type).cast::<c_void>()
+                    );
+                }
+            }
             context.set_error("PyDescr_NewMethod expected type object");
             return std::ptr::null_mut();
         }
@@ -748,7 +818,7 @@ pub unsafe extern "C" fn PyDescr_NewClassMethod(
             context.set_error("bad internal call");
             return std::ptr::null_mut();
         }
-        if !cpython_ptr_is_type_object(type_obj) {
+        if !cpython_descriptor_owner_is_type(context, type_obj) {
             context.set_error("PyDescr_NewClassMethod expected type object");
             return std::ptr::null_mut();
         }
@@ -798,7 +868,7 @@ pub unsafe extern "C" fn PyDescr_NewMember(
             context.set_error("bad internal call");
             return std::ptr::null_mut();
         }
-        if !cpython_ptr_is_type_object(type_obj) {
+        if !cpython_descriptor_owner_is_type(context, type_obj) {
             context.set_error("PyDescr_NewMember expected type object");
             return std::ptr::null_mut();
         }
@@ -1215,7 +1285,7 @@ pub unsafe extern "C" fn PyDescr_NewGetSet(
             context.set_error("bad internal call");
             return std::ptr::null_mut();
         }
-        if !cpython_ptr_is_type_object(type_obj) {
+        if !cpython_descriptor_owner_is_type(context, type_obj) {
             context.set_error("PyDescr_NewGetSet expected type object");
             return std::ptr::null_mut();
         }

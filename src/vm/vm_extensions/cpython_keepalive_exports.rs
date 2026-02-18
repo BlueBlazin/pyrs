@@ -1918,6 +1918,8 @@ static KEEP_PYLONG_FROM_LONG: unsafe extern "C" fn(i64) -> *mut c_void = super::
 static KEEP_PYLONG_FROM_LONGLONG: unsafe extern "C" fn(i64) -> *mut c_void =
     super::PyLong_FromLongLong;
 #[used]
+static KEEP__PYLONG_COPY: unsafe extern "C" fn(*mut c_void) -> *mut c_void = super::_PyLong_Copy;
+#[used]
 static KEEP_PYBOOL_FROM_LONG: unsafe extern "C" fn(i64) -> *mut c_void = super::PyBool_FromLong;
 #[used]
 static KEEP_PYFLOAT_FROM_DOUBLE: unsafe extern "C" fn(f64) -> *mut c_void =
@@ -2484,6 +2486,9 @@ static KEEP_PYSET_CLEAR: unsafe extern "C" fn(*mut c_void) -> i32 = super::PySet
 static KEEP_PYSET_POP: unsafe extern "C" fn(*mut c_void) -> *mut c_void = super::PySet_Pop;
 #[used]
 static KEEP_PYDICT_NEW: unsafe extern "C" fn() -> *mut c_void = super::PyDict_New;
+#[used]
+static KEEP_PYDICT_NEW_PRESIZED: unsafe extern "C" fn(isize) -> *mut c_void =
+    super::_PyDict_NewPresized;
 #[used]
 static KEEP_PYDICT_SIZE: unsafe extern "C" fn(*mut c_void) -> isize = super::PyDict_Size;
 #[used]

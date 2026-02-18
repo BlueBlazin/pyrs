@@ -303,6 +303,7 @@ impl Vm {
         };
 
         let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
+        let mut active_module = module.clone();
         if matches!(&resolved_init, ResolvedInit::Cpython { .. }) {
             module_ctx.run_capsule_destructors_on_drop = false;
             module_ctx.strict_capsule_refcount = false;
@@ -381,17 +382,17 @@ impl Vm {
                 // Our import path already created the target module object, so use that
                 // module as the execution target and drive slot execution from `m_slots`.
                 let mut module_ptr =
-                    module_ctx.alloc_cpython_ptr_for_value(Value::Module(module.clone()));
+                    module_ctx.alloc_cpython_ptr_for_value(Value::Module(active_module.clone()));
                 if !module_ptr.is_null() {
                     let module_def = init_result.cast::<CpythonModuleDef>();
                     if !module_def.is_null() {
-                        self.register_cpython_module_methods_from_def(&module, module_def)?;
+                        self.register_cpython_module_methods_from_def(&active_module, module_def)?;
                         // SAFETY: module_def points to extension-provided PyModuleDef layout.
                         let slots_ptr = unsafe { (*module_def).m_slots };
                         if !slots_ptr.is_null() {
                             let mut slot_index = 0usize;
                             let mut cursor = slots_ptr.cast::<CpythonModuleDefSlot>();
-                            let module_spec_ptr = match &*module.kind() {
+                            let module_spec_ptr = match &*active_module.kind() {
                                 Object::Module(module_data) => module_data
                                     .globals
                                     .get("__spec__")
@@ -424,6 +425,32 @@ impl Vm {
                                     let created = unsafe { create(module_spec_ptr, init_result) };
                                     if !created.is_null() {
                                         module_ptr = created;
+                                        // Keep sys.modules aligned with the create-slot module
+                                        // before running any exec slots so recursive imports
+                                        // observe the active module instance.
+                                        if let Some(Value::Module(created_module)) =
+                                            module_ctx.cpython_value_from_ptr(created)
+                                        {
+                                            self.modules.insert(
+                                                module_name.to_string(),
+                                                created_module.clone(),
+                                            );
+                                            module_ctx.module = created_module.clone();
+                                            active_module = created_module.clone();
+                                            if created_module.id() != module.id()
+                                                && let Object::Module(current_data) =
+                                                    &*module.kind()
+                                                && let Object::Module(created_data) =
+                                                    &mut *created_module.kind_mut()
+                                            {
+                                                for (key, value) in &current_data.globals {
+                                                    created_data
+                                                        .globals
+                                                        .entry(key.clone())
+                                                        .or_insert_with(|| value.clone());
+                                                }
+                                            }
+                                        }
                                     }
                                 } else if slot == 2 && !value.is_null() {
                                     // Py_mod_exec(module) -> int status.
@@ -486,7 +513,8 @@ impl Vm {
                                         );
                                         if std::env::var_os("PYRS_TRACE_EXT_SLOT_MODULE_KEYS")
                                             .is_some()
-                                            && let Object::Module(module_data) = &*module.kind()
+                                            && let Object::Module(module_data) =
+                                                &*active_module.kind()
                                         {
                                             let mut names: Vec<String> =
                                                 module_data.globals.keys().cloned().collect();
@@ -515,7 +543,8 @@ impl Vm {
                                                 names.iter().take(24).collect::<Vec<_>>()
                                             );
                                         }
-                                        if let Object::Module(module_data) = &mut *module.kind_mut()
+                                        if let Object::Module(module_data) =
+                                            &mut *active_module.kind_mut()
                                         {
                                             module_data.globals.insert(
                                                 "__pyrs_extension_init_error__".to_string(),
@@ -574,7 +603,7 @@ impl Vm {
                         "[ext-load] module={} reconcile_module_instance returned_id={} expected_id={}",
                         module_name,
                         returned_module.id(),
-                        module.id()
+                        active_module.id()
                     );
                 }
                 self.modules
@@ -585,9 +614,11 @@ impl Vm {
                     current_data.globals = returned_data.globals.clone();
                 }
             }
+            module_ctx.module = returned_module.clone();
+            active_module = returned_module;
         }
 
-        let Object::Module(module_data) = &mut *module.kind_mut() else {
+        let Object::Module(module_data) = &mut *active_module.kind_mut() else {
             return Err(RuntimeError::new(format!(
                 "module '{}' invalid after extension init",
                 module_name
