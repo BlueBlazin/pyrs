@@ -550,6 +550,11 @@ impl Vm {
         builtin: BuiltinFunction,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
+        if let Some(overrides) = self.builtin_attr_overrides.get(&builtin)
+            && let Some(value) = overrides.get(attr_name)
+        {
+            return Ok(value.clone());
+        }
         let mut builtin_module_name = match builtin {
             BuiltinFunction::CsvReader
             | BuiltinFunction::CsvWriter
@@ -1022,6 +1027,70 @@ impl Vm {
                 attr_name
             ))),
         }
+    }
+
+    fn builtin_attr_is_overridable(attr_name: &str) -> bool {
+        matches!(
+            attr_name,
+            "__name__"
+                | "__qualname__"
+                | "__module__"
+                | "__doc__"
+                | "__annotate__"
+                | "__defaults__"
+                | "__kwdefaults__"
+        )
+    }
+
+    pub(super) fn store_attr_builtin(
+        &mut self,
+        builtin: BuiltinFunction,
+        attr_name: &str,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        if !Self::builtin_attr_is_overridable(attr_name) {
+            return Err(RuntimeError::new(format!(
+                "builtin has no writable attribute '{}'",
+                attr_name
+            )));
+        }
+        self.builtin_attr_overrides
+            .entry(builtin)
+            .or_default()
+            .insert(attr_name.to_string(), value);
+        Ok(())
+    }
+
+    pub(super) fn delete_attr_builtin(
+        &mut self,
+        builtin: BuiltinFunction,
+        attr_name: &str,
+    ) -> Result<(), RuntimeError> {
+        if !Self::builtin_attr_is_overridable(attr_name) {
+            return Err(RuntimeError::new(format!(
+                "builtin has no deletable attribute '{}'",
+                attr_name
+            )));
+        }
+        let deleted = self
+            .builtin_attr_overrides
+            .get_mut(&builtin)
+            .and_then(|overrides| overrides.remove(attr_name))
+            .is_some();
+        if !deleted {
+            return Err(RuntimeError::new(format!(
+                "builtin has no attribute '{}'",
+                attr_name
+            )));
+        }
+        if self
+            .builtin_attr_overrides
+            .get(&builtin)
+            .is_some_and(HashMap::is_empty)
+        {
+            self.builtin_attr_overrides.remove(&builtin);
+        }
+        Ok(())
     }
 
     pub(super) fn load_attr_class_builtin_base_method(
@@ -1630,6 +1699,9 @@ impl Vm {
             }
             "discard" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetDiscard, set))
+            }
+            "remove" if !is_frozenset => {
+                Ok(self.alloc_native_bound_method(NativeMethodKind::SetRemove, set))
             }
             "pop" if !is_frozenset => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetPop, set))
@@ -2714,6 +2786,24 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<InternalCallOutcome, RuntimeError> {
+        if std::env::var_os("PYRS_TRACE_CALLABLE_NONE_BT").is_some()
+            && matches!(callable, Value::None)
+        {
+            let args_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
+            let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+            kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let kwargs_summary = kw_entries
+                .into_iter()
+                .map(|(name, value)| format!("{name}={}", format_repr(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "[call-none-entry] positional=[{}] kwargs=[{}]\n{:?}",
+                args_summary,
+                kwargs_summary,
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         let (call_depth_guard, call_depth) = CallInternalDepthGuard::enter();
         let _call_depth_guard = call_depth_guard;
         let caller_depth = self.frames.len();
@@ -2929,6 +3019,9 @@ impl Vm {
                     let init = class_attr_lookup(&class, "__init__");
                     if let Some(init_callable) = init {
                         if matches!(init_callable, Value::Builtin(BuiltinFunction::ObjectInit)) {
+                            if used_custom_new {
+                                return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
+                            }
                             if let Some(fields) = self.class_namedtuple_fields(&class) {
                                 self.bind_namedtuple_instance_fields(
                                     &instance,
@@ -2936,9 +3029,6 @@ impl Vm {
                                     args.clone(),
                                     kwargs.clone(),
                                 )?;
-                                return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
-                            }
-                            if used_custom_new {
                                 return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
                             }
                         }
@@ -2992,9 +3082,14 @@ impl Vm {
                             }
                         }
                     } else {
-                        if let Some(fields) = self.class_namedtuple_fields(&class) {
+                        if used_custom_new {
+                            self.push_value(Value::Instance(instance));
+                            false
+                        } else if let Some(fields) = self.class_namedtuple_fields(&class) {
                             self.bind_namedtuple_instance_fields(&instance, &fields, args, kwargs)?;
-                        } else if !used_custom_new {
+                            self.push_value(Value::Instance(instance));
+                            false
+                        } else {
                             if self.class_is_exception_class(&class) {
                                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                                     instance_data.attrs.insert(
@@ -3266,9 +3361,9 @@ impl Vm {
                                     "class constructor takes no arguments",
                                 ));
                             }
+                            self.push_value(Value::Instance(instance));
+                            false
                         }
-                        self.push_value(Value::Instance(instance));
-                        false
                     }
                 }
             }
@@ -3292,6 +3387,27 @@ impl Vm {
                             opcode,
                             format_repr(&other),
                         );
+                        if std::env::var_os("PYRS_TRACE_CALL_NON_FUNCTION_ARGS").is_some() {
+                            let args_summary =
+                                args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
+                            let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+                            kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                            let kwargs_summary = kw_entries
+                                .into_iter()
+                                .map(|(key, value)| format!("{key}={}", format_repr(value)))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            eprintln!(
+                                "[call-non-function-args] positional=[{}] kwargs=[{}]",
+                                args_summary, kwargs_summary
+                            );
+                        }
+                        if std::env::var_os("PYRS_TRACE_CALL_NON_FUNCTION_BT").is_some() {
+                            eprintln!(
+                                "[call-non-function-bt]\n{:?}",
+                                std::backtrace::Backtrace::force_capture()
+                            );
+                        }
                     } else {
                         eprintln!("[call-non-function] value={}", format_repr(&other));
                     }
@@ -4504,12 +4620,18 @@ impl Vm {
                     return Ok(AttrAccessOutcome::Value(unwrapped));
                 }
                 if let Value::Function(func) = attr.clone() {
+                    if attr_name == "__new__" {
+                        return Ok(AttrAccessOutcome::Value(Value::Function(func)));
+                    }
                     let bound = BoundMethod::new(func, receiver.clone());
                     return Ok(AttrAccessOutcome::Value(
                         self.heap.alloc_bound_method(bound),
                     ));
                 }
                 if let Value::Builtin(builtin) = attr.clone() {
+                    if attr_name == "__new__" {
+                        return Ok(AttrAccessOutcome::Value(Value::Builtin(builtin)));
+                    }
                     return Ok(AttrAccessOutcome::Value(
                         self.alloc_builtin_bound_method(builtin, receiver.clone()),
                     ));
@@ -4567,9 +4689,8 @@ impl Vm {
         // CPython still resolves these through `super(...)` in paths like
         // `super(Subclass, cls).__new__(cls, value)`.
         if attr_name == "__new__" {
-            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+            return Ok(AttrAccessOutcome::Value(Value::Builtin(
                 BuiltinFunction::ObjectNew,
-                object_type,
             )));
         }
         if attr_name == "__init__" {
@@ -4716,6 +4837,26 @@ impl Vm {
         }
         if module_is_package && let Some(submodule) = self.load_submodule(module, attr_name) {
             return Ok(Value::Module(submodule));
+        }
+        if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_RESOLVE").is_some()
+            && module_name == "numpy.dtypes"
+        {
+            let mut keys = globals_snapshot
+                .iter()
+                .filter_map(|(key, _)| match key {
+                    Value::Str(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            keys.sort();
+            eprintln!(
+                "[numpy-dtypes] resolve attr={} has___getattr__={} is_package={} globals_len={} keys={:?}",
+                attr_name,
+                module_getattr.is_some(),
+                module_is_package,
+                keys.len(),
+                keys
+            );
         }
         if attr_name != "__getattr__"
             && let Some(module_getattr) = module_getattr

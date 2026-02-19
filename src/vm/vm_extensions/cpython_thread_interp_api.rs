@@ -247,6 +247,40 @@ pub unsafe extern "C" fn PyFrame_GetCode(frame: *mut c_void) -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyFrame_GetBack(frame: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if frame.is_null() {
+            return std::ptr::null_mut();
+        }
+        if context.vm.is_null() {
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let current_frame_ptr = unsafe { PyThreadState_Get() };
+        if frame == current_frame_ptr {
+            if vm.frames.len() < 2 {
+                return std::ptr::null_mut();
+            }
+            let back_frame = &vm.frames[vm.frames.len() - 2];
+            return context.alloc_cpython_ptr_for_value(Value::Code(back_frame.code.clone()));
+        }
+        if let Some(Value::Module(frame_obj)) = context.cpython_value_from_ptr_or_proxy(frame)
+            && let Object::Module(module_data) = &*frame_obj.kind()
+            && let Some(back) = module_data.globals.get("f_back").cloned()
+            && !matches!(back, Value::None)
+        {
+            return context.alloc_cpython_ptr_for_value(back);
+        }
+        std::ptr::null_mut()
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyFrame_GetLineNumber(frame: *mut c_void) -> i32 {
     with_active_cpython_context_mut(|context| {
         if frame.is_null() {

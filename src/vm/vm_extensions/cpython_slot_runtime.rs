@@ -7,7 +7,7 @@ use crate::vm::{InternalCallOutcome, STR_BACKING_STORAGE_ATTR};
 use super::{
     _Py_NotImplementedStruct, CpythonMappingMethods, CpythonNumberMethods, CpythonObjectHead,
     CpythonSequenceMethods, CpythonStructSequenceField, CpythonTypeObject, ModuleCapiContext,
-    Py_DecRef, PyExc_RuntimeError, PyType_IsSubtype, c_name_to_string,
+    Py_DecRef, PyErr_Occurred, PyExc_RuntimeError, PyType_IsSubtype, c_name_to_string,
     cpython_call_internal_in_context, cpython_clear_active_exception,
     cpython_exception_name_from_runtime_message, cpython_exception_ptr_for_name,
     cpython_exception_traceback_ptr_for_value, cpython_exception_type_ptr,
@@ -372,6 +372,32 @@ pub(super) fn cpython_call_object(
             return std::ptr::null_mut();
         }
         if let Some(result) = context.try_native_tp_call(callable_ptr, &args, &kwargs) {
+            if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+                if std::env::var_os("PYRS_TRACE_CPY_NULL_NOERR").is_some() {
+                    let callable_tag = context
+                        .cpython_value_from_ptr_or_proxy(callable_ptr)
+                        .map(|value| cpython_value_debug_tag(&value))
+                        .unwrap_or_else(|| "<unresolved>".to_string());
+                    let callable_type = unsafe {
+                        callable_ptr
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .filter(|ty| !ty.is_null())
+                            .and_then(|ty| c_name_to_string((*ty).tp_name).ok())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    };
+                    eprintln!(
+                        "[cpy-null-noerr] callable_ptr={:p} callable={} type={} args={} kwargs={}",
+                        callable_ptr,
+                        callable_tag,
+                        callable_type,
+                        args.len(),
+                        kwargs.len()
+                    );
+                }
+                context.set_error("SystemError: NULL result without error in PyObject_Call");
+            }
             return result;
         }
         let Some(mut callable) = context.cpython_value_from_ptr_or_proxy(callable_ptr) else {

@@ -130,6 +130,7 @@ static PY_TYPE_NAME_ENUM: &[u8; 5] = b"enum\0";
 static PY_TYPE_NAME_FILTER: &[u8; 7] = b"filter\0";
 static PY_TYPE_NAME_FLOAT: &[u8; 6] = b"float\0";
 static PY_TYPE_NAME_FROZENSET: &[u8; 10] = b"frozenset\0";
+static PY_TYPE_NAME_GENERATOR: &[u8; 10] = b"generator\0";
 static PY_TYPE_NAME_GETSET_DESCR: &[u8; 13] = b"getset_descr\0";
 static PY_TYPE_NAME_GENERIC_ALIAS: &[u8; 19] = b"types.GenericAlias\0";
 static PY_TYPE_NAME_LIST: &[u8; 5] = b"list\0";
@@ -140,6 +141,7 @@ static PY_TYPE_NAME_LONG_RANGE_ITER: &[u8; 19] = b"longrange_iterator\0";
 static PY_TYPE_NAME_MAP: &[u8; 4] = b"map\0";
 static PY_TYPE_NAME_MEMBER_DESCR: &[u8; 13] = b"member_descr\0";
 static PY_TYPE_NAME_MEMORYVIEW: &[u8; 11] = b"memoryview\0";
+static PY_TYPE_NAME_INSTANCE_METHOD: &[u8; 15] = b"instancemethod\0";
 static PY_TYPE_NAME_METHOD: &[u8; 7] = b"method\0";
 static PY_TYPE_NAME_METHOD_DESCR: &[u8; 13] = b"method_descr\0";
 static PY_TYPE_NAME_MODULE_DEF: &[u8; 10] = b"moduledef\0";
@@ -270,6 +272,9 @@ pub static mut PyFrozenSet_Type: CpythonTypeObject =
     empty_type(PY_TYPE_NAME_FROZENSET.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
+pub static mut PyGen_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_GENERATOR.as_ptr().cast());
+#[unsafe(no_mangle)]
+#[used]
 pub static mut PyGetSetDescr_Type: CpythonTypeObject =
     empty_type(PY_TYPE_NAME_GETSET_DESCR.as_ptr().cast());
 #[unsafe(no_mangle)]
@@ -305,6 +310,10 @@ pub static mut PyMemberDescr_Type: CpythonTypeObject =
 #[used]
 pub static mut PyMemoryView_Type: CpythonTypeObject =
     empty_type(PY_TYPE_NAME_MEMORYVIEW.as_ptr().cast());
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyInstanceMethod_Type: CpythonTypeObject =
+    empty_type(PY_TYPE_NAME_INSTANCE_METHOD.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyMethod_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_METHOD.as_ptr().cast());

@@ -443,10 +443,25 @@ impl Vm {
                                                     &mut *created_module.kind_mut()
                                             {
                                                 for (key, value) in &current_data.globals {
-                                                    created_data
-                                                        .globals
-                                                        .entry(key.clone())
-                                                        .or_insert_with(|| value.clone());
+                                                    let force_metadata = matches!(
+                                                        key.as_str(),
+                                                        "__name__"
+                                                            | "__package__"
+                                                            | "__loader__"
+                                                            | "__spec__"
+                                                            | "__file__"
+                                                            | "__path__"
+                                                    );
+                                                    if force_metadata {
+                                                        created_data
+                                                            .globals
+                                                            .insert(key.clone(), value.clone());
+                                                    } else {
+                                                        created_data
+                                                            .globals
+                                                            .entry(key.clone())
+                                                            .or_insert_with(|| value.clone());
+                                                    }
                                                 }
                                             }
                                         }

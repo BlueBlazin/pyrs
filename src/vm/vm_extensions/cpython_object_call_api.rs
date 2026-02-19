@@ -804,6 +804,28 @@ pub unsafe extern "C" fn PyMethod_New(function: *mut c_void, self_obj: *mut c_vo
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyInstanceMethod_New(function: *mut c_void) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if function.is_null() {
+            context.set_error("PyInstanceMethod_New expected non-null function");
+            return std::ptr::null_mut();
+        }
+        if context.cpython_value_from_ptr_or_proxy(function).is_none() {
+            context.set_error("PyInstanceMethod_New received unknown function pointer");
+            return std::ptr::null_mut();
+        }
+        // CPython returns a new reference to an instance-method wrapper. For now we preserve
+        // callable identity and reference semantics for extension callers.
+        unsafe { Py_XIncRef(function) };
+        function
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyCode_NewEmpty(
     filename: *const c_char,
     funcname: *const c_char,

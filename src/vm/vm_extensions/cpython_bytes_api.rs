@@ -333,6 +333,79 @@ pub unsafe extern "C" fn PyBytes_ConcatAndDel(pv: *mut *mut c_void, w: *mut c_vo
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyBytes_Resize(pv: *mut *mut c_void, requested_size: isize) -> i32 {
+    if pv.is_null() {
+        unsafe { _PyErr_BadInternalCall(std::ptr::null(), 0) };
+        return -1;
+    }
+    // SAFETY: `pv` is checked non-null.
+    let current = unsafe { *pv };
+    if current.is_null() {
+        unsafe { _PyErr_BadInternalCall(std::ptr::null(), 0) };
+        return -1;
+    }
+    if requested_size < 0 {
+        cpython_set_error("PyBytes_Resize received negative size");
+        unsafe { cpython_clear_pyobject_ref(pv) };
+        return -1;
+    }
+    let result = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PyBytes_Resize missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(current_value) = context.cpython_value_from_ptr(current) else {
+            context.set_error("PyBytes_Resize received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        let current_bytes = match current_value {
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(values) => values.clone(),
+                _ => {
+                    context.set_error("PyBytes_Resize encountered invalid bytes storage");
+                    return std::ptr::null_mut();
+                }
+            },
+            _ => {
+                context.set_error("PyBytes_Resize expected bytes object");
+                return std::ptr::null_mut();
+            }
+        };
+        let mut resized = current_bytes;
+        resized.resize(requested_size as usize, 0);
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let bytes_obj = match vm.heap.alloc_bytes(resized) {
+            Value::Bytes(obj) => obj,
+            _ => unreachable!("heap.alloc_bytes must produce Value::Bytes"),
+        };
+        context.alloc_cpython_ptr_for_value(Value::Bytes(bytes_obj))
+    });
+    let new_ptr = match result {
+        Ok(ptr) if !ptr.is_null() => ptr,
+        Ok(_) => {
+            unsafe { cpython_clear_pyobject_ref(pv) };
+            return -1;
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            unsafe { cpython_clear_pyobject_ref(pv) };
+            return -1;
+        }
+    };
+    unsafe {
+        Py_XDecRef(current);
+        *pv = new_ptr;
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyBytes_Resize(pv: *mut *mut c_void, requested_size: isize) -> i32 {
+    unsafe { PyBytes_Resize(pv, requested_size) }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyBytes_Size(object: *mut c_void) -> isize {
     let foreign_bytes_len = |object: *mut c_void| -> Option<isize> {
         if object.is_null() {

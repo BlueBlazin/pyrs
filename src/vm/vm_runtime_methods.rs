@@ -1630,6 +1630,8 @@ impl Vm {
             _ => return Err(RuntimeError::new("class body must be a function")),
         };
         let orig_bases_tuple = self.heap.alloc_tuple(args.clone());
+        let trace_build_class = std::env::var_os("PYRS_TRACE_BUILD_CLASS").is_some();
+        let trace_this_class = trace_build_class && name == "_TagInfo";
         let mut resolved_bases = Vec::new();
         for base in args {
             let maybe_mro_entries = if matches!(base, Value::Class(_)) {
@@ -1668,6 +1670,14 @@ impl Vm {
                 resolved_bases.push(base);
             }
         }
+        if trace_this_class {
+            let base_tags = resolved_bases
+                .iter()
+                .map(format_repr)
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("[build-class] name={} resolved_bases=[{}]", name, base_tags);
+        }
 
         let mut base_classes = Vec::new();
         for base in resolved_bases {
@@ -1682,6 +1692,17 @@ impl Vm {
                     return Err(err);
                 }
             }
+        }
+        if trace_this_class {
+            let base_names = base_classes
+                .iter()
+                .map(|class| match &*class.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "<non-class>".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("[build-class] name={} base_classes=[{}]", name, base_names);
         }
 
         let class_module = match self.heap.alloc_module(ModuleObject::new(name.clone())) {

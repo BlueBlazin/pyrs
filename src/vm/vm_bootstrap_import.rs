@@ -3956,6 +3956,7 @@ impl Vm {
                 ("signature", BuiltinFunction::InspectSignature),
                 ("getmodule", BuiltinFunction::InspectGetModule),
                 ("getfile", BuiltinFunction::InspectGetFile),
+                ("getdoc", BuiltinFunction::InspectGetDoc),
                 ("getsourcefile", BuiltinFunction::InspectGetSourceFile),
                 ("cleandoc", BuiltinFunction::InspectCleanDoc),
                 ("isfunction", BuiltinFunction::InspectIsFunction),
@@ -7244,6 +7245,7 @@ impl Vm {
         let is_decimal_stack = name == "decimal";
         let is_functools_stack = name == "functools";
         let is_types_stack = matches!(name, "types" | "typing");
+        let is_random_stack = name == "random";
         if !is_json_stack
             && !is_pickle_stack
             && !is_re_stack
@@ -7251,6 +7253,7 @@ impl Vm {
             && !is_decimal_stack
             && !is_functools_stack
             && !is_types_stack
+            && !is_random_stack
         {
             return false;
         }

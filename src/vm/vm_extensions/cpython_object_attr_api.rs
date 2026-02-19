@@ -1,15 +1,17 @@
+use std::backtrace::Backtrace;
 use std::ffi::{CString, c_char, c_void};
 
 use crate::runtime::{Object, Value};
 
 use super::{
     _Py_NoneStruct, BuiltinFunction, CPY_PROXY_PTR_ATTR, CpythonObjectHead, CpythonTypeObject,
-    Py_DecRef, Py_IncRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches,
-    PyErr_Occurred, PyExc_AttributeError, PyExc_TypeError, PyObject_DelItem, PyObject_IsInstance,
-    c_name_to_string, cpython_call_builtin, cpython_error_message_indicates_missing_attribute,
-    cpython_is_reduce_probe_name, cpython_new_ptr_for_value, cpython_set_error,
-    cpython_set_typed_error, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
-    cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
+    ModuleCapiContext, Py_DecRef, Py_IncRef, PyErr_BadInternalCall, PyErr_Clear,
+    PyErr_ExceptionMatches, PyErr_Occurred, PyExc_AttributeError, PyExc_TypeError,
+    PyObject_DelItem, PyObject_IsInstance, c_name_to_string, cpython_call_builtin,
+    cpython_error_message_indicates_missing_attribute, cpython_is_reduce_probe_name,
+    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
+    cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag, cpython_value_from_ptr,
+    cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -43,7 +45,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     let trace_numpy_attr = std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some()
         && matches!(
             name.as_str(),
-            "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base"
+            "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base" | "BoolDType"
         );
     let trace_seed_attrs = std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some()
         && matches!(
@@ -433,6 +435,17 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             ptr
         }
         Err(err) => {
+            if std::env::var_os("PYRS_TRACE_NONE_NAME_GETATTR").is_some()
+                && name == "name"
+                && matches!(object_value_for_debug, Value::None)
+            {
+                eprintln!(
+                    "[cpy-none-name-getattr] object={:p} err={} bt={:?}",
+                    object,
+                    err,
+                    Backtrace::force_capture()
+                );
+            }
             if trace_reduce_attr {
                 eprintln!(
                     "[numpy-reduce] PyObject_GetAttrString error object={:p} attr={} err={}",
@@ -866,6 +879,48 @@ pub unsafe extern "C" fn PyObject_GenericSetDict(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyObject_GetDictPtr(object: *mut c_void) -> *mut *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if object.is_null() {
+            return std::ptr::null_mut();
+        }
+        let mut dict_ptr = unsafe { PyObject_GetAttrString(object, c"__dict__".as_ptr()) };
+        if dict_ptr.is_null() {
+            // If `__dict__` is not present, try materializing one and attaching it.
+            unsafe { PyErr_Clear() };
+            if context.vm.is_null() {
+                return std::ptr::null_mut();
+            }
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            dict_ptr = context.alloc_cpython_ptr_for_value(vm.heap.alloc_dict(Vec::new()));
+            if dict_ptr.is_null() {
+                return std::ptr::null_mut();
+            }
+            let status = unsafe { PyObject_SetAttrString(object, c"__dict__".as_ptr(), dict_ptr) };
+            if status != 0 {
+                unsafe { PyErr_Clear() };
+                return std::ptr::null_mut();
+            }
+        }
+        let slot = context.alloc_aux_buffer(std::mem::size_of::<*mut c_void>());
+        if slot.is_null() {
+            return std::ptr::null_mut();
+        }
+        let slot_ptr = slot.cast::<*mut c_void>();
+        // SAFETY: `slot_ptr` points to writable pointer-sized storage allocated above.
+        unsafe {
+            *slot_ptr = dict_ptr;
+        }
+        slot_ptr
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_SetAttrString(
     object: *mut c_void,
     name: *const c_char,
@@ -881,7 +936,10 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
     };
     let trace_pyx_capi_attr =
         std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() && name_text == "__pyx_capi__";
+    let trace_pybind11_attr =
+        std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && name_text.contains("__pybind11");
     if !object.is_null() {
+        let trace_native_setattr = std::env::var_os("PYRS_TRACE_SETATTR_NATIVE").is_some();
         let attr_name = name_text.clone();
         let native_status = with_active_cpython_context_mut(|context| {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -891,9 +949,14 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             if (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0 {
                 return None;
             }
+            let is_probable_external =
+                ModuleCapiContext::is_probable_external_cpython_object_ptr(object);
+            if !is_probable_external {
+                return None;
+            }
             let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
             let is_owned = context.owns_cpython_allocation_ptr(object);
-            if is_known_compat && is_owned {
+            if is_known_compat {
                 return None;
             }
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
@@ -915,7 +978,29 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             }
             // SAFETY: type pointer is non-null and follows CPython type layout.
             let tp_setattro = unsafe { (*type_ptr).tp_setattro };
+            if trace_native_setattr {
+                // SAFETY: guarded by type pointer checks above.
+                let type_name = unsafe {
+                    c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+                };
+                eprintln!(
+                    "[cpy-setattr-native] object={:p} known_compat={} owned={} probable_external={} type={:p} type_name={} tp_setattro={:p} tp_setattr={:p} value={:p}",
+                    object,
+                    is_known_compat,
+                    is_owned,
+                    is_probable_external,
+                    type_ptr,
+                    type_name,
+                    tp_setattro,
+                    unsafe { (*type_ptr).tp_setattr },
+                    value,
+                );
+            }
             if !tp_setattro.is_null() {
+                if (tp_setattro as usize) < MIN_VALID_PTR {
+                    context.set_error("PyObject_SetAttrString rejected low tp_setattro pointer");
+                    return Some(-1);
+                }
                 let attr_name_ptr =
                     context.alloc_cpython_ptr_for_value(Value::Str(attr_name.clone()));
                 if attr_name_ptr.is_null() {
@@ -930,6 +1015,10 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             // SAFETY: type pointer is non-null and follows CPython type layout.
             let tp_setattr = unsafe { (*type_ptr).tp_setattr };
             if !tp_setattr.is_null() {
+                if (tp_setattr as usize) < MIN_VALID_PTR {
+                    context.set_error("PyObject_SetAttrString rejected low tp_setattr pointer");
+                    return Some(-1);
+                }
                 let c_name = match CString::new(attr_name.as_str()) {
                     Ok(name) => name,
                     Err(_) => {
@@ -949,6 +1038,12 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             Some(-1)
         });
         if let Some(status) = native_status {
+            if trace_pybind11_attr {
+                eprintln!(
+                    "[pybind11-attr] branch=native object={:p} name={} value={:p} status={}",
+                    object, name_text, value_ptr, status
+                );
+            }
             if trace_pyx_capi_attr {
                 eprintln!(
                     "[pyx-capi] PyObject_SetAttrString native object={:p} value={:p} status={}",
@@ -1003,6 +1098,12 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
                     );
                 }
             });
+            if trace_pybind11_attr {
+                eprintln!(
+                    "[pybind11-attr] branch=builtin object={:p} name={} value={:p} status=0",
+                    object, name_text_for_sync, value_ptr
+                );
+            }
             if trace_pyx_capi_attr {
                 eprintln!(
                     "[pyx-capi] PyObject_SetAttrString builtin object={:p} value={:p} object_tag={} value_tag={} status=0",
@@ -1015,6 +1116,12 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             0
         }
         Err(err) => {
+            if trace_pybind11_attr {
+                eprintln!(
+                    "[pybind11-attr] branch=builtin object={:p} name={} value={:p} status=-1 err={}",
+                    object, name_text_for_sync, value_ptr, err
+                );
+            }
             if trace_pyx_capi_attr {
                 eprintln!(
                     "[pyx-capi] PyObject_SetAttrString builtin object={:p} value={:p} object_tag={} value_tag={} status=-1 err={}",

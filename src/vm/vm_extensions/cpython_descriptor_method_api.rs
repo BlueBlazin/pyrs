@@ -57,21 +57,9 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     let trace_method_precall = std::env::var_os("PYRS_TRACE_CPY_METHOD_PRECALL").is_some();
     let trace_array_function_dispatcher =
         std::env::var_os("PYRS_TRACE_ARRAY_FUNCTION_DISPATCHER").is_some();
-    let method_name = if trace_calls
-        || trace_numpy_empty
-        || trace_numpy_result_type
-        || trace_set_typedict
-        || trace_numpy_subtract
-        || trace_method_precall
-        || trace_array_function_dispatcher
-        || std::env::var_os("PYRS_TRACE_COPYTO_CALL").is_some()
-    {
-        // SAFETY: method definition pointer is valid for metadata reads.
-        unsafe {
-            c_name_to_string((*method_def).ml_name).unwrap_or_else(|_| "<invalid>".to_string())
-        }
-    } else {
-        String::new()
+    // SAFETY: method definition pointer is valid for metadata reads.
+    let method_name = unsafe {
+        c_name_to_string((*method_def).ml_name).unwrap_or_else(|_| "<invalid>".to_string())
     };
     if trace_numpy_subtract && method_name == "subtract" {
         let arg_summary = args
@@ -175,7 +163,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     if std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING").is_some()
         && matches!(
             method_name.as_str(),
-            "copyto" | "dot" | "arange" | "empty_like" | "empty" | "result_type"
+            "copyto" | "dot" | "arange" | "empty_like" | "empty" | "result_type" | "generate_state"
         )
     {
         let arg_tags = args
@@ -299,6 +287,12 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
             unsafe { Py_DecRef(kwnames_ptr) };
         }
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            context.set_error(format!(
+                "SystemError: NULL result without error in {}()",
+                method_name
+            ));
+        }
         if trace_calls {
             eprintln!(
                 "[cpy-method-call] name={} flags={} cmethod nargs={} kwargs={} class={:p} result={:p}",
@@ -405,6 +399,30 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             let call: unsafe extern "C" fn(*mut c_void, *const *mut c_void, usize, *mut c_void) -> *mut c_void =
                 // SAFETY: method flags indicate FASTCALL|KEYWORDS signature.
                 unsafe { std::mem::transmute(method) };
+            if std::env::var_os("PYRS_TRACE_GENERATE_STATE_CALL").is_some()
+                && method_name == "generate_state"
+            {
+                let arg_tags = args
+                    .iter()
+                    .map(cpython_value_debug_tag)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
+                kw_names.sort();
+                let arg_ptrs = stack
+                    .iter()
+                    .map(|ptr| format!("{:p}", *ptr))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!(
+                    "[generate-state-call] self={:p} args_len={} kwargs=[{}] args=[{}] arg_ptrs=[{}]",
+                    self_obj,
+                    args.len(),
+                    kw_names.join(", "),
+                    arg_tags,
+                    arg_ptrs
+                );
+            }
             let result = unsafe { call(self_obj, args_ptr, args.len(), kwnames_ptr) };
             if !kwnames_ptr.is_null() {
                 // SAFETY: kwnames tuple is call-local materialization and no longer needed after call.
@@ -503,6 +521,54 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
                 result
             );
         }
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            if std::env::var_os("PYRS_TRACE_NULL_NOERR_METHOD").is_some() {
+                let arg_tags = args
+                    .iter()
+                    .map(cpython_value_debug_tag)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
+                kw_names.sort();
+                let self_tag = context
+                    .cpython_value_from_ptr_or_proxy(self_obj)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|| "<unknown-self>".to_string());
+                let (self_proxy_raw, self_value_tag) = context
+                    .cpython_value_from_ptr_or_proxy(self_obj)
+                    .map(|value| {
+                        (
+                            ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&value)
+                                .unwrap_or(std::ptr::null_mut()),
+                            cpython_value_debug_tag(&value),
+                        )
+                    })
+                    .unwrap_or((std::ptr::null_mut(), "<unknown-self-value>".to_string()));
+                let self_owned = context.owns_cpython_allocation_ptr(self_obj);
+                eprintln!(
+                    "[null-noerr-method] name={} flags={} self={:p} self_tag={} nargs={} kwargs={} kw_names=[{}] args=[{}] self_type={} last_error={:?} first_error={:?}",
+                    method_name,
+                    flags,
+                    self_obj,
+                    format!(
+                        "{} self_owned={} self_proxy_raw={:p} self_value={}",
+                        self_tag, self_owned, self_proxy_raw, self_value_tag
+                    ),
+                    args.len(),
+                    kwargs.len(),
+                    kw_names.join(", "),
+                    arg_tags,
+                    cpython_safe_object_type_name(self_obj)
+                        .unwrap_or_else(|| "<unknown-type>".to_string()),
+                    context.last_error,
+                    context.first_error
+                );
+            }
+            context.set_error(format!(
+                "SystemError: NULL result without error in {}()",
+                method_name
+            ));
+        }
         return result;
     }
     if flags & METH_KEYWORDS != 0 {
@@ -536,7 +602,14 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
         let call: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
             // SAFETY: method flags indicate VARARGS|KEYWORDS signature.
             unsafe { std::mem::transmute(method) };
-        return unsafe { call(self_obj, args_ptr, kwargs_ptr) };
+        let result = unsafe { call(self_obj, args_ptr, kwargs_ptr) };
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            context.set_error(format!(
+                "SystemError: NULL result without error in {}()",
+                method_name
+            ));
+        }
+        return result;
     }
     if flags & METH_VARARGS != 0 {
         if !kwargs.is_empty() {
@@ -614,6 +687,12 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
                 result, context.last_error
             );
         }
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            context.set_error(format!(
+                "SystemError: NULL result without error in {}()",
+                method_name
+            ));
+        }
         return result;
     }
     if flags & METH_NOARGS != 0 {
@@ -624,7 +703,14 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
         let call: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
             // SAFETY: method flags indicate NOARGS signature.
             unsafe { std::mem::transmute(method) };
-        return unsafe { call(self_obj, std::ptr::null_mut()) };
+        let result = unsafe { call(self_obj, std::ptr::null_mut()) };
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            context.set_error(format!(
+                "SystemError: NULL result without error in {}()",
+                method_name
+            ));
+        }
+        return result;
     }
     if flags & METH_O != 0 {
         if args.len() != 1 || !kwargs.is_empty() {
@@ -639,7 +725,14 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
         let call: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
             // SAFETY: method flags indicate METH_O signature.
             unsafe { std::mem::transmute(method) };
-        return unsafe { call(self_obj, arg_ptr) };
+        let result = unsafe { call(self_obj, arg_ptr) };
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            context.set_error(format!(
+                "SystemError: NULL result without error in {}()",
+                method_name
+            ));
+        }
+        return result;
     }
     context.set_error(format!("unsupported cfunction method flags: {flags}"));
     std::ptr::null_mut()

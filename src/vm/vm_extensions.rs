@@ -116,7 +116,7 @@ use self::cpython_bytes_api::{
     PyByteArray_FromStringAndSize, PyByteArray_Resize, PyByteArray_Size, PyBytes_AsString,
     PyBytes_AsStringAndSize, PyBytes_Concat, PyBytes_ConcatAndDel, PyBytes_DecodeEscape,
     PyBytes_FromObject, PyBytes_FromString, PyBytes_FromStringAndSize, PyBytes_Join, PyBytes_Repr,
-    PyBytes_Size,
+    PyBytes_Resize, PyBytes_Size, _PyBytes_Resize,
 };
 use self::cpython_call_runtime::{cpython_call_internal_in_context, cpython_getattr_in_context};
 use self::cpython_capsule_api::{
@@ -141,9 +141,9 @@ use self::cpython_codec_runtime::{
 use self::cpython_context_runtime::{
     cpython_builtin_cfunction_varargs_kwargs, cpython_call_builtin,
     cpython_error_message_indicates_missing_attribute, cpython_is_reduce_probe_name,
-    cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_set_active_context,
-    cpython_set_error, cpython_set_typed_error, cpython_trace_numpy_reduce_enabled,
-    cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
+    cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
+    cpython_trace_numpy_reduce_enabled, cpython_value_from_ptr, cpython_value_from_ptr_or_proxy,
+    with_active_cpython_context_mut,
 };
 use self::cpython_contextvar_api::{PyContextVar_Get, PyContextVar_New, PyContextVar_Set};
 use self::cpython_datetime_runtime::{PYRS_DATETIME_CAPI, PYRS_DATETIME_CAPSULE_NAME};
@@ -650,6 +650,21 @@ struct CpythonBytesCompatObject {
 }
 
 #[repr(C)]
+struct CpythonAsciiUnicodeCompatObject {
+    ob_base: CpythonObjectHead,
+    length: isize,
+    hash: isize,
+    state: u32,
+}
+
+#[repr(C)]
+struct CpythonCompactUnicodeCompatObject {
+    ob_base: CpythonAsciiUnicodeCompatObject,
+    utf8_length: isize,
+    utf8: *mut c_char,
+}
+
+#[repr(C)]
 struct CpythonFloatCompatObject {
     ob_base: CpythonObjectHead,
     ob_fval: f64,
@@ -907,6 +922,19 @@ fn cpython_bytes_storage_bytes(len: usize) -> usize {
         .saturating_add(std::mem::size_of::<isize>())
         .saturating_add(len)
         .saturating_add(1)
+}
+
+#[inline]
+fn cpython_unicode_state(kind: u32, compact: bool, ascii: bool) -> u32 {
+    const INTERNED_NOT_INTERNED: u32 = 0;
+    const INTERNED_SHIFT: u32 = 0;
+    const KIND_SHIFT: u32 = 2;
+    const COMPACT_SHIFT: u32 = 5;
+    const ASCII_SHIFT: u32 = 6;
+    (INTERNED_NOT_INTERNED << INTERNED_SHIFT)
+        | ((kind & 0b111) << KIND_SHIFT)
+        | ((compact as u32) << COMPACT_SHIFT)
+        | ((ascii as u32) << ASCII_SHIFT)
 }
 
 #[inline]
@@ -2197,6 +2225,7 @@ struct ModuleCapiContext {
     cpython_allocations: Vec<*mut CpythonCompatObject>,
     cpython_aux_allocations: Vec<*mut c_void>,
     cpython_owned_ptrs: HashSet<usize>,
+    cpython_known_type_ptrs: HashSet<usize>,
     cpython_descriptors: HashMap<usize, CpythonDescriptorKind>,
     cpython_cfunction_ptr_cache: HashMap<(usize, usize, usize, usize), *mut c_void>,
     cpython_builtin_cfunction_ptr_cache: HashMap<BuiltinFunction, *mut c_void>,
@@ -2291,9 +2320,19 @@ impl Drop for ModuleCapiContext {
         let mut escaped_handles: HashSet<PyrsObjectHandle> = HashSet::new();
         let mut preserve_aux_allocations = false;
         let drained_cpython_allocations = std::mem::take(&mut self.cpython_allocations);
+        let mut seen_cpython_allocations: HashSet<usize> = HashSet::new();
         for raw in drained_cpython_allocations {
             const MIN_VALID_PTR: usize = 0x1_0000_0000;
             let raw_addr = raw as usize;
+            if !seen_cpython_allocations.insert(raw_addr) {
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!(
+                        "[pin-free] context-skip duplicate compat ptr={:p}",
+                        raw.cast::<c_void>()
+                    );
+                }
+                continue;
+            }
             if raw_addr < MIN_VALID_PTR || raw_addr % std::mem::align_of::<CpythonObjectHead>() != 0
             {
                 if std::env::var_os("PYRS_TRACE_CPY_DROP").is_some() {
@@ -2311,6 +2350,14 @@ impl Drop for ModuleCapiContext {
                     .extension_pinned_cpython_allocation_set
                     .insert(raw as usize)
                 {
+                    vm.extension_freed_cpython_allocations
+                        .remove(&(raw as usize));
+                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        eprintln!(
+                            "[pin-free] pin-insert ptr={:p} reason=keep_cpython_allocations_on_drop",
+                            raw.cast::<c_void>()
+                        );
+                    }
                     vm.extension_pinned_cpython_allocations.push(raw.cast());
                 }
                 if let Some(handle) = self.cpython_objects_by_ptr.get(&(raw as usize)).copied() {
@@ -2334,6 +2381,14 @@ impl Drop for ModuleCapiContext {
                             .extension_pinned_cpython_allocation_set
                             .insert(raw as usize)
                         {
+                            vm.extension_freed_cpython_allocations
+                                .remove(&(raw as usize));
+                            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                                eprintln!(
+                                    "[pin-free] pin-insert ptr={:p} reason=interned_unicode",
+                                    raw.cast::<c_void>()
+                                );
+                            }
                             vm.extension_pinned_cpython_allocations.push(raw.cast());
                         }
                         if let Some(handle) =
@@ -2347,14 +2402,12 @@ impl Drop for ModuleCapiContext {
                     }
                 }
                 if !keep_pinned {
-                    // CPython objects that survive past this call context increment refcount.
-                    // Keep those allocations process-stable instead of freeing them on context drop.
-                    // SAFETY: `raw` points to a CPython-compatible object head allocation.
+                    // If external/native code retained this object via Py_INCREF, transfer
+                    // ownership from this call context into the VM-level pinned registry.
+                    // SAFETY: `raw` points to a valid compat object header.
                     let refcount = unsafe { (*raw.cast::<CpythonObjectHead>()).ob_refcnt };
                     if refcount > 1 {
-                        // Drop this context's implicit temporary ownership while preserving
-                        // the externally retained references.
-                        // SAFETY: `raw` points to a writable CPython object head.
+                        // SAFETY: writable compat object header.
                         unsafe {
                             (*raw.cast::<CpythonObjectHead>()).ob_refcnt = refcount - 1;
                         }
@@ -2362,6 +2415,14 @@ impl Drop for ModuleCapiContext {
                             .extension_pinned_cpython_allocation_set
                             .insert(raw as usize)
                         {
+                            vm.extension_freed_cpython_allocations
+                                .remove(&(raw as usize));
+                            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                                eprintln!(
+                                    "[pin-free] pin-insert ptr={:p} reason=refcount_escape",
+                                    raw.cast::<c_void>()
+                                );
+                            }
                             vm.extension_pinned_cpython_allocations.push(raw.cast());
                         }
                         if let Some(handle) =
@@ -2400,13 +2461,39 @@ impl Drop for ModuleCapiContext {
             CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| {
                 registry.borrow_mut().remove(&(raw as usize));
             });
+            if !self.vm.is_null() {
+                // SAFETY: VM pointer is valid for context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                let was_pinned = vm
+                    .extension_pinned_cpython_allocation_set
+                    .remove(&(raw as usize));
+                vm.extension_pinned_capsule_names.remove(&(raw as usize));
+                vm.extension_freed_cpython_allocations.insert(raw as usize);
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!(
+                        "[pin-free] context-free compat ptr={:p} was_pinned={}",
+                        raw.cast::<c_void>(),
+                        was_pinned
+                    );
+                }
+            }
             // SAFETY: pointers were allocated via C allocator in this context.
             unsafe {
                 free(raw.cast());
             }
         }
+        let mut seen_list_buffers: HashSet<usize> = HashSet::new();
         for (handle, (buffer, _)) in self.cpython_list_buffers.drain() {
             if buffer.is_null() {
+                continue;
+            }
+            if !seen_list_buffers.insert(buffer as usize) {
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!(
+                        "[pin-free] context-skip duplicate list-buffer ptr={:p}",
+                        buffer.cast::<c_void>()
+                    );
+                }
                 continue;
             }
             let keep_pinned =
@@ -2428,18 +2515,50 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(buffer as usize)
                     {
+                        vm.extension_freed_cpython_allocations
+                            .remove(&(buffer as usize));
+                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                            eprintln!(
+                                "[pin-free] pin-insert ptr={:p} reason=list_buffer_keep",
+                                buffer.cast::<c_void>()
+                            );
+                        }
                         vm.extension_pinned_cpython_allocations.push(buffer.cast());
                     }
                 }
                 continue;
+            }
+            if !self.vm.is_null() {
+                // SAFETY: VM pointer is valid for context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                let was_pinned = vm
+                    .extension_pinned_cpython_allocation_set
+                    .remove(&(buffer as usize));
+                vm.extension_pinned_capsule_names.remove(&(buffer as usize));
+                vm.extension_freed_cpython_allocations
+                    .insert(buffer as usize);
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!(
+                        "[pin-free] context-free list-buffer ptr={:p} was_pinned={}",
+                        buffer.cast::<c_void>(),
+                        was_pinned
+                    );
+                }
             }
             // SAFETY: list item buffers were allocated through C allocator in this context.
             unsafe {
                 free(buffer.cast());
             }
         }
+        let mut seen_aux_allocations: HashSet<usize> = HashSet::new();
         for raw in self.cpython_aux_allocations.drain(..) {
             if raw.is_null() {
+                continue;
+            }
+            if !seen_aux_allocations.insert(raw as usize) {
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!("[pin-free] context-skip duplicate aux ptr={:p}", raw);
+                }
                 continue;
             }
             let keep_pinned = if self.keep_cpython_allocations_on_drop || preserve_aux_allocations {
@@ -2460,10 +2579,30 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(raw as usize)
                     {
+                        vm.extension_freed_cpython_allocations
+                            .remove(&(raw as usize));
+                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                            eprintln!("[pin-free] pin-insert ptr={:p} reason=aux_keep", raw);
+                        }
                         vm.extension_pinned_cpython_allocations.push(raw);
                     }
                 }
                 continue;
+            }
+            if !self.vm.is_null() {
+                // SAFETY: VM pointer is valid for context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                let was_pinned = vm
+                    .extension_pinned_cpython_allocation_set
+                    .remove(&(raw as usize));
+                vm.extension_pinned_capsule_names.remove(&(raw as usize));
+                vm.extension_freed_cpython_allocations.insert(raw as usize);
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!(
+                        "[pin-free] context-free aux ptr={:p} was_pinned={}",
+                        raw, was_pinned
+                    );
+                }
             }
             // SAFETY: auxiliary raw buffers were allocated via C allocator in this context.
             unsafe {
@@ -2474,25 +2613,8 @@ impl Drop for ModuleCapiContext {
 }
 
 impl ModuleCapiContext {
-    fn is_probable_c_string_pointer(ptr: *const c_char) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
-        if ptr.is_null() {
-            return false;
-        }
-        let addr = ptr as usize;
-        addr >= MIN_VALID_PTR
-    }
-
-    fn is_probable_type_object_without_metatype(object: *mut c_void) -> bool {
-        const MIN_VALID_PTR: usize = 0x1_0000_0000;
-        if object.is_null() {
-            return false;
-        }
-        let object_addr = object as usize;
-        if object_addr < MIN_VALID_PTR || object_addr % std::mem::align_of::<usize>() != 0 {
-            return false;
-        }
-        let builtin_type_ptrs = [
+    fn builtin_type_ptrs() -> [*mut c_void; 28] {
+        [
             std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>(),
             std::ptr::addr_of_mut!(PyBaseObject_Type).cast::<c_void>(),
             std::ptr::addr_of_mut!(PyLong_Type).cast::<c_void>(),
@@ -2521,8 +2643,28 @@ impl ModuleCapiContext {
             std::ptr::addr_of_mut!(PyMemoryView_Type).cast::<c_void>(),
             std::ptr::addr_of_mut!(PySuper_Type).cast::<c_void>(),
             std::ptr::addr_of_mut!(PyNone_Type).cast::<c_void>(),
-        ];
-        if builtin_type_ptrs.contains(&object) {
+        ]
+    }
+
+    fn is_probable_c_string_pointer(ptr: *const c_char) -> bool {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if ptr.is_null() {
+            return false;
+        }
+        let addr = ptr as usize;
+        addr >= MIN_VALID_PTR
+    }
+
+    fn is_probable_type_object_without_metatype(object: *mut c_void) -> bool {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if object.is_null() {
+            return false;
+        }
+        let object_addr = object as usize;
+        if object_addr < MIN_VALID_PTR || object_addr % std::mem::align_of::<usize>() != 0 {
+            return false;
+        }
+        if Self::builtin_type_ptrs().contains(&object) {
             return true;
         }
         false
@@ -2655,6 +2797,10 @@ impl ModuleCapiContext {
 
     fn new(vm: *mut Vm, module: ObjRef) -> Self {
         initialize_cpython_compat_type_objects();
+        let mut known_type_ptrs = HashSet::new();
+        for ptr in Self::builtin_type_ptrs() {
+            known_type_ptrs.insert(ptr as usize);
+        }
         Self {
             vm,
             module,
@@ -2678,6 +2824,7 @@ impl ModuleCapiContext {
             cpython_allocations: Vec::new(),
             cpython_aux_allocations: Vec::new(),
             cpython_owned_ptrs: HashSet::new(),
+            cpython_known_type_ptrs: known_type_ptrs,
             cpython_descriptors: HashMap::new(),
             cpython_cfunction_ptr_cache: HashMap::new(),
             cpython_builtin_cfunction_ptr_cache: HashMap::new(),
@@ -2781,6 +2928,19 @@ impl ModuleCapiContext {
         ptraceback: *mut c_void,
         message: String,
     ) {
+        if std::env::var_os("PYRS_TRACE_NONE_ERROR_TYPE").is_some() {
+            let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
+            if ptype == none_ptr {
+                let caller = std::panic::Location::caller();
+                eprintln!(
+                    "[cpy-err-none-type] set_error_state caller={}:{} pvalue={:p} msg={}",
+                    caller.file(),
+                    caller.line(),
+                    pvalue,
+                    message
+                );
+            }
+        }
         if std::env::var_os("PYRS_TRACE_CPY_SET_ERROR_STATE").is_some() {
             let caller = std::panic::Location::caller();
             let exception_type_name = cpython_exception_class_name_from_ptr(ptype)
@@ -2965,6 +3125,15 @@ impl ModuleCapiContext {
             self.clear_error();
             return;
         }
+        if std::env::var_os("PYRS_TRACE_NONE_ERROR_TYPE").is_some() {
+            let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
+            if state.ptype == none_ptr {
+                eprintln!(
+                    "[cpy-err-none-type] restore_error_state pvalue={:p} ptraceback={:p}",
+                    state.pvalue, state.ptraceback
+                );
+            }
+        }
         let message = self.error_message_from_ptr(state.pvalue);
         self.current_error = Some(state);
         self.set_error_message(message);
@@ -3029,6 +3198,7 @@ impl ModuleCapiContext {
             refcount,
             ob_type,
             long_payload,
+            str_payload,
             tuple_items,
             list_items,
             dict_len,
@@ -3042,6 +3212,10 @@ impl ModuleCapiContext {
                 slot.refcount.max(1) as isize,
                 cpython_type_for_value(&slot.value),
                 cpython_long_payload_from_value(&slot.value),
+                match &slot.value {
+                    Value::Str(text) => Some(text.clone()),
+                    _ => None,
+                },
                 match &slot.value {
                     Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                         Object::Tuple(items) => Some(items.clone()),
@@ -3118,6 +3292,7 @@ impl ModuleCapiContext {
                 None,
                 None,
                 None,
+                None,
             ),
             None => {
                 self.set_error(format!("invalid object handle {handle}"));
@@ -3170,6 +3345,80 @@ impl ModuleCapiContext {
                 }
             }
             raw_long.cast::<CpythonCompatObject>()
+        } else if let Some(text) = str_payload.as_ref() {
+            if text.is_ascii() {
+                let storage_bytes = std::mem::size_of::<CpythonAsciiUnicodeCompatObject>()
+                    .saturating_add(text.len())
+                    .saturating_add(1);
+                // SAFETY: allocate storage for compact ASCII unicode header + payload.
+                let raw_unicode =
+                    unsafe { malloc(storage_bytes) }.cast::<CpythonAsciiUnicodeCompatObject>();
+                if raw_unicode.is_null() {
+                    self.set_error("out of memory allocating CPython unicode compat object");
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: initialize compact ASCII unicode header and payload.
+                unsafe {
+                    raw_unicode.write(CpythonAsciiUnicodeCompatObject {
+                        ob_base: CpythonObjectHead {
+                            ob_refcnt: refcount,
+                            ob_type,
+                        },
+                        length: text.len() as isize,
+                        hash: -1,
+                        state: cpython_unicode_state(1, true, true),
+                    });
+                    let data = raw_unicode
+                        .cast::<u8>()
+                        .add(std::mem::size_of::<CpythonAsciiUnicodeCompatObject>());
+                    if !text.is_empty() {
+                        std::ptr::copy_nonoverlapping(text.as_ptr(), data, text.len());
+                    }
+                    *data.add(text.len()) = 0;
+                }
+                raw_unicode.cast::<CpythonCompatObject>()
+            } else {
+                let codepoints = text.chars().map(|ch| ch as u32).collect::<Vec<_>>();
+                let storage_bytes = std::mem::size_of::<CpythonCompactUnicodeCompatObject>()
+                    .saturating_add(
+                        codepoints
+                            .len()
+                            .saturating_add(1)
+                            .saturating_mul(std::mem::size_of::<u32>()),
+                    );
+                // SAFETY: allocate storage for compact non-ASCII unicode header + UCS4 payload.
+                let raw_unicode =
+                    unsafe { malloc(storage_bytes) }.cast::<CpythonCompactUnicodeCompatObject>();
+                if raw_unicode.is_null() {
+                    self.set_error("out of memory allocating CPython unicode compat object");
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: initialize compact unicode header and canonical payload.
+                unsafe {
+                    raw_unicode.write(CpythonCompactUnicodeCompatObject {
+                        ob_base: CpythonAsciiUnicodeCompatObject {
+                            ob_base: CpythonObjectHead {
+                                ob_refcnt: refcount,
+                                ob_type,
+                            },
+                            length: codepoints.len() as isize,
+                            hash: -1,
+                            state: cpython_unicode_state(4, true, false),
+                        },
+                        utf8_length: 0,
+                        utf8: std::ptr::null_mut(),
+                    });
+                    let data = raw_unicode
+                        .cast::<u8>()
+                        .add(std::mem::size_of::<CpythonCompactUnicodeCompatObject>())
+                        .cast::<u32>();
+                    if !codepoints.is_empty() {
+                        std::ptr::copy_nonoverlapping(codepoints.as_ptr(), data, codepoints.len());
+                    }
+                    *data.add(codepoints.len()) = 0;
+                }
+                raw_unicode.cast::<CpythonCompatObject>()
+            }
         } else if let Some(value) = complex_value {
             // SAFETY: allocate storage for CPython complex-compatible header.
             let raw_complex = unsafe { malloc(std::mem::size_of::<CpythonComplexCompatObject>()) }
@@ -4185,14 +4434,14 @@ impl ModuleCapiContext {
                     );
                 }
                 (name, module)
-            } else if self.owns_cpython_allocation_ptr(object) {
-                // SAFETY: owned pointers were allocated in this runtime and keep stable type layout.
+            } else if self.is_known_type_ptr(object) {
+                // SAFETY: known type pointers are registered from PyType_Ready / static exports.
                 let type_name =
                     unsafe { c_name_to_string((*object.cast::<CpythonTypeObject>()).tp_name).ok() };
                 if let Some(type_name) = type_name {
                     if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
                         eprintln!(
-                            "[cpy-owned-type] proxy-name source=owned-tp_name ptr={:p} tp_name={}",
+                            "[cpy-owned-type] proxy-name source=known-tp_name ptr={:p} tp_name={}",
                             object, type_name
                         );
                     }
@@ -5966,6 +6215,32 @@ impl ModuleCapiContext {
         if cpython_exception_value_from_ptr(callable as usize).is_some() {
             return None;
         }
+        if std::env::var_os("PYRS_TRACE_CPY_NONE_CALL").is_some()
+            && callable == std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>()
+        {
+            let arg_summary = args
+                .iter()
+                .map(cpython_value_debug_tag)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+            kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            let kw_summary = kw_entries
+                .into_iter()
+                .map(|(name, value)| format!("{name}={}", cpython_value_debug_tag(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!(
+                "[cpy-none-call] args=[{}] kwargs=[{}]",
+                arg_summary, kw_summary
+            );
+            if std::env::var_os("PYRS_TRACE_CPY_NONE_CALL_BT").is_some() {
+                eprintln!(
+                    "[cpy-none-call-bt]\n{:?}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
         if let Some(result) = self.try_native_vectorcall(callable, args, kwargs) {
             if trace_calls {
                 eprintln!("[cpy-call] native vectorcall callable={:p}", callable);
@@ -6105,6 +6380,14 @@ impl ModuleCapiContext {
             );
         }
         let result = unsafe { call(callable, args_ptr, kwargs_ptr) };
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            let type_name = unsafe {
+                c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+            };
+            self.set_error(format!(
+                "SystemError: NULL result without error in native tp_call ({type_name})"
+            ));
+        }
         if trace_seed_calls {
             let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
             let type_name = unsafe {
@@ -6615,6 +6898,7 @@ impl ModuleCapiContext {
             },
             _ => None,
         };
+        let is_unicode = matches!(&slot.value, Value::Str(_));
         // SAFETY: `raw` is owned allocation with `CpythonCompatObject` layout.
         unsafe {
             (*raw).ob_base.ob_base.ob_refcnt = slot.refcount.max(1) as isize;
@@ -6639,6 +6923,9 @@ impl ModuleCapiContext {
                     std::ptr::copy_nonoverlapping(bytes.as_ptr(), data.cast::<u8>(), bytes.len());
                 }
                 *data.add(bytes.len()) = 0;
+                return;
+            }
+            if is_unicode {
                 return;
             }
             if let Some(items) = list_items.as_ref() {
@@ -6867,6 +7154,7 @@ impl ModuleCapiContext {
         if ptr.is_null() {
             return;
         }
+        self.register_known_type_ptr(ptr);
         let inserted = self.cpython_owned_ptrs.insert(ptr as usize);
         if inserted {
             self.refresh_owned_type_proxy_name(ptr);
@@ -6874,6 +7162,23 @@ impl ModuleCapiContext {
         if inserted && std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
             eprintln!("[cpy-owned-type] register ptr={:p}", ptr);
         }
+    }
+
+    pub(super) fn register_known_type_ptr(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() {
+            return;
+        }
+        self.cpython_known_type_ptrs.insert(ptr as usize);
+    }
+
+    pub(super) fn is_known_type_ptr(&self, ptr: *mut c_void) -> bool {
+        if ptr.is_null() {
+            return false;
+        }
+        if Self::builtin_type_ptrs().contains(&ptr) {
+            return true;
+        }
+        self.cpython_known_type_ptrs.contains(&(ptr as usize))
     }
 
     fn pin_owned_cpython_allocation_for_vm(&mut self, ptr: *mut c_void) {
@@ -6886,6 +7191,14 @@ impl ModuleCapiContext {
             .extension_pinned_cpython_allocation_set
             .insert(ptr as usize)
         {
+            vm.extension_freed_cpython_allocations
+                .remove(&(ptr as usize));
+            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                eprintln!(
+                    "[pin-free] pin-insert ptr={:p} reason=pin_owned_allocation_for_vm",
+                    ptr
+                );
+            }
             vm.extension_pinned_cpython_allocations.push(ptr);
         }
     }
@@ -6909,6 +7222,14 @@ impl ModuleCapiContext {
             .extension_pinned_cpython_allocation_set
             .insert(ptr as usize)
         {
+            vm.extension_freed_cpython_allocations
+                .remove(&(ptr as usize));
+            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                eprintln!(
+                    "[pin-free] pin-insert ptr={:p} reason=pin_capsule_allocation_for_vm",
+                    ptr
+                );
+            }
             vm.extension_pinned_cpython_allocations.push(ptr);
         }
         if let Some(name) = slot.name.as_ref() {

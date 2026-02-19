@@ -759,11 +759,13 @@ pub struct Vm {
     extension_libraries: Vec<SharedLibraryHandle>,
     extension_callable_registry: HashMap<u64, ExtensionCallableEntry>,
     callable_attr_overrides: HashMap<u64, HashMap<String, Value>>,
+    builtin_attr_overrides: HashMap<BuiltinFunction, HashMap<String, Value>>,
     extension_capsule_registry: HashMap<String, ExtensionCapsuleRegistryEntry>,
     extension_contextvar_registry: HashMap<usize, Value>,
     extension_contextvar_allocations: Vec<*mut u8>,
     extension_pinned_cpython_allocations: Vec<*mut c_void>,
     extension_pinned_cpython_allocation_set: HashSet<usize>,
+    extension_freed_cpython_allocations: HashSet<usize>,
     extension_pinned_external_cpython_refs: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
     extension_cpython_ptr_values: HashMap<usize, Value>,
@@ -797,6 +799,9 @@ pub struct Vm {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        // Reclaim Python-level cycles before extension/native teardown mutates
+        // pointer-backed proxy state.
+        self.heap.collect_cycles(&[]);
         for state in self.extension_module_state_registry.values() {
             if state.state != 0 {
                 if let Some(finalize_func) = state.finalize_func {
@@ -849,8 +854,31 @@ impl Drop for Vm {
                 vm_extensions::Py_DecRef(ptr as *mut c_void);
             }
         }
+        let mut freed_pinned_allocations: HashSet<usize> = HashSet::new();
         for raw in self.extension_pinned_cpython_allocations.drain(..) {
             if !raw.is_null() {
+                let addr = raw as usize;
+                if !self.extension_pinned_cpython_allocation_set.contains(&addr) {
+                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        eprintln!("[pin-free] vm-skip ptr={:p} reason=not-in-set", raw);
+                    }
+                    continue;
+                }
+                if self.extension_freed_cpython_allocations.contains(&addr) {
+                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        eprintln!("[pin-free] vm-skip ptr={:p} reason=already-freed", raw);
+                    }
+                    continue;
+                }
+                if !freed_pinned_allocations.insert(addr) {
+                    if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                        eprintln!("[pin-free] vm-skip ptr={:p} reason=duplicate", raw);
+                    }
+                    continue;
+                }
+                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                    eprintln!("[pin-free] vm-free ptr={:p}", raw);
+                }
                 // SAFETY: pointers were allocated via libc malloc in C-API compat paths.
                 unsafe {
                     free(raw);
@@ -858,12 +886,10 @@ impl Drop for Vm {
             }
         }
         self.extension_pinned_cpython_allocation_set.clear();
+        self.extension_freed_cpython_allocations.clear();
         self.extension_pinned_capsule_names.clear();
         self.extension_cpython_ptr_values.clear();
         self.extension_cpython_ptr_by_object_id.clear();
-        // Break reference cycles before field teardown so per-VM object graphs
-        // do not accumulate across harness runs.
-        self.heap.collect_cycles(&[]);
     }
 }
 
@@ -947,11 +973,13 @@ impl Vm {
             extension_libraries: Vec::new(),
             extension_callable_registry: HashMap::new(),
             callable_attr_overrides: HashMap::new(),
+            builtin_attr_overrides: HashMap::new(),
             extension_capsule_registry: HashMap::new(),
             extension_contextvar_registry: HashMap::new(),
             extension_contextvar_allocations: Vec::new(),
             extension_pinned_cpython_allocations: Vec::new(),
             extension_pinned_cpython_allocation_set: HashSet::new(),
+            extension_freed_cpython_allocations: HashSet::new(),
             extension_pinned_external_cpython_refs: HashSet::new(),
             extension_pinned_capsule_names: HashMap::new(),
             extension_cpython_ptr_values: HashMap::new(),

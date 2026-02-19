@@ -5,8 +5,8 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     _PyObject_New, _PyObject_NewVar, CpythonHeapTypeInfo, CpythonMethodDef, CpythonObjectHead,
-    CpythonTypeObject, CpythonTypeSpec, ModuleCapiContext, PY_TPFLAGS_BASETYPE,
-    PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE,
+    CpythonTypeObject, CpythonTypeSpec, InternalCallOutcome, ModuleCapiContext,
+    PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE,
     PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
     PY_TPFLAGS_TUPLE_SUBCLASS, PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS,
     PY_TYPE_SLOT_MAX, PY_TYPE_SLOT_TP_ALLOC, PY_TYPE_SLOT_TP_BASE, PY_TYPE_SLOT_TP_BASES,
@@ -18,11 +18,13 @@ use super::{
     PY_TYPE_SLOT_TP_METHODS, PY_TYPE_SLOT_TP_NEW, PY_TYPE_SLOT_TP_REPR,
     PY_TYPE_SLOT_TP_RICHCOMPARE, PY_TYPE_SLOT_TP_SETATTR, PY_TYPE_SLOT_TP_SETATTRO,
     PY_TYPE_SLOT_TP_STR, PY_TYPE_SLOT_TP_TOKEN, PY_TYPE_SLOT_TP_TRAVERSE,
-    PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type,
-    PyDescr_NewClassMethod, PyDescr_NewMethod, PyDict_New, PyDict_SetItemString,
-    PyErr_BadInternalCall, PyExc_MemoryError, PyExc_SystemError, PyExc_TypeError,
-    PyModule_GetState, PyObject_Free, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Size,
-    PyType_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
+    PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type, PyBool_Type,
+    PyByteArray_Type, PyBytes_Type, PyComplex_Type, PyDescr_NewClassMethod, PyDescr_NewMethod,
+    PyDict_New, PyDict_SetItemString, PyDict_Type, PyErr_BadInternalCall, PyExc_MemoryError,
+    PyExc_SystemError, PyExc_TypeError, PyFloat_Type, PyFrozenSet_Type, PyList_Type, PyLong_Type,
+    PyMemoryView_Type, PyModule_GetState, PyObject_Free, PyRange_Type, PySet_Type, PySlice_Type,
+    PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyTuple_Type, PyType_Type,
+    PyUnicode_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
     cpython_heap_type_registry, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_set_error, cpython_set_typed_error,
     cpython_value_debug_tag, cpython_value_from_ptr, free, with_active_cpython_context_mut,
@@ -33,6 +35,64 @@ unsafe extern "C" {
 }
 
 const METH_CLASS: c_int = 0x0010;
+
+fn cpython_builtin_ctor_for_type_ptr(ty: *mut CpythonTypeObject) -> Option<BuiltinFunction> {
+    let ptr = ty.cast::<c_void>();
+    Some(if ptr == std::ptr::addr_of_mut!(PyBool_Type).cast() {
+        BuiltinFunction::Bool
+    } else if ptr == std::ptr::addr_of_mut!(PyLong_Type).cast() {
+        BuiltinFunction::Int
+    } else if ptr == std::ptr::addr_of_mut!(PyFloat_Type).cast() {
+        BuiltinFunction::Float
+    } else if ptr == std::ptr::addr_of_mut!(PyComplex_Type).cast() {
+        BuiltinFunction::Complex
+    } else if ptr == std::ptr::addr_of_mut!(PyUnicode_Type).cast() {
+        BuiltinFunction::Str
+    } else if ptr == std::ptr::addr_of_mut!(PyBytes_Type).cast() {
+        BuiltinFunction::Bytes
+    } else if ptr == std::ptr::addr_of_mut!(PyByteArray_Type).cast() {
+        BuiltinFunction::ByteArray
+    } else if ptr == std::ptr::addr_of_mut!(PyMemoryView_Type).cast() {
+        BuiltinFunction::MemoryView
+    } else if ptr == std::ptr::addr_of_mut!(PyList_Type).cast() {
+        BuiltinFunction::List
+    } else if ptr == std::ptr::addr_of_mut!(PyTuple_Type).cast() {
+        BuiltinFunction::Tuple
+    } else if ptr == std::ptr::addr_of_mut!(PyDict_Type).cast() {
+        BuiltinFunction::Dict
+    } else if ptr == std::ptr::addr_of_mut!(PySet_Type).cast() {
+        BuiltinFunction::Set
+    } else if ptr == std::ptr::addr_of_mut!(PyFrozenSet_Type).cast() {
+        BuiltinFunction::FrozenSet
+    } else if ptr == std::ptr::addr_of_mut!(PySlice_Type).cast() {
+        BuiltinFunction::Slice
+    } else if ptr == std::ptr::addr_of_mut!(PyRange_Type).cast() {
+        BuiltinFunction::Range
+    } else {
+        return None;
+    })
+}
+
+fn cpython_call_builtin_constructor(
+    function: BuiltinFunction,
+    positional: Vec<Value>,
+    keywords: HashMap<String, Value>,
+) -> Result<Value, String> {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return Err("missing VM context for builtin constructor".to_string());
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.call_internal(Value::Builtin(function), positional, keywords) {
+            Ok(InternalCallOutcome::Value(value)) => Ok(value),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => Err(vm
+                .runtime_error_from_active_exception("builtin constructor failed")
+                .message),
+            Err(err) => Err(err.message),
+        }
+    })?
+}
 
 fn cpython_build_type_from_three_arg_call(
     positional: &[Value],
@@ -204,12 +264,84 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
         return cpython_build_type_from_three_arg_call(&positional, &keywords);
     }
     let ty = callable.cast::<CpythonTypeObject>();
+    let callable_name =
+        unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
+    if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_ARGS").is_some()
+        && callable_name.to_ascii_lowercase().contains("dtype")
+    {
+        let tuple_len = if args.is_null() {
+            -1
+        } else {
+            unsafe { PyTuple_Size(args) }
+        };
+        eprintln!(
+            "[numpy-dtype-call] callable={:p} args_ptr={:p} kwargs_ptr={:p} tuple_len={}",
+            callable, args, kwargs, tuple_len
+        );
+        if tuple_len > 0 {
+            for idx in 0..tuple_len {
+                let item_ptr = unsafe { PyTuple_GetItem(args, idx) };
+                let item_type_name = if item_ptr.is_null() {
+                    "<null>".to_string()
+                } else {
+                    unsafe {
+                        item_ptr
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .filter(|ty| !ty.is_null())
+                            .and_then(|ty| c_name_to_string((*ty).tp_name).ok())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    }
+                };
+                let item_value = with_active_cpython_context_mut(|context| {
+                    context
+                        .cpython_value_from_ptr_or_proxy(item_ptr)
+                        .map(|value| match value {
+                            Value::Str(text) => format!("Str({text})"),
+                            other => cpython_value_debug_tag(&other),
+                        })
+                        .unwrap_or_else(|| "<unresolved>".to_string())
+                })
+                .unwrap_or_else(|_| "<no-context>".to_string());
+                eprintln!(
+                    "[numpy-dtype-call] arg[{}]={:p} type={} value={}",
+                    idx, item_ptr, item_type_name, item_value
+                );
+            }
+        }
+    }
     // SAFETY: callable points to a PyTypeObject-compatible struct.
     let new_slot = unsafe { (*ty).tp_new };
     if new_slot.is_null() {
-        let type_name =
-            unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
-        cpython_set_error(format!("TypeError: cannot create '{type_name}' instances"));
+        if let Some(function) = cpython_builtin_ctor_for_type_ptr(ty) {
+            let positional = match cpython_positional_args_from_tuple_object(args) {
+                Ok(values) => values,
+                Err(err) => {
+                    cpython_set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
+            let keywords = match cpython_keyword_args_from_dict_object(kwargs) {
+                Ok(values) => values,
+                Err(err) => {
+                    cpython_set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
+            let value = match cpython_call_builtin_constructor(function, positional, keywords) {
+                Ok(value) => value,
+                Err(err) => {
+                    cpython_set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
+            return cpython_new_ptr_for_value(value);
+        }
+        cpython_set_error(format!(
+            "TypeError: cannot create '{}' instances",
+            callable_name
+        ));
         return std::ptr::null_mut();
     }
     if trace_calls {
@@ -329,8 +461,6 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
                     last_error = err.clone();
                 }
             });
-            let callable_name = unsafe { c_name_to_string((*ty).tp_name) }
-                .unwrap_or_else(|_| "<unnamed>".to_string());
             let object_type_name = unsafe {
                 object_type
                     .cast::<CpythonTypeObject>()
@@ -355,8 +485,6 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
         );
     }
     if trace_calls {
-        let callable_type_name =
-            unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
         let object_type_name = unsafe {
             object_type
                 .cast::<CpythonTypeObject>()
@@ -368,7 +496,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
         };
         eprintln!(
             "[cpy-type-call] callable_type={} object_type={} should_init={}",
-            callable_type_name, object_type_name, should_init
+            callable_name, object_type_name, should_init
         );
     }
     object
@@ -801,6 +929,9 @@ fn cpython_type_from_spec_impl(
         }
         return std::ptr::null_mut();
     }
+    let _ = with_active_cpython_context_mut(|context| {
+        context.register_owned_type_ptr(type_ptr.cast::<c_void>());
+    });
     let type_key = type_ptr as usize;
     match cpython_heap_type_registry().lock() {
         Ok(mut registry) => {
@@ -1208,7 +1339,11 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
     }
     let target = ty.cast::<CpythonTypeObject>();
     let mut current = subtype.cast::<CpythonTypeObject>();
+    let mut guard = 0usize;
     while !current.is_null() {
+        if guard > 8192 {
+            return 0;
+        }
         if (current as usize) < MIN_VALID_PTR || (current as usize) % TYPE_ALIGN != 0 {
             return 0;
         }
@@ -1217,10 +1352,32 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
         }
         // SAFETY: current is checked non-null.
         let next = unsafe { (*current).tp_base };
+        let _ = with_active_cpython_context_mut(|context| {
+            context.register_known_type_ptr(current.cast::<c_void>());
+        });
         if next == current {
             break;
         }
+        if next.is_null() {
+            break;
+        }
+        if (next as usize) < MIN_VALID_PTR || (next as usize) % TYPE_ALIGN != 0 {
+            return 0;
+        }
+        if next == target {
+            return 1;
+        }
+        let next_known = with_active_cpython_context_mut(|context| {
+            context.is_known_type_ptr(next.cast::<c_void>())
+        })
+        .unwrap_or_else(|_| {
+            ModuleCapiContext::is_probable_type_object_without_metatype(next.cast())
+        });
+        if !next_known {
+            return 0;
+        }
         current = next;
+        guard += 1;
     }
     0
 }
@@ -1231,8 +1388,10 @@ pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
         cpython_set_error("PyType_Ready received null type");
         return -1;
     }
-    // SAFETY: caller provided non-null type pointer.
     let ty = ty.cast::<CpythonTypeObject>();
+    let _ = with_active_cpython_context_mut(|context| {
+        context.register_known_type_ptr(ty.cast::<c_void>());
+    });
     // SAFETY: `ty` is valid for mutation during type ready.
     unsafe {
         if (*ty).ob_type.is_null() {
@@ -1373,7 +1532,7 @@ pub unsafe extern "C" fn PyType_Ready(ty: *mut c_void) -> i32 {
         (*ty).tp_flags |= PY_TPFLAGS_READY;
     }
     let _ = with_active_cpython_context_mut(|context| {
-        context.register_owned_type_ptr(ty.cast::<c_void>());
+        context.register_known_type_ptr(ty.cast::<c_void>());
     });
     0
 }

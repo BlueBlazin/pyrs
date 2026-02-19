@@ -5,6 +5,14 @@ use super::{
 };
 
 #[used]
+static KEEP2_PYINSTANCEMETHOD_TYPE: unsafe extern "C" fn() -> *mut CpythonTypeObject =
+    keep2_pyinstancemethod_type;
+
+unsafe extern "C" fn keep2_pyinstancemethod_type() -> *mut CpythonTypeObject {
+    std::ptr::addr_of_mut!(super::PyInstanceMethod_Type)
+}
+
+#[used]
 static KEEP2_PYLONG_FROMSSIZE_T: unsafe extern "C" fn(isize) -> *mut c_void =
     super::PyLong_FromSsize_t;
 #[used]
@@ -784,6 +792,9 @@ static KEEP2_PYFRAME_NEW: unsafe extern "C" fn(
 static KEEP2_PYFRAME_GETCODE: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
     super::PyFrame_GetCode;
 #[used]
+static KEEP2_PYFRAME_GETBACK: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    super::cpython_thread_interp_api::PyFrame_GetBack;
+#[used]
 static KEEP2_PYFRAME_GETLINENUMBER: unsafe extern "C" fn(*mut c_void) -> i32 =
     super::PyFrame_GetLineNumber;
 #[used]
@@ -879,6 +890,9 @@ static KEEP3_PYCONTEXTVAR_SET: unsafe extern "C" fn(*mut c_void, *mut c_void) ->
 #[used]
 static KEEP3_PYMETHOD_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     super::PyMethod_New;
+#[used]
+static KEEP3_PYINSTANCEMETHOD_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    super::cpython_object_call_api::PyInstanceMethod_New;
 #[used]
 static KEEP3_PYCODE_NEWEMPTY: unsafe extern "C" fn(
     *const c_char,
@@ -2153,6 +2167,12 @@ static KEEP_PYBYTES_JOIN: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut
 static KEEP_PY_BYTES_JOIN_PRIVATE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     super::_PyBytes_Join;
 #[used]
+static KEEP_PYBYTES_RESIZE: unsafe extern "C" fn(*mut *mut c_void, isize) -> i32 =
+    super::PyBytes_Resize;
+#[used]
+static KEEP_PY_BYTES_RESIZE_PRIVATE: unsafe extern "C" fn(*mut *mut c_void, isize) -> i32 =
+    super::_PyBytes_Resize;
+#[used]
 static KEEP_PYBYTEARRAY_FROM_STRING_AND_SIZE: unsafe extern "C" fn(
     *const c_char,
     isize,
@@ -2630,6 +2650,9 @@ static KEEP_PYOBJECT_GENERIC_SETDICT: unsafe extern "C" fn(
     *mut c_void,
     *mut c_void,
 ) -> i32 = super::PyObject_GenericSetDict;
+#[used]
+static KEEP__PYOBJECT_GETDICTPTR: unsafe extern "C" fn(*mut c_void) -> *mut *mut c_void =
+    super::cpython_object_attr_api::_PyObject_GetDictPtr;
 #[used]
 static KEEP_PYOBJECT_SETATTR_STRING: unsafe extern "C" fn(
     *mut c_void,

@@ -4404,6 +4404,22 @@ impl Vm {
                 values.remove_value(&item);
                 Ok(NativeCallResult::Value(Value::None))
             }
+            NativeMethodKind::SetRemove => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("remove() expects one argument"));
+                }
+                let item = args.first().cloned().expect("checked len");
+                ensure_hashable(&item)?;
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::Set(values) = &mut *receiver_kind else {
+                    return Err(RuntimeError::new("remove() receiver must be set"));
+                };
+                if values.remove_value(&item) {
+                    Ok(NativeCallResult::Value(Value::None))
+                } else {
+                    Err(RuntimeError::new("key not found"))
+                }
+            }
             NativeMethodKind::SetPop => {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("pop() expects no arguments"));
@@ -5316,6 +5332,21 @@ impl Vm {
                         _ => None,
                     })
                     .collect(),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub(super) fn class_namedtuple_defaults(&self, class: &ObjRef) -> Option<Vec<Value>> {
+        let value = class_attr_lookup(class, "__pyrs_namedtuple_defaults__")?;
+        match value {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => Some(values.clone()),
+                _ => None,
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => Some(values.clone()),
                 _ => None,
             },
             _ => None,
@@ -7096,6 +7127,7 @@ impl Vm {
             }
             BuiltinFunction::InspectGetModule => self.builtin_inspect_getmodule(args, kwargs),
             BuiltinFunction::InspectGetFile => self.builtin_inspect_getfile(args, kwargs),
+            BuiltinFunction::InspectGetDoc => self.builtin_inspect_getdoc(args, kwargs),
             BuiltinFunction::InspectGetSourceFile => {
                 self.builtin_inspect_getsourcefile(args, kwargs)
             }
@@ -7472,8 +7504,14 @@ impl Vm {
             BuiltinFunction::CsvListDialects => self.builtin_csv_list_dialects(args, kwargs),
             BuiltinFunction::CsvFieldSizeLimit => self.builtin_csv_field_size_limit(args, kwargs),
             BuiltinFunction::CsvDialectValidate => self.builtin_csv_dialect_validate(args, kwargs),
+            BuiltinFunction::CollectionsNamedTuple => {
+                self.builtin_collections_namedtuple(args, kwargs)
+            }
             BuiltinFunction::CollectionsNamedTupleMake => {
                 self.builtin_collections_namedtuple_make(args, kwargs)
+            }
+            BuiltinFunction::CollectionsNamedTupleNew => {
+                self.builtin_collections_namedtuple_new(args, kwargs)
             }
             BuiltinFunction::AtexitRegister => self.builtin_atexit_register(args, kwargs),
             BuiltinFunction::AtexitUnregister => self.builtin_atexit_unregister(args, kwargs),

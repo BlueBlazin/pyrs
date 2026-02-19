@@ -800,17 +800,30 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     Backtrace::force_capture()
                 );
             }
-            let _ = with_active_cpython_context_mut(|context| {
-                let ptype = if _exception.is_null() {
-                    unsafe { PyExc_RuntimeError }
-                } else {
-                    _exception
-                };
-                context.set_error_state(ptype, std::ptr::null_mut(), std::ptr::null_mut(), message);
-            })
-            .map_err(|err| {
-                cpython_set_error(err);
-            });
+            let ptype = if _exception.is_null() {
+                unsafe { PyExc_RuntimeError }
+            } else {
+                _exception
+            };
+            // Mirror CPython: PyErr_SetString(exc, msg) is equivalent to
+            // PyErr_SetObject(exc, PyUnicode_FromString(msg)).
+            let value = cpython_new_ptr_for_value(Value::Str(message.clone()));
+            if !value.is_null() {
+                unsafe { PyErr_SetObject(ptype, value) };
+                unsafe { Py_DecRef(value) };
+            } else {
+                let _ = with_active_cpython_context_mut(|context| {
+                    context.set_error_state(
+                        ptype,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        message,
+                    );
+                })
+                .map_err(|err| {
+                    cpython_set_error(err);
+                });
+            }
         }
         Err(err) => cpython_set_error(format!("PyErr_SetString invalid message: {err}")),
     }
@@ -1272,6 +1285,34 @@ pub unsafe extern "C" fn PyErr_Fetch(
             ptraceback: std::ptr::null_mut(),
         },
     );
+    if std::env::var_os("PYRS_TRACE_PYERR_FETCH").is_some() {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        let mut type_name = "<null>".to_string();
+        let mut type_tp_name = "<null>".to_string();
+        if !state.ptype.is_null() && (state.ptype as usize) >= MIN_VALID_PTR {
+            type_name = cpython_type_name_for_object_ptr(state.ptype);
+            // SAFETY: debug-only pointer inspection guarded by non-null + minimum-address checks.
+            let type_ptr = unsafe {
+                state
+                    .ptype
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            if !type_ptr.is_null() && (type_ptr as usize) >= MIN_VALID_PTR {
+                // SAFETY: debug-only pointer inspection.
+                type_tp_name = unsafe { c_name_to_string((*type_ptr).tp_name) }
+                    .unwrap_or_else(|_| "<invalid>".to_string());
+            } else if !type_ptr.is_null() {
+                type_tp_name = "<low-type-ptr>".to_string();
+            }
+        }
+        eprintln!(
+            "[cpy-err-fetch] ptype={:p} pvalue={:p} ptraceback={:p} type_name={} type_tp_name={}",
+            state.ptype, state.pvalue, state.ptraceback, type_name, type_tp_name
+        );
+    }
     if !ptype.is_null() {
         // SAFETY: caller provided writable error-type output pointer.
         unsafe { *ptype = state.ptype };
@@ -1488,9 +1529,8 @@ fn cpython_raised_exception_ptr_from_state(
     if let Some(value) = value {
         return context.alloc_cpython_ptr_for_value(value);
     }
-    if !state.ptype.is_null() {
-        return state.ptype;
-    }
+    // PyErr_GetRaisedException returns an exception *instance* (or NULL), not an exception class.
+    // If normalization failed, preserve failure signal rather than returning `ptype`.
     std::ptr::null_mut()
 }
 
@@ -1596,27 +1636,36 @@ pub unsafe extern "C" fn PyErr_GetExcInfo(
 ) {
     let _ = with_active_cpython_context_mut(|context| {
         let handled = context.handled_exception_get();
+        if handled.is_none() {
+            if !p_type.is_null() {
+                // SAFETY: caller provided writable output pointer.
+                unsafe { *p_type = std::ptr::null_mut() };
+            }
+            if !p_value.is_null() {
+                // SAFETY: caller provided writable output pointer.
+                unsafe { *p_value = std::ptr::null_mut() };
+            }
+            if !p_traceback.is_null() {
+                // SAFETY: caller provided writable output pointer.
+                unsafe { *p_traceback = std::ptr::null_mut() };
+            }
+            return;
+        }
+        let handled = handled.unwrap_or(Value::None);
         if !p_type.is_null() {
-            let value = handled
-                .as_ref()
-                .and_then(|value| cpython_exception_type_ptr_for_value(context, value))
-                .unwrap_or_else(|| context.alloc_cpython_ptr_for_value(Value::None));
+            let value = cpython_exception_type_ptr_for_value(context, &handled)
+                .unwrap_or(std::ptr::null_mut());
             // SAFETY: caller provided writable output pointer.
             unsafe { *p_type = value };
         }
         if !p_value.is_null() {
-            let value = handled
-                .clone()
-                .map(|value| context.alloc_cpython_ptr_for_value(value))
-                .unwrap_or(std::ptr::null_mut());
+            let value = context.alloc_cpython_ptr_for_value(handled.clone());
             // SAFETY: caller provided writable output pointer.
             unsafe { *p_value = value };
         }
         if !p_traceback.is_null() {
-            let value = handled
-                .as_ref()
-                .and_then(|value| cpython_exception_traceback_ptr_for_value(context, value))
-                .unwrap_or_else(|| context.alloc_cpython_ptr_for_value(Value::None));
+            let value = cpython_exception_traceback_ptr_for_value(context, &handled)
+                .unwrap_or(std::ptr::null_mut());
             // SAFETY: caller provided writable output pointer.
             unsafe { *p_traceback = value };
         }
@@ -1693,6 +1742,75 @@ pub unsafe extern "C" fn PyErr_NormalizeException(
     _pvalue: *mut *mut c_void,
     _ptraceback: *mut *mut c_void,
 ) {
+    if _ptype.is_null() {
+        return;
+    }
+    let _ = with_active_cpython_context_mut(|context| {
+        // SAFETY: caller provides writable pointers when non-null; we snapshot values first.
+        let mut raw_type = unsafe { *_ptype };
+        if raw_type.is_null() {
+            return;
+        }
+        // SAFETY: optional output pointer from caller.
+        let mut raw_value = if _pvalue.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: `_pvalue` was checked non-null.
+            unsafe { *_pvalue }
+        };
+        // SAFETY: optional output pointer from caller.
+        let mut raw_traceback = if _ptraceback.is_null() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: `_ptraceback` was checked non-null.
+            unsafe { *_ptraceback }
+        };
+
+        // If `ptype` already holds an exception instance, move it to `pvalue` and derive type.
+        if raw_value.is_null()
+            && let Some(value) = context.cpython_value_from_ptr_or_proxy(raw_type)
+            && cpython_is_exception_value(context, &value)
+        {
+            raw_value = raw_type;
+            let derived = cpython_exception_type_ptr(raw_type);
+            if !derived.is_null() {
+                raw_type = derived;
+            }
+        }
+
+        let value_obj = if raw_value.is_null() {
+            None
+        } else {
+            context.cpython_value_from_ptr_or_proxy(raw_value)
+        };
+
+        if let Some(normalized) =
+            cpython_make_exception_instance_from_type_and_value(context, raw_type, value_obj)
+        {
+            raw_value = normalized;
+            let derived = cpython_exception_type_ptr(normalized);
+            if !derived.is_null() {
+                raw_type = derived;
+            }
+            if raw_traceback.is_null()
+                && let Some(value) = context.cpython_value_from_ptr_or_proxy(normalized)
+            {
+                raw_traceback = cpython_exception_traceback_ptr_for_value(context, &value)
+                    .unwrap_or(std::ptr::null_mut());
+            }
+        }
+
+        // SAFETY: `_ptype` is non-null (guarded above) and writable per C-API contract.
+        unsafe { *_ptype = raw_type };
+        if !_pvalue.is_null() {
+            // SAFETY: optional output pointer from caller.
+            unsafe { *_pvalue = raw_value };
+        }
+        if !_ptraceback.is_null() {
+            // SAFETY: optional output pointer from caller.
+            unsafe { *_ptraceback = raw_traceback };
+        }
+    });
 }
 
 fn cpython_optional_filename_from_c(name: *const c_char) -> Option<String> {

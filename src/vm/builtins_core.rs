@@ -1476,6 +1476,147 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_collections_namedtuple(
+        &mut self,
+        args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let module_name = match kwargs.remove("module") {
+            Some(Value::Str(name)) => Some(name),
+            Some(Value::None) | None => None,
+            Some(_) => return Err(RuntimeError::new("namedtuple() module must be string")),
+        };
+        let _rename = match kwargs.remove("rename") {
+            Some(value) => self.truthy_from_value(&value)?,
+            None => false,
+        };
+        let defaults = match kwargs.remove("defaults") {
+            Some(Value::None) | None => Vec::new(),
+            Some(value) => self.collect_iterable_values(value)?,
+        };
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "namedtuple() got an unexpected keyword argument",
+            ));
+        }
+
+        let class_value = BuiltinFunction::CollectionsNamedTuple.call(&self.heap, args)?;
+        let Value::Class(class) = class_value.clone() else {
+            return Err(RuntimeError::new("namedtuple() internal class error"));
+        };
+
+        let Some(fields) = self.class_namedtuple_fields(&class) else {
+            return Err(RuntimeError::new("namedtuple() internal field error"));
+        };
+
+        if defaults.len() > fields.len() {
+            return Err(RuntimeError::new(
+                "namedtuple() defaults length exceeds field count",
+            ));
+        }
+
+        let defaults_tuple = self.heap.alloc_tuple(defaults.clone());
+        let mut field_defaults = Vec::new();
+        if !defaults.is_empty() {
+            let first_default_index = fields.len() - defaults.len();
+            for (offset, value) in defaults.into_iter().enumerate() {
+                let field_name = fields[first_default_index + offset].clone();
+                field_defaults.push((Value::Str(field_name), value));
+            }
+        }
+        let field_defaults_dict = self.heap.alloc_dict(field_defaults);
+
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            if let Some(module_name) = module_name {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str(module_name));
+            }
+            class_data.attrs.insert(
+                "__pyrs_namedtuple_defaults__".to_string(),
+                defaults_tuple.clone(),
+            );
+            class_data
+                .attrs
+                .insert("_field_defaults".to_string(), field_defaults_dict);
+            if !class_data.attrs.contains_key("__match_args__")
+                && let Some(fields_value) = class_data.attrs.get("_fields").cloned()
+            {
+                class_data
+                    .attrs
+                    .insert("__match_args__".to_string(), fields_value);
+            }
+        }
+
+        self.store_attr_builtin(
+            BuiltinFunction::CollectionsNamedTupleNew,
+            "__defaults__",
+            defaults_tuple,
+        )?;
+        Ok(class_value)
+    }
+
+    pub(super) fn builtin_collections_namedtuple_new(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "namedtuple.__new__() requires class receiver",
+            ));
+        }
+        let class = match args.remove(0) {
+            Value::Class(class) => class,
+            _ => {
+                return Err(RuntimeError::new(
+                    "namedtuple.__new__() requires class receiver",
+                ));
+            }
+        };
+        let Some(fields) = self.class_namedtuple_fields(&class) else {
+            return Err(RuntimeError::new(
+                "namedtuple.__new__() requires namedtuple class",
+            ));
+        };
+        if args.len() > fields.len() {
+            return Err(RuntimeError::new("namedtuple() argument count mismatch"));
+        }
+        let defaults = self.class_namedtuple_defaults(&class).unwrap_or_default();
+        if defaults.len() > fields.len() {
+            return Err(RuntimeError::new("namedtuple() argument count mismatch"));
+        }
+        let first_default = fields.len().saturating_sub(defaults.len());
+        let mut bound_values: Vec<Option<Value>> = vec![None; fields.len()];
+        for (index, value) in args.into_iter().enumerate() {
+            bound_values[index] = Some(value);
+        }
+        for (name, value) in kwargs {
+            let Some(index) = fields.iter().position(|field| field == &name) else {
+                return Err(RuntimeError::new(
+                    "namedtuple() got unexpected keyword argument",
+                ));
+            };
+            if bound_values[index].is_some() {
+                return Err(RuntimeError::new(
+                    "namedtuple() got multiple values for field",
+                ));
+            }
+            bound_values[index] = Some(value);
+        }
+        for index in 0..fields.len() {
+            if bound_values[index].is_none() && index >= first_default {
+                bound_values[index] = Some(defaults[index - first_default].clone());
+            }
+        }
+        let Some(final_values) = bound_values.into_iter().collect::<Option<Vec<_>>>() else {
+            return Err(RuntimeError::new("namedtuple() argument count mismatch"));
+        };
+        let instance = self.alloc_instance_for_class(&class);
+        self.bind_namedtuple_instance_fields(&instance, &fields, final_values, HashMap::new())?;
+        Ok(Value::Instance(instance))
+    }
+
     pub(super) fn builtin_dir(
         &self,
         args: Vec<Value>,
@@ -3725,20 +3866,53 @@ impl Vm {
     pub(super) fn builtin_property(
         &self,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if args.len() > 4 {
+            return Err(RuntimeError::new("property() expects up to four arguments"));
+        }
+        let mut fget = args.first().cloned().unwrap_or(Value::None);
+        let mut fset = args.get(1).cloned().unwrap_or(Value::None);
+        let mut fdel = args.get(2).cloned().unwrap_or(Value::None);
+        let mut doc = args.get(3).cloned().unwrap_or(Value::None);
+
+        if let Some(value) = kwargs.remove("fget") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "property() got multiple values for argument 'fget'",
+                ));
+            }
+            fget = value;
+        }
+        if let Some(value) = kwargs.remove("fset") {
+            if args.len() > 1 {
+                return Err(RuntimeError::new(
+                    "property() got multiple values for argument 'fset'",
+                ));
+            }
+            fset = value;
+        }
+        if let Some(value) = kwargs.remove("fdel") {
+            if args.len() > 2 {
+                return Err(RuntimeError::new(
+                    "property() got multiple values for argument 'fdel'",
+                ));
+            }
+            fdel = value;
+        }
+        if let Some(value) = kwargs.remove("doc") {
+            if args.len() > 3 {
+                return Err(RuntimeError::new(
+                    "property() got multiple values for argument 'doc'",
+                ));
+            }
+            doc = value;
+        }
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "property() got an unexpected keyword argument",
             ));
         }
-        if args.len() > 4 {
-            return Err(RuntimeError::new("property() expects up to four arguments"));
-        }
-        let fget = args.first().cloned().unwrap_or(Value::None);
-        let fset = args.get(1).cloned().unwrap_or(Value::None);
-        let fdel = args.get(2).cloned().unwrap_or(Value::None);
-        let doc = args.get(3).cloned().unwrap_or(Value::None);
         Ok(self.build_property_descriptor(fget, fset, fdel, doc))
     }
 
@@ -4324,7 +4498,16 @@ impl Vm {
                 }
             }
             Value::Cell(cell) => self.store_attr_cell(&cell, &name, value)?,
-            _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
+            other => {
+                if std::env::var_os("PYRS_TRACE_SETATTR_UNSUPPORTED").is_some() {
+                    eprintln!(
+                        "[object-setattr-unsupported] target={} name={}",
+                        format_repr(&other),
+                        name
+                    );
+                }
+                return Err(RuntimeError::new("attribute assignment unsupported type"));
+            }
         }
         Ok(Value::None)
     }
@@ -7856,7 +8039,17 @@ impl Vm {
             Value::Exception(mut exception) => {
                 self.store_attr_exception(&mut exception, &name, value)?
             }
-            _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
+            Value::Builtin(builtin) => self.store_attr_builtin(builtin, &name, value)?,
+            other => {
+                if std::env::var_os("PYRS_TRACE_SETATTR_UNSUPPORTED").is_some() {
+                    eprintln!(
+                        "[setattr-unsupported] target={} name={}",
+                        format_repr(&other),
+                        name
+                    );
+                }
+                return Err(RuntimeError::new("attribute assignment unsupported type"));
+            }
         }
 
         Ok(Value::None)
@@ -7919,6 +8112,7 @@ impl Vm {
             Value::Function(func) => self.delete_attr_function(&func, &name)?,
             Value::Cell(cell) => self.delete_attr_cell(&cell, &name)?,
             Value::Exception(exception) => self.delete_attr_exception(&exception, &name)?,
+            Value::Builtin(builtin) => self.delete_attr_builtin(builtin, &name)?,
             _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
         }
 

@@ -375,6 +375,14 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                         &key_value,
                         Value::Str(name) if name == "int8" || name == "bool" || name == "float64"
                     );
+                if std::env::var_os("PYRS_TRACE_NUMPY_BOOL_LOOKUP").is_some()
+                    && matches!(&key_value, Value::Str(name) if name == "bool")
+                {
+                    eprintln!(
+                        "[numpy-bool-lookup] runtime-dict dict={:p} key_ptr={:p}",
+                        dict, key
+                    );
+                }
                 if trace_typedict_lookup {
                     eprintln!(
                         "[numpy-typedict] lookup dict={:p} key_ptr={:p} key={}",
@@ -506,6 +514,17 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
             unsafe { std::mem::transmute(mp_subscript) };
         // SAFETY: foreign dict and key pointers are handed to native mapping slot.
         let value_ptr = unsafe { subscript(dict, key) };
+        if std::env::var_os("PYRS_TRACE_NUMPY_BOOL_LOOKUP").is_some() {
+            let key_is_bool = context
+                .cpython_value_from_ptr_or_proxy(key)
+                .is_some_and(|value| matches!(value, Value::Str(ref text) if text == "bool"));
+            if key_is_bool {
+                eprintln!(
+                    "[numpy-bool-lookup] external-dict dict={:p} key_ptr={:p} value_ptr={:p}",
+                    dict, key, value_ptr
+                );
+            }
+        }
         // PyDict_GetItem suppresses lookup exceptions and preserves prior error state.
         context.current_error = saved_current_error;
         context.last_error = saved_last_error;
@@ -607,6 +626,12 @@ pub unsafe extern "C" fn PyDict_SetItemString(
     }
     let key_name = unsafe { c_name_to_string(key) }.unwrap_or_else(|_| "<invalid>".to_string());
     let result = unsafe { PyDict_SetItem(dict, key_obj, value) };
+    if std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && key_name.contains("__pybind11") {
+        eprintln!(
+            "[pybind11-dict] set key={} dict={:p} value={:p} result={}",
+            key_name, dict, value, result
+        );
+    }
     if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some()
         && matches!(
             key_name.as_str(),
@@ -644,6 +669,12 @@ pub unsafe extern "C" fn PyDict_GetItemString(
     let result = unsafe { PyDict_GetItem(dict, key_obj) };
     // SAFETY: `key_obj` is a temporary strong reference created above.
     unsafe { Py_DecRef(key_obj) };
+    if std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && key_name.contains("__pybind11") {
+        eprintln!(
+            "[pybind11-dict] get key={} dict={:p} result={:p}",
+            key_name, dict, result
+        );
+    }
     if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() && trace_key {
         eprintln!(
             "[numpy-init] PyDict_GetItemString key={} dict={:p} result={:p}",

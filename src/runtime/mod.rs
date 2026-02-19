@@ -309,6 +309,7 @@ pub enum NativeMethodKind {
     SetContains,
     SetAdd,
     SetDiscard,
+    SetRemove,
     SetPop,
     SetUpdate,
     SetUnion,
@@ -2789,6 +2790,7 @@ pub enum BuiltinFunction {
     CollectionsUserListTypeRepr,
     CollectionsUserStringTypeRepr,
     CollectionsNamedTuple,
+    CollectionsNamedTupleNew,
     CollectionsNamedTupleMake,
     CollectionsDefaultDict,
     TokenizeTokenizerIter,
@@ -2845,6 +2847,7 @@ pub enum BuiltinFunction {
     InspectSignatureRepr,
     InspectGetModule,
     InspectGetFile,
+    InspectGetDoc,
     InspectGetSourceFile,
     InspectCleanDoc,
     InspectIsClass,
@@ -4911,6 +4914,10 @@ impl BuiltinFunction {
                 if let Value::Class(class_ref) = &class_value
                     && let Object::Class(class_data) = &mut *class_ref.kind_mut()
                 {
+                    class_data.attrs.insert(
+                        "__new__".to_string(),
+                        Value::Builtin(BuiltinFunction::CollectionsNamedTupleNew),
+                    );
                     class_data
                         .attrs
                         .insert("_make".to_string(), Value::Module(make_wrapper));
@@ -4989,6 +4996,9 @@ impl BuiltinFunction {
                 }
                 Ok(Value::Instance(instance))
             }
+            BuiltinFunction::CollectionsNamedTupleNew => Err(RuntimeError::new(
+                "namedtuple.__new__() VM dispatch not available",
+            )),
             BuiltinFunction::TypesMappingProxy => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("MappingProxyType() expects one argument"));
@@ -5632,6 +5642,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectSignatureRepr
             | BuiltinFunction::InspectGetModule
             | BuiltinFunction::InspectGetFile
+            | BuiltinFunction::InspectGetDoc
             | BuiltinFunction::InspectGetSourceFile
             | BuiltinFunction::InspectCleanDoc
             | BuiltinFunction::InspectIsClass
@@ -7197,6 +7208,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),
+                    NativeMethodKind::SetRemove => "<bound method set.remove>".to_string(),
                     NativeMethodKind::SetPop => "<bound method set.pop>".to_string(),
                     NativeMethodKind::SetUpdate => "<bound method set.update>".to_string(),
                     NativeMethodKind::SetUnion => "<bound method set.union>".to_string(),

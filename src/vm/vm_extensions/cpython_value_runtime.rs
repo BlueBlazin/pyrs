@@ -5,8 +5,8 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 use super::{
     ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyBytes_Type, PyComplex_Type,
     PyDict_Type, PyDictProxy_Type, PyFloat_Type, PyFrozenSet_Type, PyList_Type, PyLong_Type,
-    PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PySet_Type, PySlice_Type,
-    PySuper_Type, PyTuple_Type, PyType_Type, PyUnicode_Type,
+    PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type, PySet_Type,
+    PySlice_Type, PySuper_Type, PyTuple_Type, PyType_Type, PyUnicode_Type,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -78,6 +78,7 @@ pub(super) fn cpython_builtin_type_ptr_for_class_name(class_name: &str) -> Optio
         "set" => std::ptr::addr_of_mut!(PySet_Type).cast(),
         "frozenset" => std::ptr::addr_of_mut!(PyFrozenSet_Type).cast(),
         "slice" => std::ptr::addr_of_mut!(PySlice_Type).cast(),
+        "range" => std::ptr::addr_of_mut!(PyRange_Type).cast(),
         _ => return None,
     })
 }
@@ -115,6 +116,8 @@ pub(super) fn cpython_builtin_type_name_for_ptr(ptr: *mut c_void) -> Option<&'st
         Some("frozenset")
     } else if ptr == std::ptr::addr_of_mut!(PySlice_Type).cast() {
         Some("slice")
+    } else if ptr == std::ptr::addr_of_mut!(PyRange_Type).cast() {
+        Some("range")
     } else {
         None
     }
@@ -139,6 +142,7 @@ pub(super) fn cpython_builtin_type_ptr_for_builtin(
         BuiltinFunction::Bytes => std::ptr::addr_of_mut!(PyBytes_Type).cast(),
         BuiltinFunction::ByteArray => std::ptr::addr_of_mut!(PyByteArray_Type).cast(),
         BuiltinFunction::MemoryView => std::ptr::addr_of_mut!(PyMemoryView_Type).cast(),
+        BuiltinFunction::Range => std::ptr::addr_of_mut!(PyRange_Type).cast(),
         _ => return None,
     })
 }

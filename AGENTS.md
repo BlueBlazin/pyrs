@@ -61,6 +61,18 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- Scientific-stack closure checkpoint (2026-02-19):
+  - landed substrate fixes this round:
+    - builtin-attribute write/delete support for `Value::Builtin` targets (`StoreAttr`/`setattr`/`delattr` paths),
+    - namedtuple runtime parity improvements (defaults + subclass `super().__new__(cls, ...)` path),
+    - `set.remove` method surface + `KeyError` miss behavior,
+    - `property()` keyword-argument support (`fget`/`fset`/`fdel`/`doc`),
+    - `inspect.getdoc` bootstrap surface,
+    - slice-assignment fallback to `__setitem__` for instance/proxy targets,
+    - `PyBytes_Resize`/`_PyBytes_Resize` and `PyGen_Type` symbol/export closure.
+  - current active blocker:
+    - `import matplotlib` still exits with `SIGSEGV (139)` in direct mode.
+    - tracing points to repeated `_multiarray_umath.add_docstring` traffic before failure; keep focus on Lane B root-cause closure (no shim patching).
 - NumPy import warning cleanup (2026-02-17):
   - fixed `PyInterpreterState_Main`/`PyThreadState_Get()->interp` baseline so NumPy no longer reports the sub-interpreter warning during import.
   - narrowed `types.MethodType` detection to Python-bound methods (not native bound methods), removing the prior `add_newdoc` warning flood for extension callables.

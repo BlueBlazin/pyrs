@@ -2486,6 +2486,32 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_inspect_getdoc(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("getdoc() expects one argument"));
+        }
+        let mut doc_value = args.remove(0);
+        if !matches!(doc_value, Value::Str(_) | Value::None) {
+            doc_value = match self.builtin_getattr(
+                vec![doc_value, Value::Str("__doc__".to_string()), Value::None],
+                HashMap::new(),
+            ) {
+                Ok(value) => value,
+                Err(err) if is_missing_attribute_error(&err) => Value::None,
+                Err(err) => return Err(err),
+            };
+        }
+        match doc_value {
+            Value::None => Ok(Value::None),
+            Value::Str(doc) => Ok(Value::Str(Self::inspect_cleandoc_text(&doc))),
+            _ => Ok(Value::None),
+        }
+    }
+
     fn inspect_cleandoc_text(doc: &str) -> String {
         let mut expanded = String::with_capacity(doc.len());
         let mut column = 0usize;

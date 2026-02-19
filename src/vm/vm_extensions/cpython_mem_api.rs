@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use super::with_active_cpython_context_mut;
+use super::{ModuleCapiContext, with_active_cpython_context_mut};
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut c_void;
@@ -32,11 +32,44 @@ pub unsafe extern "C" fn PyMem_RawFree(ptr: *mut c_void) {
     if ptr.is_null() {
         return;
     }
-    if let Ok(true) =
-        with_active_cpython_context_mut(|context| context.owns_cpython_allocation_ptr(ptr))
-    {
-        if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
-            eprintln!("[cpy-ptr] suppress free for compat ptr={:p}", ptr);
+    let mut handled = false;
+    let mut suppress_free = false;
+    let mut deregistered_vm_pin = false;
+    if let Ok(()) = with_active_cpython_context_mut(|context: &mut ModuleCapiContext| {
+        if context.owns_cpython_allocation_ptr(ptr) {
+            suppress_free = true;
+            handled = true;
+            return;
+        }
+        if !context.vm.is_null() {
+            // SAFETY: VM pointer is valid for the active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            if vm
+                .extension_pinned_cpython_allocation_set
+                .remove(&(ptr as usize))
+            {
+                vm.extension_pinned_capsule_names.remove(&(ptr as usize));
+                vm.extension_freed_cpython_allocations.insert(ptr as usize);
+                deregistered_vm_pin = true;
+                handled = true;
+            }
+        }
+    }) {
+        if suppress_free {
+            if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+                eprintln!("[cpy-ptr] suppress free for compat ptr={:p}", ptr);
+            }
+            return;
+        }
+        if deregistered_vm_pin && std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
+            eprintln!("[cpy-ptr] free deregistered pinned ptr={:p}", ptr);
+        }
+    }
+    if handled {
+        // SAFETY: caller explicitly requested deallocation; pointer was either non-owned
+        // by the active context or removed from VM pinned ownership before this free.
+        unsafe {
+            free(ptr);
         }
         return;
     }

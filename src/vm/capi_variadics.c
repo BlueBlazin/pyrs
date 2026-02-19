@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <signal.h>
+#include <limits.h>
 
 typedef intptr_t Py_ssize_t;
 typedef void (*PyOS_sighandler_t)(int);
@@ -36,6 +37,7 @@ extern void *PyLong_FromUnsignedLong(unsigned long value);
 extern void *PyLong_FromLongLong(long long value);
 extern void *PyLong_FromUnsignedLongLong(unsigned long long value);
 extern void *PyLong_FromSsize_t(Py_ssize_t value);
+extern long PyLong_AsLong(void *value);
 extern void *PyFloat_FromDouble(double value);
 extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
@@ -1795,6 +1797,36 @@ static int parse_args_and_keywords_va(
             }
             if (output != NULL) {
                 *output = truth ? 1 : 0;
+            }
+            token_index++;
+            continue;
+        }
+
+        if (token == 'i') {
+            int *output = va_arg(*ap, int *);
+            if (!present) {
+                if (!optional) {
+                    free(spec);
+                    pyrs_capi_set_error_message("missing required argument");
+                    return 0;
+                }
+                token_index++;
+                continue;
+            }
+            long parsed = PyLong_AsLong(value);
+            if (parsed == -1 && PyErr_Occurred() != NULL) {
+                free(spec);
+                return 0;
+            }
+            if (parsed < INT_MIN || parsed > INT_MAX) {
+                free(spec);
+                pyrs_capi_set_error_message(
+                    "PyArg_ParseTupleAndKeywords integer out of range for 'i'"
+                );
+                return 0;
+            }
+            if (output != NULL) {
+                *output = (int)parsed;
             }
             token_index++;
             continue;

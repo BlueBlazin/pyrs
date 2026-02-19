@@ -1845,6 +1845,9 @@ impl Vm {
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
                     }
+                    Value::Builtin(builtin) => {
+                        self.store_attr_builtin(builtin, &attr_name, value)?
+                    }
                     _ => {
                         if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
                             if let Some(frame) = self.frames.last() {
@@ -1909,6 +1912,9 @@ impl Vm {
                     Value::Cell(cell) => self.store_attr_cell(&cell, &attr_name, value)?,
                     Value::Exception(mut exception) => {
                         self.store_attr_exception(&mut exception, &attr_name, value)?
+                    }
+                    Value::Builtin(builtin) => {
+                        self.store_attr_builtin(builtin, &attr_name, value)?
                     }
                     _ => {
                         if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
@@ -1990,6 +1996,9 @@ impl Vm {
                     }
                     Value::Exception(exception) => {
                         self.delete_attr_exception(&exception, &attr_name)?;
+                    }
+                    Value::Builtin(builtin) => {
+                        self.delete_attr_builtin(builtin, &attr_name)?;
                     }
                     _ => {
                         return Err(RuntimeError::new("attribute deletion unsupported type"));
@@ -2908,6 +2917,13 @@ impl Vm {
                                     }
                                 }
                                 self.push_value(target_value);
+                            } else if let Some(proxy_result) = self.cpython_proxy_set_item(
+                                &target_value,
+                                index.clone(),
+                                value.clone(),
+                            ) {
+                                proxy_result?;
+                                self.push_value(target_value);
                             } else {
                                 if self.instance_backing_dict(&instance).is_some() {
                                     return Err(RuntimeError::new("slicing unsupported for dict"));
@@ -3324,9 +3340,6 @@ impl Vm {
                             }
                             self.push_value(Value::MemoryView(obj));
                         }
-                        (_target, Value::Slice(_)) => {
-                            return Err(RuntimeError::new("slice assignment not supported"));
-                        }
                         (target, index) => {
                             let target_value = target.clone();
                             if let Some(setitem) =
@@ -3676,8 +3689,17 @@ impl Vm {
                     _ => return Err(RuntimeError::new("class bases must be a tuple")),
                 };
                 let orig_bases_tuple = self.heap.alloc_tuple(bases.clone());
+                let trace_build_class = std::env::var_os("PYRS_TRACE_BUILD_CLASS").is_some();
+                let trace_this_class = trace_build_class && class_name == "_TagInfo";
                 let mut resolved_bases = Vec::new();
                 for base in bases {
+                    if trace_this_class {
+                        eprintln!(
+                            "[build-class-op] name={} raw_base={}",
+                            class_name,
+                            format_repr(&base)
+                        );
+                    }
                     let maybe_mro_entries = if matches!(base, Value::Class(_)) {
                         None
                     } else {
@@ -3714,6 +3736,17 @@ impl Vm {
                         resolved_bases.push(base);
                     }
                 }
+                if trace_this_class {
+                    let resolved = resolved_bases
+                        .iter()
+                        .map(format_repr)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    eprintln!(
+                        "[build-class-op] name={} resolved_bases=[{}]",
+                        class_name, resolved
+                    );
+                }
                 let mut base_classes = Vec::new();
                 for base in resolved_bases {
                     match self.class_from_base_value(base.clone()) {
@@ -3735,6 +3768,20 @@ impl Vm {
                             return Err(err);
                         }
                     }
+                }
+                if trace_this_class {
+                    let base_names = base_classes
+                        .iter()
+                        .map(|class| match &*class.kind() {
+                            Object::Class(class_data) => class_data.name.clone(),
+                            _ => "<non-class>".to_string(),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    eprintln!(
+                        "[build-class-op] name={} base_classes=[{}]",
+                        class_name, base_names
+                    );
                 }
 
                 let class_qualname = self
@@ -6042,6 +6089,39 @@ impl Vm {
         explicit_cause: Option<Value>,
     ) -> Result<(), RuntimeError> {
         let mut exc = self.normalize_exception_value(value)?;
+        if std::env::var_os("PYRS_TRACE_ASSERT_RAISE").is_some() {
+            let is_assertion = match &exc {
+                Value::Exception(exception) => exception.name == "AssertionError",
+                Value::ExceptionType(name) => name == "AssertionError",
+                _ => false,
+            };
+            if is_assertion {
+                let (filename, func_name, ip, line, column) =
+                    if let Some(frame) = self.frames.last() {
+                        let location = frame.code.locations.get(frame.last_ip);
+                        (
+                            frame.code.filename.clone(),
+                            frame.code.name.clone(),
+                            frame.last_ip as i64,
+                            location.map(|loc| loc.line).unwrap_or(0),
+                            location.map(|loc| loc.column).unwrap_or(0),
+                        )
+                    } else {
+                        ("<no-frame>".to_string(), "<no-frame>".to_string(), 0, 0, 0)
+                    };
+                let summary = match &exc {
+                    Value::Exception(exception) => exception
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| "<no-message>".to_string()),
+                    _ => "<non-instance>".to_string(),
+                };
+                eprintln!(
+                    "[assert-raise] file={} func={} ip={} line={} col={} msg={}",
+                    filename, func_name, ip, line, column, summary
+                );
+            }
+        }
         if let Value::Exception(exc_data) = &mut exc {
             if let Some(cause_value) = explicit_cause {
                 if matches!(cause_value, Value::None) {
@@ -6846,6 +6926,44 @@ impl Vm {
                 }
                 return Ok(ClassBuildOutcome::Value(class_value));
             };
+            if std::env::var_os("PYRS_TRACE_BUILD_CLASS").is_some() && name == "_TagInfo" {
+                let base_debug = bases
+                    .iter()
+                    .map(|base| match &*base.kind() {
+                        Object::Class(class_data) => format!("{}#{}", class_data.name, base.id()),
+                        _ => format!("<non-class>#{}", base.id()),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let typing_namedtuple = self
+                    .modules
+                    .get("typing")
+                    .and_then(|typing| match &*typing.kind() {
+                        Object::Module(module_data) => {
+                            module_data.globals.get("_NamedTuple").cloned()
+                        }
+                        _ => None,
+                    })
+                    .and_then(|value| match value {
+                        Value::Class(class) => Some(class),
+                        _ => None,
+                    })
+                    .map(|class| {
+                        format!(
+                            "{}#{}",
+                            match &*class.kind() {
+                                Object::Class(class_data) => class_data.name.clone(),
+                                _ => "<non-class>".to_string(),
+                            },
+                            class.id()
+                        )
+                    })
+                    .unwrap_or_else(|| "<missing>".to_string());
+                eprintln!(
+                    "[build-class-meta] name={} bases=[{}] typing._NamedTuple={}",
+                    name, base_debug, typing_namedtuple
+                );
+            }
             let bases_tuple = self
                 .heap
                 .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>());
@@ -6856,11 +6974,6 @@ impl Vm {
             )? {
                 InternalCallOutcome::Value(value) => {
                     if let Value::Class(class) = &value {
-                        if let Some(meta_class) = resolved_metaclass
-                            && let Object::Class(class_data) = &mut *class.kind_mut()
-                        {
-                            class_data.metaclass = Some(meta_class);
-                        }
                         self.record_exception_parent_for_class(class);
                         Ok(ClassBuildOutcome::Value(value))
                     } else {

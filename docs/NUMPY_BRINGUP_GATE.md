@@ -103,6 +103,18 @@ If a probed local module is not installed, its dependent cases are recorded as `
 
 ## Current Expected State
 
+- 2026-02-19 checkpoint (current):
+  - closed direct blockers hit in the latest scientific-stack pass:
+    - `PyBytes_Resize` + `_PyBytes_Resize` exported and kept alive (Mach-O symbol closure for Pillow/matplotlib dependency chain),
+    - `PyGen_Type` exported in type-surface baseline,
+    - `inspect.getdoc` exposed in bootstrap inspect module,
+    - `set.remove` surfaced with `KeyError` miss semantics,
+    - `property()` now accepts keyword arguments (`fget`/`fset`/`fdel`/`doc`),
+    - namedtuple runtime parity improved for defaults + `super().__new__(cls, ...)` subclass flows,
+    - slice assignment now falls back to `__setitem__` for instance/proxy targets.
+  - current P0 blocker:
+    - `import matplotlib` / `import matplotlib._c_internal_utils` currently exits with `SIGSEGV` (`139`).
+    - trace runs show repeated `_multiarray_umath.add_docstring` extension-call traffic before failure; crash analysis remains active in Lane B.
 - CPython ABI bridge mode has been removed; probes run in direct mode only.
 - Lane B remains required even with Lane A progress; local NumPy artifacts are currently `cp314-cp314` wheels (not abi3-only wheels).
 - Import-probe and source-build modes both produce actionable failure diagnostics in JSON.

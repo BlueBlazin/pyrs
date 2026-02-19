@@ -2144,6 +2144,25 @@ ok = ok and err
 }
 
 #[test]
+fn executes_set_remove_and_missing_key_error() {
+    let source = r#"s = {1, 2, 3}
+s.remove(2)
+ok = (s == {1, 3})
+missing = False
+try:
+    s.remove(99)
+except KeyError:
+    missing = True
+ok = ok and missing
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn dict_subclass_subscript_set_and_delete_call_special_methods() {
     let source = r#"class D(dict):
     def __init__(self):
@@ -8898,6 +8917,17 @@ fn executes_property_setter_decorator() {
 }
 
 #[test]
+fn property_accepts_keyword_arguments() {
+    let source =
+        "def getv(self):\n    return 7\np = property(fget=getv, doc='hello')\nok = (p.fget is getv and p.__doc__ == 'hello')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_builtin_type_dict() {
     let source =
         "mappingproxy = type(type.__dict__)\nok = isinstance(type.__dict__, mappingproxy)\n";
@@ -11285,6 +11315,24 @@ fn collections_namedtuple_supports_ordering_for_sort() {
 }
 
 #[test]
+fn collections_namedtuple_defaults_and_super_new_work_for_subclass_overrides() {
+    let source = r#"import collections
+_TagInfo = collections.namedtuple("_TagInfo", "value name type length enum")
+class TagInfo(_TagInfo):
+    __slots__ = []
+    def __new__(cls, value=None, name='unknown', type=None, length=None, enum=None):
+        return super().__new__(cls, value, name, type, length, enum or {})
+t = TagInfo(1, "name")
+ok = (t.value == 1 and t.name == "name" and isinstance(t.enum, dict))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exception_hierarchy_matches_oserror_children_expectations() {
     let source = "errs = [BrokenPipeError, ChildProcessError, ConnectionAbortedError, ConnectionError, ConnectionRefusedError, ConnectionResetError, FileExistsError, InterruptedError, IsADirectoryError, ProcessLookupError]\nok = all(issubclass(e, OSError) for e in errs) and issubclass(BrokenPipeError, ConnectionError)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -12684,6 +12732,25 @@ ok = (len(r6) == 5 and len(r7) == 5
 }
 
 #[test]
+fn slice_assignment_uses_setitem_special_method_for_instances() {
+    let source = r#"class FlatIter:
+    def __init__(self):
+        self.events = []
+    def __setitem__(self, key, value):
+        self.events.append((repr(key), value))
+
+f = FlatIter()
+f[1:5:2] = 99
+ok = (len(f.events) == 1 and f.events[0][1] == 99)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bytes_subclass_constructor_accepts_payload_and_roundtrips_bytes() {
     let source = r#"class AuthenticationString(bytes):
     pass
@@ -13515,6 +13582,19 @@ ok = (
     and inspect.iscode(sample.__code__)
     and inspect.unwrap(sample) is sample
 )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn inspect_getdoc_reads_and_cleans_docstrings() {
+    let source = r#"import inspect
+doc = inspect.getdoc("\n\talpha\n\t    beta\n")
+ok = (doc == "alpha\n    beta" and inspect.getdoc(None) is None)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
