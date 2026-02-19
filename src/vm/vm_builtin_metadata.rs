@@ -3030,7 +3030,9 @@ impl Vm {
             Value::Class(class) => {
                 let (class_name, metaclass_name) = match &*class.kind() {
                     Object::Class(class_data) => {
-                        let metaclass_name = class_data.metaclass.as_ref().map(|meta| match &*meta.kind() {
+                        let metaclass_name = class_data.metaclass.as_ref().map(|meta| match &*meta
+                            .kind()
+                        {
                             Object::Class(meta_data) => meta_data.name.clone(),
                             _ => "<non-class-meta>".to_string(),
                         });
@@ -3614,9 +3616,7 @@ impl Vm {
             {
                 eprintln!(
                     "[class-call] caller-ip-mismatch callable={} before={} after={}",
-                    callable_repr,
-                    caller_ip,
-                    caller.ip
+                    callable_repr, caller_ip, caller.ip
                 );
             }
             return Ok(InternalCallOutcome::CallerExceptionHandled);

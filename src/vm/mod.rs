@@ -427,7 +427,8 @@ const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
-const LOCAL_SHIM_MODULES: &[&str] = &["importlib.resources"];
+const LOCAL_SHIM_MODULES: &[&str] = &["importlib.resources", "_ctypes"];
+const LOCAL_SHIM_PRECEDENCE_MODULES: &[&str] = &["_ctypes"];
 
 thread_local! {
     static VM_THREAD_IDENT_OVERRIDE: Cell<Option<i64>> = const { Cell::new(None) };
@@ -2648,6 +2649,10 @@ impl Vm {
             module_data.globals.insert(
                 "getfilesystemencoding".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetFilesystemEncoding),
+            );
+            module_data.globals.insert(
+                "getdefaultencoding".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetDefaultEncoding),
             );
             module_data.globals.insert(
                 "getfilesystemencodeerrors".to_string(),
@@ -9328,6 +9333,7 @@ fn classify_runtime_error(message: &str) -> &'static str {
     if message.contains("index out of range")
         || message.contains("pop index out of range")
         || message.contains("pop from empty list")
+        || message.contains("out of bounds for axis")
     {
         return "IndexError";
     }

@@ -7987,6 +7987,8 @@ impl Vm {
                 'I' | 'L' => (StructFieldKind::U32, 4usize, true, true),
                 'q' => (StructFieldKind::I64, 8usize, true, true),
                 'Q' => (StructFieldKind::U64, 8usize, true, true),
+                'P' => (StructFieldKind::U64, 8usize, true, true),
+                'u' => (StructFieldKind::U32, 4usize, true, true),
                 'f' => (StructFieldKind::F32, 4usize, true, true),
                 'd' => (StructFieldKind::F64, 8usize, true, true),
                 _ => {

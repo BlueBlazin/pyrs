@@ -632,7 +632,11 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
             return std::ptr::null_mut();
         };
         // SAFETY: `converter` is a valid nb_int/nb_index slot for this object type.
-        unsafe { converter(slot_object) }
+        let result = unsafe { converter(slot_object) };
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            context.set_error("PyNumber_Long returned NULL without setting an exception");
+        }
+        result
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);

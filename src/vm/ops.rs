@@ -1123,6 +1123,7 @@ fn is_type_union_operand(value: &Value) -> bool {
             | BuiltinFunction::ByteArray
             | BuiltinFunction::MemoryView
             | BuiltinFunction::Range
+            | BuiltinFunction::Slice
             | BuiltinFunction::Complex
             | BuiltinFunction::ClassMethod
             | BuiltinFunction::StaticMethod

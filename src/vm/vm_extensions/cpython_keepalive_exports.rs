@@ -2785,6 +2785,18 @@ static KEEP_PYDESCR_NEW_CLASS_METHOD: unsafe extern "C" fn(
     *mut c_void,
 ) -> *mut c_void = super::PyDescr_NewClassMethod;
 #[used]
+static KEEP_PYCLASSMETHOD_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    super::PyClassMethod_New;
+#[used]
+static KEEP__PYCLASSMETHOD_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    super::_PyClassMethod_New;
+#[used]
+static KEEP_PYSTATICMETHOD_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    super::PyStaticMethod_New;
+#[used]
+static KEEP__PYSTATICMETHOD_NEW: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    super::_PyStaticMethod_New;
+#[used]
 static KEEP_PYWRAPPER_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     super::PyWrapper_New;
 #[used]

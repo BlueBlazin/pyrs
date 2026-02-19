@@ -5,8 +5,73 @@ use crate::runtime::{Object, Value};
 use crate::vm::{NativeCallResult, NativeMethodKind};
 
 use super::{
-    CpythonListCompatObject, cpython_debug_compare_value, cpython_set_error,
-    cpython_value_from_ptr, with_active_cpython_context_mut,
+    CpythonListCompatObject, CpythonMappingMethods, CpythonSequenceMethods,
+    cpython_debug_compare_value, cpython_set_error, cpython_value_from_ptr,
+    with_active_cpython_context_mut,
+};
+
+unsafe extern "C" fn cpython_list_sq_length_slot(list: *mut c_void) -> isize {
+    unsafe { PyList_Size(list) }
+}
+
+unsafe extern "C" fn cpython_list_sq_item_slot(list: *mut c_void, index: isize) -> *mut c_void {
+    unsafe { PyList_GetItemRef(list, index) }
+}
+
+unsafe extern "C" fn cpython_list_mp_length_slot(list: *mut c_void) -> isize {
+    unsafe { PyList_Size(list) }
+}
+
+unsafe extern "C" fn cpython_list_mp_subscript_slot(
+    list: *mut c_void,
+    key: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("list mp_subscript missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(list_value) = context.cpython_value_from_ptr_or_proxy(list) else {
+            context.set_error("list mp_subscript received unknown list pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("list mp_subscript received unknown key pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.getitem_value(list_value, key_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+pub(super) static mut PY_LIST_SEQUENCE_METHODS: CpythonSequenceMethods = CpythonSequenceMethods {
+    sq_length: cpython_list_sq_length_slot as *mut c_void,
+    sq_concat: std::ptr::null_mut(),
+    sq_repeat: std::ptr::null_mut(),
+    sq_item: cpython_list_sq_item_slot as *mut c_void,
+    was_sq_slice: std::ptr::null_mut(),
+    sq_ass_item: std::ptr::null_mut(),
+    was_sq_ass_slice: std::ptr::null_mut(),
+    sq_contains: std::ptr::null_mut(),
+    sq_inplace_concat: std::ptr::null_mut(),
+    sq_inplace_repeat: std::ptr::null_mut(),
+};
+
+pub(super) static mut PY_LIST_MAPPING_METHODS: CpythonMappingMethods = CpythonMappingMethods {
+    mp_length: cpython_list_mp_length_slot as *mut c_void,
+    mp_subscript: cpython_list_mp_subscript_slot as *mut c_void,
+    mp_ass_subscript: std::ptr::null_mut(),
 };
 
 #[unsafe(no_mangle)]

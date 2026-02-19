@@ -80,13 +80,42 @@ fn cpython_iter_next_for_capi(vm: &mut Vm, iter: &Value) -> Result<Option<Value>
     if !cpython_value_is_iterator_for_capi(vm, iter)? {
         return Err(RuntimeError::new("expected an iterator"));
     }
+    let trace_iter_next = std::env::var_os("PYRS_TRACE_CPY_ITERNEXT").is_some();
+    if trace_iter_next {
+        let tag = match iter {
+            Value::Iterator(_) => "iterator",
+            Value::Instance(_) => "instance",
+            Value::Generator(_) => "generator",
+            _ => "other",
+        };
+        eprintln!("[cpy-iternext] start iter={}", tag);
+    }
     match vm.next_from_iterator_value(iter)? {
-        GeneratorResumeOutcome::Yield(value) => Ok(Some(value)),
-        GeneratorResumeOutcome::Complete(_) => Ok(None),
+        GeneratorResumeOutcome::Yield(value) => {
+            if trace_iter_next {
+                eprintln!("[cpy-iternext] yield {}", crate::vm::format_repr(&value));
+            }
+            Ok(Some(value))
+        }
+        GeneratorResumeOutcome::Complete(_) => {
+            if trace_iter_next {
+                eprintln!("[cpy-iternext] complete");
+            }
+            Ok(None)
+        }
         GeneratorResumeOutcome::PropagatedException => {
             if cpython_stop_iteration_value_from_active_exception(vm).is_some() {
+                if trace_iter_next {
+                    eprintln!("[cpy-iternext] propagated stop-iteration");
+                }
                 Ok(None)
             } else {
+                if trace_iter_next {
+                    eprintln!(
+                        "[cpy-iternext] propagated error {}",
+                        vm.runtime_error_from_active_exception("iteration failed").message
+                    );
+                }
                 Err(vm.runtime_error_from_active_exception("iteration failed"))
             }
         }

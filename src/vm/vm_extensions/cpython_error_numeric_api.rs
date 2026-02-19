@@ -2307,10 +2307,37 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
             cpython_make_exception_instance_from_type_and_value(context, ptype, value_obj.clone())
         {
             let message = context.error_message_from_ptr(normalized);
+            if message.contains("__exit__")
+                && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some()
+            {
+                let exception_name = cpython_exception_class_name_from_ptr(ptype)
+                    .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
+                eprintln!(
+                    "[cpy-attr-exit] path=normalized ptype={:p} name={} value_ptr={:p} message={} bt={:?}",
+                    ptype,
+                    exception_name,
+                    value,
+                    message,
+                    Backtrace::force_capture()
+                );
+            }
             context.set_error_state(ptype, normalized, std::ptr::null_mut(), message);
             return;
         }
         let message = context.error_message_from_ptr(value);
+        if message.contains("__exit__") && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some()
+        {
+            let exception_name = cpython_exception_class_name_from_ptr(ptype)
+                .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype));
+            eprintln!(
+                "[cpy-attr-exit] path=direct ptype={:p} name={} value_ptr={:p} message={} bt={:?}",
+                ptype,
+                exception_name,
+                value,
+                message,
+                Backtrace::force_capture()
+            );
+        }
         context.set_error_state(ptype, value, std::ptr::null_mut(), message);
     })
     .map_err(|err| {

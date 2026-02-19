@@ -58,6 +58,63 @@ unsafe extern "C" {
 
 const METH_CLASS: c_int = 0x0010;
 
+unsafe extern "C" fn cpython_type_mp_subscript_slot(
+    object: *mut c_void,
+    key: *mut c_void,
+) -> *mut c_void {
+    let trace_type_subscript = std::env::var_os("PYRS_TRACE_TYPE_SUBSCRIPT").is_some();
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("type mp_subscript missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("type mp_subscript received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("type mp_subscript received unknown key pointer");
+            return std::ptr::null_mut();
+        };
+        if trace_type_subscript {
+            eprintln!(
+                "[type-subscript] object_ptr={:p} key_ptr={:p} object={} key={}",
+                object,
+                key,
+                cpython_value_debug_tag(&object_value),
+                cpython_value_debug_tag(&key_value)
+            );
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.getitem_value(object_value, key_value) {
+            Ok(value) => {
+                if trace_type_subscript {
+                    eprintln!("[type-subscript] result={}", cpython_value_debug_tag(&value));
+                }
+                context.alloc_cpython_ptr_for_value(value)
+            }
+            Err(err) => {
+                if trace_type_subscript {
+                    eprintln!("[type-subscript] error={}", err.message);
+                }
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+pub(super) static mut PY_TYPE_MAPPING_METHODS: CpythonMappingMethods = CpythonMappingMethods {
+    mp_length: std::ptr::null_mut(),
+    mp_subscript: cpython_type_mp_subscript_slot as *mut c_void,
+    mp_ass_subscript: std::ptr::null_mut(),
+};
+
 fn cpython_builtin_ctor_for_type_ptr(ty: *mut CpythonTypeObject) -> Option<BuiltinFunction> {
     let ptr = ty.cast::<c_void>();
     Some(if ptr == std::ptr::addr_of_mut!(PyBool_Type).cast() {
@@ -928,24 +985,27 @@ pub(super) fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
     if object_type.is_null() {
         return ModuleCapiContext::is_probable_type_object_without_metatype(ptr);
     }
-    let object_metatype = object_type.cast::<CpythonTypeObject>();
+    let object_type_obj = object_type.cast::<CpythonTypeObject>();
     // SAFETY: object_type was loaded from a non-null object header above.
-    let metatype_flags = unsafe {
-        object_metatype
+    let object_type_flags = unsafe {
+        object_type_obj
             .as_ref()
             .map(|ty| ty.tp_flags)
             .unwrap_or_default()
     };
-    if object_type == type_type || (metatype_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0 {
+    if object_type == type_type || (object_type_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0 {
         return true;
     }
     // SAFETY: object_type and type_type are validated non-null pointers.
     if unsafe { PyType_IsSubtype(object_type, type_type) != 0 } {
         return true;
     }
-    // Some extension-defined metatypes arrive with incomplete fast-subclass flags.
-    // Fall back to conservative structural checks so ready heap types are not rejected.
-    ModuleCapiContext::is_probable_type_object_without_metatype(ptr)
+    // Heap types created through `PyType_FromSpec*` are tracked in the registry even
+    // when fast-subclass flags are still incomplete during bring-up.
+    cpython_heap_type_registry()
+        .lock()
+        .ok()
+        .is_some_and(|registry| registry.contains_key(&(ptr as usize)))
 }
 
 fn cpython_type_ptr_from_value(value: &Value) -> Option<*mut CpythonTypeObject> {
@@ -1002,6 +1062,20 @@ fn cpython_resolve_type_base_from_arg(
             for item in items {
                 if let Some(base) = cpython_type_ptr_from_value(item) {
                     return Ok(base);
+                }
+            }
+            // Fallback to raw tuple-pointer inspection for foreign extension tuples whose
+            // items are not yet mapped into runtime Values.
+            let raw_len = unsafe { PyTuple_Size(bases) };
+            if raw_len > 0 {
+                for index in 0..(raw_len as usize) {
+                    let raw_item = unsafe { PyTuple_GetItem(bases, index as isize) };
+                    if raw_item.is_null() {
+                        continue;
+                    }
+                    if cpython_is_type_object_ptr(raw_item) {
+                        return Ok(raw_item.cast::<CpythonTypeObject>());
+                    }
                 }
             }
             Ok(default)

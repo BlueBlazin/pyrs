@@ -288,10 +288,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             unsafe { Py_DecRef(kwnames_ptr) };
         }
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
-            context.set_error(format!(
-                "SystemError: NULL result without error in {}()",
-                method_name
-            ));
+            cpython_set_null_result_without_error(context, &method_name);
         }
         if trace_calls {
             eprintln!(
@@ -545,8 +542,28 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
                     })
                     .unwrap_or((std::ptr::null_mut(), "<unknown-self-value>".to_string()));
                 let self_owned = context.owns_cpython_allocation_ptr(self_obj);
+                let vm_stack = if context.vm.is_null() {
+                    "<no-vm>".to_string()
+                } else {
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    let vm = unsafe { &*context.vm };
+                    vm.frames
+                        .iter()
+                        .rev()
+                        .take(8)
+                        .map(|frame| {
+                            let active = frame
+                                .active_exception
+                                .as_ref()
+                                .map(cpython_value_debug_tag)
+                                .unwrap_or_else(|| "None".to_string());
+                            format!("{}:{} active={}", frame.code.name, frame.ip, active)
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" <- ")
+                };
                 eprintln!(
-                    "[null-noerr-method] name={} flags={} self={:p} self_tag={} nargs={} kwargs={} kw_names=[{}] args=[{}] self_type={} last_error={:?} first_error={:?}",
+                    "[null-noerr-method] name={} flags={} self={:p} self_tag={} nargs={} kwargs={} kw_names=[{}] args=[{}] self_type={} last_error={:?} first_error={:?} vm_stack={}",
                     method_name,
                     flags,
                     self_obj,
@@ -561,13 +578,11 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
                     cpython_safe_object_type_name(self_obj)
                         .unwrap_or_else(|| "<unknown-type>".to_string()),
                     context.last_error,
-                    context.first_error
+                    context.first_error,
+                    vm_stack
                 );
             }
-            context.set_error(format!(
-                "SystemError: NULL result without error in {}()",
-                method_name
-            ));
+            cpython_set_null_result_without_error(context, &method_name);
         }
         return result;
     }
@@ -604,10 +619,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             unsafe { std::mem::transmute(method) };
         let result = unsafe { call(self_obj, args_ptr, kwargs_ptr) };
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
-            context.set_error(format!(
-                "SystemError: NULL result without error in {}()",
-                method_name
-            ));
+            cpython_set_null_result_without_error(context, &method_name);
         }
         return result;
     }
@@ -688,10 +700,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             );
         }
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
-            context.set_error(format!(
-                "SystemError: NULL result without error in {}()",
-                method_name
-            ));
+            cpython_set_null_result_without_error(context, &method_name);
         }
         return result;
     }
@@ -705,10 +714,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             unsafe { std::mem::transmute(method) };
         let result = unsafe { call(self_obj, std::ptr::null_mut()) };
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
-            context.set_error(format!(
-                "SystemError: NULL result without error in {}()",
-                method_name
-            ));
+            cpython_set_null_result_without_error(context, &method_name);
         }
         return result;
     }
@@ -727,15 +733,41 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             unsafe { std::mem::transmute(method) };
         let result = unsafe { call(self_obj, arg_ptr) };
         if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
-            context.set_error(format!(
-                "SystemError: NULL result without error in {}()",
-                method_name
-            ));
+            cpython_set_null_result_without_error(context, &method_name);
         }
         return result;
     }
     context.set_error(format!("unsupported cfunction method flags: {flags}"));
     std::ptr::null_mut()
+}
+
+fn cpython_set_null_result_without_error(
+    context: &mut ModuleCapiContext,
+    method_name: &str,
+) {
+    if context.current_error.is_some() {
+        return;
+    }
+    if !context.vm.is_null() {
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        if vm
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.as_ref())
+            .is_some()
+        {
+            let detail = vm
+                .runtime_error_from_active_exception("native method call failed")
+                .message;
+            context.set_error(detail);
+            return;
+        }
+    }
+    context.set_error(format!(
+        "SystemError: NULL result without error in {}()",
+        method_name
+    ));
 }
 
 fn cpython_method_call_flags_are_valid(flags: i32) -> bool {
@@ -981,6 +1013,60 @@ pub unsafe extern "C" fn PyDescr_NewClassMethod(
         cpython_set_error(err);
         std::ptr::null_mut()
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyClassMethod_New(callable: *mut c_void) -> *mut c_void {
+    if callable.is_null() {
+        unsafe { PyErr_BadArgument() };
+        return std::ptr::null_mut();
+    }
+    let value = match cpython_value_from_ptr(callable) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::ClassMethod, vec![value]) {
+        Ok(wrapper) => cpython_new_ptr_for_value(wrapper),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyClassMethod_New(callable: *mut c_void) -> *mut c_void {
+    unsafe { PyClassMethod_New(callable) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyStaticMethod_New(callable: *mut c_void) -> *mut c_void {
+    if callable.is_null() {
+        unsafe { PyErr_BadArgument() };
+        return std::ptr::null_mut();
+    }
+    let value = match cpython_value_from_ptr(callable) {
+        Ok(value) => value,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    match cpython_call_builtin(BuiltinFunction::StaticMethod, vec![value]) {
+        Ok(wrapper) => cpython_new_ptr_for_value(wrapper),
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyStaticMethod_New(callable: *mut c_void) -> *mut c_void {
+    unsafe { PyStaticMethod_New(callable) }
 }
 
 #[unsafe(no_mangle)]

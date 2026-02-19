@@ -14,6 +14,10 @@ use super::{
     value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
 };
 
+unsafe extern "C" {
+    fn PyErr_Clear();
+}
+
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
     let shape_items = match value {
         Value::List(obj) => match &*obj.kind() {
@@ -93,7 +97,9 @@ impl Vm {
         };
         if let Some(Value::Str(value)) = module_data.globals.get("value") {
             if !args.is_empty() {
-                return Err(RuntimeError::new(format!("{method_name}() expects no arguments")));
+                return Err(RuntimeError::new(format!(
+                    "{method_name}() expects no arguments"
+                )));
             }
             return Ok(value.clone());
         }
@@ -4688,15 +4694,14 @@ impl Vm {
                 if !matches!(getter, Value::None) && !self.is_callable_value(&getter) {
                     return Err(RuntimeError::new("getter() argument must be callable"));
                 }
-                let updated =
-                    self.clone_property_descriptor_with(
-                        &receiver,
-                        Some(getter),
-                        None,
-                        None,
-                        None,
-                        None,
-                    )?;
+                let updated = self.clone_property_descriptor_with(
+                    &receiver,
+                    Some(getter),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
                 Ok(NativeCallResult::Value(updated))
             }
             NativeMethodKind::PropertySetter => {
@@ -4707,15 +4712,14 @@ impl Vm {
                 if !matches!(setter, Value::None) && !self.is_callable_value(&setter) {
                     return Err(RuntimeError::new("setter() argument must be callable"));
                 }
-                let updated =
-                    self.clone_property_descriptor_with(
-                        &receiver,
-                        None,
-                        Some(setter),
-                        None,
-                        None,
-                        None,
-                    )?;
+                let updated = self.clone_property_descriptor_with(
+                    &receiver,
+                    None,
+                    Some(setter),
+                    None,
+                    None,
+                    None,
+                )?;
                 Ok(NativeCallResult::Value(updated))
             }
             NativeMethodKind::PropertyDeleter => {
@@ -5569,6 +5573,9 @@ impl Vm {
             }
             Value::Instance(instance) => {
                 let receiver = Value::Instance(instance.clone());
+                let is_cpython_proxy_iterator =
+                    Vm::cpython_proxy_raw_ptr_from_value(&receiver).is_some()
+                        && Vm::cpython_proxy_has_iternext(&receiver).unwrap_or(false);
                 let method = self
                     .lookup_bound_special_method(&receiver, "__next__")?
                     .ok_or_else(|| RuntimeError::new("yield from expects iterable"))?;
@@ -5601,7 +5608,11 @@ impl Vm {
                             frame.blocks = caller_blocks.clone();
                             frame.active_exception = caller_active_exception.clone();
                         }
-                        if exception_is_named(&value, "StopIteration") {
+                        if exception_is_named(&value, "StopIteration")
+                            || (is_cpython_proxy_iterator
+                                && exception_is_named(&value, "IndexError"))
+                        {
+                            unsafe { PyErr_Clear() };
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
                             Ok(GeneratorResumeOutcome::Yield(value))
@@ -5620,7 +5631,11 @@ impl Vm {
                                 frame.active_exception = caller_active_exception.clone();
                             }
                             if let Some(exception) = active_exception {
-                                if exception_is_named(&exception, "StopIteration") {
+                                if exception_is_named(&exception, "StopIteration")
+                                    || (is_cpython_proxy_iterator
+                                        && exception_is_named(&exception, "IndexError"))
+                                {
+                                    unsafe { PyErr_Clear() };
                                     return Ok(GeneratorResumeOutcome::Complete(Value::None));
                                 }
                                 self.raise_exception(exception)?;
@@ -5638,7 +5653,11 @@ impl Vm {
                             frame.blocks = caller_blocks.clone();
                             frame.active_exception = caller_active_exception.clone();
                         }
-                        if runtime_error_matches_exception(&err.message, "StopIteration") {
+                        if runtime_error_matches_exception(&err.message, "StopIteration")
+                            || (is_cpython_proxy_iterator
+                                && runtime_error_matches_exception(&err.message, "IndexError"))
+                        {
+                            unsafe { PyErr_Clear() };
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
                         } else {
                             Err(err)
@@ -6075,13 +6094,16 @@ impl Vm {
                     Ok(InternalCallOutcome::CallerExceptionHandled) => {
                         if self.active_exception_is("IndexError") {
                             self.clear_active_exception();
+                            unsafe { PyErr_Clear() };
                             return Ok(None);
                         }
                         let _ = target;
                         let err = self.runtime_error_from_active_exception("__getitem__() failed");
                         if runtime_error_matches_exception(&err.message, "IndexError")
                             || err.message.contains("index out of range")
+                            || err.message.contains("out of bounds for axis")
                         {
+                            unsafe { PyErr_Clear() };
                             return Ok(None);
                         }
                         Err(err)
@@ -6089,7 +6111,9 @@ impl Vm {
                     Err(err) => {
                         if runtime_error_matches_exception(&err.message, "IndexError")
                             || err.message.contains("index out of range")
+                            || err.message.contains("out of bounds for axis")
                         {
+                            unsafe { PyErr_Clear() };
                             return Ok(None);
                         }
                         Err(err)
@@ -6114,9 +6138,13 @@ impl Vm {
                             return Ok(Some(value));
                         }
                         Err(err) => {
-                            if runtime_error_matches_exception(&err.message, "IndexError")
-                                || err.message.contains("index out of range")
-                            {
+                            let treat_as_end = runtime_error_matches_exception(
+                                &err.message,
+                                "IndexError",
+                            ) || err.message.contains("index out of range")
+                                || err.message.contains("out of bounds for axis");
+                            if treat_as_end {
+                                unsafe { PyErr_Clear() };
                                 return Ok(None);
                             }
                             return Err(err);
@@ -6136,9 +6164,13 @@ impl Vm {
                         Ok(Some(value))
                     }
                     Err(err) => {
-                        if runtime_error_matches_exception(&err.message, "IndexError")
-                            || err.message.contains("index out of range")
-                        {
+                        let treat_as_end = runtime_error_matches_exception(
+                            &err.message,
+                            "IndexError",
+                        ) || err.message.contains("index out of range")
+                            || err.message.contains("out of bounds for axis");
+                        if treat_as_end {
+                            unsafe { PyErr_Clear() };
                             return Ok(None);
                         }
                         Err(err)
@@ -6392,6 +6424,9 @@ impl Vm {
             BuiltinFunction::SysExcInfo => self.builtin_sys_exc_info(args, kwargs),
             BuiltinFunction::SysExit => self.builtin_sys_exit(args, kwargs),
             BuiltinFunction::SysIsFinalizing => self.builtin_sys_is_finalizing(args, kwargs),
+            BuiltinFunction::SysGetDefaultEncoding => {
+                self.builtin_sys_getdefaultencoding(args, kwargs)
+            }
             BuiltinFunction::SysGetFilesystemEncoding => {
                 self.builtin_sys_getfilesystemencoding(args, kwargs)
             }
@@ -6596,6 +6631,8 @@ impl Vm {
             BuiltinFunction::TimeSleep => self.builtin_time_sleep(args, kwargs),
             BuiltinFunction::OsGetPid => self.builtin_os_getpid(args, kwargs),
             BuiltinFunction::OsGetCwd => self.builtin_os_getcwd(args, kwargs),
+            BuiltinFunction::OsUname => self.builtin_os_uname(args, kwargs),
+            BuiltinFunction::OsUnameIter => self.builtin_os_uname_iter(args, kwargs),
             BuiltinFunction::OsGetEnv => self.builtin_os_getenv(args, kwargs),
             BuiltinFunction::OsPutEnv => self.builtin_os_putenv(args, kwargs),
             BuiltinFunction::OsUnsetEnv => self.builtin_os_unsetenv(args, kwargs),

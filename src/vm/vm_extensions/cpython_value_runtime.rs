@@ -1,12 +1,15 @@
 use std::ffi::c_void;
 
-use crate::runtime::{BuiltinFunction, Object, Value};
+use crate::runtime::{BuiltinFunction, IteratorKind, Object, Value};
 
 use super::{
-    ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyBytes_Type, PyComplex_Type,
-    PyDict_Type, PyDictProxy_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type, PyList_Type,
-    PyLong_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type,
-    PySet_Type, PySlice_Type, PySuper_Type, PyTuple_Type, PyType_Type, PyUnicode_Type,
+    ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArrayIter_Type, PyByteArray_Type,
+    PyBytesIter_Type, PyBytes_Type, PyCallIter_Type, PyComplex_Type, PyDictIterKey_Type,
+    PyDict_Type, PyDictProxy_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type, PyGen_Type,
+    PyListIter_Type, PyList_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type, PyMethod_Type,
+    PyModule_Type, PyNone_Type, PyRangeIter_Type, PyRange_Type, PySeqIter_Type, PySetIter_Type,
+    PySet_Type, PySlice_Type, PySuper_Type, PyTupleIter_Type, PyTuple_Type, PyType_Type,
+    PyUnicodeIter_Type, PyUnicode_Type,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -26,6 +29,28 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
         Value::Bytes(_) => std::ptr::addr_of_mut!(PyBytes_Type).cast(),
         Value::ByteArray(_) => std::ptr::addr_of_mut!(PyByteArray_Type).cast(),
         Value::MemoryView(_) => std::ptr::addr_of_mut!(PyMemoryView_Type).cast(),
+        Value::Iterator(obj) => match &*obj.kind() {
+            Object::Iterator(state) => match &state.kind {
+                IteratorKind::List(_) => std::ptr::addr_of_mut!(PyListIter_Type).cast(),
+                IteratorKind::Tuple(_) => std::ptr::addr_of_mut!(PyTupleIter_Type).cast(),
+                IteratorKind::Str(_) => std::ptr::addr_of_mut!(PyUnicodeIter_Type).cast(),
+                IteratorKind::Dict(_) => std::ptr::addr_of_mut!(PyDictIterKey_Type).cast(),
+                IteratorKind::Set(_) => std::ptr::addr_of_mut!(PySetIter_Type).cast(),
+                IteratorKind::Bytes(_) => std::ptr::addr_of_mut!(PyBytesIter_Type).cast(),
+                IteratorKind::ByteArray(_) => std::ptr::addr_of_mut!(PyByteArrayIter_Type).cast(),
+                IteratorKind::Map { .. } => std::ptr::addr_of_mut!(PyMap_Type).cast(),
+                IteratorKind::RangeObject { .. } => std::ptr::addr_of_mut!(PyRange_Type).cast(),
+                IteratorKind::Range { .. } => std::ptr::addr_of_mut!(PyRangeIter_Type).cast(),
+                IteratorKind::CallIter { .. } => std::ptr::addr_of_mut!(PyCallIter_Type).cast(),
+                IteratorKind::SequenceGetItem { .. }
+                | IteratorKind::CpythonSequence { .. }
+                | IteratorKind::MemoryView(_)
+                | IteratorKind::Cycle { .. }
+                | IteratorKind::Count { .. } => std::ptr::addr_of_mut!(PySeqIter_Type).cast(),
+            },
+            _ => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),
+        },
+        Value::Generator(_) => std::ptr::addr_of_mut!(PyGen_Type).cast(),
         Value::Module(_) => std::ptr::addr_of_mut!(PyModule_Type).cast(),
         Value::Slice(_) => std::ptr::addr_of_mut!(PySlice_Type).cast(),
         Value::Super(_) => std::ptr::addr_of_mut!(PySuper_Type).cast(),

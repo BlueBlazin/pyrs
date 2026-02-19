@@ -10,19 +10,17 @@ use super::{
     LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry, ModuleObject,
     NativeMethodKind, NativeMethodObject, ObjRef, Object, OneArgCallHotPath,
     OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, QuickenedSiteKind, Rc, RuntimeError,
-    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values,
-    apply_bindings, bind_arguments, builtin_exception_parent,
-    class_attr_lookup, class_attr_lookup_direct, classify_runtime_error, decode_call_counts,
-    deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value,
-    dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
-    extract_import_error_name, extract_os_error_errno, extract_os_error_strerror,
-    extract_prefixed_exception_message, extract_runtime_error_exception_name,
-    extract_runtime_error_final_message, floor_div_values, format_repr, format_value,
-    infer_os_error_errno, is_comprehension_code, is_import_error_family, is_os_error_family,
-    is_truthy,
-    lshift_values, memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
-    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
-    module_globals_version, pos_value, pow_values, rshift_values,
+    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings,
+    bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
+    classify_runtime_error, decode_call_counts, deref_name, dict_contains_key_checked,
+    dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, ensure_hashable,
+    exception_message_from_call_args, extract_import_error_name, extract_os_error_errno,
+    extract_os_error_strerror, extract_prefixed_exception_message,
+    extract_runtime_error_exception_name, extract_runtime_error_final_message, floor_div_values,
+    format_repr, format_value, infer_os_error_errno, is_comprehension_code, is_import_error_family,
+    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
+    memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
+    mod_values, module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
     slot_names_from_value, strip_sqlite_exception_metadata, value_from_bigint, value_to_int,
     value_to_optional_index,
@@ -94,7 +92,8 @@ impl Vm {
         if module_name.is_empty() || module_name == "__main__" {
             return;
         }
-        let import_loader = loader_name == SOURCE_FILE_LOADER || loader_name == SOURCELESS_FILE_LOADER;
+        let import_loader =
+            loader_name == SOURCE_FILE_LOADER || loader_name == SOURCELESS_FILE_LOADER;
         if import_loader {
             self.remove_module_entry_and_parent_binding(&module_name);
         }
@@ -10090,9 +10089,8 @@ impl Vm {
                     self.clear_active_exception();
                     Ok(None)
                 } else {
-                    Err(self.runtime_error_from_active_exception(
-                        "property attribute lookup failed",
-                    ))
+                    Err(self
+                        .runtime_error_from_active_exception("property attribute lookup failed"))
                 }
             }
             Err(err) => {
@@ -10129,7 +10127,8 @@ impl Vm {
             if matches!(value, Value::None) {
                 continue;
             }
-            if let Some(flag) = self.optional_getattr_value(value.clone(), "__isabstractmethod__")?
+            if let Some(flag) =
+                self.optional_getattr_value(value.clone(), "__isabstractmethod__")?
                 && is_truthy(&flag)
             {
                 return Ok(true);
@@ -10157,28 +10156,34 @@ impl Vm {
                 let abstract_flag = self.property_descriptor_is_abstract(&fget, &fset, &fdel)?;
                 Ok(Some(Value::Bool(abstract_flag)))
             }
-            "__get__" => Ok(Some(
-                self.alloc_native_bound_method(NativeMethodKind::PropertyGet, instance.clone()),
-            )),
-            "__set__" => Ok(Some(
-                self.alloc_native_bound_method(NativeMethodKind::PropertySet, instance.clone()),
-            )),
-            "__delete__" => Ok(Some(
-                self.alloc_native_bound_method(NativeMethodKind::PropertyDelete, instance.clone()),
-            )),
+            "__get__" => Ok(Some(self.alloc_native_bound_method(
+                NativeMethodKind::PropertyGet,
+                instance.clone(),
+            ))),
+            "__set__" => Ok(Some(self.alloc_native_bound_method(
+                NativeMethodKind::PropertySet,
+                instance.clone(),
+            ))),
+            "__delete__" => Ok(Some(self.alloc_native_bound_method(
+                NativeMethodKind::PropertyDelete,
+                instance.clone(),
+            ))),
             "__set_name__" => Ok(Some(self.alloc_native_bound_method(
                 NativeMethodKind::PropertySetName,
                 instance.clone(),
             ))),
-            "getter" => Ok(Some(
-                self.alloc_native_bound_method(NativeMethodKind::PropertyGetter, instance.clone()),
-            )),
-            "setter" => Ok(Some(
-                self.alloc_native_bound_method(NativeMethodKind::PropertySetter, instance.clone()),
-            )),
-            "deleter" => Ok(Some(
-                self.alloc_native_bound_method(NativeMethodKind::PropertyDeleter, instance.clone()),
-            )),
+            "getter" => Ok(Some(self.alloc_native_bound_method(
+                NativeMethodKind::PropertyGetter,
+                instance.clone(),
+            ))),
+            "setter" => Ok(Some(self.alloc_native_bound_method(
+                NativeMethodKind::PropertySetter,
+                instance.clone(),
+            ))),
+            "deleter" => Ok(Some(self.alloc_native_bound_method(
+                NativeMethodKind::PropertyDeleter,
+                instance.clone(),
+            ))),
             _ => Ok(None),
         }
     }

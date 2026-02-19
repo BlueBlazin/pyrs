@@ -47,6 +47,8 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             name.as_str(),
             "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base" | "BoolDType"
         );
+    let trace_exit_lookup = std::env::var_os("PYRS_TRACE_ATTR_EXIT_LOOKUP").is_some()
+        && name == "__exit__";
     let trace_seed_attrs = std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some()
         && matches!(
             name.as_str(),
@@ -410,6 +412,13 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             object, tag, name, owned, known
         );
     }
+    if trace_exit_lookup {
+        eprintln!(
+            "[cpy-attr-exit-lookup] object={:p} object_tag={}",
+            object,
+            cpython_value_debug_tag(&object_value)
+        );
+    }
     if name == "__array_finalize__" && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
         match &object_value {
             Value::Class(class_obj) => {
@@ -439,6 +448,9 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     ) {
         Ok(value) => {
             let ptr = cpython_new_ptr_for_value(value);
+            if trace_exit_lookup {
+                eprintln!("[cpy-attr-exit-lookup] result={:p}", ptr);
+            }
             if trace_reduce_attr {
                 eprintln!(
                     "[numpy-reduce] PyObject_GetAttrString builtin-result object={:p} attr={} result={:p}",
@@ -454,6 +466,9 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             ptr
         }
         Err(err) => {
+            if trace_exit_lookup {
+                eprintln!("[cpy-attr-exit-lookup] error={}", err);
+            }
             if std::env::var_os("PYRS_TRACE_NONE_NAME_GETATTR").is_some()
                 && name == "name"
                 && matches!(object_value_for_debug, Value::None)
@@ -733,6 +748,8 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             return std::ptr::null_mut();
         }
     };
+    let object_debug_for_err = cpython_value_debug_tag(&object_value);
+    let name_debug_for_err = cpython_value_debug_tag(&name_value);
     match cpython_call_builtin(BuiltinFunction::GetAttr, vec![object_value, name_value]) {
         Ok(value) => {
             let ptr = cpython_new_ptr_for_value(value);
@@ -749,6 +766,18 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 eprintln!(
                     "[numpy-reduce] PyObject_GetAttr builtin-error object={:p} attr={} err={}",
                     object, attr_name, err
+                );
+            }
+            if err.contains("__exit__")
+                && std::env::var_os("PYRS_TRACE_ATTR_MISS").is_some()
+            {
+                eprintln!(
+                    "[cpy-attr-miss] object={:p} object_value={} name={} err={} bt={:?}",
+                    object,
+                    object_debug_for_err,
+                    name_debug_for_err,
+                    err,
+                    Backtrace::force_capture()
                 );
             }
             cpython_set_error(err);
@@ -1167,10 +1196,6 @@ pub unsafe extern "C" fn PyObject_SetAttr(
     name: *mut c_void,
     value: *mut c_void,
 ) -> i32 {
-    if value.is_null() {
-        unsafe { PyErr_BadInternalCall() };
-        return -1;
-    }
     let trace_pyx_capi = if std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() {
         with_active_cpython_context_mut(|context| {
             context
@@ -1186,6 +1211,7 @@ pub unsafe extern "C" fn PyObject_SetAttr(
     } else {
         false
     };
+    // CPython treats `value == NULL` as attribute deletion for `PyObject_SetAttr`.
     let status = unsafe { PyObject_GenericSetAttr(object, name, value) };
     if trace_pyx_capi {
         eprintln!(

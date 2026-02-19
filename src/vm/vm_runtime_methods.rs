@@ -735,6 +735,13 @@ impl Vm {
                     }
                 }
                 other => {
+                    if typing_alias_marker_value(&other) && typing_alias_index_shape(&index) {
+                        // Typing/generic alias marker instances can be re-subscripted while
+                        // building annotation metadata in scientific-stack imports.
+                        // Preserve the symbolic alias object instead of treating it as a
+                        // concrete runtime container.
+                        return Ok(other);
+                    }
                     if let Some(proxy_result) =
                         self.cpython_proxy_get_item(&other, index.clone())
                     {
@@ -751,6 +758,13 @@ impl Vm {
                             }
                         }
                     } else {
+                        if std::env::var_os("PYRS_TRACE_GETITEM_UNSUPPORTED").is_some() {
+                            eprintln!(
+                                "[getitem-unsupported] value={} index={}",
+                                format_repr(&other),
+                                format_repr(&index)
+                            );
+                        }
                         Err(RuntimeError::new("subscript unsupported type"))
                     }
                 }

@@ -8980,8 +8980,7 @@ fn property_accepts_keyword_arguments() {
 
 #[test]
 fn property_exposes_name_from_getter() {
-    let source =
-        "class C:\n    @property\n    def value(self):\n        return 42\nok = (C.value.__name__ == 'value')\n";
+    let source = "class C:\n    @property\n    def value(self):\n        return 42\nok = (C.value.__name__ == 'value')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9337,6 +9336,17 @@ fn itertools_count_iterates() {
 #[test]
 fn itertools_cycle_repeats_indefinitely() {
     let source = "import itertools\nit = itertools.cycle([1, 19])\nout = [next(it), next(it), next(it), next(it), next(it)]\nok = out == [1, 19, 1, 19, 1]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn itertools_cycle_sequence_fallback_stops_on_numpy_style_indexerror() {
+    let source = "import itertools\nclass Seq:\n    def __getitem__(self, i):\n        if i < 4:\n            return i\n        raise IndexError(f'index {i} is out of bounds for axis 0 with size 4')\nit = itertools.cycle(Seq())\nout = [next(it), next(it), next(it), next(it), next(it), next(it)]\nok = out == [0, 1, 2, 3, 0, 1]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -7,6 +7,25 @@ use super::{
 };
 
 impl Vm {
+    fn import_active_exception_summary(&self, value: &Value) -> String {
+        match value {
+            Value::Exception(exception) => {
+                if let Some(message) = exception.message.as_ref() {
+                    let prefixed = format!("{}:", exception.name);
+                    if message.starts_with(&prefixed) {
+                        message.clone()
+                    } else {
+                        format!("{}: {}", exception.name, message)
+                    }
+                } else {
+                    exception.name.clone()
+                }
+            }
+            Value::ExceptionType(name) => name.clone(),
+            other => self.value_type_name_for_error(other),
+        }
+    }
+
     pub(super) fn builtin_import(
         &mut self,
         mut args: Vec<Value>,
@@ -257,10 +276,7 @@ impl Vm {
                     .get(caller_depth.saturating_sub(1))
                     .and_then(|frame| frame.active_exception.as_ref())
             {
-                let exception_name = self.value_type_name_for_error(active);
-                return Err(RuntimeError::new(format!(
-                    "{exception_name}: import raised exception"
-                )));
+                return Err(RuntimeError::new(self.import_active_exception_summary(active)));
             }
             return Err(err);
         }
@@ -284,10 +300,7 @@ impl Vm {
                     );
                 }
                 if let Some(active) = caller_active_exception_after.as_ref() {
-                    let exception_name = self.value_type_name_for_error(active);
-                    return Err(RuntimeError::new(format!(
-                        "{exception_name}: import raised exception"
-                    )));
+                    return Err(RuntimeError::new(self.import_active_exception_summary(active)));
                 }
                 return Err(RuntimeError::new("RuntimeError: import raised exception"));
             }

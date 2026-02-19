@@ -1,11 +1,12 @@
 use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
-    InstanceObject, LOCAL_SHIM_MODULES, ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef,
-    Object, PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES,
-    PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf,
-    Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM,
-    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
+    InstanceObject, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject,
+    ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object, PURE_STDLIB_COLLECTIONS_MODULES,
+    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
+    PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError,
+    SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER,
+    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
     cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
     matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
 };
@@ -386,6 +387,7 @@ impl Vm {
             &[
                 ("getpid", BuiltinFunction::OsGetPid),
                 ("getcwd", BuiltinFunction::OsGetCwd),
+                ("uname", BuiltinFunction::OsUname),
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("putenv", BuiltinFunction::OsPutEnv),
                 ("unsetenv", BuiltinFunction::OsUnsetEnv),
@@ -532,6 +534,7 @@ impl Vm {
             &[
                 ("getpid", BuiltinFunction::OsGetPid),
                 ("getcwd", BuiltinFunction::OsGetCwd),
+                ("uname", BuiltinFunction::OsUname),
                 ("getenv", BuiltinFunction::OsGetEnv),
                 ("putenv", BuiltinFunction::OsPutEnv),
                 ("unsetenv", BuiltinFunction::OsUnsetEnv),
@@ -6370,6 +6373,11 @@ impl Vm {
     }
 
     pub(super) fn path_finder_find_spec(&mut self, name: &str) -> Option<ModuleSourceInfo> {
+        if LOCAL_SHIM_PRECEDENCE_MODULES.contains(&name)
+            && let Some(shim_source) = self.preferred_local_shim_source(name)
+        {
+            return Some(shim_source);
+        }
         if let Some((parent_name, child_name)) = name.rsplit_once('.')
             && let Some(parent_paths) = self.package_search_paths(parent_name)
             && let Some(source) = self.find_module_source_in_roots(child_name, &parent_paths)

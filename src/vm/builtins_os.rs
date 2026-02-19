@@ -22,6 +22,135 @@ const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
 const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
 
 impl Vm {
+    pub(super) fn builtin_os_uname(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("uname() expects no arguments"));
+        }
+        let sysname = if cfg!(target_os = "macos") {
+            "Darwin".to_string()
+        } else if cfg!(target_os = "linux") {
+            "Linux".to_string()
+        } else {
+            std::env::consts::OS.to_string()
+        };
+        let nodename = std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("COMPUTERNAME"))
+            .unwrap_or_else(|_| "localhost".to_string());
+        let release = Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
+            .and_then(|out| {
+                if out.status.success() {
+                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| "0.0.0".to_string());
+        let version = Command::new("uname")
+            .arg("-v")
+            .output()
+            .ok()
+            .and_then(|out| {
+                if out.status.success() {
+                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+        let machine = Command::new("uname")
+            .arg("-m")
+            .output()
+            .ok()
+            .and_then(|out| {
+                if out.status.success() {
+                    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| std::env::consts::ARCH.to_string());
+        let uname_class = match self
+            .heap
+            .alloc_class(ClassObject::new("uname_result".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *uname_class.kind_mut() {
+            class_data.attrs.insert(
+                "__iter__".to_string(),
+                Value::Builtin(BuiltinFunction::OsUnameIter),
+            );
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("posix".to_string()));
+            class_data.attrs.insert(
+                "__name__".to_string(),
+                Value::Str("uname_result".to_string()),
+            );
+        }
+        let uname_instance = self.heap.alloc_instance(InstanceObject::new(uname_class));
+        if let Value::Instance(instance) = &uname_instance
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+        {
+            instance_data
+                .attrs
+                .insert("sysname".to_string(), Value::Str(sysname.clone()));
+            instance_data
+                .attrs
+                .insert("nodename".to_string(), Value::Str(nodename.clone()));
+            instance_data
+                .attrs
+                .insert("release".to_string(), Value::Str(release.clone()));
+            instance_data
+                .attrs
+                .insert("version".to_string(), Value::Str(version.clone()));
+            instance_data
+                .attrs
+                .insert("machine".to_string(), Value::Str(machine.clone()));
+            instance_data.attrs.insert(
+                "__values__".to_string(),
+                self.heap.alloc_tuple(vec![
+                    Value::Str(sysname),
+                    Value::Str(nodename),
+                    Value::Str(release),
+                    Value::Str(version),
+                    Value::Str(machine),
+                ]),
+            );
+        }
+        Ok(uname_instance)
+    }
+
+    pub(super) fn builtin_os_uname_iter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "uname_result.__iter__ expects no arguments",
+            ));
+        }
+        let receiver = self.receiver_from_value(&args[0])?;
+        let values = match &*receiver.kind() {
+            Object::Instance(instance_data) => instance_data.attrs.get("__values__").cloned(),
+            _ => None,
+        }
+        .ok_or_else(|| RuntimeError::new("uname_result has no values"))?;
+        self.to_iterator_value(values)
+    }
+
     pub(super) fn builtin_os_getcwd(
         &mut self,
         args: Vec<Value>,

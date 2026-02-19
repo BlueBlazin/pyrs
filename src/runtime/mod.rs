@@ -2338,6 +2338,7 @@ pub enum BuiltinFunction {
     SysExcInfo,
     SysExit,
     SysIsFinalizing,
+    SysGetDefaultEncoding,
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
     SysGetRefCount,
@@ -2451,6 +2452,8 @@ pub enum BuiltinFunction {
     TimeSleep,
     OsGetPid,
     OsGetCwd,
+    OsUname,
+    OsUnameIter,
     OsGetEnv,
     OsPutEnv,
     OsUnsetEnv,
@@ -4450,32 +4453,34 @@ impl BuiltinFunction {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("RLock() expects no arguments"));
                 }
-                let module = match heap.alloc_module(ModuleObject::new("<RLock>".to_string())) {
-                    Value::Module(obj) => obj,
+                let class = match heap
+                    .alloc_class(ClassObject::new("_thread.lock".to_string(), Vec::new()))
+                {
+                    Value::Class(obj) => obj,
                     _ => unreachable!(),
                 };
-                if let Object::Module(module_data) = &mut *module.kind_mut() {
-                    module_data.globals.insert(
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    class_data.attrs.insert(
                         "__enter__".to_string(),
                         Value::Builtin(BuiltinFunction::ThreadLockEnter),
                     );
-                    module_data.globals.insert(
+                    class_data.attrs.insert(
                         "__exit__".to_string(),
                         Value::Builtin(BuiltinFunction::ThreadLockExit),
                     );
-                    module_data.globals.insert(
+                    class_data.attrs.insert(
                         "acquire".to_string(),
                         Value::Builtin(BuiltinFunction::ThreadLockAcquire),
                     );
-                    module_data.globals.insert(
+                    class_data.attrs.insert(
                         "release".to_string(),
                         Value::Builtin(BuiltinFunction::ThreadLockRelease),
                     );
                 }
-                Ok(Value::Module(module))
+                Ok(heap.alloc_instance(InstanceObject::new(class)))
             }
-            BuiltinFunction::ThreadLockEnter => Ok(Value::None),
-            BuiltinFunction::ThreadLockExit => Ok(Value::Bool(false)),
+            BuiltinFunction::ThreadLockEnter => Ok(Value::Bool(true)),
+            BuiltinFunction::ThreadLockExit => Ok(Value::None),
             BuiltinFunction::ThreadLockAcquire => Ok(Value::Bool(true)),
             BuiltinFunction::ThreadLockRelease => Ok(Value::None),
             BuiltinFunction::FunctoolsLruCache => {
@@ -5372,6 +5377,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysExcInfo
             | BuiltinFunction::SysExit
             | BuiltinFunction::SysIsFinalizing
+            | BuiltinFunction::SysGetDefaultEncoding
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
             | BuiltinFunction::SysGetRefCount
@@ -5458,6 +5464,8 @@ impl BuiltinFunction {
             | BuiltinFunction::TimeSleep
             | BuiltinFunction::OsGetPid
             | BuiltinFunction::OsGetCwd
+            | BuiltinFunction::OsUname
+            | BuiltinFunction::OsUnameIter
             | BuiltinFunction::OsGetEnv
             | BuiltinFunction::OsPutEnv
             | BuiltinFunction::OsUnsetEnv

@@ -146,12 +146,17 @@ use self::cpython_context_runtime::{
     with_active_cpython_context_mut,
 };
 use self::cpython_contextvar_api::{PyContextVar_Get, PyContextVar_New, PyContextVar_Set};
-use self::cpython_datetime_runtime::{PYRS_DATETIME_CAPI, PYRS_DATETIME_CAPSULE_NAME};
+use self::cpython_datetime_runtime::{
+    PYRS_DATETIME_CAPI, PYRS_DATETIME_CAPSULE_NAME, PYRS_DATETIME_DATE_TYPE,
+    PYRS_DATETIME_DATETIME_TYPE, PYRS_DATETIME_DELTA_TYPE, PYRS_DATETIME_TIME_TYPE,
+    PYRS_DATETIME_TZINFO_TYPE, initialize_datetime_capi_types,
+};
 use self::cpython_descriptor_method_api::{
     PyCFunction_Call, PyCFunction_GetFlags, PyCFunction_GetFunction, PyCFunction_GetSelf,
-    PyCFunction_New, PyCFunction_NewEx, PyCMethod_New, PyDescr_NewClassMethod, PyDescr_NewGetSet,
-    PyDescr_NewMember, PyDescr_NewMethod, PyMember_GetOne, PyMember_SetOne, PySlice_AdjustIndices,
-    PySlice_GetIndices, PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack, PyWrapper_New,
+    PyCFunction_New, PyCFunction_NewEx, PyCMethod_New, PyClassMethod_New, PyDescr_NewClassMethod,
+    PyDescr_NewGetSet, PyDescr_NewMember, PyDescr_NewMethod, PyMember_GetOne, PyMember_SetOne,
+    PySlice_AdjustIndices, PySlice_GetIndices, PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack,
+    PyStaticMethod_New, PyWrapper_New, _PyClassMethod_New, _PyStaticMethod_New,
     cpython_cfunction_tp_call, cpython_cfunction_tp_getattro, cpython_invoke_method_from_values,
     cpython_method_descriptor_tp_call,
 };
@@ -236,7 +241,7 @@ use self::cpython_iter_api::{
 use self::cpython_list_api::{
     PyList_Append, PyList_AsTuple, PyList_GetItem, PyList_GetItemRef, PyList_GetSlice,
     PyList_Insert, PyList_New, PyList_Reverse, PyList_SetItem, PyList_SetSlice, PyList_Size,
-    PyList_Sort,
+    PyList_Sort, PY_LIST_MAPPING_METHODS, PY_LIST_SEQUENCE_METHODS,
 };
 use self::cpython_long_float_api::{
     _PyLong_Copy, PyBool_FromLong, PyFloat_FromDouble, PyFloat_FromString, PyLong_AsNativeBytes,
@@ -402,8 +407,8 @@ use self::cpython_type_api::{
     PyType_GenericNew, PyType_GetBaseByToken, PyType_GetFlags, PyType_GetFullyQualifiedName,
     PyType_GetModule, PyType_GetModuleByDef, PyType_GetModuleName, PyType_GetModuleState,
     PyType_GetName, PyType_GetQualName, PyType_GetSlot, PyType_GetTypeDataSize, PyType_IsSubtype,
-    PyType_Modified, PyType_Ready, cpython_is_type_object_ptr, cpython_type_tp_call,
-    cpython_type_tp_getattro, cpython_type_tp_setattro,
+    PyType_Modified, PyType_Ready, PY_TYPE_MAPPING_METHODS, cpython_is_type_object_ptr,
+    cpython_type_tp_call, cpython_type_tp_getattro, cpython_type_tp_setattro,
 };
 use self::cpython_type_exports::*;
 use self::cpython_type_layout::*;
@@ -1035,13 +1040,27 @@ unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVec
 }
 
 unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
     if object.is_null() {
+        return None;
+    }
+    let object_addr = object as usize;
+    if object_addr == usize::MAX
+        || object_addr < MIN_VALID_PTR
+        || object_addr % std::mem::align_of::<CpythonObjectHead>() != 0
+    {
         return None;
     }
     // SAFETY: caller provides a foreign PyObject*.
     let head = unsafe { object.cast::<CpythonObjectHead>().as_ref() }?;
     let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
     if type_ptr.is_null() {
+        return None;
+    }
+    let type_addr = type_ptr as usize;
+    if type_addr < MIN_VALID_PTR
+        || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
+    {
         return None;
     }
     let is_long = type_ptr == std::ptr::addr_of_mut!(PyLong_Type)
@@ -1069,13 +1088,27 @@ unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
 }
 
 unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
     if object.is_null() {
+        return None;
+    }
+    let object_addr = object as usize;
+    if object_addr == usize::MAX
+        || object_addr < MIN_VALID_PTR
+        || object_addr % std::mem::align_of::<CpythonObjectHead>() != 0
+    {
         return None;
     }
     // SAFETY: caller provides a foreign PyObject*.
     let head = unsafe { object.cast::<CpythonObjectHead>().as_ref() }?;
     let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
     if type_ptr.is_null() {
+        return None;
+    }
+    let type_addr = type_ptr as usize;
+    if type_addr < MIN_VALID_PTR
+        || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
+    {
         return None;
     }
     let is_long = type_ptr == std::ptr::addr_of_mut!(PyLong_Type)
@@ -1919,6 +1952,7 @@ fn initialize_cpython_compat_type_objects() {
         PyType_Type.tp_new = PyType_GenericNew as *mut c_void;
         PyType_Type.tp_getattro = cpython_type_tp_getattro as *mut c_void;
         PyType_Type.tp_setattro = cpython_type_tp_setattro as *mut c_void;
+        PyType_Type.tp_as_mapping = std::ptr::addr_of_mut!(PY_TYPE_MAPPING_METHODS).cast();
         PyType_Type.tp_base = std::ptr::addr_of_mut!(PyBaseObject_Type);
         PyBaseObject_Type.tp_getattro = PyObject_GenericGetAttr as *mut c_void;
         PyBaseObject_Type.tp_setattro = PyObject_GenericSetAttr as *mut c_void;
@@ -2027,6 +2061,8 @@ fn initialize_cpython_compat_type_objects() {
         PyTuple_Type.tp_itemsize = 8;
         PyList_Type.tp_basicsize = 40;
         PyList_Type.tp_itemsize = 0;
+        PyList_Type.tp_as_sequence = std::ptr::addr_of_mut!(PY_LIST_SEQUENCE_METHODS).cast();
+        PyList_Type.tp_as_mapping = std::ptr::addr_of_mut!(PY_LIST_MAPPING_METHODS).cast();
         PyDict_Type.tp_basicsize = 48;
         PyDict_Type.tp_itemsize = 0;
         PySet_Type.tp_basicsize = 200;
@@ -2054,6 +2090,40 @@ fn initialize_cpython_compat_type_objects() {
             PY_TPFLAGS_BASETYPE | PY_TPFLAGS_UNICODE_SUBCLASS | PY_TPFLAGS_READY;
         PyDict_Type.tp_flags |= PY_TPFLAGS_BASETYPE | PY_TPFLAGS_DICT_SUBCLASS | PY_TPFLAGS_READY;
         PyNone_Type.tp_flags |= PY_TPFLAGS_READY;
+
+        // Iterator-like builtin types must expose tp_iter/tp_iternext so native
+        // extension code (including Cython-generated loops) can drive iteration
+        // through slots without falling back to Python-level wrappers.
+        let iter_self = PyObject_SelfIter as *mut c_void;
+        let iter_next = PyIter_Next as *mut c_void;
+        let iterator_types: &mut [*mut CpythonTypeObject] = &mut [
+            std::ptr::addr_of_mut!(PyByteArrayIter_Type),
+            std::ptr::addr_of_mut!(PyBytesIter_Type),
+            std::ptr::addr_of_mut!(PyCallIter_Type),
+            std::ptr::addr_of_mut!(PyDictIterItem_Type),
+            std::ptr::addr_of_mut!(PyDictIterKey_Type),
+            std::ptr::addr_of_mut!(PyDictIterValue_Type),
+            std::ptr::addr_of_mut!(PyDictRevIterItem_Type),
+            std::ptr::addr_of_mut!(PyDictRevIterKey_Type),
+            std::ptr::addr_of_mut!(PyDictRevIterValue_Type),
+            std::ptr::addr_of_mut!(PyFilter_Type),
+            std::ptr::addr_of_mut!(PyGen_Type),
+            std::ptr::addr_of_mut!(PyListIter_Type),
+            std::ptr::addr_of_mut!(PyListRevIter_Type),
+            std::ptr::addr_of_mut!(PyLongRangeIter_Type),
+            std::ptr::addr_of_mut!(PyMap_Type),
+            std::ptr::addr_of_mut!(PyRangeIter_Type),
+            std::ptr::addr_of_mut!(PyReversed_Type),
+            std::ptr::addr_of_mut!(PySeqIter_Type),
+            std::ptr::addr_of_mut!(PySetIter_Type),
+            std::ptr::addr_of_mut!(PyTupleIter_Type),
+            std::ptr::addr_of_mut!(PyUnicodeIter_Type),
+            std::ptr::addr_of_mut!(PyZip_Type),
+        ];
+        for ty in iterator_types {
+            (**ty).tp_iter = iter_self;
+            (**ty).tp_iternext = iter_next;
+        }
 
         _Py_NoneStruct.ob_type = std::ptr::addr_of_mut!(PyNone_Type).cast();
         _Py_NotImplementedStruct.ob_type = std::ptr::addr_of_mut!(PyBaseObject_Type).cast();
@@ -3263,7 +3333,7 @@ impl ModuleCapiContext {
         });
         let (
             refcount,
-            ob_type,
+            mut ob_type,
             long_payload,
             str_payload,
             tuple_items,
@@ -3271,6 +3341,7 @@ impl ModuleCapiContext {
             dict_len,
             bytes_payload,
             class_state,
+            instance_class,
             bound_method_state,
             float_value,
             complex_value,
@@ -3317,9 +3388,24 @@ impl ModuleCapiContext {
                 },
                 match &slot.value {
                     Value::Class(class_obj) => match &*class_obj.kind() {
-                        Object::Class(class_data) => {
-                            Some((class_data.name.clone(), class_data.attrs.clone()))
-                        }
+                        Object::Class(class_data) => Some((
+                            class_data.name.clone(),
+                            class_data.attrs.clone(),
+                            class_data.metaclass.clone(),
+                            class_data.bases.clone(),
+                        )),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                match &slot.value {
+                    Value::Instance(instance_obj) => match &*instance_obj.kind() {
+                        Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                            Object::Class(class_data) if class_data.name == "_thread.lock" => {
+                                Some(instance_data.class.clone())
+                            }
+                            _ => None,
+                        },
                         _ => None,
                     },
                     _ => None,
@@ -3360,12 +3446,19 @@ impl ModuleCapiContext {
                 None,
                 None,
                 None,
+                None,
             ),
             None => {
                 self.set_error(format!("invalid object handle {handle}"));
                 return std::ptr::null_mut();
             }
         };
+        if let Some(instance_class) = instance_class {
+            let class_ptr = self.alloc_cpython_ptr_for_value(Value::Class(instance_class));
+            if !class_ptr.is_null() {
+                ob_type = class_ptr;
+            }
+        }
         let raw = if let Some((capsule_refcount, pointer, name, context, cpython_destructor)) =
             capsule_state
         {
@@ -3632,7 +3725,8 @@ impl ModuleCapiContext {
                 *data.add(bytes.len()) = 0;
             }
             raw_bytes.cast::<CpythonCompatObject>()
-        } else if let Some((class_name, class_attrs)) = class_state.as_ref() {
+        } else if let Some((class_name, class_attrs, class_metaclass, class_bases)) = class_state
+        {
             // SAFETY: allocate storage for CPython type-compatible header.
             let raw_type = unsafe { malloc(std::mem::size_of::<CpythonTypeObject>()) }
                 .cast::<CpythonTypeObject>();
@@ -3640,7 +3734,7 @@ impl ModuleCapiContext {
                 self.set_error("out of memory allocating CPython type compat object");
                 return std::ptr::null_mut();
             }
-            let name_ptr = match self.alloc_owned_c_string_for_capi(class_name) {
+            let name_ptr = match self.alloc_owned_c_string_for_capi(&class_name) {
                 Ok(ptr) => ptr,
                 Err(err) => {
                     // SAFETY: `raw_type` was allocated above and is owned here.
@@ -3662,14 +3756,43 @@ impl ModuleCapiContext {
                     .collect::<Vec<_>>();
                 self.alloc_cpython_ptr_for_value(vm.heap.alloc_dict(entries))
             };
+            let ob_type_ptr = class_metaclass
+                .and_then(|meta| {
+                    let ptr = self.alloc_cpython_ptr_for_value(Value::Class(meta));
+                    (!ptr.is_null()).then_some(ptr)
+                })
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>());
+            let tp_base_ptr = class_bases
+                .first()
+                .and_then(|base| {
+                    let ptr = self.alloc_cpython_ptr_for_value(Value::Class(base.clone()));
+                    (!ptr.is_null()).then_some(ptr.cast::<CpythonTypeObject>())
+                })
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(PyBaseObject_Type));
+            let tp_basicsize = {
+                let default = std::mem::size_of::<CpythonCompatObject>() as isize;
+                let module_name = class_attrs.get("__module__").and_then(|value| match value {
+                    Value::Str(name) => Some(name.as_str()),
+                    _ => None,
+                });
+                match (module_name, class_name.as_str()) {
+                    (Some("datetime"), "date") => 32,
+                    (Some("datetime"), "datetime") => 48,
+                    (Some("datetime"), "time") => 40,
+                    (Some("datetime"), "timedelta") => 40,
+                    (Some("datetime"), "tzinfo") => 16,
+                    (Some("datetime"), "timezone") => 32,
+                    _ => default,
+                }
+            };
             // SAFETY: `raw_type` points to writable CpythonTypeObject storage.
             unsafe {
                 raw_type.write(CpythonTypeObject {
                     ob_refcnt: refcount,
-                    ob_type: std::ptr::addr_of_mut!(PyType_Type).cast(),
+                    ob_type: ob_type_ptr,
                     ob_size: 0,
                     tp_name: name_ptr,
-                    tp_basicsize: std::mem::size_of::<CpythonCompatObject>() as isize,
+                    tp_basicsize,
                     tp_itemsize: 0,
                     tp_dealloc: std::ptr::null_mut(),
                     tp_vectorcall_offset: 0,
@@ -3722,6 +3845,7 @@ impl ModuleCapiContext {
                     tp_watched: 0,
                     tp_versions_used: 0,
                 });
+                (*raw_type).tp_base = tp_base_ptr;
             }
             raw_type.cast::<CpythonCompatObject>()
         } else if let Some((function_obj, receiver_obj)) = bound_method_state.as_ref() {
@@ -4294,7 +4418,8 @@ impl ModuleCapiContext {
         // PyType_Check(op): treat any object whose metatype is `type` (or subtype) as a type.
         // NumPy DType classes use `_DTypeMeta`, so strict pointer-equality with `PyType_Type`
         // is insufficient and would misclassify those type objects as plain instances.
-        let is_type_object = Self::is_probable_type_object_ptr(object);
+        let is_type_object =
+            self.is_known_type_ptr(object) || Self::is_probable_type_object_ptr(object);
         if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
             let object_type_name = unsafe {
                 object_type
@@ -5405,6 +5530,13 @@ impl ModuleCapiContext {
         Ok(unsafe { object.cast::<u8>().add(member.offset as usize) })
     }
 
+    fn cpython_slot_table_ptr_is_valid<T>(ptr: *const T) -> bool {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        !ptr.is_null()
+            && (ptr as usize) >= MIN_VALID_PTR
+            && (ptr as usize) % std::mem::align_of::<T>() == 0
+    }
+
     fn external_mapping_get_item_string(
         &mut self,
         mapping_ptr: *mut c_void,
@@ -5535,6 +5667,9 @@ impl ModuleCapiContext {
         let key = Value::Str(attr_name.to_string());
         for _ in 0..64 {
             if current.is_null() {
+                break;
+            }
+            if !Self::cpython_slot_table_ptr_is_valid::<CpythonTypeObject>(current) {
                 break;
             }
             // SAFETY: current points to a PyTypeObject-compatible header.
@@ -5698,10 +5833,13 @@ impl ModuleCapiContext {
             if !is_type_object {
                 // SAFETY: current points to a PyTypeObject-compatible header.
                 let methods_ptr = unsafe { (*current).tp_methods }.cast::<CpythonMethodDef>();
-                if !methods_ptr.is_null() {
+                if Self::cpython_slot_table_ptr_is_valid(methods_ptr) {
                     let mut method = methods_ptr;
                     let mut traced_methods = 0usize;
-                    loop {
+                    for _ in 0..4096 {
+                        if !Self::cpython_slot_table_ptr_is_valid(method) {
+                            break;
+                        }
                         // SAFETY: methods table is terminated by null `ml_name`.
                         let method_name_ptr = unsafe { (*method).ml_name };
                         if method_name_ptr.is_null() {
@@ -5746,10 +5884,13 @@ impl ModuleCapiContext {
                 }
                 // SAFETY: current points to a PyTypeObject-compatible header.
                 let getset_ptr = unsafe { (*current).tp_getset }.cast::<CpythonGetSetDef>();
-                if !getset_ptr.is_null() {
+                if Self::cpython_slot_table_ptr_is_valid(getset_ptr) {
                     let mut getset = getset_ptr;
                     let mut traced_getsets = 0usize;
-                    loop {
+                    for _ in 0..4096 {
+                        if !Self::cpython_slot_table_ptr_is_valid(getset) {
+                            break;
+                        }
                         // SAFETY: getset table is terminated by null `name`.
                         let getset_name_ptr = unsafe { (*getset).name };
                         if getset_name_ptr.is_null() {
@@ -5805,10 +5946,13 @@ impl ModuleCapiContext {
                         (*current).tp_basicsize,
                     )
                 };
-                if !members_ptr.is_null() {
+                if Self::cpython_slot_table_ptr_is_valid(members_ptr) {
                     let mut member = members_ptr;
                     let mut traced_members = 0usize;
-                    loop {
+                    for _ in 0..4096 {
+                        if !Self::cpython_slot_table_ptr_is_valid(member) {
+                            break;
+                        }
                         // SAFETY: member table is terminated by null `name`.
                         let member_name_ptr = unsafe { (*member).name };
                         if member_name_ptr.is_null() {
@@ -5852,9 +5996,12 @@ impl ModuleCapiContext {
                 // For class-level attribute lookup, materialize descriptor
                 // objects instead of invoking instance getters/setters.
                 let methods_ptr = unsafe { (*current).tp_methods }.cast::<CpythonMethodDef>();
-                if !methods_ptr.is_null() {
+                if Self::cpython_slot_table_ptr_is_valid(methods_ptr) {
                     let mut method = methods_ptr;
-                    loop {
+                    for _ in 0..4096 {
+                        if !Self::cpython_slot_table_ptr_is_valid(method) {
+                            break;
+                        }
                         let method_name_ptr = unsafe { (*method).ml_name };
                         if method_name_ptr.is_null() {
                             break;
@@ -5881,9 +6028,12 @@ impl ModuleCapiContext {
                     }
                 }
                 let getset_ptr = unsafe { (*current).tp_getset }.cast::<CpythonGetSetDef>();
-                if !getset_ptr.is_null() {
+                if Self::cpython_slot_table_ptr_is_valid(getset_ptr) {
                     let mut getset = getset_ptr;
-                    loop {
+                    for _ in 0..4096 {
+                        if !Self::cpython_slot_table_ptr_is_valid(getset) {
+                            break;
+                        }
                         let getset_name_ptr = unsafe { (*getset).name };
                         if getset_name_ptr.is_null() {
                             break;
@@ -5910,9 +6060,12 @@ impl ModuleCapiContext {
                     }
                 }
                 let members_ptr = unsafe { (*current).tp_members }.cast::<CpythonMemberDef>();
-                if !members_ptr.is_null() {
+                if Self::cpython_slot_table_ptr_is_valid(members_ptr) {
                     let mut member = members_ptr;
-                    loop {
+                    for _ in 0..4096 {
+                        if !Self::cpython_slot_table_ptr_is_valid(member) {
+                            break;
+                        }
                         let member_name_ptr = unsafe { (*member).name };
                         if member_name_ptr.is_null() {
                             break;

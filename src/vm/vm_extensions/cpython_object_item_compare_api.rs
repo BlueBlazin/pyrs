@@ -10,7 +10,7 @@ use super::{
     _Py_EllipsisObject, _Py_FalseStruct, _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct,
     CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, Py_DecRef,
     PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
-    PyExc_AttributeError, PyExc_TypeError, PyLong_AsSsize_t, PyObject_CallOneArg, PyObject_GetAttr,
+    PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError, PyExc_TypeError, PyLong_AsSsize_t, PyObject_CallOneArg, PyObject_GetAttr,
     PyObject_GetAttrString, PyTuple_GetItem, PyTuple_Size, PyTuple_Type, PyType_IsSubtype,
     PyType_Type, c_name_to_string, cpython_builtin_type_name_for_ptr, cpython_call_builtin,
     cpython_call_object, cpython_error_message_indicates_missing_attribute,
@@ -23,20 +23,48 @@ use super::{
     value_to_int, with_active_cpython_context_mut,
 };
 
+fn cpython_set_item_runtime_error(message: String) {
+    if message.starts_with("IndexError:")
+        || message.contains("index out of range")
+        || message.contains("out of bounds for axis")
+    {
+        let detail = message
+            .strip_prefix("IndexError:")
+            .map(str::trim)
+            .unwrap_or(message.as_str());
+        cpython_set_typed_error(unsafe { PyExc_IndexError }, detail);
+        return;
+    }
+    if message.starts_with("KeyError:") || message.contains("key not found") {
+        let detail = message
+            .strip_prefix("KeyError:")
+            .map(str::trim)
+            .unwrap_or(message.as_str());
+        cpython_set_typed_error(unsafe { PyExc_KeyError }, detail);
+        return;
+    }
+    cpython_set_error(message);
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void) -> *mut c_void {
     let trace_getitem = std::env::var_os("PYRS_TRACE_CPY_GETITEM").is_some();
     if trace_getitem {
-        let key_desc = with_active_cpython_context_mut(|context| {
+        let (object_tag, key_desc) = with_active_cpython_context_mut(|context| {
+            let object_tag = context
+                .cpython_value_from_ptr_or_proxy(object)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unknown>".to_string());
             context
                 .cpython_value_from_ptr_or_proxy(key)
                 .map(|value| cpython_debug_compare_value(&value))
-                .unwrap_or_else(|| "<unknown>".to_string())
+                .map(|key| (object_tag.clone(), key))
+                .unwrap_or_else(|| (object_tag, "<unknown>".to_string()))
         })
-        .unwrap_or_else(|_| "<no-context>".to_string());
+        .unwrap_or_else(|_| ("<no-context>".to_string(), "<no-context>".to_string()));
         eprintln!(
-            "[cpy-getitem] object_ptr={:p} key_ptr={:p} key={}",
-            object, key, key_desc
+            "[cpy-getitem] object_ptr={:p} key_ptr={:p} object={} key={}",
+            object, key, object_tag, key_desc
         );
     }
     let result = with_active_cpython_context_mut(|context| {
@@ -87,7 +115,7 @@ pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void)
         match vm.getitem_value(object_value, key_value) {
             Ok(value) => context.alloc_cpython_ptr_for_value(value),
             Err(err) => {
-                context.set_error(err.message);
+                cpython_set_item_runtime_error(err.message);
                 std::ptr::null_mut()
             }
         }
@@ -96,9 +124,22 @@ pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void)
         cpython_set_error(err);
         std::ptr::null_mut()
     });
+    if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+        let _ = with_active_cpython_context_mut(|context| {
+            context.set_error("PyObject_GetItem returned NULL without setting an exception");
+        });
+    }
     if trace_getitem {
         if result.is_null() {
-            eprintln!("[cpy-getitem] result=<null>");
+            let detail = with_active_cpython_context_mut(|context| {
+                context
+                    .last_error
+                    .clone()
+                    .or_else(|| context.first_error.clone())
+                    .unwrap_or_else(|| "<none>".to_string())
+            })
+            .unwrap_or_else(|_| "<no-context>".to_string());
+            eprintln!("[cpy-getitem] result=<null> error={}", detail);
         } else {
             let result_tag = with_active_cpython_context_mut(|context| {
                 context
@@ -119,7 +160,36 @@ pub unsafe extern "C" fn PyObject_SetItem(
     key: *mut c_void,
     value: *mut c_void,
 ) -> i32 {
-    with_active_cpython_context_mut(|context| {
+    let trace_setitem = std::env::var_os("PYRS_TRACE_CPY_SETITEM").is_some();
+    if trace_setitem {
+        let (obj_desc, key_desc, val_desc) = with_active_cpython_context_mut(|context| {
+            let obj = context
+                .cpython_value_from_ptr_or_proxy(object)
+                .map(|v| cpython_value_debug_tag(&v))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let key = context
+                .cpython_value_from_ptr_or_proxy(key)
+                .map(|v| cpython_value_debug_tag(&v))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let val = context
+                .cpython_value_from_ptr_or_proxy(value)
+                .map(|v| cpython_value_debug_tag(&v))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            (obj, key, val)
+        })
+        .unwrap_or_else(|_| {
+            (
+                "<no-context>".to_string(),
+                "<no-context>".to_string(),
+                "<no-context>".to_string(),
+            )
+        });
+        eprintln!(
+            "[cpy-setitem] object={:p} key={:p} value={:p} obj={} key_desc={} value_desc={}",
+            object, key, value, obj_desc, key_desc, val_desc
+        );
+    }
+    let status = with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
             context.set_error("PyObject_SetItem missing VM context");
             return -1;
@@ -363,12 +433,33 @@ pub unsafe extern "C" fn PyObject_SetItem(
     .unwrap_or_else(|err| {
         cpython_set_error(err);
         -1
-    })
+    });
+    if status < 0 && unsafe { PyErr_Occurred() }.is_null() {
+        let _ = with_active_cpython_context_mut(|context| {
+            context.set_error("PyObject_SetItem returned -1 without setting an exception");
+        });
+    }
+    if trace_setitem {
+        let occurred = unsafe { PyErr_Occurred() };
+        let detail = with_active_cpython_context_mut(|context| {
+            context
+                .last_error
+                .clone()
+                .or_else(|| context.first_error.clone())
+                .unwrap_or_else(|| "<none>".to_string())
+        })
+        .unwrap_or_else(|_| "<no-context>".to_string());
+        eprintln!(
+            "[cpy-setitem] status={} occurred={:p} detail={}",
+            status, occurred, detail
+        );
+    }
+    status
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_DelItem(object: *mut c_void, key: *mut c_void) -> i32 {
-    with_active_cpython_context_mut(|context| {
+    let status = with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {
             context.set_error("PyObject_DelItem missing VM context");
             return -1;
@@ -524,7 +615,13 @@ pub unsafe extern "C" fn PyObject_DelItem(object: *mut c_void, key: *mut c_void)
     .unwrap_or_else(|err| {
         cpython_set_error(err);
         -1
-    })
+    });
+    if status < 0 && unsafe { PyErr_Occurred() }.is_null() {
+        let _ = with_active_cpython_context_mut(|context| {
+            context.set_error("PyObject_DelItem returned -1 without setting an exception");
+        });
+    }
+    status
 }
 
 #[unsafe(no_mangle)]

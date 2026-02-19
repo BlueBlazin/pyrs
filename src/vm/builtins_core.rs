@@ -17,8 +17,7 @@ use super::{
     parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
     runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
-    with_bytes_like_source,
-    xor_values,
+    with_bytes_like_source, xor_values,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -1860,6 +1859,19 @@ impl Vm {
             ));
         }
         Ok(Value::Bool(false))
+    }
+
+    pub(super) fn builtin_sys_getdefaultencoding(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "sys.getdefaultencoding() expects no arguments",
+            ));
+        }
+        Ok(Value::Str("utf-8".to_string()))
     }
 
     pub(super) fn builtin_sys_getfilesystemencoding(
@@ -7000,10 +7012,12 @@ impl Vm {
             | Value::Class(_)
             | Value::ExceptionType(_) => true,
             Value::Module(module) => match &*module.kind() {
-                Object::Module(module_data) if module_data.name == "__staticmethod__" => module_data
-                    .globals
-                    .get("__func__")
-                    .is_some_and(|func| self.is_callable_value(func)),
+                Object::Module(module_data) if module_data.name == "__staticmethod__" => {
+                    module_data
+                        .globals
+                        .get("__func__")
+                        .is_some_and(|func| self.is_callable_value(func))
+                }
                 _ => false,
             },
             Value::Instance(instance) => match &*instance.kind() {

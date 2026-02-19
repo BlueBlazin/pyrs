@@ -2944,7 +2944,11 @@ impl Vm {
         }
         let class = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => return Err(RuntimeError::new("replace() receiver must be Signature instance")),
+            _ => {
+                return Err(RuntimeError::new(
+                    "replace() receiver must be Signature instance",
+                ));
+            }
         };
         let copied_text = Self::instance_attr_get(&instance, "__text__");
         let copied_parameters = Self::instance_attr_get(&instance, "parameters");

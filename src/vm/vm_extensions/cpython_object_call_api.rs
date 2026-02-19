@@ -10,7 +10,7 @@ use super::{
     CPY_PROXY_GET_ITER_ACTIVE, CpythonCFunctionCompatObject, CpythonMappingMethods,
     CpythonNumberMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject,
     InternalCallOutcome, ModuleCapiContext, Py_DecRef, Py_XIncRef, PyCFunction_Type, PyDict_Clear,
-    PyErr_BadInternalCall, PyErr_Clear, PyMethod_Type, PyMethodDescr_Type, PyObject_GetAttr,
+    PyErr_BadInternalCall, PyErr_Clear, PyErr_Occurred, PyMethod_Type, PyMethodDescr_Type, PyObject_GetAttr,
     PyObject_GetAttrString, PyObject_HasAttrStringWithError, PyTuple_New, PyTuple_SetItem,
     PyTuple_Size, PyType_IsSubtype, PyUnicode_InternFromString, c_name_to_string,
     cpython_call_builtin, cpython_call_object, cpython_keyword_args_from_dict_object,
@@ -347,6 +347,51 @@ pub unsafe extern "C" fn PyObject_Format(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
+    let trace_getiter = std::env::var_os("PYRS_TRACE_CPY_GETITER").is_some();
+    if trace_getiter {
+        let (desc, type_name, tp_iter, tp_iternext) = with_active_cpython_context_mut(|context| {
+            let desc = context
+                .cpython_value_from_ptr_or_proxy(object)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            // SAFETY: pointer is a candidate PyObject* for debug-only slot introspection.
+            let (type_name, tp_iter, tp_iternext) = unsafe {
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .filter(|ty| !ty.is_null())
+                    .map(|ty| {
+                        (
+                            c_name_to_string((*ty).tp_name)
+                                .unwrap_or_else(|_| "<invalid>".to_string()),
+                            (*ty).tp_iter,
+                            (*ty).tp_iternext,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            "<unknown-type>".to_string(),
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
+                        )
+                    })
+            };
+            (desc, type_name, tp_iter, tp_iternext)
+        })
+        .unwrap_or_else(|_| {
+            (
+                "<no-context>".to_string(),
+                "<no-context>".to_string(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        });
+        eprintln!(
+            "[cpy-getiter] object={:p} value={} type={} tp_iter={:p} tp_iternext={:p}",
+            object, desc, type_name, tp_iter, tp_iternext
+        );
+    }
     let object_addr = object as usize;
     let recursion_depth = CPY_PROXY_GET_ITER_ACTIVE.with(|stack| {
         let mut stack = stack.borrow_mut();
@@ -527,6 +572,26 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
         cpython_set_error(err);
         std::ptr::null_mut()
     });
+    if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+        let _ = with_active_cpython_context_mut(|context| {
+            context.set_error("PyObject_GetIter returned NULL without setting an exception");
+        });
+    }
+    if trace_getiter {
+        let occurred = unsafe { PyErr_Occurred() };
+        let detail = with_active_cpython_context_mut(|context| {
+            context
+                .last_error
+                .clone()
+                .or_else(|| context.first_error.clone())
+                .unwrap_or_else(|| "<none>".to_string())
+        })
+        .unwrap_or_else(|_| "<no-context>".to_string());
+        eprintln!(
+            "[cpy-getiter] result={:p} occurred={:p} detail={}",
+            result, occurred, detail
+        );
+    }
     CPY_PROXY_GET_ITER_ACTIVE.with(|stack| {
         let mut stack = stack.borrow_mut();
         if let Some(last) = stack.last().copied() {
@@ -875,19 +940,32 @@ pub unsafe extern "C" fn PyUnstable_Code_NewWithPosOnlyArgs(
     _linetable: *mut c_void,
     _exceptiontable: *mut c_void,
 ) -> *mut c_void {
-    with_active_cpython_context_mut(|context| {
-        // Cython uses this API for extension-module code object metadata.
-        // Keep allocation stable even when foreign unicode pointers are not mapped in-context.
-        let _ = (filename, name);
-        let filename_text = "<string>".to_string();
-        let name_text = "<module>".to_string();
-        let code = CodeObject::new(name_text, filename_text);
-        context.alloc_cpython_ptr_for_value(Value::Code(Rc::new(code)))
-    })
-    .unwrap_or_else(|err| {
-        cpython_set_error(err);
-        std::ptr::null_mut()
-    })
+    let _ = (
+        _argcount,
+        _posonlyargcount,
+        _kwonlyargcount,
+        _nlocals,
+        _stacksize,
+        _flags,
+        _code,
+        _consts,
+        _names,
+        _varnames,
+        _freevars,
+        _cellvars,
+        filename,
+        name,
+        _qualname,
+        _firstlineno,
+        _linetable,
+        _exceptiontable,
+    );
+    // Return a stable singleton reference here rather than allocating transient
+    // fake code objects; Cython-generated extension init paths retain these results.
+    unsafe {
+        Py_XIncRef(std::ptr::addr_of_mut!(super::_Py_NoneStruct).cast::<c_void>());
+    }
+    std::ptr::addr_of_mut!(super::_Py_NoneStruct).cast::<c_void>()
 }
 
 #[unsafe(no_mangle)]

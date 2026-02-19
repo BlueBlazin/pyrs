@@ -13,10 +13,11 @@ use crate::vm::ExtensionCapsuleRegistryEntry;
 
 use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
-    _Py_NoneStruct, CpythonModuleDef, CpythonModuleDefSlot, CpythonObjectHead,
-    CpythonTypeObject, ExtensionCallableKind, ExtensionInitScopeGuard, ModuleCapiContext, ObjRef,
-    PYRS_DATETIME_CAPI,
-    PYRS_DATETIME_CAPSULE_NAME, PyType_Type, Vm, c_name_to_string,
+    _Py_NoneStruct, CpythonModuleDef, CpythonModuleDefSlot, CpythonObjectHead, CpythonTypeObject,
+    ExtensionCallableKind, ExtensionInitScopeGuard, ModuleCapiContext, ObjRef, PYRS_DATETIME_CAPI,
+    PYRS_DATETIME_CAPSULE_NAME, PYRS_DATETIME_DATE_TYPE, PYRS_DATETIME_DATETIME_TYPE,
+    PYRS_DATETIME_DELTA_TYPE, PYRS_DATETIME_TIME_TYPE, PYRS_DATETIME_TZINFO_TYPE, Vm,
+    c_name_to_string, initialize_datetime_capi_types,
 };
 
 enum ExtensionExecutionPlan {
@@ -38,11 +39,14 @@ impl Vm {
         // SAFETY: static capsule storage and exported type/singleton symbols live for
         // process lifetime; registry stores raw pointers as opaque capsule payloads.
         unsafe {
-            PYRS_DATETIME_CAPI.date_type = std::ptr::addr_of_mut!(PyType_Type).cast();
-            PYRS_DATETIME_CAPI.datetime_type = std::ptr::addr_of_mut!(PyType_Type).cast();
-            PYRS_DATETIME_CAPI.time_type = std::ptr::addr_of_mut!(PyType_Type).cast();
-            PYRS_DATETIME_CAPI.delta_type = std::ptr::addr_of_mut!(PyType_Type).cast();
-            PYRS_DATETIME_CAPI.tzinfo_type = std::ptr::addr_of_mut!(PyType_Type).cast();
+            initialize_datetime_capi_types();
+            PYRS_DATETIME_CAPI.date_type = std::ptr::addr_of_mut!(PYRS_DATETIME_DATE_TYPE).cast();
+            PYRS_DATETIME_CAPI.datetime_type =
+                std::ptr::addr_of_mut!(PYRS_DATETIME_DATETIME_TYPE).cast();
+            PYRS_DATETIME_CAPI.time_type = std::ptr::addr_of_mut!(PYRS_DATETIME_TIME_TYPE).cast();
+            PYRS_DATETIME_CAPI.delta_type = std::ptr::addr_of_mut!(PYRS_DATETIME_DELTA_TYPE).cast();
+            PYRS_DATETIME_CAPI.tzinfo_type =
+                std::ptr::addr_of_mut!(PYRS_DATETIME_TZINFO_TYPE).cast();
             PYRS_DATETIME_CAPI.timezone_utc = std::ptr::addr_of_mut!(_Py_NoneStruct).cast();
             self.extension_capsule_registry.insert(
                 PYRS_DATETIME_CAPSULE_NAME.to_string(),
@@ -472,29 +476,35 @@ impl Vm {
                                     let exec: unsafe extern "C" fn(*mut c_void) -> i32 =
                                         unsafe { std::mem::transmute(value) };
                                     if trace_slots {
-                                        let (module_type, module_type_name) = if module_ptr.is_null()
-                                        {
-                                            (std::ptr::null_mut(), "<null>".to_string())
-                                        } else {
-                                            // SAFETY: best-effort diagnostics before exec slot call.
-                                            unsafe {
-                                                let ty = module_ptr
-                                                    .cast::<CpythonObjectHead>()
-                                                    .as_ref()
-                                                    .map(|head| {
-                                                        head.ob_type.cast::<CpythonTypeObject>()
-                                                    })
-                                                    .unwrap_or(std::ptr::null_mut());
-                                                let ty_name = ty
-                                                    .as_ref()
-                                                    .and_then(|raw| c_name_to_string(raw.tp_name).ok())
-                                                    .unwrap_or_else(|| "<unknown>".to_string());
-                                                (ty.cast::<c_void>(), ty_name)
-                                            }
-                                        };
+                                        let (module_type, module_type_name) =
+                                            if module_ptr.is_null() {
+                                                (std::ptr::null_mut(), "<null>".to_string())
+                                            } else {
+                                                // SAFETY: best-effort diagnostics before exec slot call.
+                                                unsafe {
+                                                    let ty = module_ptr
+                                                        .cast::<CpythonObjectHead>()
+                                                        .as_ref()
+                                                        .map(|head| {
+                                                            head.ob_type.cast::<CpythonTypeObject>()
+                                                        })
+                                                        .unwrap_or(std::ptr::null_mut());
+                                                    let ty_name = ty
+                                                        .as_ref()
+                                                        .and_then(|raw| {
+                                                            c_name_to_string(raw.tp_name).ok()
+                                                        })
+                                                        .unwrap_or_else(|| "<unknown>".to_string());
+                                                    (ty.cast::<c_void>(), ty_name)
+                                                }
+                                            };
                                         eprintln!(
                                             "[ext-slot] module={} slot=2 exec={:p} module_ptr={:p} module_type={:p} module_type_name={}",
-                                            module_name, value, module_ptr, module_type, module_type_name
+                                            module_name,
+                                            value,
+                                            module_ptr,
+                                            module_type,
+                                            module_type_name
                                         );
                                     }
                                     let status = unsafe { exec(module_ptr) };
