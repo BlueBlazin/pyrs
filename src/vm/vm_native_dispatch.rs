@@ -6444,6 +6444,8 @@ impl Vm {
             BuiltinFunction::MathExp => self.builtin_math_exp(args, kwargs),
             BuiltinFunction::MathErfc => self.builtin_math_erfc(args, kwargs),
             BuiltinFunction::MathLog => self.builtin_math_log(args, kwargs),
+            BuiltinFunction::MathLog2 => self.builtin_math_log2(args, kwargs),
+            BuiltinFunction::MathLGamma => self.builtin_math_lgamma(args, kwargs),
             BuiltinFunction::MathFSum => self.builtin_math_fsum(args, kwargs),
             BuiltinFunction::MathSumProd => self.builtin_math_sumprod(args, kwargs),
             BuiltinFunction::MathCos => self.builtin_math_cos(args, kwargs),

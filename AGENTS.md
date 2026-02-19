@@ -84,11 +84,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `pandas_import` / `pandas_series_sum`: process exit `-5` (native crash class failure).
     - `matplotlib_import` / `matplotlib_pyplot_smoke`: import assertion path failure.
   - additional NumPy P0 blocker:
-    - `import numpy.random` still aborts (process exit `-1`) after the random extension chain
-      loads through `numpy.random.mtrand`.
-    - current sanitizer signal is stack-overflow in nested
-      `run_pending_import_frames`/`import_module_object`/`call_internal` paths, so the active
-      root-cause direction is import/runtime re-entrancy depth control and call-shape closure.
+    - `import numpy.random` now fails deterministically with
+      `TypeError: ... PyInit_mtrand ... attempted to call non-function` (process exit `2`),
+      no longer an allocator-trap abort.
+    - traced failure point is `_pickle.py` line 7 (`ImportNameCpython`) while importing
+      `numpy.random.mtrand`; active root-cause direction is `ImportNameCpython` +
+      pending-import semantics in extension-init recursion.
   - root-cause closures landed in this slice:
     - `PyUnicode_AsUTF8` now returns stable UTF-8 pointers from a process registry
       (instead of per-call scratch storage), closing a concrete NumPy `arr_add_docstring`
@@ -96,6 +97,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - type-object attr lookup now treats metatype-backed type objects as type objects (not metatype-only), unblocking `numpy.dtype` class attrs like `alignment`.
     - proxy type-object rich-compare dunder fallback (`__lt__/__le__/__eq__/__ne__/__gt__/__ge__`) now materializes callable wrappers from `tp_richcompare`, unblocking `numpy.dtype.__ge__` class-attr probes.
     - ndarray pretty-print path now runs only for ndarray instances (not proxy classes), fixing `print(type(np.arange(...)))` runtime failures.
+    - `PyObject_GetBuffer` now recovers mapped handles for proxy-backed pointers and falls back to external `tp_as_buffer.bf_getbuffer` slots when internal pyrs buffer storage is not applicable.
+    - `PyBuffer_Release` no longer assumes `Py_buffer.internal` is pyrs-owned; foreign exporter internals are left untouched, and pyrs-owned internals are tracked/released explicitly via context-owned pointer bookkeeping.
   - closure landed this round:
     - `PyType_FromSpec*` base-resolution now correctly handles `bases` tuples containing `Builtin(Type)` so Cython metatype construction no longer defaults to `object`.
     - this removed the earlier random-stack gate `PyDescr_NewMethod expected type object` / shared-Cython-type `PyType_Check` failure.

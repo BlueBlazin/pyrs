@@ -58,6 +58,12 @@ pub(super) struct CpythonTypeObject {
 }
 
 #[repr(C)]
+pub(super) struct CpythonBufferProcs {
+    pub(super) bf_getbuffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> c_int>,
+    pub(super) bf_releasebuffer: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+}
+
+#[repr(C)]
 pub(super) struct CpythonNumberMethods {
     pub(super) nb_add: *mut c_void,
     pub(super) nb_subtract: *mut c_void,

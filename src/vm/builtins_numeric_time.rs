@@ -5,6 +5,41 @@ use super::{
     value_to_bigint, value_to_f64, value_to_int,
 };
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+#[link(name = "m")]
+unsafe extern "C" {
+    fn lgamma(x: f64) -> f64;
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+unsafe extern "C" {
+    fn lgamma(x: f64) -> f64;
+}
+
+#[cfg(unix)]
+fn native_lgamma(x: f64) -> f64 {
+    // SAFETY: libc `lgamma` is pure for finite inputs and has no side effects.
+    unsafe { lgamma(x) }
+}
+
+#[cfg(not(unix))]
+fn native_lgamma(x: f64) -> f64 {
+    // Fallback approximation for non-Unix targets.
+    if x <= 0.0 {
+        return f64::NAN;
+    }
+    let pi = std::f64::consts::PI;
+    let z = x;
+    (z - 0.5) * z.ln() - z + 0.5 * (2.0 * pi).ln()
+}
+
 impl Vm {
     pub(super) fn builtin_random_seed(
         &mut self,
@@ -772,6 +807,40 @@ impl Vm {
             return Err(RuntimeError::new("math domain error"));
         }
         Ok(Value::Float(x.ln() / base.ln()))
+    }
+
+    pub(super) fn builtin_math_lgamma(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("lgamma() expects one argument"));
+        }
+        let x = value_to_f64(args[0].clone())?;
+        if x.is_finite() && x <= 0.0 && x.fract() == 0.0 {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        let value = native_lgamma(x);
+        if !x.is_nan() && value.is_nan() {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        Ok(Value::Float(value))
+    }
+
+    pub(super) fn builtin_math_log2(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("log2() expects one argument"));
+        }
+        let x = value_to_f64(args[0].clone())?;
+        if x <= 0.0 {
+            return Err(RuntimeError::new("math domain error"));
+        }
+        Ok(Value::Float(x.log2()))
     }
 
     pub(super) fn builtin_math_fsum(

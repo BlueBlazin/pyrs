@@ -2424,6 +2424,8 @@ pub enum BuiltinFunction {
     MathExp,
     MathErfc,
     MathLog,
+    MathLog2,
+    MathLGamma,
     MathFSum,
     MathSumProd,
     MathCos,
@@ -5399,6 +5401,8 @@ impl BuiltinFunction {
             | BuiltinFunction::MathExp
             | BuiltinFunction::MathErfc
             | BuiltinFunction::MathLog
+            | BuiltinFunction::MathLog2
+            | BuiltinFunction::MathLGamma
             | BuiltinFunction::MathFSum
             | BuiltinFunction::MathSumProd
             | BuiltinFunction::MathCos

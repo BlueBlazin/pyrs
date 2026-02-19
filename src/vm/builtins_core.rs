@@ -2747,9 +2747,7 @@ impl Vm {
         } else if let Some(value) = byteorder_kw {
             value
         } else {
-            return Err(RuntimeError::new(
-                "int.from_bytes() missing byteorder argument",
-            ));
+            Value::Str("big".to_string())
         };
         let signed_arg = if !args.is_empty() {
             args.remove(0)
@@ -3032,6 +3030,25 @@ impl Vm {
         }
     }
 
+    fn fallback_none_type_class(&mut self) -> ObjRef {
+        if let Some(module) = self.modules.get("builtins").cloned()
+            && let Object::Module(module_data) = &*module.kind()
+            && let Some(Value::Class(class)) = module_data.globals.get("__pyrs_none_type_class__")
+        {
+            return class.clone();
+        }
+        let class = self.alloc_synthetic_class("NoneType");
+        if let Some(module) = self.modules.get("builtins").cloned()
+            && let Object::Module(module_data) = &mut *module.kind_mut()
+        {
+            module_data.globals.insert(
+                "__pyrs_none_type_class__".to_string(),
+                Value::Class(class.clone()),
+            );
+        }
+        class
+    }
+
     fn bound_method_is_python_method(&self, method: &ObjRef) -> bool {
         let Object::BoundMethod(method_data) = &*method.kind() else {
             return false;
@@ -3123,7 +3140,10 @@ impl Vm {
                     Some(Value::Builtin(BuiltinFunction::CollectionsDefaultDict))
                 }
                 Value::Code(_) => self.types_module_class("CodeType").map(Value::Class),
-                Value::None => self.types_module_class("NoneType").map(Value::Class),
+                Value::None => Some(Value::Class(
+                    self.types_module_class("NoneType")
+                        .unwrap_or_else(|| self.fallback_none_type_class()),
+                )),
                 _ => None,
             };
             if let Some(marker) = special {
@@ -4181,9 +4201,7 @@ impl Vm {
             return true;
         }
         if let Object::Class(class_data) = &*class.kind()
-            && class_data
-                .attrs
-                .contains_key("__pyrs_cpython_proxy_ptr__")
+            && class_data.attrs.contains_key("__pyrs_cpython_proxy_ptr__")
         {
             return true;
         }
@@ -4209,7 +4227,10 @@ impl Vm {
                 "[object-init-class] class={} id={} allow=fallback new_attr={}",
                 class_data.name,
                 class.id(),
-                !matches!(new_attr, None | Some(Value::Builtin(BuiltinFunction::ObjectNew)))
+                !matches!(
+                    new_attr,
+                    None | Some(Value::Builtin(BuiltinFunction::ObjectNew))
+                )
             );
         }
         !matches!(

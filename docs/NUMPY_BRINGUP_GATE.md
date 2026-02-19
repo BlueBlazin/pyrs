@@ -124,8 +124,13 @@ If a probed local module is not installed, its dependent cases are recorded as `
     - returned UTF-8 pointers now come from a stable process registry (not per-call scratch storage), matching CPython's "pointer remains valid while object exists" contract for extension consumers.
     - this closed a concrete `arr_add_docstring` use-after-free in NumPy bring-up.
   - `numpy.random` remains blocked:
-    - `import numpy.random` still aborts (process exit `-1`) after the random extension chain loads through `numpy.random.mtrand`.
-    - current sanitizer signal is stack-overflow in nested import/call paths (`run_pending_import_frames`/`import_module_object`/`call_internal`), so the active root-cause direction is import/runtime re-entrancy depth control (not the earlier `NoneType.generate_state` blocker).
+    - `import numpy.random` now fails deterministically with
+      `TypeError: ... PyInit_mtrand ... attempted to call non-function`
+      (no longer aborting with allocator trap / process exit `-1`).
+    - current traced failure point is `_pickle.py` line 7 (`ImportNameCpython`) while importing `numpy.random.mtrand`; active root-cause direction is `ImportNameCpython`/pending-import execution semantics during extension-init recursion.
+    - prior `PyObject_GetBuffer` unknown-pointer path is closed:
+      internal handle recovery now backfills via proxy-value mapping, and
+      `PyBuffer_Release` no longer treats foreign `Py_buffer.internal` pointers as pyrs-owned allocations.
   - `np.arange(0, 10, 0.5)` no longer falls back to proxy-instance placeholders for `repr/str`; NumPy's `arrayprint` path now executes directly.
   - root-cause fix: `PyObject_SetAttrString` now accepts foreign extension value pointers through proxy conversion (`cpython_value_from_ptr_or_proxy`) instead of rejecting them as unknown pointers during `_multiarray_umath._populate_finfo_constants`.
   - metatype-backed type objects (for example `numpy.dtype`) now resolve class attributes through type-object semantics (not metatype-only lookup), which unblocked `dtype.alignment` and `dtype.__ge__` bring-up blockers.

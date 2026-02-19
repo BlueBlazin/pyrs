@@ -3276,11 +3276,20 @@ impl Vm {
                 if std::env::var_os("PYRS_TRACE_CALL_NON_FUNCTION").is_some() {
                     if let Some(frame) = self.frames.last() {
                         let location = frame.code.locations.get(frame.last_ip);
+                        let opcode = frame
+                            .code
+                            .instructions
+                            .get(frame.last_ip)
+                            .map(|instr| format!("{:?}", instr.opcode))
+                            .unwrap_or_else(|| "<unknown>".to_string());
                         eprintln!(
-                            "[call-non-function] file={} line={} col={} value={}",
+                            "[call-non-function] file={} func={} line={} col={} ip={} opcode={} value={}",
                             frame.code.filename,
+                            frame.code.name,
                             location.map(|loc| loc.line).unwrap_or(0),
                             location.map(|loc| loc.column).unwrap_or(0),
+                            frame.last_ip,
+                            opcode,
                             format_repr(&other),
                         );
                     } else {

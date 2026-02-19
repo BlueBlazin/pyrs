@@ -6,12 +6,11 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     _Py_NoneStruct, CPY_PROXY_PTR_ATTR, CPYTHON_DESCRIPTOR_REGISTRY, CpythonCFunctionCompatObject,
-    CpythonDescriptorKind, CpythonGetSetDef, CpythonMemberDef, CpythonMethodDef,
-    CpythonObjectHead, CpythonTypeObject, METH_FASTCALL, METH_KEYWORDS, METH_METHOD, METH_NOARGS,
-    METH_O, METH_VARARGS,
-    ModuleCapiContext, PY_MEMBER_READONLY, PY_MEMBER_RELATIVE_OFFSET, PY_MEMBER_T_BOOL,
-    PY_MEMBER_T_BYTE, PY_MEMBER_T_CHAR, PY_MEMBER_T_DOUBLE, PY_MEMBER_T_FLOAT, PY_MEMBER_T_INT,
-    PY_MEMBER_T_LONG, PY_MEMBER_T_LONGLONG, PY_MEMBER_T_NONE, PY_MEMBER_T_OBJECT,
+    CpythonDescriptorKind, CpythonGetSetDef, CpythonMemberDef, CpythonMethodDef, CpythonObjectHead,
+    CpythonTypeObject, METH_FASTCALL, METH_KEYWORDS, METH_METHOD, METH_NOARGS, METH_O,
+    METH_VARARGS, ModuleCapiContext, PY_MEMBER_READONLY, PY_MEMBER_RELATIVE_OFFSET,
+    PY_MEMBER_T_BOOL, PY_MEMBER_T_BYTE, PY_MEMBER_T_CHAR, PY_MEMBER_T_DOUBLE, PY_MEMBER_T_FLOAT,
+    PY_MEMBER_T_INT, PY_MEMBER_T_LONG, PY_MEMBER_T_LONGLONG, PY_MEMBER_T_NONE, PY_MEMBER_T_OBJECT,
     PY_MEMBER_T_OBJECT_EX, PY_MEMBER_T_PYSSIZET, PY_MEMBER_T_SHORT, PY_MEMBER_T_STRING,
     PY_MEMBER_T_STRING_INPLACE, PY_MEMBER_T_UBYTE, PY_MEMBER_T_UINT, PY_MEMBER_T_ULONG,
     PY_MEMBER_T_ULONGLONG, PY_MEMBER_T_USHORT, Py_DecRef, Py_XDecRef, Py_XIncRef, PyBool_FromLong,
@@ -1433,6 +1432,16 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
         }
         // SAFETY: cfunction object layout is stable for this context.
         let self_obj = unsafe { (*raw).m_self };
+        if self_obj == usize::MAX as *mut c_void {
+            // SAFETY: method table pointer is validated above.
+            let method_name = unsafe { c_name_to_string((*method_def).ml_name) }
+                .unwrap_or_else(|_| "<unnamed>".to_string());
+            context.set_error(format!(
+                "invalid cfunction self sentinel for method '{}'",
+                method_name
+            ));
+            return std::ptr::null_mut();
+        }
         // SAFETY: cfunction object layout is stable for this context.
         let class_obj = unsafe { (*raw).m_class };
         let positional = match cpython_positional_args_from_tuple_object(args) {
@@ -1478,13 +1487,15 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_
         let descriptor_kind = if let Some(kind) = context.cpython_descriptors.get(&descriptor_key) {
             Some(*kind)
         } else {
-            CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| registry.borrow().get(&descriptor_key).copied())
+            CPYTHON_DESCRIPTOR_REGISTRY
+                .with(|registry| registry.borrow().get(&descriptor_key).copied())
         };
         let Some(CpythonDescriptorKind::Method {
             owner_type,
             method_def,
             class_method,
-        }) = descriptor_kind else {
+        }) = descriptor_kind
+        else {
             context.set_error("descriptor call expected method descriptor");
             return std::ptr::null_mut();
         };
@@ -1525,7 +1536,9 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_
                 .unwrap_or(std::ptr::null_mut())
         };
         if receiver_type.is_null()
-            || unsafe { PyType_IsSubtype(receiver_type.cast::<c_void>(), owner_type.cast::<c_void>()) } == 0
+            || unsafe {
+                PyType_IsSubtype(receiver_type.cast::<c_void>(), owner_type.cast::<c_void>())
+            } == 0
         {
             context.set_error("descriptor receiver is not an instance/subclass of owner type");
             return std::ptr::null_mut();

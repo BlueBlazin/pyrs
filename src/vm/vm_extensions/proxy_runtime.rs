@@ -157,7 +157,9 @@ impl Vm {
                         let base_tag = cpython_value_debug_tag(&value);
                         match value {
                             Value::Instance(instance_obj) => match &*instance_obj.kind() {
-                                Object::Instance(instance_data) => match &*instance_data.class.kind()
+                                Object::Instance(instance_data) => match &*instance_data
+                                    .class
+                                    .kind()
                                 {
                                     Object::Class(class_data) => {
                                         let is_proxy = is_cpython_proxy_class(class_data);
@@ -183,9 +185,9 @@ impl Vm {
                     .and_then(|value| match value {
                         Value::Instance(instance_obj) => match &*instance_obj.kind() {
                             Object::Instance(instance_data) => {
-                                ModuleCapiContext::cpython_proxy_raw_ptr_from_value(
-                                    &Value::Class(instance_data.class.clone()),
-                                )
+                                ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&Value::Class(
+                                    instance_data.class.clone(),
+                                ))
                             }
                             _ => None,
                         },
@@ -751,11 +753,13 @@ impl Vm {
             }
             if rendered.is_null() {
                 // SAFETY: fallback uses standard attribute call flow for zero-arg dunder.
-                rendered = unsafe { Self::cpython_proxy_call_dunder_zeroarg(target_ptr, "__str__") };
+                rendered =
+                    unsafe { Self::cpython_proxy_call_dunder_zeroarg(target_ptr, "__str__") };
             }
             if rendered.is_null() {
                 // SAFETY: CPython str() may fall back to __repr__.
-                rendered = unsafe { Self::cpython_proxy_call_dunder_zeroarg(target_ptr, "__repr__") };
+                rendered =
+                    unsafe { Self::cpython_proxy_call_dunder_zeroarg(target_ptr, "__repr__") };
             }
             rendered
         };
@@ -1236,7 +1240,8 @@ impl Vm {
                 let type_name = if type_ptr.is_null() {
                     "<null>".to_string()
                 } else {
-                    c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+                    c_name_to_string((*type_ptr).tp_name)
+                        .unwrap_or_else(|_| "<invalid>".to_string())
                 };
                 (type_ptr, type_name)
             };

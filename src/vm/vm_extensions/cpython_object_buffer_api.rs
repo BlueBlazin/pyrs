@@ -1,13 +1,14 @@
-use std::ffi::{c_char, c_void};
+use std::ffi::{c_char, c_int, c_void};
 
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    CpythonBuffer, CpythonBufferInternal, ModuleCapiContext, Py_DecRef, Py_XIncRef,
-    PyBuffer_Release, PyErr_BadInternalCall, PyExc_BufferError, PyExc_TypeError, PyExc_ValueError,
-    PyLong_AsLong, PyObject_Str, PyrsObjectHandle, c_name_to_string, cpython_bytes_data_ptr,
-    cpython_call_builtin, cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
-    cpython_value_from_ptr, with_active_cpython_context_mut,
+    CpythonBuffer, CpythonBufferProcs, CpythonObjectHead, CpythonTypeObject, ModuleCapiContext,
+    Py_DecRef, Py_XIncRef, PyBuffer_Release, PyErr_BadInternalCall, PyExc_BufferError,
+    PyExc_TypeError, PyExc_ValueError, PyLong_AsLong, PyObject_Str, PyrsObjectHandle,
+    c_name_to_string, cpython_bytes_data_ptr, cpython_call_builtin, cpython_new_ptr_for_value,
+    cpython_set_error, cpython_set_typed_error, cpython_value_from_ptr,
+    with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -19,14 +20,51 @@ pub unsafe extern "C" fn PyObject_AsFileDescriptor(object: *mut c_void) -> i32 {
 pub unsafe extern "C" fn PyObject_CheckBuffer(object: *mut c_void) -> i32 {
     match cpython_value_from_ptr(object) {
         Ok(Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_)) => 1,
-        Ok(_) => 0,
-        Err(_) => 0,
+        Ok(_) | Err(_) => {
+            if cpython_external_getbuffer_slot(object).is_some() {
+                1
+            } else {
+                0
+            }
+        }
     }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_CheckReadBuffer(object: *mut c_void) -> i32 {
     unsafe { PyObject_CheckBuffer(object) }
+}
+
+fn cpython_buffer_procs_for_object(object: *mut c_void) -> Option<*mut CpythonBufferProcs> {
+    if object.is_null() {
+        return None;
+    }
+    // SAFETY: caller provided a candidate CPython object pointer.
+    let object_type = unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if object_type.is_null() {
+        return None;
+    }
+    // SAFETY: `object_type` is non-null and read-only inspected for slot pointers.
+    let buffer_procs = unsafe { (*object_type).tp_as_buffer.cast::<CpythonBufferProcs>() };
+    if buffer_procs.is_null() {
+        None
+    } else {
+        Some(buffer_procs)
+    }
+}
+
+fn cpython_external_getbuffer_slot(
+    object: *mut c_void,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> c_int> {
+    let buffer_procs = cpython_buffer_procs_for_object(object)?;
+    // SAFETY: buffer-procs table is non-null in this branch.
+    unsafe { (*buffer_procs).bf_getbuffer }
 }
 
 fn cpython_legacy_bytes_buffer_slot(
@@ -516,43 +554,76 @@ pub unsafe extern "C" fn PyMemoryView_GetContiguous(
 pub unsafe extern "C" fn PyObject_GetBuffer(
     object: *mut c_void,
     view: *mut CpythonBuffer,
-    _flags: i32,
+    flags: i32,
 ) -> i32 {
     if view.is_null() {
         cpython_set_error("PyObject_GetBuffer received null view");
         return -1;
     }
     with_active_cpython_context_mut(|context| {
-        let Some(handle) = context.cpython_handle_from_ptr(object) else {
-            context.set_error("PyObject_GetBuffer received unknown object pointer");
-            return -1;
-        };
-        let info = match context.object_get_buffer_info_v2(handle) {
-            Ok(info) => info,
-            Err(err) => {
-                context.set_error(err);
-                return -1;
-            }
-        };
-        let internal = Box::into_raw(Box::new(CpythonBufferInternal { handle }));
-        // SAFETY: caller passed a valid writable Py_buffer pointer.
-        unsafe {
-            *view = CpythonBuffer {
-                buf: info.data.cast_mut().cast(),
-                obj: object,
-                len: info.len as isize,
-                itemsize: info.itemsize as isize,
-                readonly: info.readonly,
-                ndim: info.ndim as i32,
-                format: info.format.cast_mut(),
-                shape: info.shape.cast_mut(),
-                strides: info.strides.cast_mut(),
-                suboffsets: std::ptr::null_mut(),
-                internal: internal.cast(),
-            };
-            Py_XIncRef(object);
+        let mut handle = context.cpython_handle_from_ptr(object);
+        if handle.is_none()
+            && let Some(value) = context.cpython_value_from_ptr_or_proxy(object)
+        {
+            context.cache_cpython_ptr_value(object, &value);
+            handle = context.cpython_handle_from_ptr(object);
         }
-        0
+
+        let use_internal_buffer_path = handle
+            .and_then(|mapped| context.object_value(mapped).map(|value| (mapped, value)))
+            .and_then(|(mapped, value)| {
+                if matches!(
+                    value,
+                    Value::Bytes(_) | Value::ByteArray(_) | Value::MemoryView(_)
+                ) {
+                    Some(mapped)
+                } else {
+                    None
+                }
+            });
+        if let Some(handle) = use_internal_buffer_path {
+            let info = match context.object_get_buffer_info_v2(handle) {
+                Ok(info) => info,
+                Err(err) => {
+                    context.set_error(err);
+                    return -1;
+                }
+            };
+            let internal = context.register_buffer_internal(handle);
+            // SAFETY: caller passed a valid writable Py_buffer pointer.
+            unsafe {
+                *view = CpythonBuffer {
+                    buf: info.data.cast_mut().cast(),
+                    obj: object,
+                    len: info.len as isize,
+                    itemsize: info.itemsize as isize,
+                    readonly: info.readonly,
+                    ndim: info.ndim as i32,
+                    format: info.format.cast_mut(),
+                    shape: info.shape.cast_mut(),
+                    strides: info.strides.cast_mut(),
+                    suboffsets: std::ptr::null_mut(),
+                    internal,
+                };
+                Py_XIncRef(object);
+            }
+            return 0;
+        }
+
+        if let Some(getbuffer) = cpython_external_getbuffer_slot(object) {
+            // SAFETY: `getbuffer` originates from the object's `tp_as_buffer` slot table.
+            return unsafe { getbuffer(object, view.cast(), flags as c_int) };
+        }
+
+        if let Some(handle) = handle {
+            context.set_error(format!(
+                "object handle {} does not support buffer protocol",
+                handle
+            ));
+        } else {
+            context.set_error("PyObject_GetBuffer received unknown object pointer");
+        }
+        -1
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);

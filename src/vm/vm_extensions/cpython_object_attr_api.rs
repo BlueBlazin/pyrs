@@ -3,11 +3,10 @@ use std::ffi::{CString, c_char, c_void};
 use crate::runtime::{Object, Value};
 
 use super::{
-    BuiltinFunction, CPY_PROXY_PTR_ATTR, CpythonObjectHead, CpythonTypeObject, Py_DecRef,
-    Py_IncRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
-    PyExc_AttributeError, PyExc_TypeError, PyObject_DelItem, PyObject_IsInstance, _Py_NoneStruct,
-    c_name_to_string,
-    cpython_call_builtin, cpython_error_message_indicates_missing_attribute,
+    _Py_NoneStruct, BuiltinFunction, CPY_PROXY_PTR_ATTR, CpythonObjectHead, CpythonTypeObject,
+    Py_DecRef, Py_IncRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches,
+    PyErr_Occurred, PyExc_AttributeError, PyExc_TypeError, PyObject_DelItem, PyObject_IsInstance,
+    c_name_to_string, cpython_call_builtin, cpython_error_message_indicates_missing_attribute,
     cpython_is_reduce_probe_name, cpython_new_ptr_for_value, cpython_set_error,
     cpython_set_typed_error, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
     cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
@@ -30,7 +29,10 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     let trace_numpy_dtype_attr =
         std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_ATTR").is_some() && name == "dtype";
     if trace_numpy_dtype_attr {
-        eprintln!("[numpy-dtype-attr] PyObject_GetAttrString object={:p}", object);
+        eprintln!(
+            "[numpy-dtype-attr] PyObject_GetAttrString object={:p}",
+            object
+        );
     }
     if trace_reduce_attr {
         eprintln!(
@@ -779,10 +781,7 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
         };
         eprintln!(
             "[pyx-capi] GenericSetAttr module=numpy.random._common id={} object={:p} name={} value_ptr={:p}",
-            module_id,
-            module_ptr,
-            name_debug,
-            value
+            module_id, module_ptr, name_debug, value
         );
     }
     let result = if value.is_null() {

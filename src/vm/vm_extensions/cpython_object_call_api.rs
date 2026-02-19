@@ -6,16 +6,17 @@ use crate::bytecode::CodeObject;
 use crate::runtime::{BoundMethod, BuiltinFunction, Object, Value};
 
 use super::{
-    CPY_PROXY_GET_ITER_ACTIVE, CpythonMappingMethods, CpythonNumberMethods, CpythonObjectHead,
-    CpythonSequenceMethods, CpythonTypeObject, InternalCallOutcome, ModuleCapiContext, Py_DecRef,
-    Py_XIncRef, PyDict_Clear, PyErr_BadInternalCall, PyErr_Clear, PyObject_GetAttr,
+    CPY_PROXY_GET_ITER_ACTIVE, CpythonCFunctionCompatObject, CpythonMappingMethods,
+    CpythonNumberMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject,
+    InternalCallOutcome, ModuleCapiContext, Py_DecRef, Py_XIncRef, PyCFunction_Type, PyDict_Clear,
+    PyErr_BadInternalCall, PyErr_Clear, PyMethod_Type, PyMethodDescr_Type, PyObject_GetAttr,
     PyObject_GetAttrString, PyObject_HasAttrStringWithError, PyTuple_New, PyTuple_SetItem,
-    PyTuple_Size, PyUnicode_InternFromString, c_name_to_string, cpython_call_builtin,
-    cpython_call_object, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
-    cpython_objref_from_value, cpython_positional_args_from_tuple_object,
-    cpython_resolve_vectorcall, cpython_set_active_context, cpython_set_error,
-    cpython_value_debug_tag, cpython_value_from_ptr, is_truthy,
-    with_active_cpython_context_mut,
+    PyTuple_Size, PyType_IsSubtype, PyUnicode_InternFromString, c_name_to_string,
+    cpython_call_builtin, cpython_call_object, cpython_keyword_args_from_dict_object,
+    cpython_new_ptr_for_value, cpython_objref_from_value,
+    cpython_positional_args_from_tuple_object, cpython_resolve_vectorcall,
+    cpython_set_active_context, cpython_set_error, cpython_value_debug_tag, cpython_value_from_ptr,
+    is_truthy, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -1302,15 +1303,61 @@ pub unsafe extern "C" fn PyObject_VectorcallDict(
     }
 
     with_active_cpython_context_mut(|context| {
+        let trace_seed_calls = std::env::var_os("PYRS_TRACE_SEED_CALLS").is_some();
         let mut positional_values = Vec::with_capacity(positional_count);
+        let mut positional_raw_ptrs = Vec::with_capacity(positional_count);
         for index in 0..positional_count {
             // SAFETY: caller guarantees at least positional_count entries.
             let arg_ptr = unsafe { *args.add(index) };
+            if trace_seed_calls {
+                positional_raw_ptrs.push(arg_ptr);
+            }
             let Some(value) = context.cpython_value_from_ptr_or_proxy(arg_ptr) else {
                 context.set_error("PyObject_VectorcallDict received unknown positional arg");
                 return std::ptr::null_mut();
             };
             positional_values.push(value);
+        }
+        if trace_seed_calls {
+            let callable_type = if callable.is_null() {
+                "<null>".to_string()
+            } else {
+                // SAFETY: best-effort type-name read for tracing.
+                unsafe {
+                    callable
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .filter(|ty| !ty.is_null())
+                        .and_then(|ty| c_name_to_string((*ty).tp_name).ok())
+                        .unwrap_or_else(|| "<unknown>".to_string())
+                }
+            };
+            if callable_type.contains("SeedSequence")
+                || callable_type.contains("BitGenerator")
+                || callable_type.contains("RandomState")
+                || callable_type.contains("MT19937")
+            {
+                let positional_summary = positional_values
+                    .iter()
+                    .map(cpython_value_debug_tag)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let raw_summary = positional_raw_ptrs
+                    .iter()
+                    .map(|ptr| format!("{:p}", ptr))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                eprintln!(
+                    "[seed-vectorcall-dict] callable={:p} type={} nargsf={} positional_raw=[{}] positional_values=[{}] kwargs_ptr={:p}",
+                    callable,
+                    callable_type,
+                    nargsf,
+                    raw_summary,
+                    positional_summary,
+                    kwargs
+                );
+            }
         }
 
         let kwargs_entries: Vec<(Value, Value)> = if kwargs.is_null() {
@@ -1441,6 +1488,8 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
     nargsf: usize,
     kwnames: *mut c_void,
 ) -> *mut c_void {
+    const PY_VECTORCALL_ARGUMENTS_OFFSET: usize = 1usize << (usize::BITS - 1);
+    const PY_TPFLAGS_METHOD_DESCRIPTOR: usize = 1usize << 17;
     if args.is_null() || nargsf == 0 {
         cpython_set_error("PyObject_VectorcallMethod requires self arg");
         return std::ptr::null_mut();
@@ -1451,8 +1500,100 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
     if method.is_null() {
         return std::ptr::null_mut();
     }
-    let remaining = nargsf.saturating_sub(1);
-    let result = unsafe { PyObject_Vectorcall(method, args.add(1), remaining, kwnames) };
+    let trace_vectorcall_method = std::env::var_os("PYRS_TRACE_VECTORCALL_METHOD").is_some();
+    let method_requires_explicit_self = unsafe {
+        let method_type = method
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type)
+            .unwrap_or(std::ptr::null_mut());
+        if method_type.is_null() {
+            false
+        } else if method_type == std::ptr::addr_of_mut!(PyMethod_Type).cast::<c_void>()
+            || PyType_IsSubtype(
+                method_type,
+                std::ptr::addr_of_mut!(PyMethod_Type).cast::<c_void>(),
+            ) != 0
+        {
+            false
+        } else if PyType_IsSubtype(
+            method_type,
+            std::ptr::addr_of_mut!(PyMethodDescr_Type).cast::<c_void>(),
+        ) != 0
+        {
+            true
+        } else if PyType_IsSubtype(
+            method_type,
+            std::ptr::addr_of_mut!(PyCFunction_Type).cast::<c_void>(),
+        ) != 0
+        {
+            // Unbound cfunction wrappers still expect the receiver as the first
+            // positional argument. Bound wrappers carry `m_self` and should be
+            // invoked without the receiver.
+            let raw = method.cast::<CpythonCFunctionCompatObject>();
+            raw.as_ref()
+                .map(|obj| obj.m_self.is_null())
+                .unwrap_or(false)
+        } else {
+            // CPython decides this via _PyObject_GetMethod(); use the method-descriptor
+            // type flag as a fallback for extension descriptor types not known statically.
+            method_type
+                .cast::<CpythonTypeObject>()
+                .as_ref()
+                .map(|ty| (ty.tp_flags & PY_TPFLAGS_METHOD_DESCRIPTOR) != 0)
+                .unwrap_or(false)
+        }
+    };
+    if trace_vectorcall_method {
+        let method_type_name = unsafe {
+            method
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .filter(|ty| !ty.is_null())
+                .and_then(|ty| c_name_to_string((*ty).tp_name).ok())
+                .unwrap_or_else(|| "<unknown>".to_string())
+        };
+        let cfunction_self = unsafe {
+            let method_type = method
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type)
+                .unwrap_or(std::ptr::null_mut());
+            if method_type.is_null()
+                || (method_type == std::ptr::addr_of_mut!(PyCFunction_Type).cast::<c_void>()
+                    || PyType_IsSubtype(
+                        method_type,
+                        std::ptr::addr_of_mut!(PyCFunction_Type).cast::<c_void>(),
+                    ) != 0)
+            {
+                method
+                    .cast::<CpythonCFunctionCompatObject>()
+                    .as_ref()
+                    .map(|obj| obj.m_self)
+                    .unwrap_or(std::ptr::null_mut())
+            } else {
+                std::ptr::null_mut()
+            }
+        };
+        eprintln!(
+            "[vectorcall-method] name={:p} method_type={} self={:p} method_ptr={:p} cfunc_self={:p} nargsf={} explicit_self={} kwnames={:p}",
+            name,
+            method_type_name,
+            self_obj,
+            method,
+            cfunction_self,
+            nargsf,
+            method_requires_explicit_self,
+            kwnames
+        );
+    }
+    let (call_args, call_nargsf) = if method_requires_explicit_self {
+        (args, nargsf & !PY_VECTORCALL_ARGUMENTS_OFFSET)
+    } else {
+        (unsafe { args.add(1) }, nargsf.saturating_sub(1))
+    };
+    let result = unsafe { PyObject_Vectorcall(method, call_args, call_nargsf, kwnames) };
     unsafe { Py_DecRef(method) };
     result
 }

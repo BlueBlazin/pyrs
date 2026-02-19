@@ -263,6 +263,8 @@ impl Vm {
                 ("exp", BuiltinFunction::MathExp),
                 ("erfc", BuiltinFunction::MathErfc),
                 ("log", BuiltinFunction::MathLog),
+                ("log2", BuiltinFunction::MathLog2),
+                ("lgamma", BuiltinFunction::MathLGamma),
                 ("fsum", BuiltinFunction::MathFSum),
                 ("sumprod", BuiltinFunction::MathSumProd),
                 ("cos", BuiltinFunction::MathCos),

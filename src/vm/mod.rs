@@ -839,15 +839,6 @@ impl Drop for Vm {
                 }
             }
         }
-        for raw in self.extension_pinned_cpython_allocations.drain(..) {
-            if !raw.is_null() {
-                // SAFETY: pointers were allocated via libc malloc in C-API compat paths.
-                unsafe {
-                    free(raw);
-                }
-            }
-        }
-        self.extension_pinned_cpython_allocation_set.clear();
         for ptr in self.extension_pinned_external_cpython_refs.drain() {
             if ptr == 0 {
                 continue;
@@ -858,6 +849,15 @@ impl Drop for Vm {
                 vm_extensions::Py_DecRef(ptr as *mut c_void);
             }
         }
+        for raw in self.extension_pinned_cpython_allocations.drain(..) {
+            if !raw.is_null() {
+                // SAFETY: pointers were allocated via libc malloc in C-API compat paths.
+                unsafe {
+                    free(raw);
+                }
+            }
+        }
+        self.extension_pinned_cpython_allocation_set.clear();
         self.extension_pinned_capsule_names.clear();
         self.extension_cpython_ptr_values.clear();
         self.extension_cpython_ptr_by_object_id.clear();
@@ -995,6 +995,7 @@ impl Vm {
         vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
         vm.install_sys_module();
         vm.install_importlib_modules();
+        // Provide CPython core `_random` substrate; stdlib `random.py` layers on top.
         vm.install_random_module();
         vm.install_stdlib_modules();
         vm.install_builtins();
@@ -3282,7 +3283,7 @@ impl Vm {
     }
 
     fn install_random_module(&mut self) {
-        let random_module = match self.heap.alloc_module(ModuleObject::new("random")) {
+        let random_module = match self.heap.alloc_module(ModuleObject::new("_random")) {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
@@ -3290,6 +3291,13 @@ impl Vm {
             .heap
             .alloc_class(ClassObject::new("Random".to_string(), Vec::new()))
         {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        let system_random_class = match self.heap.alloc_class(ClassObject::new(
+            "SystemRandom".to_string(),
+            vec![random_class.clone()],
+        )) {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
@@ -3331,9 +3339,47 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::RandomShuffle),
             );
         }
+        if let Object::Class(class_data) = &mut *system_random_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::RandomSeed),
+            );
+            class_data.attrs.insert(
+                "seed".to_string(),
+                Value::Builtin(BuiltinFunction::RandomSeed),
+            );
+            class_data.attrs.insert(
+                "random".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandom),
+            );
+            class_data.attrs.insert(
+                "randrange".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandRange),
+            );
+            class_data.attrs.insert(
+                "randint".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandInt),
+            );
+            class_data.attrs.insert(
+                "getrandbits".to_string(),
+                Value::Builtin(BuiltinFunction::RandomGetRandBits),
+            );
+            class_data.attrs.insert(
+                "choice".to_string(),
+                Value::Builtin(BuiltinFunction::RandomChoice),
+            );
+            class_data.attrs.insert(
+                "choices".to_string(),
+                Value::Builtin(BuiltinFunction::RandomChoices),
+            );
+            class_data.attrs.insert(
+                "shuffle".to_string(),
+                Value::Builtin(BuiltinFunction::RandomShuffle),
+            );
+        }
         self.set_module_metadata(
             &random_module,
-            "random",
+            "_random",
             None,
             Some(BUILTIN_MODULE_LOADER),
             false,
@@ -3376,11 +3422,70 @@ impl Vm {
             module_data
                 .globals
                 .insert("Random".to_string(), Value::Class(random_class.clone()));
+            module_data.globals.insert(
+                "SystemRandom".to_string(),
+                Value::Class(system_random_class.clone()),
+            );
+        }
+        self.register_module("_random", random_module);
+
+        // Keep a fallback `random` module for environments where stdlib `random.py`
+        // is not present on `sys.path` (tests and minimal bootstrap).
+        let random_fallback = match self.heap.alloc_module(ModuleObject::new("random")) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(
+            &random_fallback,
+            "random",
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            false,
+            Vec::new(),
+            false,
+        );
+        if let Object::Module(module_data) = &mut *random_fallback.kind_mut() {
+            module_data.globals.insert(
+                "seed".to_string(),
+                Value::Builtin(BuiltinFunction::RandomSeed),
+            );
+            module_data.globals.insert(
+                "random".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandom),
+            );
+            module_data.globals.insert(
+                "randrange".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandRange),
+            );
+            module_data.globals.insert(
+                "randint".to_string(),
+                Value::Builtin(BuiltinFunction::RandomRandInt),
+            );
+            module_data.globals.insert(
+                "getrandbits".to_string(),
+                Value::Builtin(BuiltinFunction::RandomGetRandBits),
+            );
+            module_data.globals.insert(
+                "choice".to_string(),
+                Value::Builtin(BuiltinFunction::RandomChoice),
+            );
+            module_data.globals.insert(
+                "choices".to_string(),
+                Value::Builtin(BuiltinFunction::RandomChoices),
+            );
+            module_data.globals.insert(
+                "shuffle".to_string(),
+                Value::Builtin(BuiltinFunction::RandomShuffle),
+            );
             module_data
                 .globals
-                .insert("SystemRandom".to_string(), Value::Class(random_class));
+                .insert("Random".to_string(), Value::Class(random_class));
+            module_data.globals.insert(
+                "SystemRandom".to_string(),
+                Value::Class(system_random_class),
+            );
         }
-        self.register_module("random", random_module);
+        self.register_module("random", random_fallback);
     }
 
     fn install_builtin_module(

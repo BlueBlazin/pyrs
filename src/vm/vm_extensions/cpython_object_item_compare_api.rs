@@ -9,19 +9,18 @@ use super::cpython_object_call_api::PyObject_IsTrue;
 use super::{
     _Py_EllipsisObject, _Py_FalseStruct, _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct,
     CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, Py_DecRef,
-    PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred, PyExc_AttributeError,
-    PyExc_TypeError, PyLong_AsSsize_t, PyObject_CallOneArg, PyObject_GetAttr,
+    PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
+    PyExc_AttributeError, PyExc_TypeError, PyLong_AsSsize_t, PyObject_CallOneArg, PyObject_GetAttr,
     PyObject_GetAttrString, PyTuple_GetItem, PyTuple_Size, PyTuple_Type, PyType_IsSubtype,
-    PyType_Type, c_name_to_string,
-    cpython_builtin_type_name_for_ptr, cpython_call_builtin, cpython_call_object,
-    cpython_error_message_indicates_missing_attribute, cpython_exception_value_from_ptr,
-    cpython_lookup_interned_unicode_text, cpython_mapping_ass_subscript_slot,
-    cpython_mapping_subscript_slot, cpython_new_ptr_for_value, cpython_sequence_item_slot,
-    cpython_set_error, cpython_set_typed_error, cpython_slice_bounds_step_one,
-    cpython_slice_indices_for_len, cpython_trace_numpy_reduce_enabled,
-    cpython_try_richcompare_slot, cpython_tuple_items_ptr, cpython_unicode_text_from_value,
-    cpython_value_debug_tag, cpython_value_from_ptr, is_truthy, value_to_int,
-    with_active_cpython_context_mut,
+    PyType_Type, c_name_to_string, cpython_builtin_type_name_for_ptr, cpython_call_builtin,
+    cpython_call_object, cpython_error_message_indicates_missing_attribute,
+    cpython_exception_value_from_ptr, cpython_lookup_interned_unicode_text,
+    cpython_mapping_ass_subscript_slot, cpython_mapping_subscript_slot, cpython_new_ptr_for_value,
+    cpython_sequence_item_slot, cpython_set_error, cpython_set_typed_error,
+    cpython_slice_bounds_step_one, cpython_slice_indices_for_len,
+    cpython_trace_numpy_reduce_enabled, cpython_try_richcompare_slot, cpython_tuple_items_ptr,
+    cpython_unicode_text_from_value, cpython_value_debug_tag, cpython_value_from_ptr, is_truthy,
+    value_to_int, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -540,7 +539,9 @@ pub unsafe extern "C" fn PyObject_Size(object: *mut c_void) -> isize {
                 if let Some(head) = object.cast::<CpythonObjectHead>().as_ref() {
                     let type_ptr = head.ob_type.cast::<CpythonTypeObject>();
                     if !type_ptr.is_null() {
-                        let as_mapping = (*type_ptr).tp_as_mapping.cast::<super::CpythonMappingMethods>();
+                        let as_mapping = (*type_ptr)
+                            .tp_as_mapping
+                            .cast::<super::CpythonMappingMethods>();
                         if !as_mapping.is_null() {
                             let mp_length = (*as_mapping).mp_length;
                             if !mp_length.is_null() {
@@ -549,8 +550,9 @@ pub unsafe extern "C" fn PyObject_Size(object: *mut c_void) -> isize {
                                 return len_fn(object);
                             }
                         }
-                        let as_sequence =
-                            (*type_ptr).tp_as_sequence.cast::<super::CpythonSequenceMethods>();
+                        let as_sequence = (*type_ptr)
+                            .tp_as_sequence
+                            .cast::<super::CpythonSequenceMethods>();
                         if !as_sequence.is_null() {
                             let sq_length = (*as_sequence).sq_length;
                             if !sq_length.is_null() {
@@ -1210,8 +1212,7 @@ pub unsafe extern "C" fn PyObject_IsInstance(object: *mut c_void, class: *mut c_
         let Some(object_type) = type_ptr_for_object(object) else {
             return 0;
         };
-        let is_match = object_type == class
-            || unsafe { PyType_IsSubtype(object_type, class) != 0 };
+        let is_match = object_type == class || unsafe { PyType_IsSubtype(object_type, class) != 0 };
         return i32::from(is_match);
     }
 
@@ -1227,8 +1228,8 @@ pub unsafe extern "C" fn PyObject_IsInstance(object: *mut c_void, class: *mut c_
             let Some(object_type) = type_ptr_for_object(object) else {
                 return 0;
             };
-            let is_match = object_type == class
-                || unsafe { PyType_IsSubtype(object_type, class) != 0 };
+            let is_match =
+                object_type == class || unsafe { PyType_IsSubtype(object_type, class) != 0 };
             return i32::from(is_match);
         }
         cpython_set_typed_error(

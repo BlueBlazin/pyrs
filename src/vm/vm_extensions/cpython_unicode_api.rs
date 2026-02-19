@@ -5,7 +5,7 @@ use crate::runtime::{Object, Value};
 use crate::vm::{BuiltinFunction, dict_set_value_checked, value_to_int};
 
 use super::{
-    _Py_NotImplementedStruct, CpythonBuffer, CpythonBufferInternal, CpythonObjectHead,
+    _Py_NotImplementedStruct, CpythonBuffer, CpythonBufferProcs, CpythonObjectHead,
     CpythonTypeObject, Cwchar, ModuleCapiContext, Py_DecRef, Py_IncRef, Py_XDecRef,
     PyBytes_AsString, PyErr_BadArgument, PyErr_BadInternalCall, PyErr_Clear, PyErr_NoMemory,
     PyErr_Occurred, PyExc_IndexError, PyExc_RuntimeError, PyExc_SystemError, PyExc_TypeError,
@@ -15,11 +15,10 @@ use super::{
     cpython_codec_name_or_default, cpython_getattr_in_context, cpython_lookup_interned_unicode_ptr,
     cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_register_interned_unicode,
     cpython_resolve_vectorcall, cpython_set_error, cpython_set_typed_error,
-    cpython_stable_utf8_ptr,
-    cpython_string_to_wide_units, cpython_unicode_decode_with_codec_in_context,
-    cpython_unicode_encode_with_codec_in_context, cpython_unicode_text_from_value,
-    cpython_value_debug_tag, cpython_value_from_ptr, cpython_wide_ptr_to_string,
-    with_active_cpython_context_mut,
+    cpython_stable_utf8_ptr, cpython_string_to_wide_units,
+    cpython_unicode_decode_with_codec_in_context, cpython_unicode_encode_with_codec_in_context,
+    cpython_unicode_text_from_value, cpython_value_debug_tag, cpython_value_from_ptr,
+    cpython_wide_ptr_to_string, with_active_cpython_context_mut,
 };
 
 fn cpython_codec_name_normalized(name: &str) -> String {
@@ -2926,6 +2925,32 @@ pub unsafe extern "C" fn PyUnicode_AsUCS4Copy(object: *mut c_void) -> *mut u32 {
     raw
 }
 
+fn cpython_external_releasebuffer_slot(
+    object: *mut c_void,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void)> {
+    if object.is_null() {
+        return None;
+    }
+    // SAFETY: caller provided a candidate CPython object pointer.
+    let object_type = unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if object_type.is_null() {
+        return None;
+    }
+    // SAFETY: `object_type` is non-null and inspected read-only for slot pointers.
+    let buffer_procs = unsafe { (*object_type).tp_as_buffer.cast::<CpythonBufferProcs>() };
+    if buffer_procs.is_null() {
+        return None;
+    }
+    // SAFETY: buffer-procs table is non-null in this branch.
+    unsafe { (*buffer_procs).bf_releasebuffer }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyBuffer_Release(view: *mut c_void) {
     if view.is_null() {
@@ -2935,12 +2960,21 @@ pub unsafe extern "C" fn PyBuffer_Release(view: *mut c_void) {
     let view_ref = unsafe { &mut *view.cast::<CpythonBuffer>() };
     let object = view_ref.obj;
     let internal = view_ref.internal;
+    let mut released_owned_internal = false;
     if !internal.is_null() {
-        // SAFETY: `internal` is allocated in `PyObject_GetBuffer` as `CpythonBufferInternal`.
-        let internal = unsafe { Box::from_raw(internal.cast::<CpythonBufferInternal>()) };
         let _ = with_active_cpython_context_mut(|context| {
-            let _ = context.object_release_buffer(internal.handle);
+            if let Some(handle) = context.take_owned_buffer_internal_handle(internal) {
+                let _ = context.object_release_buffer(handle);
+                released_owned_internal = true;
+            }
         });
+    }
+    if !released_owned_internal
+        && !object.is_null()
+        && let Some(releasebuffer) = cpython_external_releasebuffer_slot(object)
+    {
+        // SAFETY: release slot originates from the object's `tp_as_buffer` table.
+        unsafe { releasebuffer(object, view) };
     }
     if !object.is_null() {
         unsafe { Py_XDecRef(object) };

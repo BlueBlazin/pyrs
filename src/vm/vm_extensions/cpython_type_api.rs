@@ -167,6 +167,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
     kwargs: *mut c_void,
 ) -> *mut c_void {
     let trace_calls = std::env::var_os("PYRS_TRACE_CPY_CALLS").is_some();
+    let trace_seed_calls = std::env::var_os("PYRS_TRACE_SEED_CALLS").is_some();
     if callable.is_null() {
         cpython_set_error("type call received null callable");
         return std::ptr::null_mut();
@@ -219,6 +220,68 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
             callable, new_slot, init_slot, args, kwargs
         );
     }
+    if trace_seed_calls {
+        let callable_name =
+            unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
+        if callable_name.contains("SeedSequence")
+            || callable_name.contains("BitGenerator")
+            || callable_name.contains("RandomState")
+            || callable_name.contains("MT19937")
+        {
+            let (tp_flags, tp_basicsize, tp_itemsize, tp_alloc, tp_new, tp_init) = unsafe {
+                (
+                    (*ty).tp_flags,
+                    (*ty).tp_basicsize,
+                    (*ty).tp_itemsize,
+                    (*ty).tp_alloc,
+                    (*ty).tp_new,
+                    (*ty).tp_init,
+                )
+            };
+            let tuple_len = if args.is_null() {
+                -1
+            } else {
+                unsafe { PyTuple_Size(args) }
+            };
+            eprintln!(
+                "[seed-type-call] callable={:p} name={} flags=0x{:x} basicsize={} itemsize={} tp_alloc={:p} tp_new={:p} tp_init={:p} args_ptr={:p} kwargs_ptr={:p} tuple_len={}",
+                callable,
+                callable_name,
+                tp_flags,
+                tp_basicsize,
+                tp_itemsize,
+                tp_alloc,
+                tp_new,
+                tp_init,
+                args,
+                kwargs,
+                tuple_len
+            );
+            if tuple_len > 0 {
+                for idx in 0..(tuple_len.min(6)) {
+                    let item_ptr = unsafe { PyTuple_GetItem(args, idx) };
+                    let item_type = if item_ptr.is_null() {
+                        "<null>".to_string()
+                    } else {
+                        // SAFETY: best-effort type read for trace diagnostics.
+                        unsafe {
+                            item_ptr
+                                .cast::<CpythonObjectHead>()
+                                .as_ref()
+                                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                                .filter(|ty| !ty.is_null())
+                                .and_then(|ty| c_name_to_string((*ty).tp_name).ok())
+                                .unwrap_or_else(|| "<unknown>".to_string())
+                        }
+                    };
+                    eprintln!(
+                        "[seed-type-call] arg[{}]={:p} type={}",
+                        idx, item_ptr, item_type
+                    );
+                }
+            }
+        }
+    }
     let new_fn: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
         // SAFETY: tp_new follows CPython `newfunc` signature.
         unsafe { std::mem::transmute(new_slot) };
@@ -266,8 +329,8 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
                     last_error = err.clone();
                 }
             });
-            let callable_name =
-                unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
+            let callable_name = unsafe { c_name_to_string((*ty).tp_name) }
+                .unwrap_or_else(|_| "<unnamed>".to_string());
             let object_type_name = unsafe {
                 object_type
                     .cast::<CpythonTypeObject>()
@@ -630,11 +693,7 @@ fn cpython_type_from_spec_impl(
             .unwrap_or_else(|_| "<invalid>".to_string());
         eprintln!(
             "[cpy-type-build] from-spec name={} metaclass={:p} bases_arg={:p} resolved_base={:p} base_name={}",
-            full_name,
-            metaclass_ptr,
-            bases,
-            base,
-            base_name
+            full_name, metaclass_ptr, bases, base, base_name
         );
     }
     let (default_module_name, qualname) = cpython_split_type_name(&full_name);

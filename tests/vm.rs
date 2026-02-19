@@ -624,11 +624,12 @@ fn int_exposes_rational_and_complex_projection_attributes() {
 fn executes_bigint_from_bytes_to_bytes_and_bit_length_paths() {
     let source = "\
 big = int.from_bytes(b'\\x01' + (b'\\x00' * 20), 'big')\n\
+default_order = int.from_bytes(b'\\x01\\x02')\n\
 neg = int.from_bytes((b'\\xff' * 20), 'big', signed=True)\n\
 roundtrip = big.to_bytes(21, 'big')\n\
 bit_big = (1 << 130).bit_length()\n\
 bit_bool = True.bit_length()\n\
-ok = (big == (1 << 160) and neg == -1 and len(roundtrip) == 21 and roundtrip[0] == 1 and bit_big == 131 and bit_bool == 1)\n";
+ok = (big == (1 << 160) and default_order == 258 and neg == -1 and len(roundtrip) == 21 and roundtrip[0] == 1 and bit_big == 131 and bit_bool == 1)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -5565,6 +5566,8 @@ fabs = math.fabs(-2.5)\n\
 expv = math.exp(1.0)\n\
 erfc0 = math.erfc(0.0)\n\
 logv = math.log(8.0, 2.0)\n\
+log2v = math.log2(8.0)\n\
+lgammav = math.lgamma(5.0)\n\
 fsumv = math.fsum([0.1, 0.2, 0.3])\n\
 sumprodv = math.sumprod([1, 2, 3], [4, 5, 6])\n\
 cosv = math.cos(0.0)\n\
@@ -5576,7 +5579,7 @@ atanv = math.atan(1.0)\n\
 acosv = math.acos(1.0)\n\
 close_ok = math.isclose(0.3000000001, 0.3, rel_tol=1e-9, abs_tol=1e-9)\n\
 far_ok = not math.isclose(1.0, 1.1)\n\
-ok = abs(ld - 4.0) < 1e-12 and abs(hyp - 5.0) < 1e-12 and abs(fabs - 2.5) < 1e-12 and abs(expv - 2.718281828459045) < 1e-12 and abs(erfc0 - 1.0) < 1e-6 and abs(logv - 3.0) < 1e-12 and abs(fsumv - 0.6) < 1e-12 and abs(sumprodv - 32.0) < 1e-12 and abs(cosv - 1.0) < 1e-12 and abs(sinv) < 1e-12 and abs(tanv) < 1e-12 and abs(coshv - 1.0) < 1e-12 and abs(asinv - 1.5707963267948966) < 1e-12 and abs(atanv - 0.7853981633974483) < 1e-12 and abs(acosv) < 1e-12 and close_ok and far_ok\n";
+ok = abs(ld - 4.0) < 1e-12 and abs(hyp - 5.0) < 1e-12 and abs(fabs - 2.5) < 1e-12 and abs(expv - 2.718281828459045) < 1e-12 and abs(erfc0 - 1.0) < 1e-6 and abs(logv - 3.0) < 1e-12 and abs(log2v - 3.0) < 1e-12 and abs(lgammav - 3.1780538303479458) < 1e-12 and abs(fsumv - 0.6) < 1e-12 and abs(sumprodv - 32.0) < 1e-12 and abs(cosv - 1.0) < 1e-12 and abs(sinv) < 1e-12 and abs(tanv) < 1e-12 and abs(coshv - 1.0) < 1e-12 and abs(asinv - 1.5707963267948966) < 1e-12 and abs(atanv - 0.7853981633974483) < 1e-12 and abs(acosv) < 1e-12 and close_ok and far_ok\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -5612,7 +5615,12 @@ try:
     math.sumprod([1, 2], [3])
 except ValueError:
     bad_lengths = True
-ok = domain_sqrt and domain_log and domain_acos and bad_tol and bad_lengths
+domain_lgamma = False
+try:
+    math.lgamma(0)
+except ValueError:
+    domain_lgamma = True
+ok = domain_sqrt and domain_log and domain_acos and bad_tol and bad_lengths and domain_lgamma
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

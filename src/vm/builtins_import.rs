@@ -179,6 +179,56 @@ impl Vm {
         if self.frames.len() <= caller_depth {
             return Ok(());
         }
+        if let Some(active_stop_depth) = self.run_stop_depth {
+            let cpython_context_active = super::vm_extensions::cpython_active_context_is_set();
+            // We're already inside a stop-depth run loop (e.g. import/eval/call
+            // trampoline). Re-entering `run()` here can recurse one level per
+            // nested import and eventually overflow the Rust stack for deep
+            // extension import trees (NumPy random/scipy bring-up hit this).
+            //
+            // If the active loop is already draining to an equal-or-shallower
+            // depth, just let it continue; it will execute these queued frames.
+            // Extension C-API callbacks are the exception: C code can import a
+            // module and immediately read attributes from it before control
+            // returns to the VM loop, so those imports must still be drained
+            // synchronously.
+            if active_stop_depth <= caller_depth {
+                if cpython_context_active {
+                    if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                        eprintln!(
+                            "[import-pending-force] caller_depth={} active_stop_depth={} frames={} reason=cpython-context",
+                            caller_depth,
+                            active_stop_depth,
+                            self.frames.len()
+                        );
+                    }
+                } else {
+                    if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                        eprintln!(
+                            "[import-pending-skip] caller_depth={} active_stop_depth={} frames={}",
+                            caller_depth,
+                            active_stop_depth,
+                            self.frames.len()
+                        );
+                    }
+                    return Ok(());
+                }
+            } else {
+                // Rare case: nested caller asks to drain farther than current stop
+                // depth. Tighten the active stop depth in-place and let the running
+                // loop honor it without introducing another `run()` re-entry.
+                self.run_stop_depth = Some(caller_depth);
+                if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                    eprintln!(
+                        "[import-pending-tighten] caller_depth={} previous_stop_depth={} frames={}",
+                        caller_depth,
+                        active_stop_depth,
+                        self.frames.len()
+                    );
+                }
+                return Ok(());
+            }
+        }
         let caller_active_exception_before = if caller_depth == 0 {
             None
         } else {
