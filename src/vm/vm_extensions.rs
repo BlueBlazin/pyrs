@@ -2711,6 +2711,36 @@ impl ModuleCapiContext {
         }
     }
 
+    fn is_probable_type_object_ptr(object: *mut c_void) -> bool {
+        if object.is_null() {
+            return false;
+        }
+        // SAFETY: best-effort probe for candidate type objects.
+        let object_type = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        let expected_type = std::ptr::addr_of_mut!(PyType_Type).cast::<CpythonTypeObject>();
+        if object_type.is_null() {
+            return Self::is_probable_type_object_without_metatype(object);
+        }
+        if object_type == expected_type {
+            return true;
+        }
+        // SAFETY: `object_type` is non-null in this branch and used only for
+        // type-subclass/probe checks.
+        unsafe {
+            ((*object_type).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
+                || PyType_IsSubtype(
+                    object_type.cast::<c_void>(),
+                    expected_type.cast::<c_void>(),
+                ) != 0
+        }
+    }
+
     fn is_probable_external_cpython_object_ptr(object: *mut c_void) -> bool {
         const MIN_VALID_PTR: usize = 0x1_0000_0000;
         if object.is_null() {
@@ -2740,11 +2770,37 @@ impl ModuleCapiContext {
             let Some(type_head) = type_ptr.cast::<CpythonObjectHead>().as_ref() else {
                 return false;
             };
-            if type_head.ob_refcnt == 0 {
+            let tp_name = (*type_ptr).tp_name;
+            if !Self::is_probable_c_string_pointer(tp_name) {
                 return false;
             }
-            let tp_name = (*type_ptr).tp_name;
-            Self::is_probable_c_string_pointer(tp_name)
+            if type_head.ob_refcnt == 0 {
+                // Some transient Cython heap metatypes can be observed with refcnt=0 during
+                // module init while still carrying valid type metadata and a real metatype.
+                // Keep the gate strict by requiring a valid metatype chain to `type`.
+                let metatype_ptr = type_head.ob_type.cast::<CpythonTypeObject>();
+                if metatype_ptr.is_null() {
+                    return false;
+                }
+                let metatype_addr = metatype_ptr as usize;
+                if metatype_addr < MIN_VALID_PTR
+                    || metatype_addr % std::mem::align_of::<usize>() != 0
+                {
+                    return false;
+                }
+                let metatype_tp_name = (*metatype_ptr).tp_name;
+                if !Self::is_probable_c_string_pointer(metatype_tp_name) {
+                    return false;
+                }
+                let py_type = std::ptr::addr_of_mut!(PyType_Type).cast::<CpythonTypeObject>();
+                if metatype_ptr == py_type {
+                    return true;
+                }
+                return ((*metatype_ptr).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
+                    || PyType_IsSubtype(metatype_ptr.cast::<c_void>(), py_type.cast::<c_void>())
+                        != 0;
+            }
+            true
         }
     }
 
@@ -4238,24 +4294,7 @@ impl ModuleCapiContext {
         // PyType_Check(op): treat any object whose metatype is `type` (or subtype) as a type.
         // NumPy DType classes use `_DTypeMeta`, so strict pointer-equality with `PyType_Type`
         // is insufficient and would misclassify those type objects as plain instances.
-        let is_type_object = if object_type.is_null() {
-            Self::is_probable_type_object_without_metatype(object)
-        } else if object_type == expected_type {
-            true
-        } else {
-            // SAFETY: `object_type` is a non-null candidate metatype pointer here.
-            let metatype_flags = unsafe { (*object_type).tp_flags };
-            if (metatype_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0 {
-                true
-            } else {
-                // SAFETY: `object_type`/`expected_type` are candidate type pointers; subtype test
-                // is guarded internally against null/unaligned/invalid pointers.
-                unsafe {
-                    PyType_IsSubtype(object_type.cast::<c_void>(), expected_type.cast::<c_void>())
-                        != 0
-                }
-            }
-        };
+        let is_type_object = Self::is_probable_type_object_ptr(object);
         if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
             let object_type_name = unsafe {
                 object_type
@@ -4477,6 +4516,16 @@ impl ModuleCapiContext {
         } else {
             None
         };
+        let proxy_metaclass_value = if is_type_object {
+            let metatype_ptr = object_type.cast::<c_void>();
+            if metatype_ptr.is_null() || metatype_ptr == object {
+                None
+            } else {
+                self.cpython_value_from_ptr_or_proxy(metatype_ptr)
+            }
+        } else {
+            None
+        };
         // SAFETY: VM pointer is valid for the C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
         let mut proxy_bases = Vec::new();
@@ -4485,6 +4534,8 @@ impl ModuleCapiContext {
         {
             proxy_bases.push(base_class);
         }
+        let proxy_metaclass = proxy_metaclass_value
+            .and_then(|value| vm.class_from_base_value(value).ok());
         let is_base_object_type =
             is_type_object && object == std::ptr::addr_of_mut!(PyBaseObject_Type).cast::<c_void>();
         if proxy_bases.is_empty()
@@ -4525,6 +4576,9 @@ impl ModuleCapiContext {
                 class_data
                     .attrs
                     .insert("__module__".to_string(), Value::Str(module_name.clone()));
+            }
+            if let Some(metaclass_obj) = &proxy_metaclass {
+                class_data.metaclass = Some(metaclass_obj.clone());
             }
         }
         let proxy_mro = vm

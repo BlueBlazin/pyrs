@@ -3862,36 +3862,6 @@ impl Vm {
         }
         errno_values.push(("errorcode", self.heap.alloc_dict(errorcode_entries)));
         self.install_builtin_module("errno", &[], errno_values);
-        let abc_base = self
-            .heap
-            .alloc_class(ClassObject::new("ABC".to_string(), Vec::new()));
-        self.install_builtin_module(
-            "abc",
-            &[
-                ("abstractmethod", BuiltinFunction::AbcAbstractMethod),
-                (
-                    "update_abstractmethods",
-                    BuiltinFunction::AbcUpdateAbstractMethods,
-                ),
-                ("get_cache_token", BuiltinFunction::AbcGetCacheToken),
-            ],
-            vec![
-                ("ABCMeta", Value::Builtin(BuiltinFunction::Type)),
-                ("ABC", abc_base),
-                (
-                    "abstractclassmethod",
-                    Value::Builtin(BuiltinFunction::ClassMethod),
-                ),
-                (
-                    "abstractstaticmethod",
-                    Value::Builtin(BuiltinFunction::StaticMethod),
-                ),
-                (
-                    "abstractproperty",
-                    Value::Builtin(BuiltinFunction::Property),
-                ),
-            ],
-        );
         let inspect_sentinel = {
             let sentinel_class = match self.heap.alloc_class(ClassObject::new(
                 "_inspect_sentinel".to_string(),

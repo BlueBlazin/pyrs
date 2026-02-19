@@ -79,6 +79,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - current active blocker:
     - `import matplotlib` still exits with `SIGSEGV (139)` in direct mode.
     - tracing points to repeated `_multiarray_umath.add_docstring` traffic before failure; keep focus on Lane B root-cause closure (no shim patching).
+- Scientific-stack closure checkpoint (2026-02-20):
+  - removed bootstrap `abc` module shim (`ABCMeta = type`) so stdlib now resolves through CPython `Lib/abc.py` with native `_abc` substrate.
+  - fixed metaclass descriptor binding in `tp_getattro` metatype paths so calls like `Sequence.register(...)` bind `cls` correctly.
+  - relaxed proxy pointer gating for transient Cython metatype pointers (`ob_refcnt == 0`) only when their metatype chain still validates as a real `type` lineage.
+  - SciPy blocker moved forward from `type 'type' has no attribute 'register'` to `_ctypes` substrate absence:
+    - `ModuleNotFoundError: module '_ctypes' not found` during `scipy._lib._ccallback_c` init.
 - NumPy import warning cleanup (2026-02-17):
   - fixed `PyInterpreterState_Main`/`PyThreadState_Get()->interp` baseline so NumPy no longer reports the sub-interpreter warning during import.
   - narrowed `types.MethodType` detection to Python-bound methods (not native bound methods), removing the prior `add_newdoc` warning flood for extension callables.

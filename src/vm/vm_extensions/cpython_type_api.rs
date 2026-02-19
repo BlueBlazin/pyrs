@@ -365,7 +365,128 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
                 object, attr_name, attr_ptr
             );
         }
+        // Bind metaclass descriptors against the original class object so
+        // methods like ABCMeta.register receive `cls` correctly.
+        if let Ok(Some(bound_ptr)) = with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                return None;
+            }
+            let Value::Class(class_obj) = context.cpython_value_from_ptr_or_proxy(object)? else {
+                return None;
+            };
+            // SAFETY: VM pointer is valid for active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let resolved = match vm.load_attr_class(&class_obj, &attr_name) {
+                Ok(crate::vm::AttrAccessOutcome::Value(value)) => value,
+                Ok(crate::vm::AttrAccessOutcome::ExceptionHandled) => return None,
+                Err(_) => return None,
+            };
+            Some(context.alloc_cpython_ptr_for_value(resolved))
+        }) && !bound_ptr.is_null()
+        {
+            if trace_type_getattr {
+                eprintln!(
+                    "[cpy-type-getattr] metatype-bound-hit object={:p} attr={} ptr={:p}",
+                    object, attr_name, bound_ptr
+                );
+            }
+            return bound_ptr;
+        }
         return attr_ptr;
+    }
+    // Runtime classes can carry metaclass state that is richer than the raw
+    // `ob_type` fallback visible through C-API compat pointers (for example
+    // ABC registration surfaces used by SciPy/Cython).
+    let runtime_metaclass_lookup = with_active_cpython_context_mut(|context| {
+        let object_value = context.cpython_value_from_ptr_or_proxy(object)?;
+        let metaclass_obj = match object_value {
+            Value::Class(class_obj) => match &*class_obj.kind() {
+                Object::Class(class_data) => class_data.metaclass.clone(),
+                _ => None,
+            },
+            // Some external class objects may currently materialize as proxy
+            // instances; in that case the instance class is the effective
+            // metaclass for type-attribute lookup.
+            Value::Instance(instance_obj) => match &*instance_obj.kind() {
+                Object::Instance(instance_data) => Some(instance_data.class.clone()),
+                _ => None,
+            },
+            _ => None,
+        }?;
+        let metaclass_value = Value::Class(metaclass_obj);
+        let metaclass_ptr = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&metaclass_value)
+            .unwrap_or_else(|| context.alloc_cpython_ptr_for_value(metaclass_value.clone()));
+        if metaclass_ptr.is_null() {
+            return None;
+        }
+        context
+            .lookup_type_attr_via_tp_dict(metaclass_ptr, &attr_name)
+            .or_else(|| context.lookup_type_attr_via_runtime_mro(metaclass_ptr, &attr_name))
+    });
+    if let Ok(Some(attr_ptr)) = runtime_metaclass_lookup
+        && !attr_ptr.is_null()
+    {
+        if trace_type_getattr {
+            eprintln!(
+                "[cpy-type-getattr] runtime-metaclass-hit object={:p} attr={} ptr={:p}",
+                object, attr_name, attr_ptr
+            );
+        }
+        if let Ok(Some(bound_ptr)) = with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                return None;
+            }
+            let Value::Class(class_obj) = context.cpython_value_from_ptr_or_proxy(object)? else {
+                return None;
+            };
+            // SAFETY: VM pointer is valid for active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let resolved = match vm.load_attr_class(&class_obj, &attr_name) {
+                Ok(crate::vm::AttrAccessOutcome::Value(value)) => value,
+                Ok(crate::vm::AttrAccessOutcome::ExceptionHandled) => return None,
+                Err(_) => return None,
+            };
+            Some(context.alloc_cpython_ptr_for_value(resolved))
+        }) && !bound_ptr.is_null()
+        {
+            if trace_type_getattr {
+                eprintln!(
+                    "[cpy-type-getattr] runtime-metaclass-bound-hit object={:p} attr={} ptr={:p}",
+                    object, attr_name, bound_ptr
+                );
+            }
+            return bound_ptr;
+        }
+        return attr_ptr;
+    }
+    if trace_type_getattr {
+        let _ = with_active_cpython_context_mut(|context| {
+            let mapped_value = context.cpython_value_from_ptr_or_proxy(object);
+            let value_tag = mapped_value
+                .as_ref()
+                .map(cpython_value_debug_tag)
+                .unwrap_or_else(|| "None".to_string());
+            let metaclass_name = mapped_value.as_ref().and_then(|value| match value {
+                Value::Class(class_obj) => match &*class_obj.kind() {
+                    Object::Class(class_data) => class_data
+                        .metaclass
+                        .as_ref()
+                        .and_then(|metaclass| match &*metaclass.kind() {
+                            Object::Class(meta_data) => Some(meta_data.name.clone()),
+                            _ => None,
+                        }),
+                    _ => None,
+                },
+                _ => None,
+            });
+            eprintln!(
+                "[cpy-type-getattr] runtime-metaclass-miss object={:p} attr={} value_tag={} metaclass={}",
+                object,
+                attr_name,
+                value_tag,
+                metaclass_name.unwrap_or_else(|| "<none>".to_string())
+            );
+        });
     }
     // SAFETY: object pointer follows type slot dispatch contract.
     let type_ptr = unsafe {

@@ -106,8 +106,12 @@ If a probed local module is not installed, its dependent cases are recorded as `
 - 2026-02-19 import-state checkpoint:
   - fixed source-module failure cleanup so failed imports no longer leave partial modules in `sys.modules` (tracked via internal module-initializing marker + unwind cleanup).
   - concrete closure: after `import numpy`, attempting `import ctypes` now raises `ModuleNotFoundError: module '_ctypes' not found` (no stale partial `ctypes` module with missing `CFUNCTYPE`).
+- 2026-02-20 import-state checkpoint:
+  - removed the bootstrap `abc` shim (`ABCMeta = type`) so stdlib now uses CPython `Lib/abc.py` + native `_abc` substrate.
+  - `tp_getattro` metatype paths now bind metaclass descriptors against the original class object (fixes `ABCMeta.register` argument binding semantics).
+  - proxy type-probability gating now accepts transient Cython metatype pointers with `ob_refcnt==0` only when their metatype chain still validates as a real `type` lineage.
   - SciPy direct-mode blocker has moved forward to:
-    - `AttributeError: extension 'scipy._lib._ccallback_c' initializer 'PyInit__ccallback_c' Py_mod_exec failed: type 'type' has no attribute 'register'`.
+    - `ModuleNotFoundError: module '_ctypes' not found` from `scipy._lib._ccallback_c` init.
 - 2026-02-19 checkpoint (current):
   - closed direct blockers hit in the latest scientific-stack pass:
     - `PyBytes_Resize` + `_PyBytes_Resize` exported and kept alive (Mach-O symbol closure for Pillow/matplotlib dependency chain),

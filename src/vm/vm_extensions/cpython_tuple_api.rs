@@ -139,26 +139,85 @@ pub unsafe extern "C" fn PyTuple_SetItem(
             Some(value) => value,
             None => {
                 // SAFETY: best-effort diagnostics for unknown tuple item pointers.
-                let (type_ptr, type_name) = unsafe {
-                    let type_ptr = item
-                        .cast::<CpythonObjectHead>()
-                        .as_ref()
+                let (
+                    type_ptr,
+                    type_name,
+                    item_refcnt,
+                    type_refcnt,
+                    type_flags,
+                    type_metatype_ptr,
+                    type_metatype_refcnt,
+                    type_metatype_flags,
+                ) = unsafe {
+                    let item_head = item.cast::<CpythonObjectHead>().as_ref();
+                    let item_refcnt = item_head.map(|head| head.ob_refcnt).unwrap_or(0);
+                    let type_ptr = item_head
                         .map(|head| head.ob_type.cast::<CpythonTypeObject>())
                         .unwrap_or(std::ptr::null_mut());
                     if type_ptr.is_null() {
-                        (std::ptr::null_mut(), "<null>".to_string())
+                        (
+                            std::ptr::null_mut(),
+                            "<null>".to_string(),
+                            item_refcnt,
+                            0,
+                            0,
+                            std::ptr::null_mut(),
+                            0,
+                            0,
+                        )
                     } else {
+                        let type_name = c_name_to_string((*type_ptr).tp_name)
+                            .unwrap_or_else(|_| "<invalid>".to_string());
+                        let type_refcnt = type_ptr
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_refcnt)
+                            .unwrap_or(0);
+                        let type_flags = (*type_ptr).tp_flags;
+                        let type_metatype_ptr = type_ptr
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .unwrap_or(std::ptr::null_mut());
+                        let (type_metatype_refcnt, type_metatype_flags) = if type_metatype_ptr
+                            .is_null()
+                        {
+                            (0, 0)
+                        } else {
+                            (
+                                type_metatype_ptr
+                                    .cast::<CpythonObjectHead>()
+                                    .as_ref()
+                                    .map(|head| head.ob_refcnt)
+                                    .unwrap_or(0),
+                                (*type_metatype_ptr).tp_flags,
+                            )
+                        };
                         (
                             type_ptr,
-                            c_name_to_string((*type_ptr).tp_name)
-                                .unwrap_or_else(|_| "<invalid>".to_string()),
+                            type_name,
+                            item_refcnt,
+                            type_refcnt,
+                            type_flags,
+                            type_metatype_ptr,
+                            type_metatype_refcnt,
+                            type_metatype_flags,
                         )
                     }
                 };
                 let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(item);
                 context.set_error(format!(
-                    "PyTuple_SetItem received unknown item pointer ptr={:p} type={:p} type_name={} probable_external={}",
-                    item, type_ptr, type_name, probable
+                    "PyTuple_SetItem received unknown item pointer ptr={:p} type={:p} type_name={} probable_external={} item_refcnt={} type_refcnt={} type_flags=0x{:x} type_metatype={:p} type_metatype_refcnt={} type_metatype_flags=0x{:x}",
+                    item,
+                    type_ptr,
+                    type_name,
+                    probable,
+                    item_refcnt,
+                    type_refcnt,
+                    type_flags,
+                    type_metatype_ptr,
+                    type_metatype_refcnt,
+                    type_metatype_flags
                 ));
                 return -1;
             }
