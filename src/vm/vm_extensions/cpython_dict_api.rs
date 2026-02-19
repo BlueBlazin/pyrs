@@ -9,9 +9,9 @@ use super::{
     Py_IncRef, Py_XDecRef, PyErr_BadInternalCall, PyErr_Occurred, PyErr_SetObject, PyExc_KeyError,
     PyUnicode_FromString, TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
     cpython_debug_compare_value, cpython_is_reduce_probe_name, cpython_new_ptr_for_value,
-    cpython_set_error, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
-    cpython_value_from_ptr, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value_checked, with_active_cpython_context_mut,
+    cpython_safe_object_type_name, cpython_set_error, cpython_trace_numpy_reduce_enabled,
+    cpython_value_debug_tag, cpython_value_from_ptr, dict_contains_key_checked, dict_get_value,
+    dict_remove_value, dict_set_value_checked, with_active_cpython_context_mut, ModuleCapiContext,
 };
 
 #[unsafe(no_mangle)]
@@ -39,23 +39,49 @@ pub unsafe extern "C" fn _PyDict_NewPresized(_minused: isize) -> *mut c_void {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyDict_Size(dict: *mut c_void) -> isize {
-    match cpython_value_from_ptr(dict) {
-        Ok(Value::Dict(dict_obj)) => match &*dict_obj.kind() {
-            Object::Dict(values) => values.len() as isize,
-            _ => {
-                cpython_set_error("PyDict_Size encountered invalid dict storage");
+    with_active_cpython_context_mut(|context| {
+        let Some(target) = context.cpython_value_from_ptr_or_proxy(dict) else {
+            context.set_error("PyDict_Size received unknown dict pointer");
+            return -1;
+        };
+        if let Value::Dict(dict_obj) = target.clone() {
+            return match &*dict_obj.kind() {
+                Object::Dict(values) => values.len() as isize,
+                _ => {
+                    context.set_error("PyDict_Size encountered invalid dict storage");
+                    -1
+                }
+            };
+        }
+        match cpython_call_builtin(BuiltinFunction::Len, vec![target]) {
+            Ok(Value::Int(length)) => match isize::try_from(length) {
+                Ok(length) => length,
+                Err(_) => {
+                    context.set_error("PyDict_Size length does not fit isize");
+                    -1
+                }
+            },
+            Ok(Value::BigInt(_)) => {
+                context.set_error("PyDict_Size length does not fit isize");
                 -1
             }
-        },
-        Ok(_) => {
-            cpython_set_error("PyDict_Size expected dict object");
-            -1
+            Ok(other) => {
+                context.set_error(format!(
+                    "PyDict_Size expected dict-like length result, got {}",
+                    cpython_value_debug_tag(&other)
+                ));
+                -1
+            }
+            Err(err) => {
+                context.set_error(err);
+                -1
+            }
         }
-        Err(err) => {
-            cpython_set_error(err);
-            -1
-        }
-    }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -246,6 +272,23 @@ pub unsafe extern "C" fn PyDict_SetDefault(
             return context.alloc_cpython_ptr_for_value(existing);
         }
         let Some(default_item) = context.cpython_value_from_ptr_or_proxy(default_value) else {
+            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+                let ty = cpython_safe_object_type_name(default_value)
+                    .unwrap_or_else(|| "<unknown-type>".to_string());
+                let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(
+                    default_value,
+                );
+                let owned = context.owns_cpython_allocation_ptr(default_value);
+                eprintln!(
+                    "[pydict-setdefault-unknown-default] dict={:p} key={} default={:p} default_type={} owned={} probable={}",
+                    dict,
+                    cpython_value_debug_tag(&key_value),
+                    default_value,
+                    ty,
+                    owned,
+                    probable
+                );
+            }
             context.set_error("PyDict_SetDefault received unknown default pointer");
             return std::ptr::null_mut();
         };
@@ -305,6 +348,24 @@ pub unsafe extern "C" fn PyDict_SetDefaultRef(
             return 1;
         }
         let Some(default_item) = context.cpython_value_from_ptr_or_proxy(default_value) else {
+            if std::env::var_os("PYRS_TRACE_PYDICT_ERRORS").is_some() {
+                let ty = cpython_safe_object_type_name(default_value)
+                    .unwrap_or_else(|| "<unknown-type>".to_string());
+                let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(
+                    default_value,
+                );
+                let owned = context.owns_cpython_allocation_ptr(default_value);
+                eprintln!(
+                    "[pydict-setdefaultref-unknown-default] dict={:p} key={} default={:p} default_type={} owned={} probable={} result_ptr={:p}",
+                    dict,
+                    cpython_value_debug_tag(&key_value),
+                    default_value,
+                    ty,
+                    owned,
+                    probable,
+                    result
+                );
+            }
             context.set_error("PyDict_SetDefaultRef received unknown default pointer");
             return -1;
         };

@@ -4797,36 +4797,20 @@ impl ModuleCapiContext {
                     })
                     .unwrap_or(false)
             };
-            if likely_type_object
+            let owned_object_allocation = owns_allocation
+                && self
+                    .cpython_allocations
+                    .iter()
+                    .any(|allocation| allocation.cast::<c_void>() == object);
+            if (likely_type_object || owned_object_allocation)
                 && let Some(proxy) = self.cpython_external_proxy_value(object)
             {
-                if !owns_allocation {
-                    // SAFETY: VM pointer is valid for active C-API context lifetime.
-                    let vm = unsafe { &mut *self.vm };
-                    let inserted = vm
-                        .extension_pinned_external_cpython_refs
-                        .insert(object as usize);
-                    if inserted {
-                        // SAFETY: pointer accepted via type-object fallback.
-                        unsafe {
-                            Py_IncRef(object);
-                        }
-                    }
-                    vm.extension_cpython_ptr_values
-                        .entry(object as usize)
-                        .or_insert_with(|| proxy.clone());
-                } else {
-                    self.pin_owned_cpython_allocation_for_vm(object);
-                    // SAFETY: VM pointer is valid for active C-API context lifetime.
-                    let vm = unsafe { &mut *self.vm };
-                    vm.extension_cpython_ptr_values
-                        .entry(object as usize)
-                        .or_insert_with(|| proxy.clone());
-                }
+                let proxy =
+                    self.cache_cpython_proxy_value_for_ptr(object, proxy, owns_allocation, true);
                 if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
                     eprintln!(
-                        "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false",
-                        object, owns_allocation
+                        "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false type_like={} owned_object_alloc={}",
+                        object, owns_allocation, likely_type_object, owned_object_allocation
                     );
                 }
                 return Some(proxy);
@@ -4839,6 +4823,22 @@ impl ModuleCapiContext {
             }
             return None;
         }
+        let proxy = self.cpython_external_proxy_value(object)?;
+        Some(self.cache_cpython_proxy_value_for_ptr(
+            object,
+            proxy,
+            owns_allocation,
+            false,
+        ))
+    }
+
+    fn cache_cpython_proxy_value_for_ptr(
+        &mut self,
+        object: *mut c_void,
+        proxy: Value,
+        owns_allocation: bool,
+        force_trace_fallback: bool,
+    ) -> Value {
         if !owns_allocation {
             // Keep external PyObject* proxies alive for the VM lifetime once they are
             // materialized into runtime values. Context-scoped incref/decref churn can
@@ -4848,7 +4848,7 @@ impl ModuleCapiContext {
             let inserted = vm
                 .extension_pinned_external_cpython_refs
                 .insert(object as usize);
-            if std::env::var_os("PYRS_TRACE_CPY_PIN").is_some() {
+            if std::env::var_os("PYRS_TRACE_CPY_PIN").is_some() || force_trace_fallback {
                 eprintln!(
                     "[cpy-pin] ptr={:p} branch=external inserted={}",
                     object, inserted
@@ -4861,9 +4861,7 @@ impl ModuleCapiContext {
                     Py_IncRef(object);
                 }
             }
-        }
-        let proxy = self.cpython_external_proxy_value(object)?;
-        if owns_allocation {
+        } else {
             self.pin_owned_cpython_allocation_for_vm(object);
         }
         if !self.vm.is_null() {
@@ -4893,7 +4891,7 @@ impl ModuleCapiContext {
             );
         }
         self.cpython_ptr_by_handle.insert(handle, object);
-        Some(proxy)
+        proxy
     }
 
     fn cpython_module_obj_from_ptr(&mut self, object: *mut c_void) -> Result<ObjRef, String> {
