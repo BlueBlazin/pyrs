@@ -120,12 +120,12 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - `numpy_import`: `PASS`
   - `numpy_ndarray_sum`: `PASS`
   - `numpy_numerictypes_core`: `PASS`
+  - `PyUnicode_AsUTF8` pointer-lifetime parity fix landed:
+    - returned UTF-8 pointers now come from a stable process registry (not per-call scratch storage), matching CPython's "pointer remains valid while object exists" contract for extension consumers.
+    - this closed a concrete `arr_add_docstring` use-after-free in NumPy bring-up.
   - `numpy.random` remains blocked:
-    - `import numpy.random` fails in `numpy.random.mtrand` with
-      `AttributeError: ... NoneType has no attribute 'generate_state'`.
-    - root cause direction: class-level extension-type `tp_init` dispatch still falls through to
-      `object.__init__` for `BitGenerator.__init__(self, seed)` call-sites, so `_seed_seq` is not
-      initialized before `MT19937.__init__` reads `self._seed_seq.generate_state(...)`.
+    - `import numpy.random` still aborts (process exit `-1`) after the random extension chain loads through `numpy.random.mtrand`.
+    - current sanitizer signal is stack-overflow in nested import/call paths (`run_pending_import_frames`/`import_module_object`/`call_internal`), so the active root-cause direction is import/runtime re-entrancy depth control (not the earlier `NoneType.generate_state` blocker).
   - `np.arange(0, 10, 0.5)` no longer falls back to proxy-instance placeholders for `repr/str`; NumPy's `arrayprint` path now executes directly.
   - root-cause fix: `PyObject_SetAttrString` now accepts foreign extension value pointers through proxy conversion (`cpython_value_from_ptr_or_proxy`) instead of rejecting them as unknown pointers during `_multiarray_umath._populate_finfo_constants`.
   - metatype-backed type objects (for example `numpy.dtype`) now resolve class attributes through type-object semantics (not metatype-only lookup), which unblocked `dtype.alignment` and `dtype.__ge__` bring-up blockers.

@@ -84,11 +84,15 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `pandas_import` / `pandas_series_sum`: process exit `-5` (native crash class failure).
     - `matplotlib_import` / `matplotlib_pyplot_smoke`: import assertion path failure.
   - additional NumPy P0 blocker:
-    - `import numpy.random` currently fails in `numpy.random.mtrand` with
-      `NoneType has no attribute 'generate_state'`.
-    - core direction: class-level extension `tp_init` dispatch parity (`BitGenerator.__init__`)
-      must be closed so `_seed_seq` initialization happens before `MT19937` state setup.
+    - `import numpy.random` still aborts (process exit `-1`) after the random extension chain
+      loads through `numpy.random.mtrand`.
+    - current sanitizer signal is stack-overflow in nested
+      `run_pending_import_frames`/`import_module_object`/`call_internal` paths, so the active
+      root-cause direction is import/runtime re-entrancy depth control and call-shape closure.
   - root-cause closures landed in this slice:
+    - `PyUnicode_AsUTF8` now returns stable UTF-8 pointers from a process registry
+      (instead of per-call scratch storage), closing a concrete NumPy `arr_add_docstring`
+      use-after-free path.
     - type-object attr lookup now treats metatype-backed type objects as type objects (not metatype-only), unblocking `numpy.dtype` class attrs like `alignment`.
     - proxy type-object rich-compare dunder fallback (`__lt__/__le__/__eq__/__ne__/__gt__/__ge__`) now materializes callable wrappers from `tp_richcompare`, unblocking `numpy.dtype.__ge__` class-attr probes.
     - ndarray pretty-print path now runs only for ndarray instances (not proxy classes), fixing `print(type(np.arange(...)))` runtime failures.
