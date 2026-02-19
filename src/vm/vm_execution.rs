@@ -6920,7 +6920,8 @@ impl Vm {
                 _ => format!("{init_subclass:?}"),
             };
             eprintln!(
-                "[init-subclass] class={} hook={} kwargs={}",
+                "[init-subclass] depth={} class={} hook={} kwargs={}",
+                self.frames.len(),
                 class_name,
                 hook_tag,
                 class_keywords.len()
