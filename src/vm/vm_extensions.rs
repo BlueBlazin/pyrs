@@ -714,6 +714,7 @@ const CPY_SLOT_EQ_NAME: &[u8] = b"__eq__\0";
 const CPY_SLOT_NE_NAME: &[u8] = b"__ne__\0";
 const CPY_SLOT_GT_NAME: &[u8] = b"__gt__\0";
 const CPY_SLOT_GE_NAME: &[u8] = b"__ge__\0";
+const CPY_SLOT_INIT_NAME: &[u8] = b"__init__\0";
 
 static mut CPY_SLOT_LT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
     ml_name: CPY_SLOT_LT_NAME.as_ptr().cast::<c_char>(),
@@ -749,6 +750,12 @@ static mut CPY_SLOT_GE_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
     ml_name: CPY_SLOT_GE_NAME.as_ptr().cast::<c_char>(),
     ml_meth: Some(cpython_slot_dunder_ge),
     ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_INIT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_INIT_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: None,
+    ml_flags: METH_VARARGS | METH_KEYWORDS,
     ml_doc: std::ptr::null(),
 };
 
@@ -1451,6 +1458,22 @@ fn cpython_slot_richcompare_method_def(attr_name: &str) -> Option<*mut CpythonMe
     }
 }
 
+fn cpython_slot_init_method_def() -> *mut CpythonMethodDef {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let init_callable: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
+            cpython_slot_dunder_init;
+        // SAFETY: slot-init wrapper follows the METH_VARARGS|METH_KEYWORDS ABI.
+        unsafe {
+            CPY_SLOT_INIT_METHOD_DEF.ml_meth = Some(std::mem::transmute::<
+                unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void,
+                unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void,
+            >(init_callable));
+        }
+    });
+    std::ptr::addr_of_mut!(CPY_SLOT_INIT_METHOD_DEF)
+}
+
 unsafe fn cpython_slot_richcompare_dunder_call(
     args: *mut c_void,
     op: i32,
@@ -1529,6 +1552,155 @@ unsafe extern "C" fn cpython_slot_dunder_ge(
     args: *mut c_void,
 ) -> *mut c_void {
     unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_GE, "__ge__") }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_init(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    if self_obj.is_null() {
+        cpython_set_error("TypeError: descriptor '__init__' received null self");
+        return std::ptr::null_mut();
+    }
+    let args_tuple = if args.is_null() {
+        // SAFETY: tuple allocation follows CPython ABI.
+        let tuple = unsafe { PyTuple_New(0) };
+        if tuple.is_null() {
+            return std::ptr::null_mut();
+        }
+        tuple
+    } else {
+        args
+    };
+    let needs_args_decref = args.is_null();
+    let receiver_is_type_object = cpython_is_type_object_ptr(self_obj);
+    let (target, init_args) = if receiver_is_type_object {
+        // SAFETY: tuple pointer is either provided by the caller or created above.
+        let argc = unsafe { PyTuple_Size(args_tuple) };
+        if argc < 1 {
+            if needs_args_decref {
+                // SAFETY: tuple was allocated in this function.
+                unsafe { Py_DecRef(args_tuple) };
+            }
+            cpython_set_error("TypeError: descriptor '__init__' requires an instance argument");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: tuple size validated above.
+        let instance = unsafe { PyTuple_GetItem(args_tuple, 0) };
+        if instance.is_null() {
+            if needs_args_decref {
+                // SAFETY: tuple was allocated in this function.
+                unsafe { Py_DecRef(args_tuple) };
+            }
+            return std::ptr::null_mut();
+        }
+        let tail_len = (argc - 1) as usize;
+        // SAFETY: tuple allocation follows CPython ABI.
+        let tail_tuple = unsafe { PyTuple_New(tail_len as isize) };
+        if tail_tuple.is_null() {
+            if needs_args_decref {
+                // SAFETY: tuple was allocated in this function.
+                unsafe { Py_DecRef(args_tuple) };
+            }
+            return std::ptr::null_mut();
+        }
+        for index in 0..tail_len {
+            // SAFETY: bounds checked by `tail_len`.
+            let value = unsafe { PyTuple_GetItem(args_tuple, (index + 1) as isize) };
+            if value.is_null() {
+                if needs_args_decref {
+                    // SAFETY: tuple was allocated in this function.
+                    unsafe { Py_DecRef(args_tuple) };
+                }
+                // SAFETY: tuple was allocated in this function.
+                unsafe { Py_DecRef(tail_tuple) };
+                return std::ptr::null_mut();
+            }
+            // SAFETY: destination tuple steals a reference.
+            unsafe { Py_XIncRef(value) };
+            if unsafe { PyTuple_SetItem(tail_tuple, index as isize, value) } != 0 {
+                if needs_args_decref {
+                    // SAFETY: tuple was allocated in this function.
+                    unsafe { Py_DecRef(args_tuple) };
+                }
+                // SAFETY: tuple was allocated in this function.
+                unsafe { Py_DecRef(tail_tuple) };
+                return std::ptr::null_mut();
+            }
+        }
+        (instance, tail_tuple)
+    } else {
+        (self_obj, args_tuple)
+    };
+
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    let target_type = if receiver_is_type_object {
+        self_obj.cast::<CpythonTypeObject>()
+    } else if (target as usize) < MIN_VALID_PTR
+        || (target as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+    {
+        std::ptr::null_mut()
+    } else {
+        // SAFETY: `target` pointer shape was validated above.
+        unsafe {
+            target
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        }
+    };
+    if target_type.is_null() {
+        if needs_args_decref {
+            // SAFETY: tuple was allocated in this function.
+            unsafe { Py_DecRef(args_tuple) };
+        }
+        if init_args != args_tuple {
+            // SAFETY: tuple was allocated in this function.
+            unsafe { Py_DecRef(init_args) };
+        }
+        cpython_set_error("TypeError: descriptor '__init__' received target without type");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: target type pointer is non-null above.
+    let init_slot = unsafe { (*target_type).tp_init };
+    if init_slot.is_null() {
+        if needs_args_decref {
+            // SAFETY: tuple was allocated in this function.
+            unsafe { Py_DecRef(args_tuple) };
+        }
+        if init_args != args_tuple {
+            // SAFETY: tuple was allocated in this function.
+            unsafe { Py_DecRef(init_args) };
+        }
+        // SAFETY: type pointer is valid for metadata lookup.
+        let type_name =
+            unsafe { c_name_to_string((*target_type).tp_name) }.unwrap_or_else(|_| "<unknown>".to_string());
+        cpython_set_error(format!(
+            "TypeError: descriptor '__init__' for '{type_name}' has no initializer"
+        ));
+        return std::ptr::null_mut();
+    }
+    let init_fn: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
+        // SAFETY: slot pointer follows CPython `initproc` ABI.
+        unsafe { std::mem::transmute(init_slot) };
+    let status = unsafe { init_fn(target, init_args, kwargs) };
+    if needs_args_decref {
+        // SAFETY: tuple was allocated in this function.
+        unsafe { Py_DecRef(args_tuple) };
+    }
+    if init_args != args_tuple {
+        // SAFETY: tuple was allocated in this function.
+        unsafe { Py_DecRef(init_args) };
+    }
+    if status < 0 {
+        return std::ptr::null_mut();
+    }
+    let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+    // SAFETY: None singleton is process-global and stable.
+    unsafe { Py_IncRef(none_ptr) };
+    none_ptr
 }
 
 unsafe extern "C" fn cpython_float_tp_new(
@@ -1917,6 +2089,7 @@ static CPYTHON_HEAP_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonHeapType
     OnceLock::new();
 static CPYTHON_INTERNED_UNICODE_REGISTRY: OnceLock<Mutex<CpythonInternedUnicodeRegistry>> =
     OnceLock::new();
+static CPYTHON_STABLE_UTF8_REGISTRY: OnceLock<Mutex<HashMap<String, Box<[u8]>>>> = OnceLock::new();
 
 struct CpythonThreadLock {
     state: Mutex<bool>,
@@ -2273,19 +2446,40 @@ impl ModuleCapiContext {
         if object_addr < MIN_VALID_PTR || object_addr % std::mem::align_of::<usize>() != 0 {
             return false;
         }
-        // SAFETY: guarded by non-null + minimum-address + alignment checks.
-        unsafe {
-            let ty = object.cast::<CpythonTypeObject>();
-            let Some(_head) = ty.cast::<CpythonObjectHead>().as_ref() else {
-                return false;
-            };
-            let tp_name = (*ty).tp_name;
-            if !Self::is_probable_c_string_pointer(tp_name) {
-                return false;
-            }
-            let basicsize = (*ty).tp_basicsize;
-            basicsize > 0 && basicsize < (1 << 20)
+        let builtin_type_ptrs = [
+            std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyBaseObject_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyLong_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyBool_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyFloat_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyComplex_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyByteArray_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyBytes_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyUnicode_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyTuple_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyList_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyDict_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PySet_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyFrozenSet_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PySlice_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyModule_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyMethod_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyCapsule_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyCFunction_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyMethodDescr_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyClassMethodDescr_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyGetSetDescr_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyMemberDescr_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyWrapperDescr_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyProperty_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyMemoryView_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PySuper_Type).cast::<c_void>(),
+            std::ptr::addr_of_mut!(PyNone_Type).cast::<c_void>(),
+        ];
+        if builtin_type_ptrs.contains(&object) {
+            return true;
         }
+        false
     }
 
     fn is_probable_external_cpython_object_ptr(object: *mut c_void) -> bool {
@@ -4909,7 +5103,11 @@ impl ModuleCapiContext {
                             ) -> *mut c_void =
                                 // SAFETY: descriptor getter follows CPython descriptor ABI.
                                 unsafe { std::mem::transmute(descriptor_get) };
-                            let owner_ptr = object_type.cast::<c_void>();
+                            let owner_ptr = if is_type_object {
+                                object
+                            } else {
+                                object_type.cast::<c_void>()
+                            };
                             let self_ptr = if is_type_object {
                                 std::ptr::null_mut()
                             } else {
@@ -5268,6 +5466,24 @@ impl ModuleCapiContext {
                         }
                         return Some(callable_ptr);
                     }
+                }
+            }
+            if attr_name == "__init__" && unsafe { !(*current).tp_init.is_null() } {
+                let method_def = cpython_slot_init_method_def();
+                let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                    method_def,
+                    object,
+                    std::ptr::null_mut(),
+                    current.cast::<c_void>(),
+                );
+                if !callable_ptr.is_null() {
+                    if trace_lookup_branch {
+                        eprintln!(
+                            "[proxy-lookup-branch] attr={} branch=tp_init_slot_wrapper object={:p} current={:p} value_ptr={:p}",
+                            attr_name, object, current, callable_ptr
+                        );
+                    }
+                    return Some(callable_ptr);
                 }
             }
             // SAFETY: current points to a PyTypeObject-compatible header.
@@ -5643,14 +5859,22 @@ impl ModuleCapiContext {
             return None;
         }
         let trace_seed_calls = if std::env::var_os("PYRS_TRACE_NUMPY_SEED_CALLS").is_some() {
-            // SAFETY: `type_ptr` is validated above.
-            let type_name = unsafe {
-                c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+            let callable_name = if cpython_is_type_object_ptr(callable) {
+                // SAFETY: type-object pointer shape is validated by `cpython_is_type_object_ptr`.
+                unsafe {
+                    c_name_to_string((*callable.cast::<CpythonTypeObject>()).tp_name)
+                        .unwrap_or_else(|_| "<invalid>".to_string())
+                }
+            } else {
+                // SAFETY: `type_ptr` is validated above.
+                unsafe {
+                    c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+                }
             };
-            type_name.contains("SeedSequence")
-                || type_name.contains("BitGenerator")
-                || type_name.contains("MT19937")
-                || type_name.contains("RandomState")
+            callable_name.contains("SeedSequence")
+                || callable_name.contains("BitGenerator")
+                || callable_name.contains("MT19937")
+                || callable_name.contains("RandomState")
         } else {
             false
         };
@@ -8125,6 +8349,26 @@ impl ModuleCapiContext {
         let text = text.clone();
         self.scratch_c_string_ptr(&text)
     }
+}
+
+fn cpython_stable_utf8_registry() -> &'static Mutex<HashMap<String, Box<[u8]>>> {
+    CPYTHON_STABLE_UTF8_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(super) fn cpython_stable_utf8_ptr(text: &str) -> Result<*const c_char, String> {
+    let mut registry = cpython_stable_utf8_registry()
+        .lock()
+        .map_err(|_| "failed to lock stable UTF-8 registry".to_string())?;
+    if let Some(bytes) = registry.get(text) {
+        return Ok(bytes.as_ptr().cast::<c_char>());
+    }
+    let mut bytes = Vec::with_capacity(text.len().saturating_add(1));
+    bytes.extend_from_slice(text.as_bytes());
+    bytes.push(0);
+    let boxed = bytes.into_boxed_slice();
+    let ptr = boxed.as_ptr().cast::<c_char>();
+    registry.insert(text.to_string(), boxed);
+    Ok(ptr)
 }
 
 unsafe fn capi_context_mut<'a>(module_ctx: *mut c_void) -> Option<&'a mut ModuleCapiContext> {

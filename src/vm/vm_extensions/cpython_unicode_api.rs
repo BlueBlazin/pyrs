@@ -15,6 +15,7 @@ use super::{
     cpython_codec_name_or_default, cpython_getattr_in_context, cpython_lookup_interned_unicode_ptr,
     cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_register_interned_unicode,
     cpython_resolve_vectorcall, cpython_set_error, cpython_set_typed_error,
+    cpython_stable_utf8_ptr,
     cpython_string_to_wide_units, cpython_unicode_decode_with_codec_in_context,
     cpython_unicode_encode_with_codec_in_context, cpython_unicode_text_from_value,
     cpython_value_debug_tag, cpython_value_from_ptr, cpython_wide_ptr_to_string,
@@ -335,9 +336,13 @@ pub unsafe extern "C" fn PyUnicode_AsUTF8(object: *mut c_void) -> *const c_char 
             context.set_error("PyUnicode_AsUTF8 expected str object");
             return std::ptr::null();
         };
-        context
-            .scratch_c_string_ptr(&text)
-            .unwrap_or(std::ptr::null())
+        match cpython_stable_utf8_ptr(&text) {
+            Ok(ptr) => ptr,
+            Err(err) => {
+                context.set_error(err);
+                std::ptr::null()
+            }
+        }
     }) {
         Ok(ptr) => ptr,
         Err(err) => {

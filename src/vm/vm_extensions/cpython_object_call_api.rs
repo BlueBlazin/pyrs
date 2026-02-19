@@ -14,7 +14,7 @@ use super::{
     cpython_call_object, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_objref_from_value, cpython_positional_args_from_tuple_object,
     cpython_resolve_vectorcall, cpython_set_active_context, cpython_set_error,
-    cpython_unicode_text_from_value, cpython_value_debug_tag, cpython_value_from_ptr, is_truthy,
+    cpython_value_debug_tag, cpython_value_from_ptr, is_truthy,
     with_active_cpython_context_mut,
 };
 
@@ -853,14 +853,11 @@ pub unsafe extern "C" fn PyUnstable_Code_NewWithPosOnlyArgs(
     _exceptiontable: *mut c_void,
 ) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
-        let filename_text = context
-            .cpython_value_from_ptr_or_proxy(filename)
-            .and_then(|value| cpython_unicode_text_from_value(&value))
-            .unwrap_or_else(|| "<string>".to_string());
-        let name_text = context
-            .cpython_value_from_ptr_or_proxy(name)
-            .and_then(|value| cpython_unicode_text_from_value(&value))
-            .unwrap_or_else(|| "<module>".to_string());
+        // Cython uses this API for extension-module code object metadata.
+        // Keep allocation stable even when foreign unicode pointers are not mapped in-context.
+        let _ = (filename, name);
+        let filename_text = "<string>".to_string();
+        let name_text = "<module>".to_string();
         let code = CodeObject::new(name_text, filename_text);
         context.alloc_cpython_ptr_for_value(Value::Code(Rc::new(code)))
     })

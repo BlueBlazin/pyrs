@@ -6894,6 +6894,7 @@ impl Vm {
         class: &ObjRef,
         class_keywords: &HashMap<String, Value>,
     ) -> Result<bool, RuntimeError> {
+        let trace_init_subclass = std::env::var_os("PYRS_TRACE_INIT_SUBCLASS").is_some();
         let mro = self.class_mro_entries(class);
         let init_subclass = mro
             .into_iter()
@@ -6902,6 +6903,29 @@ impl Vm {
         let Some(init_subclass) = init_subclass else {
             return Ok(false);
         };
+        if trace_init_subclass {
+            let class_name = match &*class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
+            let hook_tag = match &init_subclass {
+                Value::Builtin(builtin) => format!("builtin::{builtin:?}"),
+                Value::Function(_) => "function".to_string(),
+                Value::BoundMethod(_) => "bound_method".to_string(),
+                Value::Class(class_ref) => match &*class_ref.kind() {
+                    Object::Class(class_data) => format!("class::{}", class_data.name),
+                    _ => "class::<non-class>".to_string(),
+                },
+                Value::Instance(_) => "instance".to_string(),
+                _ => format!("{init_subclass:?}"),
+            };
+            eprintln!(
+                "[init-subclass] class={} hook={} kwargs={}",
+                class_name,
+                hook_tag,
+                class_keywords.len()
+            );
+        }
         match self.call_internal(
             init_subclass,
             vec![Value::Class(class.clone())],
