@@ -5,6 +5,7 @@ use std::rc::Rc;
 use crate::bytecode::CodeObject;
 use crate::runtime::{BoundMethod, BuiltinFunction, Object, Value};
 
+use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
     CPY_PROXY_GET_ITER_ACTIVE, CpythonCFunctionCompatObject, CpythonMappingMethods,
     CpythonNumberMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject,
@@ -14,9 +15,8 @@ use super::{
     PyTuple_Size, PyType_IsSubtype, PyUnicode_InternFromString, c_name_to_string,
     cpython_call_builtin, cpython_call_object, cpython_keyword_args_from_dict_object,
     cpython_new_ptr_for_value, cpython_objref_from_value,
-    cpython_positional_args_from_tuple_object, cpython_resolve_vectorcall,
-    cpython_set_active_context, cpython_set_error, cpython_value_debug_tag, cpython_value_from_ptr,
-    is_truthy, with_active_cpython_context_mut,
+    cpython_positional_args_from_tuple_object, cpython_resolve_vectorcall, cpython_set_error,
+    cpython_value_debug_tag, cpython_value_from_ptr, is_truthy, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -138,12 +138,12 @@ pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
             if slot.is_null() {
                 return None;
             }
-            let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(*context));
+            let _active_context_guard =
+                ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(*context));
             // SAFETY: `tp_str` uses unary slot signature (`reprfunc`) for this type.
             let str_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
                 unsafe { std::mem::transmute(slot) };
             let rendered = unsafe { str_fn(object) };
-            cpython_set_active_context(previous_context);
             Some(rendered)
         });
         match str_slot_result {
@@ -201,12 +201,12 @@ pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
             if slot.is_null() {
                 return None;
             }
-            let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(*context));
+            let _active_context_guard =
+                ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(*context));
             // SAFETY: `tp_repr` uses unary slot signature (`reprfunc`) for this type.
             let repr_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
                 unsafe { std::mem::transmute(slot) };
             let rendered = unsafe { repr_fn(object) };
-            cpython_set_active_context(previous_context);
             Some(rendered)
         });
         match repr_slot_result {
@@ -1545,6 +1545,16 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
         }
     };
     if trace_vectorcall_method {
+        let method_name_value = with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_ptr_or_proxy(name)
+                .map(|value| match value {
+                    Value::Str(text) => format!("'{}'", text),
+                    other => cpython_value_debug_tag(&other),
+                })
+                .unwrap_or_else(|| "<unresolved>".to_string())
+        })
+        .unwrap_or_else(|_| "<no-context>".to_string());
         let method_type_name = unsafe {
             method
                 .cast::<CpythonObjectHead>()
@@ -1577,8 +1587,9 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
             }
         };
         eprintln!(
-            "[vectorcall-method] name={:p} method_type={} self={:p} method_ptr={:p} cfunc_self={:p} nargsf={} explicit_self={} kwnames={:p}",
+            "[vectorcall-method] name={:p} name_value={} method_type={} self={:p} method_ptr={:p} cfunc_self={:p} nargsf={} explicit_self={} kwnames={:p}",
             name,
+            method_name_value,
             method_type_name,
             self_obj,
             method,

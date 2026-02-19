@@ -3,10 +3,11 @@ use std::ffi::CString;
 
 use crate::vm::ExtensionCallableEntry;
 
+use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
     BoundMethod, CpythonMethodDef, ExtensionCallableKind, ModuleCapiContext, NativeCallResult,
     NativeMethodKind, NativeMethodObject, ObjRef, Object, PyrsApiV1, PyrsObjectHandle,
-    RuntimeError, Value, Vm, cpython_invoke_method_from_values, cpython_set_active_context,
+    RuntimeError, Value, Vm, cpython_invoke_method_from_values,
 };
 
 impl Vm {
@@ -148,7 +149,8 @@ impl Vm {
                         function_id, module_name, method_def as *mut CpythonMethodDef
                     );
                 }
-                let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+                let _active_context_guard =
+                    ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
                 let self_obj =
                     call_ctx.alloc_cpython_ptr_for_value(Value::Module(entry.module.clone()));
                 let result_ptr = cpython_invoke_method_from_values(
@@ -159,7 +161,6 @@ impl Vm {
                     args,
                     kwargs,
                 );
-                cpython_set_active_context(previous_context);
                 if result_ptr.is_null() {
                     -1
                 } else if let Some(result_value) =

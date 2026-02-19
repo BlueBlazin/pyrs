@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::{CString, c_void};
 
+use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
     CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
     ModuleCapiContext, ObjRef, Object, ProxyAttrLookupReentryGuard, Py_DecRef, PyErr_Clear,
@@ -9,8 +10,7 @@ use super::{
     PyNumber_Positive, PyNumber_Subtract, PyNumber_TrueDivide, PyObject_CallObject,
     PyObject_GetAttrString, PyObject_GetItem, PyObject_RichCompareBool, PyObject_SetItem,
     PyObject_Size, RuntimeError, Value, Vm, c_name_to_string, cpython_is_type_object_ptr,
-    cpython_set_active_context, cpython_valid_type_ptr, cpython_value_debug_tag,
-    is_cpython_proxy_class,
+    cpython_valid_type_ptr, cpython_value_debug_tag, is_cpython_proxy_class,
 };
 
 impl Vm {
@@ -105,11 +105,11 @@ impl Vm {
             ));
         };
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let result_ptr = call_ctx
             .try_native_tp_call(raw_ptr, &args, &kwargs)
             .unwrap_or(std::ptr::null_mut());
-        cpython_set_active_context(previous_context);
         if result_ptr.is_null() {
             if std::env::var_os("PYRS_TRACE_PROXY_CALL_FAIL").is_some() {
                 const MIN_VALID_PTR: usize = 0x1_0000_0000;
@@ -248,7 +248,8 @@ impl Vm {
             return Some(Err(RuntimeError::new("object is not iterable")));
         }
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         // SAFETY: raw pointer validated above and points to a CPython-compatible object header.
         let type_ptr = unsafe {
             raw_ptr
@@ -272,7 +273,6 @@ impl Vm {
                 unsafe { tp_iter(raw_ptr) }
             }
         };
-        cpython_set_active_context(previous_context);
         if iter_ptr.is_null() {
             let detail = call_ctx
                 .last_error
@@ -328,7 +328,8 @@ impl Vm {
     ) -> Option<Result<Value, RuntimeError>> {
         Self::cpython_proxy_raw_ptr_from_value(value)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let value_ptr = call_ctx.alloc_cpython_ptr_for_value(value.clone());
         let result_ptr = if value_ptr.is_null() {
             std::ptr::null_mut()
@@ -336,7 +337,6 @@ impl Vm {
             // SAFETY: pointer was materialized in the active C-API context above.
             unsafe { op(value_ptr) }
         };
-        cpython_set_active_context(previous_context);
         if value_ptr.is_null() {
             return Some(Err(RuntimeError::new(format!(
                 "{failure_label} to materialize operand",
@@ -370,7 +370,8 @@ impl Vm {
             return None;
         }
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let left_ptr = call_ctx.alloc_cpython_ptr_for_value(left.clone());
         let right_ptr = call_ctx.alloc_cpython_ptr_for_value(right.clone());
         let result_ptr = if left_ptr.is_null() || right_ptr.is_null() {
@@ -379,7 +380,6 @@ impl Vm {
             // SAFETY: pointers were materialized in the active C-API context above.
             unsafe { op(left_ptr, right_ptr) }
         };
-        cpython_set_active_context(previous_context);
         if left_ptr.is_null() || right_ptr.is_null() {
             return Some(Err(RuntimeError::new(format!(
                 "{failure_label} to materialize operands"
@@ -440,7 +440,8 @@ impl Vm {
         let _reentry_guard = CpythonProxyLongGuard;
         let raw_ptr = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(value)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let result = if raw_ptr.is_null() {
             Err(RuntimeError::new("int() unsupported type"))
         } else {
@@ -492,7 +493,6 @@ impl Vm {
                 }
             }
         };
-        cpython_set_active_context(previous_context);
         Some(result)
     }
 
@@ -523,7 +523,8 @@ impl Vm {
         let _reentry_guard = CpythonProxyFloatGuard;
         let raw_ptr = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(value)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let result = if raw_ptr.is_null() {
             Err(RuntimeError::new("float() unsupported type"))
         } else {
@@ -582,7 +583,6 @@ impl Vm {
                 }
             }
         };
-        cpython_set_active_context(previous_context);
         Some(result)
     }
 
@@ -686,7 +686,8 @@ impl Vm {
     ) -> Option<Result<(), RuntimeError>> {
         Self::cpython_proxy_raw_ptr_from_value(target)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
         let key_ptr = call_ctx.alloc_cpython_ptr_for_value(key);
         let value_ptr = call_ctx.alloc_cpython_ptr_for_value(value);
@@ -696,7 +697,6 @@ impl Vm {
             // SAFETY: pointers were materialized in the active C-API context above.
             unsafe { PyObject_SetItem(target_ptr, key_ptr, value_ptr) }
         };
-        cpython_set_active_context(previous_context);
         if target_ptr.is_null() || key_ptr.is_null() || value_ptr.is_null() {
             return Some(Err(RuntimeError::new(
                 "proxy setitem failed to materialize operands",
@@ -725,7 +725,8 @@ impl Vm {
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
         let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__str__", false)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
         let result_ptr = if target_ptr.is_null() {
             std::ptr::null_mut()
@@ -763,7 +764,6 @@ impl Vm {
             }
             rendered
         };
-        cpython_set_active_context(previous_context);
         if target_ptr.is_null() {
             return Some(Err(RuntimeError::new(
                 "proxy str() failed to materialize operand",
@@ -794,7 +794,8 @@ impl Vm {
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
         let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__repr__", false)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
         let result_ptr = if target_ptr.is_null() {
             std::ptr::null_mut()
@@ -827,7 +828,6 @@ impl Vm {
             }
             rendered
         };
-        cpython_set_active_context(previous_context);
         if target_ptr.is_null() {
             return Some(Err(RuntimeError::new(
                 "proxy repr() failed to materialize operand",
@@ -853,7 +853,8 @@ impl Vm {
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
         let _guard = ProxyAttrLookupReentryGuard::enter(raw_ptr as usize, "__format__", false)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
         let c_format = CString::new("__format__").ok()?;
         let format_method_ptr = if target_ptr.is_null() {
@@ -876,7 +877,6 @@ impl Vm {
             // SAFETY: pointers were materialized in the active C-API context above.
             unsafe { PyObject_CallObject(format_method_ptr, spec_args_ptr) }
         };
-        cpython_set_active_context(previous_context);
         if target_ptr.is_null() || format_method_ptr.is_null() || spec_args_ptr.is_null() {
             return Some(Err(RuntimeError::new(
                 "proxy format() failed to materialize operands",
@@ -904,7 +904,8 @@ impl Vm {
     ) -> Option<Result<Value, RuntimeError>> {
         Self::cpython_proxy_raw_ptr_from_value(target)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
         let size = if target_ptr.is_null() {
             -1
@@ -912,7 +913,6 @@ impl Vm {
             // SAFETY: pointer was materialized in the active C-API context above.
             unsafe { PyObject_Size(target_ptr) }
         };
-        cpython_set_active_context(previous_context);
         if target_ptr.is_null() {
             return Some(Err(RuntimeError::new(
                 "proxy len() failed to materialize operand",
@@ -938,7 +938,8 @@ impl Vm {
         if call_ctx.owns_cpython_allocation_ptr(raw_ptr) {
             return None;
         }
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let target_ptr = call_ctx.alloc_cpython_ptr_for_value(target.clone());
         let key_ptr = call_ctx.alloc_cpython_ptr_for_value(key);
         let result_ptr = if target_ptr.is_null() || key_ptr.is_null() {
@@ -947,7 +948,6 @@ impl Vm {
             // SAFETY: pointers were materialized in the active C-API context above.
             unsafe { PyObject_GetItem(target_ptr, key_ptr) }
         };
-        cpython_set_active_context(previous_context);
         if target_ptr.is_null() || key_ptr.is_null() {
             return Some(Err(RuntimeError::new(
                 "proxy getitem failed to materialize operands",
@@ -989,7 +989,8 @@ impl Vm {
             return None;
         }
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let left_ptr = call_ctx.alloc_cpython_ptr_for_value(left.clone());
         let right_ptr = call_ctx.alloc_cpython_ptr_for_value(right.clone());
         let result = if left_ptr.is_null() || right_ptr.is_null() {
@@ -998,7 +999,6 @@ impl Vm {
             // SAFETY: pointers were materialized in the active C-API context above.
             unsafe { PyObject_RichCompareBool(left_ptr, right_ptr, op) }
         };
-        cpython_set_active_context(previous_context);
         if left_ptr.is_null() || right_ptr.is_null() {
             return Some(Err(RuntimeError::new(
                 "proxy comparison failed to materialize operands",
@@ -1176,9 +1176,9 @@ impl Vm {
         else {
             return None;
         };
-        let previous_context = cpython_set_active_context(std::ptr::addr_of_mut!(call_ctx));
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let attr_ptr = unsafe { PyObject_GetAttrString(raw_ptr, c_name.as_ptr()) };
-        cpython_set_active_context(previous_context);
         if attr_ptr.is_null() {
             if trace_proxy_attr {
                 let detail = call_ctx

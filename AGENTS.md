@@ -80,9 +80,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `numpy_numerictypes_core`: `PASS`
     - `np.arange(0, 10, 0.5)` now renders as `array([...])` instead of proxy placeholders.
   - latest optional scientific-stack blockers are now:
-    - `scipy_import`: process exit `-10` (native crash class failure).
-    - `pandas_import` / `pandas_series_sum`: process exit `-5` (native crash class failure).
-    - `matplotlib_import` / `matplotlib_pyplot_smoke`: import assertion path failure.
+    - `scipy_import`: `AttributeError: module 'ctypes' has no attribute 'CFUNCTYPE'`.
+    - `pandas_import` / `pandas_series_sum`: `numpy.random.mtrand` `Py_mod_exec` runtime error
+      (`index 4 is out of bounds for axis 0 with size 4`).
+    - `matplotlib_import` / `matplotlib_pyplot_smoke`: missing symbol `PyInstanceMethod_Type`.
   - additional NumPy P0 blocker:
     - `import numpy.random` now fails deterministically with
       `TypeError: ... PyInit_mtrand ... attempted to call non-function` (process exit `2`),
@@ -90,6 +91,17 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - traced failure point is `_pickle.py` line 7 (`ImportNameCpython`) while importing
       `numpy.random.mtrand`; active root-cause direction is `ImportNameCpython` +
       pending-import semantics in extension-init recursion.
+  - scientific-stack update (2026-02-19):
+    - CPython active-context switching now uses RAII (`ActiveCpythonContextGuard`) across
+      proxy/callable/loader/object-call paths, with nested-context error-message propagation.
+    - this removed the prior `SystemError: NULL result without error in generate_state()` mask;
+      traced `numpy.random.mtrand` init now reports the underlying error:
+      `index 4 is out of bounds for axis 0 with size 4`.
+    - current gate blockers:
+      - `scipy_import`: `AttributeError: module 'ctypes' has no attribute 'CFUNCTYPE'`.
+      - `pandas_import` / `pandas_series_sum`: `numpy.random.mtrand` `Py_mod_exec` runtime
+        error (`index 4 is out of bounds for axis 0 with size 4`).
+      - `matplotlib_import` / `matplotlib_pyplot_smoke`: missing symbol `PyInstanceMethod_Type`.
   - root-cause closures landed in this slice:
     - `PyUnicode_AsUTF8` now returns stable UTF-8 pointers from a process registry
       (instead of per-call scratch storage), closing a concrete NumPy `arr_add_docstring`

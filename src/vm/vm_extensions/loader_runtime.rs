@@ -11,10 +11,11 @@ use crate::extensions::{
 use crate::runtime::{Object, RuntimeError, Value};
 use crate::vm::ExtensionCapsuleRegistryEntry;
 
+use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
     _Py_NoneStruct, CpythonModuleDef, CpythonModuleDefSlot, ExtensionCallableKind,
     ExtensionInitScopeGuard, ModuleCapiContext, ObjRef, PYRS_DATETIME_CAPI,
-    PYRS_DATETIME_CAPSULE_NAME, PyType_Type, Vm, c_name_to_string, cpython_set_active_context,
+    PYRS_DATETIME_CAPSULE_NAME, PyType_Type, Vm, c_name_to_string,
 };
 
 enum ExtensionExecutionPlan {
@@ -353,12 +354,10 @@ impl Vm {
                 // See comment above in the pyrs-v1 branch; keep shared library loaded across
                 // init failures to preserve callback pointer validity during teardown.
                 self.extension_libraries.push(handle);
-                let previous_context =
-                    cpython_set_active_context(std::ptr::addr_of_mut!(module_ctx));
+                let _active_context_guard =
+                    ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
                 // SAFETY: symbol was resolved with `unsafe extern "C" fn() -> *mut c_void`.
-                let result = unsafe { initializer() };
-                cpython_set_active_context(previous_context);
-                result
+                unsafe { initializer() }
             }
         };
 
@@ -376,8 +375,8 @@ impl Vm {
             let returned = if let Some(value) = module_ctx.cpython_value_from_ptr(init_result) {
                 value
             } else {
-                let previous_context =
-                    cpython_set_active_context(std::ptr::addr_of_mut!(module_ctx));
+                let _active_context_guard =
+                    ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
                 // CPython multi-phase extensions return `PyModuleDef*` from `PyInit_*`.
                 // Our import path already created the target module object, so use that
                 // module as the execution target and drive slot execution from `m_slots`.
@@ -501,7 +500,6 @@ impl Vm {
                                                         .pvalue)
                                             );
                                         }
-                                        cpython_set_active_context(previous_context);
                                         let message = module_ctx
                                             .last_error
                                             .clone()
@@ -569,7 +567,6 @@ impl Vm {
                         }
                     }
                 }
-                cpython_set_active_context(previous_context);
                 if module_ptr.is_null() {
                     if trace_slots {
                         eprintln!("[ext-load] module={} unknown_module_ptr", module_name);

@@ -124,10 +124,10 @@ If a probed local module is not installed, its dependent cases are recorded as `
     - returned UTF-8 pointers now come from a stable process registry (not per-call scratch storage), matching CPython's "pointer remains valid while object exists" contract for extension consumers.
     - this closed a concrete `arr_add_docstring` use-after-free in NumPy bring-up.
   - `numpy.random` remains blocked:
-    - `import numpy.random` now fails deterministically with
-      `TypeError: ... PyInit_mtrand ... attempted to call non-function`
-      (no longer aborting with allocator trap / process exit `-1`).
-    - current traced failure point is `_pickle.py` line 7 (`ImportNameCpython`) while importing `numpy.random.mtrand`; active root-cause direction is `ImportNameCpython`/pending-import execution semantics during extension-init recursion.
+    - active-context restore is now RAII-guarded (`ActiveCpythonContextGuard`) across proxy/callable/loader/object-call runtime paths.
+    - the prior `NULL result without error in generate_state()` path is closed; traced failure now surfaces the underlying extension error:
+      `index 4 is out of bounds for axis 0 with size 4` from `numpy.random.mtrand` init.
+    - `pandas_import` / `pandas_series_sum` now fail with the same surfaced `numpy.random.mtrand` `Py_mod_exec` error (runtime error, exit `2`) instead of native crash exits.
     - prior `PyObject_GetBuffer` unknown-pointer path is closed:
       internal handle recovery now backfills via proxy-value mapping, and
       `PyBuffer_Release` no longer treats foreign `Py_buffer.internal` pointers as pyrs-owned allocations.
@@ -136,12 +136,13 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - metatype-backed type objects (for example `numpy.dtype`) now resolve class attributes through type-object semantics (not metatype-only lookup), which unblocked `dtype.alignment` and `dtype.__ge__` bring-up blockers.
   - proxy class `str`/`repr` now use class-safe rendering (`<class 'module.name'>`) and no longer route through ndarray-only rendering logic.
 - Latest optional scientific-stack probe (`--include-scientific-stack`) remains red:
-  - `scipy_import`: `FAIL` (process exit `-10`)
-  - `pandas_import` / `pandas_series_sum`: `FAIL` (process exit `-5`)
-  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (import assertion path)
+  - `scipy_import`: `FAIL` (`AttributeError: module 'ctypes' has no attribute 'CFUNCTYPE'`)
+  - `pandas_import` / `pandas_series_sum`: `FAIL` (`numpy.random.mtrand` `Py_mod_exec` fails with `index 4 is out of bounds for axis 0 with size 4`)
+  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (missing symbol `PyInstanceMethod_Type`)
 - Next P0 focus after NumPy baseline pass:
-  - root-cause the `scipy`/`pandas` native crash exits (`SIGBUS`/`SIGTRAP` class failures) with targeted native traces,
-  - then close `matplotlib` import assertion parity.
+  - close `ctypes.CFUNCTYPE` surface for SciPy import.
+  - fix `numpy.random.mtrand` `generate_state` bounds/shape semantics to unblock pandas import/smoke.
+  - export/implement `PyInstanceMethod_Type` for matplotlib binary imports.
 - `PyNumber_Long` reduction-path blocker is closed via:
   - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and
   - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.

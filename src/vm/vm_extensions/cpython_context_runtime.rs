@@ -32,6 +32,39 @@ pub(in crate::vm::vm_extensions) fn cpython_set_active_context(
     })
 }
 
+pub(in crate::vm::vm_extensions) struct ActiveCpythonContextGuard {
+    context: *mut ModuleCapiContext,
+    previous: *mut ModuleCapiContext,
+}
+
+impl ActiveCpythonContextGuard {
+    pub(in crate::vm::vm_extensions) fn push(context: *mut ModuleCapiContext) -> Self {
+        let previous = cpython_set_active_context(context);
+        Self { context, previous }
+    }
+}
+
+impl Drop for ActiveCpythonContextGuard {
+    fn drop(&mut self) {
+        if !self.previous.is_null() && !self.context.is_null() {
+            // SAFETY: both pointers refer to live contexts for the active call stack.
+            unsafe {
+                let previous = &mut *self.previous;
+                let current = &mut *self.context;
+                if previous.current_error.is_none() && current.current_error.is_some() {
+                    let message = current
+                        .last_error
+                        .clone()
+                        .or_else(|| current.first_error.clone())
+                        .unwrap_or_else(|| "nested CPython context raised an error".to_string());
+                    previous.set_error(message);
+                }
+            }
+        }
+        cpython_set_active_context(self.previous);
+    }
+}
+
 pub(in crate::vm::vm_extensions) fn cpython_trace_numpy_reduce_enabled() -> bool {
     std::env::var_os("PYRS_TRACE_NUMPY_REDUCE").is_some()
 }
@@ -94,6 +127,15 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
     message: impl Into<String>,
 ) {
     let message = message.into();
+    if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+        let caller = std::panic::Location::caller();
+        eprintln!(
+            "[cpy-typed-err-src] {} (at {}:{})",
+            message,
+            caller.file(),
+            caller.line()
+        );
+    }
     let _ = with_active_cpython_context_mut(|context| {
         let ty = if ptype.is_null() {
             // SAFETY: exception singleton pointer is process-global.
@@ -236,4 +278,52 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_builtin_cfunction_
         cpython_set_error(err);
         std::ptr::null_mut()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::vm::Vm;
+
+    use super::{
+        ACTIVE_CPYTHON_INIT_CONTEXT, ActiveCpythonContextGuard, ModuleCapiContext,
+        cpython_set_active_context,
+    };
+
+    #[test]
+    fn active_context_guard_restores_previous_context() {
+        let mut vm = Vm::new();
+        let mut outer = ModuleCapiContext::new(std::ptr::addr_of_mut!(vm), vm.main_module.clone());
+        let mut inner = ModuleCapiContext::new(std::ptr::addr_of_mut!(vm), vm.main_module.clone());
+        let outer_ptr = std::ptr::addr_of_mut!(outer);
+        let inner_ptr = std::ptr::addr_of_mut!(inner);
+
+        let prior = cpython_set_active_context(outer_ptr);
+        assert!(prior.is_null());
+        {
+            let _guard = ActiveCpythonContextGuard::push(inner_ptr);
+            let active = ACTIVE_CPYTHON_INIT_CONTEXT.with(|cell| cell.get());
+            assert_eq!(active, inner_ptr);
+        }
+        let active = ACTIVE_CPYTHON_INIT_CONTEXT.with(|cell| cell.get());
+        assert_eq!(active, outer_ptr);
+        cpython_set_active_context(std::ptr::null_mut());
+    }
+
+    #[test]
+    fn active_context_guard_propagates_nested_error_message() {
+        let mut vm = Vm::new();
+        let mut outer = ModuleCapiContext::new(std::ptr::addr_of_mut!(vm), vm.main_module.clone());
+        let mut inner = ModuleCapiContext::new(std::ptr::addr_of_mut!(vm), vm.main_module.clone());
+        let outer_ptr = std::ptr::addr_of_mut!(outer);
+        let inner_ptr = std::ptr::addr_of_mut!(inner);
+
+        cpython_set_active_context(outer_ptr);
+        {
+            let _guard = ActiveCpythonContextGuard::push(inner_ptr);
+            inner.set_error("nested error");
+        }
+        assert_eq!(outer.last_error.as_deref(), Some("nested error"));
+        assert!(outer.current_error.is_some());
+        cpython_set_active_context(std::ptr::null_mut());
+    }
 }
