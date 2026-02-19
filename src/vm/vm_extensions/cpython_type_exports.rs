@@ -130,6 +130,7 @@ static PY_TYPE_NAME_ENUM: &[u8; 5] = b"enum\0";
 static PY_TYPE_NAME_FILTER: &[u8; 7] = b"filter\0";
 static PY_TYPE_NAME_FLOAT: &[u8; 6] = b"float\0";
 static PY_TYPE_NAME_FROZENSET: &[u8; 10] = b"frozenset\0";
+static PY_TYPE_NAME_FUNCTION: &[u8; 9] = b"function\0";
 static PY_TYPE_NAME_GENERATOR: &[u8; 10] = b"generator\0";
 static PY_TYPE_NAME_GETSET_DESCR: &[u8; 13] = b"getset_descr\0";
 static PY_TYPE_NAME_GENERIC_ALIAS: &[u8; 19] = b"types.GenericAlias\0";
@@ -270,6 +271,10 @@ pub static mut PyFloat_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_FLOAT.a
 #[used]
 pub static mut PyFrozenSet_Type: CpythonTypeObject =
     empty_type(PY_TYPE_NAME_FROZENSET.as_ptr().cast());
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyFunction_Type: CpythonTypeObject =
+    empty_type(PY_TYPE_NAME_FUNCTION.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyGen_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_GENERATOR.as_ptr().cast());

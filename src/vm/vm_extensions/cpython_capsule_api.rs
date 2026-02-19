@@ -126,6 +126,18 @@ pub unsafe extern "C" fn PyCapsule_New(
     name: *const c_char,
     destructor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) -> *mut c_void {
+    if std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && !name.is_null() {
+        // SAFETY: capsule name pointer is expected to be NUL-terminated.
+        let name_text = unsafe { CStr::from_ptr(name) }
+            .to_str()
+            .unwrap_or("<invalid>");
+        if name_text.contains("__pybind11") {
+            eprintln!(
+                "[pybind11-capsule] new name={} payload={:p} destructor={:?}",
+                name_text, pointer, destructor
+            );
+        }
+    }
     if std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some() {
         let name_text = if name.is_null() {
             "<null>".to_string()
@@ -178,6 +190,22 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
     capsule: *mut c_void,
     name: *const c_char,
 ) -> *mut c_void {
+    let trace_capsule_get = std::env::var_os("PYRS_TRACE_CPY_CAPSULE_GET").is_some();
+    let trace_numpy_capsules = std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some();
+    let requested_name = if name.is_null() {
+        None
+    } else {
+        // SAFETY: capsule name pointer is expected to be NUL-terminated.
+        unsafe { CStr::from_ptr(name) }.to_str().ok()
+    };
+    let trace_array_api = trace_numpy_capsules
+        && requested_name
+            .map(|requested| requested.contains("_ARRAY_API") || requested.contains("_UFUNC_API"))
+            .unwrap_or(false);
+    let trace_pybind_capsule = std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some()
+        && requested_name
+            .map(|requested| requested.contains("__pybind11"))
+            .unwrap_or(false);
     with_active_cpython_context_mut(|context| {
         if std::env::var_os("PYRS_TRACE_NUMPY_MEM_HANDLER").is_some() && !name.is_null() {
             // SAFETY: capsule name pointer is expected to be NUL-terminated.
@@ -207,7 +235,42 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
         }
         let Some(handle) = context.cpython_handle_from_ptr(capsule) else {
             match unsafe { cpython_external_capsule_pointer(context, capsule, name) } {
-                Ok(Some(pointer)) => return pointer,
+                Ok(Some(pointer)) => {
+                    if trace_pybind_capsule {
+                        eprintln!(
+                            "[pybind11-capsule] get external requested={} capsule={:p} payload={:p}",
+                            requested_name.unwrap_or("<invalid>"),
+                            capsule,
+                            pointer
+                        );
+                    }
+                    if trace_capsule_get {
+                        eprintln!(
+                            "[cpy-capsule-get] external capsule={:p} requested={} payload={:p}",
+                            capsule,
+                            requested_name.unwrap_or("<invalid>"),
+                            pointer
+                        );
+                    }
+                    if trace_array_api {
+                        // SAFETY: pointer comes from external capsule payload.
+                        let first = unsafe {
+                            if pointer.is_null() {
+                                0usize
+                            } else {
+                                *pointer.cast::<usize>()
+                            }
+                        };
+                        eprintln!(
+                            "[numpy-init] PyCapsule_GetPointer external name={} capsule={:p} payload={:p} first_word=0x{:x}",
+                            requested_name.unwrap_or("<invalid>"),
+                            capsule,
+                            pointer,
+                            first
+                        );
+                    }
+                    return pointer;
+                }
                 Ok(None) => {
                     if std::env::var_os("PYRS_TRACE_CPY_CAPSULE").is_some() {
                         let requested_name = if name.is_null() {
@@ -275,7 +338,42 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
         }
         if !context.capsules.contains_key(&handle) {
             match unsafe { cpython_external_capsule_pointer(context, capsule, name) } {
-                Ok(Some(pointer)) => return pointer,
+                Ok(Some(pointer)) => {
+                    if trace_pybind_capsule {
+                        eprintln!(
+                            "[pybind11-capsule] get proxy-fallback requested={} capsule={:p} payload={:p}",
+                            requested_name.unwrap_or("<invalid>"),
+                            capsule,
+                            pointer
+                        );
+                    }
+                    if trace_capsule_get {
+                        eprintln!(
+                            "[cpy-capsule-get] proxy-fallback capsule={:p} requested={} payload={:p}",
+                            capsule,
+                            requested_name.unwrap_or("<invalid>"),
+                            pointer
+                        );
+                    }
+                    if trace_array_api {
+                        // SAFETY: pointer comes from external capsule payload.
+                        let first = unsafe {
+                            if pointer.is_null() {
+                                0usize
+                            } else {
+                                *pointer.cast::<usize>()
+                            }
+                        };
+                        eprintln!(
+                            "[numpy-init] PyCapsule_GetPointer proxy-fallback name={} capsule={:p} payload={:p} first_word=0x{:x}",
+                            requested_name.unwrap_or("<invalid>"),
+                            capsule,
+                            pointer,
+                            first
+                        );
+                    }
+                    return pointer;
+                }
                 Ok(None) => {}
                 Err(err) => {
                     context.set_error(err);
@@ -308,7 +406,45 @@ pub unsafe extern "C" fn PyCapsule_GetPointer(
             return std::ptr::null_mut();
         }
         match context.capsule_get_pointer(handle, name) {
-            Ok(pointer) => pointer,
+            Ok(pointer) => {
+                if trace_pybind_capsule {
+                    eprintln!(
+                        "[pybind11-capsule] get managed requested={} capsule={:p} handle={} payload={:p}",
+                        requested_name.unwrap_or("<invalid>"),
+                        capsule,
+                        handle,
+                        pointer
+                    );
+                }
+                if trace_capsule_get {
+                    eprintln!(
+                        "[cpy-capsule-get] managed capsule={:p} requested={} handle={} payload={:p}",
+                        capsule,
+                        requested_name.unwrap_or("<invalid>"),
+                        handle,
+                        pointer
+                    );
+                }
+                if trace_array_api {
+                    // SAFETY: pointer is a capsule payload from context registry.
+                    let first = unsafe {
+                        if pointer.is_null() {
+                            0usize
+                        } else {
+                            *pointer.cast::<usize>()
+                        }
+                    };
+                    eprintln!(
+                        "[numpy-init] PyCapsule_GetPointer managed name={} capsule={:p} handle={} payload={:p} first_word=0x{:x}",
+                        requested_name.unwrap_or("<invalid>"),
+                        capsule,
+                        handle,
+                        pointer,
+                        first
+                    );
+                }
+                pointer
+            }
             Err(err) => {
                 context.set_error(err);
                 std::ptr::null_mut()

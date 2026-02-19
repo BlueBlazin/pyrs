@@ -64,6 +64,14 @@ pub(super) struct CpythonBufferProcs {
 }
 
 #[repr(C)]
+pub(super) struct CpythonAsyncMethods {
+    pub(super) am_await: *mut c_void,
+    pub(super) am_aiter: *mut c_void,
+    pub(super) am_anext: *mut c_void,
+    pub(super) am_send: *mut c_void,
+}
+
+#[repr(C)]
 pub(super) struct CpythonNumberMethods {
     pub(super) nb_add: *mut c_void,
     pub(super) nb_subtract: *mut c_void,
@@ -152,6 +160,52 @@ pub(super) const PY_MEMBER_T_PYSSIZET: c_int = 19;
 pub(super) const PY_MEMBER_T_NONE: c_int = 20;
 pub(super) const PY_MEMBER_READONLY: c_int = 1;
 pub(super) const PY_MEMBER_RELATIVE_OFFSET: c_int = 8;
+pub(super) const PY_TYPE_SLOT_BF_GETBUFFER: c_int = 1;
+pub(super) const PY_TYPE_SLOT_BF_RELEASEBUFFER: c_int = 2;
+pub(super) const PY_TYPE_SLOT_MP_ASS_SUBSCRIPT: c_int = 3;
+pub(super) const PY_TYPE_SLOT_MP_LENGTH: c_int = 4;
+pub(super) const PY_TYPE_SLOT_MP_SUBSCRIPT: c_int = 5;
+pub(super) const PY_TYPE_SLOT_NB_ABSOLUTE: c_int = 6;
+pub(super) const PY_TYPE_SLOT_NB_ADD: c_int = 7;
+pub(super) const PY_TYPE_SLOT_NB_AND: c_int = 8;
+pub(super) const PY_TYPE_SLOT_NB_BOOL: c_int = 9;
+pub(super) const PY_TYPE_SLOT_NB_DIVMOD: c_int = 10;
+pub(super) const PY_TYPE_SLOT_NB_FLOAT: c_int = 11;
+pub(super) const PY_TYPE_SLOT_NB_FLOOR_DIVIDE: c_int = 12;
+pub(super) const PY_TYPE_SLOT_NB_INDEX: c_int = 13;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_ADD: c_int = 14;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_AND: c_int = 15;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_FLOOR_DIVIDE: c_int = 16;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_LSHIFT: c_int = 17;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_MULTIPLY: c_int = 18;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_OR: c_int = 19;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_POWER: c_int = 20;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_REMAINDER: c_int = 21;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_RSHIFT: c_int = 22;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_SUBTRACT: c_int = 23;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_TRUE_DIVIDE: c_int = 24;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_XOR: c_int = 25;
+pub(super) const PY_TYPE_SLOT_NB_INT: c_int = 26;
+pub(super) const PY_TYPE_SLOT_NB_INVERT: c_int = 27;
+pub(super) const PY_TYPE_SLOT_NB_LSHIFT: c_int = 28;
+pub(super) const PY_TYPE_SLOT_NB_MULTIPLY: c_int = 29;
+pub(super) const PY_TYPE_SLOT_NB_NEGATIVE: c_int = 30;
+pub(super) const PY_TYPE_SLOT_NB_OR: c_int = 31;
+pub(super) const PY_TYPE_SLOT_NB_POSITIVE: c_int = 32;
+pub(super) const PY_TYPE_SLOT_NB_POWER: c_int = 33;
+pub(super) const PY_TYPE_SLOT_NB_REMAINDER: c_int = 34;
+pub(super) const PY_TYPE_SLOT_NB_RSHIFT: c_int = 35;
+pub(super) const PY_TYPE_SLOT_NB_SUBTRACT: c_int = 36;
+pub(super) const PY_TYPE_SLOT_NB_TRUE_DIVIDE: c_int = 37;
+pub(super) const PY_TYPE_SLOT_NB_XOR: c_int = 38;
+pub(super) const PY_TYPE_SLOT_SQ_ASS_ITEM: c_int = 39;
+pub(super) const PY_TYPE_SLOT_SQ_CONCAT: c_int = 40;
+pub(super) const PY_TYPE_SLOT_SQ_CONTAINS: c_int = 41;
+pub(super) const PY_TYPE_SLOT_SQ_INPLACE_CONCAT: c_int = 42;
+pub(super) const PY_TYPE_SLOT_SQ_INPLACE_REPEAT: c_int = 43;
+pub(super) const PY_TYPE_SLOT_SQ_ITEM: c_int = 44;
+pub(super) const PY_TYPE_SLOT_SQ_LENGTH: c_int = 45;
+pub(super) const PY_TYPE_SLOT_SQ_REPEAT: c_int = 46;
 pub(super) const PY_TYPE_SLOT_TP_ALLOC: c_int = 47;
 pub(super) const PY_TYPE_SLOT_TP_BASE: c_int = 48;
 pub(super) const PY_TYPE_SLOT_TP_BASES: c_int = 49;
@@ -180,7 +234,13 @@ pub(super) const PY_TYPE_SLOT_TP_TRAVERSE: c_int = 71;
 pub(super) const PY_TYPE_SLOT_TP_MEMBERS: c_int = 72;
 pub(super) const PY_TYPE_SLOT_TP_GETSET: c_int = 73;
 pub(super) const PY_TYPE_SLOT_TP_FREE: c_int = 74;
+pub(super) const PY_TYPE_SLOT_NB_MATRIX_MULTIPLY: c_int = 75;
+pub(super) const PY_TYPE_SLOT_NB_INPLACE_MATRIX_MULTIPLY: c_int = 76;
+pub(super) const PY_TYPE_SLOT_AM_AWAIT: c_int = 77;
+pub(super) const PY_TYPE_SLOT_AM_AITER: c_int = 78;
+pub(super) const PY_TYPE_SLOT_AM_ANEXT: c_int = 79;
 pub(super) const PY_TYPE_SLOT_TP_FINALIZE: c_int = 80;
+pub(super) const PY_TYPE_SLOT_AM_SEND: c_int = 81;
 pub(super) const PY_TYPE_SLOT_TP_VECTORCALL: c_int = 82;
 pub(super) const PY_TYPE_SLOT_TP_TOKEN: c_int = 83;
 pub(super) const PY_TYPE_SLOT_MAX: c_int = 83;

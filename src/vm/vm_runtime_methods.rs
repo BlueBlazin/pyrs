@@ -1179,6 +1179,14 @@ impl Vm {
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::TypeInit),
             );
+            type_data.attrs.insert(
+                "__reduce_ex__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectReduceEx),
+            );
+            type_data.attrs.insert(
+                "__reduce__".to_string(),
+                Value::Builtin(BuiltinFunction::ObjectReduce),
+            );
             type_data
                 .attrs
                 .insert("__flags__".to_string(), Value::Int(0));

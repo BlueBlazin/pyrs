@@ -112,11 +112,11 @@ use self::cpython_bigint_runtime::{
     cpython_required_unsigned_bytes_for_bigint,
 };
 use self::cpython_bytes_api::{
-    _PyBytes_Join, PyByteArray_AsString, PyByteArray_Concat, PyByteArray_FromObject,
-    PyByteArray_FromStringAndSize, PyByteArray_Resize, PyByteArray_Size, PyBytes_AsString,
-    PyBytes_AsStringAndSize, PyBytes_Concat, PyBytes_ConcatAndDel, PyBytes_DecodeEscape,
-    PyBytes_FromObject, PyBytes_FromString, PyBytes_FromStringAndSize, PyBytes_Join, PyBytes_Repr,
-    PyBytes_Resize, PyBytes_Size, _PyBytes_Resize,
+    _PyBytes_Join, _PyBytes_Resize, PyByteArray_AsString, PyByteArray_Concat,
+    PyByteArray_FromObject, PyByteArray_FromStringAndSize, PyByteArray_Resize, PyByteArray_Size,
+    PyBytes_AsString, PyBytes_AsStringAndSize, PyBytes_Concat, PyBytes_ConcatAndDel,
+    PyBytes_DecodeEscape, PyBytes_FromObject, PyBytes_FromString, PyBytes_FromStringAndSize,
+    PyBytes_Join, PyBytes_Repr, PyBytes_Resize, PyBytes_Size,
 };
 use self::cpython_call_runtime::{cpython_call_internal_in_context, cpython_getattr_in_context};
 use self::cpython_capsule_api::{
@@ -403,6 +403,7 @@ use self::cpython_type_api::{
     PyType_GetModule, PyType_GetModuleByDef, PyType_GetModuleName, PyType_GetModuleState,
     PyType_GetName, PyType_GetQualName, PyType_GetSlot, PyType_GetTypeDataSize, PyType_IsSubtype,
     PyType_Modified, PyType_Ready, cpython_is_type_object_ptr, cpython_type_tp_call,
+    cpython_type_tp_getattro, cpython_type_tp_setattro,
 };
 use self::cpython_type_exports::*;
 use self::cpython_type_layout::*;
@@ -1916,6 +1917,8 @@ fn initialize_cpython_compat_type_objects() {
         PyType_Type.tp_call = cpython_type_tp_call as *mut c_void;
         PyType_Type.tp_alloc = PyType_GenericAlloc as *mut c_void;
         PyType_Type.tp_new = PyType_GenericNew as *mut c_void;
+        PyType_Type.tp_getattro = cpython_type_tp_getattro as *mut c_void;
+        PyType_Type.tp_setattro = cpython_type_tp_setattro as *mut c_void;
         PyType_Type.tp_base = std::ptr::addr_of_mut!(PyBaseObject_Type);
         PyBaseObject_Type.tp_getattro = PyObject_GenericGetAttr as *mut c_void;
         PyBaseObject_Type.tp_setattro = PyObject_GenericSetAttr as *mut c_void;
@@ -1956,6 +1959,7 @@ fn initialize_cpython_compat_type_objects() {
             std::ptr::addr_of_mut!(PyFilter_Type),
             std::ptr::addr_of_mut!(PyFloat_Type),
             std::ptr::addr_of_mut!(PyFrozenSet_Type),
+            std::ptr::addr_of_mut!(PyFunction_Type),
             std::ptr::addr_of_mut!(PyGetSetDescr_Type),
             std::ptr::addr_of_mut!(Py_GenericAliasType),
             std::ptr::addr_of_mut!(PyList_Type),
@@ -2031,6 +2035,8 @@ fn initialize_cpython_compat_type_objects() {
         PySlice_Type.tp_itemsize = 0;
         PyModule_Type.tp_basicsize = 56;
         PyModule_Type.tp_itemsize = 0;
+        PyFunction_Type.tp_basicsize = 136;
+        PyFunction_Type.tp_itemsize = 0;
         PyMethod_Type.tp_basicsize = 48;
         PyMethod_Type.tp_itemsize = 0;
         PyCapsule_Type.tp_basicsize = 64;
@@ -2661,13 +2667,48 @@ impl ModuleCapiContext {
             return false;
         }
         let object_addr = object as usize;
-        if object_addr < MIN_VALID_PTR || object_addr % std::mem::align_of::<usize>() != 0 {
+        if object_addr < MIN_VALID_PTR
+            || object_addr % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
             return false;
         }
         if Self::builtin_type_ptrs().contains(&object) {
             return true;
         }
-        false
+        // SAFETY: guarded by non-null + minimum-address + alignment checks.
+        let Some(type_obj) = (unsafe { object.cast::<CpythonTypeObject>().as_ref() }) else {
+            return false;
+        };
+        if !Self::is_probable_c_string_pointer(type_obj.tp_name) {
+            return false;
+        }
+        // SAFETY: type pointer is validated above.
+        let Some(head) = (unsafe { object.cast::<CpythonObjectHead>().as_ref() }) else {
+            return false;
+        };
+        if head.ob_refcnt == 0 {
+            return false;
+        }
+        let metatype = head.ob_type.cast::<CpythonTypeObject>();
+        if metatype.is_null() {
+            return true;
+        }
+        if metatype == std::ptr::addr_of_mut!(PyType_Type) {
+            return true;
+        }
+        let metatype_addr = metatype as usize;
+        if metatype_addr < MIN_VALID_PTR
+            || metatype_addr % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
+            return false;
+        }
+        // SAFETY: metatype pointer is plausibility-checked above.
+        unsafe {
+            metatype
+                .as_ref()
+                .map(|meta| Self::is_probable_c_string_pointer(meta.tp_name))
+                .unwrap_or(false)
+        }
     }
 
     fn is_probable_external_cpython_object_ptr(object: *mut c_void) -> bool {
@@ -2763,36 +2804,6 @@ impl ModuleCapiContext {
                 }
             }
         }
-    }
-
-    fn owned_pointer_allows_proxy_fallback(object: *mut c_void) -> bool {
-        // SAFETY: caller validates that `object` points to a CPython object header.
-        let object_type = unsafe {
-            object
-                .cast::<CpythonObjectHead>()
-                .as_ref()
-                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                .unwrap_or(std::ptr::null_mut())
-        };
-        if object_type.is_null() {
-            return false;
-        }
-        let allowed = [
-            std::ptr::addr_of_mut!(PyType_Type),
-            std::ptr::addr_of_mut!(PyCFunction_Type),
-            std::ptr::addr_of_mut!(PyMethodDescr_Type),
-            std::ptr::addr_of_mut!(PyClassMethodDescr_Type),
-            std::ptr::addr_of_mut!(PyGetSetDescr_Type),
-            std::ptr::addr_of_mut!(PyMemberDescr_Type),
-            std::ptr::addr_of_mut!(PyWrapperDescr_Type),
-        ];
-        allowed.iter().any(|candidate| {
-            if object_type == *candidate {
-                return true;
-            }
-            // SAFETY: both pointers are valid type objects in this path.
-            unsafe { PyType_IsSubtype(object_type.cast(), (*candidate).cast()) != 0 }
-        })
     }
 
     fn new(vm: *mut Vm, module: ObjRef) -> Self {
@@ -3799,9 +3810,6 @@ impl ModuleCapiContext {
                 let Object::Class(class_data) = &*class_obj.kind() else {
                     return None;
                 };
-                if !is_cpython_proxy_class(class_data) {
-                    return None;
-                }
                 match class_data.attrs.get(CPY_PROXY_PTR_ATTR) {
                     Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => {
                         Some(*raw_ptr as usize as *mut c_void)
@@ -3813,12 +3821,6 @@ impl ModuleCapiContext {
                 let Object::Instance(instance_data) = &*instance_obj.kind() else {
                     return None;
                 };
-                let Object::Class(class_data) = &*instance_data.class.kind() else {
-                    return None;
-                };
-                if !is_cpython_proxy_class(class_data) {
-                    return None;
-                }
                 match instance_data.attrs.get(CPY_PROXY_PTR_ATTR) {
                     Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => {
                         Some(*raw_ptr as usize as *mut c_void)
@@ -4587,35 +4589,73 @@ impl ModuleCapiContext {
         let owns_allocation = self.owns_cpython_allocation_ptr(object);
         let probable_external = Self::is_probable_external_cpython_object_ptr(object);
         if !probable_external {
+            // Some extension-created heap metatypes can fail the conservative
+            // pointer-probability gate (for example, transient Cython metatypes)
+            // while still being valid type objects. Allow proxy materialization
+            // for those type-like pointers so C-API tuple/dict setters can carry
+            // them through initialization paths.
+            let likely_type_object = unsafe {
+                const MIN_VALID_PTR: usize = 0x1_0000_0000;
+                object
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .filter(|type_ptr| !type_ptr.is_null())
+                    .map(|type_ptr| {
+                        let type_addr = type_ptr as usize;
+                        if type_addr < MIN_VALID_PTR
+                            || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
+                        {
+                            return false;
+                        }
+                        let py_type = std::ptr::addr_of_mut!(PyType_Type).cast::<CpythonTypeObject>();
+                        type_ptr == py_type
+                            || ((*type_ptr).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
+                            || PyType_IsSubtype(
+                                type_ptr.cast::<c_void>(),
+                                py_type.cast::<c_void>(),
+                            ) != 0
+                    })
+                    .unwrap_or(false)
+            };
+            if likely_type_object
+                && let Some(proxy) = self.cpython_external_proxy_value(object)
+            {
+                if !owns_allocation {
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    let inserted = vm
+                        .extension_pinned_external_cpython_refs
+                        .insert(object as usize);
+                    if inserted {
+                        // SAFETY: pointer accepted via type-object fallback.
+                        unsafe {
+                            Py_IncRef(object);
+                        }
+                    }
+                    vm.extension_cpython_ptr_values
+                        .entry(object as usize)
+                        .or_insert_with(|| proxy.clone());
+                } else {
+                    self.pin_owned_cpython_allocation_for_vm(object);
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    vm.extension_cpython_ptr_values
+                        .entry(object as usize)
+                        .or_insert_with(|| proxy.clone());
+                }
+                if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+                    eprintln!(
+                        "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false",
+                        object, owns_allocation
+                    );
+                }
+                return Some(proxy);
+            }
             if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
                 eprintln!(
                     "[cpy-proxy-reject] ptr={:p} owns={} probable=false",
                     object, owns_allocation
-                );
-            }
-            return None;
-        }
-        if owns_allocation && !Self::owned_pointer_allows_proxy_fallback(object) {
-            // Unknown owned pointers are not safe to treat as proxy-backed objects.
-            // Restrict owned-pointer fallback to known descriptor/cfunction surfaces.
-            if std::env::var_os("PYRS_TRACE_CPY_OWNED_TYPES").is_some() {
-                // SAFETY: diagnostic only; pointer checks already performed above.
-                let object_type = unsafe {
-                    object
-                        .cast::<CpythonObjectHead>()
-                        .as_ref()
-                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                        .unwrap_or(std::ptr::null_mut())
-                };
-                let metatype_flags = if object_type.is_null() {
-                    0usize
-                } else {
-                    // SAFETY: diagnostic only on non-null candidate metatype pointer.
-                    unsafe { (*object_type).tp_flags }
-                };
-                eprintln!(
-                    "[cpy-owned-type] proxy-fallback-reject ptr={:p} object_type={:p} metatype_flags=0x{:x}",
-                    object, object_type, metatype_flags
                 );
             }
             return None;
@@ -4740,6 +4780,13 @@ impl ModuleCapiContext {
         }
         self.cpython_aux_allocations.push(raw);
         raw
+    }
+
+    pub(super) fn register_aux_allocation(&mut self, raw: *mut c_void) {
+        if raw.is_null() {
+            return;
+        }
+        self.cpython_aux_allocations.push(raw);
     }
 
     fn alloc_owned_c_string_for_capi(&mut self, text: &str) -> Result<*const c_char, String> {

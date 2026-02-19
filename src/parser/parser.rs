@@ -258,7 +258,9 @@ impl Parser {
                 let (annotation, mut next) = self.parse_expr_at(next_pos + 1)?;
                 let mut value = None;
                 if matches!(self.token_at(next).kind, TokenKind::Equal) {
-                    let (expr, after) = self.parse_expr_at(next + 1)?;
+                    // Annotated assignments accept tuple-expression RHS, e.g.
+                    // `x: tuple[int, int] = 1, 2`, so parse tuple tails here.
+                    let (expr, after) = self.parse_expr_with_tuple_tail(next + 1)?;
                     value = Some(expr);
                     next = after;
                 }
@@ -1107,7 +1109,7 @@ impl Parser {
                 return Err(self.error_at(pos, "expected else"));
             }
             pos += 1;
-            let (orelse, next) = self.parse_if_expr(pos)?;
+            let (orelse, next) = self.parse_expr_at(pos)?;
             let span = body.span;
             let expr = Expr {
                 node: ExprKind::IfExpr {

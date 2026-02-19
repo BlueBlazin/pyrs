@@ -12,7 +12,8 @@ use super::cpython_module_name_runtime::{
 };
 use super::{
     InternalCallOutcome, PyErr_WarnEx, PyExc_DeprecationWarning, c_name_to_string,
-    cpython_set_error, cpython_value_from_ptr, dict_get_value, with_active_cpython_context_mut,
+    cpython_debug_compare_value, cpython_set_error, cpython_value_from_ptr, dict_get_value,
+    with_active_cpython_context_mut,
 };
 
 const PYC_MAGIC_NUMBER_TOKEN: c_long = 0x0A0D0E2B;
@@ -31,23 +32,55 @@ pub unsafe extern "C" fn PyImport_GetMagicTag() -> *const c_char {
 pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_void {
     match unsafe { c_name_to_string(name) } {
         Ok(module_name) => {
+            let trace_ctypes = std::env::var_os("PYRS_TRACE_CPY_CTYPES_IMPORT").is_some()
+                && module_name.contains("ctypes");
+            if trace_ctypes {
+                eprintln!("[cpy-ctypes-import] PyImport_ImportModule name={module_name}");
+            }
             if std::env::var_os("PYRS_TRACE_CPY_API").is_some() {
                 eprintln!("[cpy-api] PyImport_ImportModule name={module_name}");
             }
             with_active_cpython_context_mut(|context| {
                 match cpython_import_from_inittab(context, &module_name) {
                     Ok(Some(value)) => {
+                        if trace_ctypes {
+                            eprintln!(
+                                "[cpy-ctypes-import] inittab hit name={} value={}",
+                                module_name,
+                                cpython_debug_compare_value(&value)
+                            );
+                        }
                         return context.alloc_cpython_ptr_for_value(value);
                     }
                     Ok(None) => {}
                     Err(err) => {
+                        if trace_ctypes {
+                            eprintln!(
+                                "[cpy-ctypes-import] inittab err name={} err={}",
+                                module_name, err
+                            );
+                        }
                         context.set_error(err);
                         return std::ptr::null_mut();
                     }
                 }
                 match context.module_import(&module_name) {
-                    Ok(handle) => context.alloc_cpython_ptr_for_handle(handle),
+                    Ok(handle) => {
+                        if trace_ctypes {
+                            eprintln!(
+                                "[cpy-ctypes-import] module_import ok name={} handle={}",
+                                module_name, handle
+                            );
+                        }
+                        context.alloc_cpython_ptr_for_handle(handle)
+                    }
                     Err(err) => {
+                        if trace_ctypes {
+                            eprintln!(
+                                "[cpy-ctypes-import] module_import err name={} err={}",
+                                module_name, err
+                            );
+                        }
                         context.set_error(err);
                         std::ptr::null_mut()
                     }
@@ -119,6 +152,10 @@ pub unsafe extern "C" fn PyImport_AddModuleRef(name: *const c_char) -> *mut c_vo
             return std::ptr::null_mut();
         }
     };
+    if std::env::var_os("PYRS_TRACE_CPY_CTYPES_IMPORT").is_some() && module_name.contains("ctypes")
+    {
+        eprintln!("[cpy-ctypes-import] PyImport_AddModuleRef name={module_name}");
+    }
     with_active_cpython_context_mut(|context| {
         match cpython_import_add_module_by_name(context, &module_name) {
             Ok(module) => context.alloc_cpython_ptr_for_value(Value::Module(module)),
@@ -145,6 +182,11 @@ pub unsafe extern "C" fn PyImport_AddModuleObject(name: *mut c_void) -> *mut c_v
                     return std::ptr::null_mut();
                 }
             };
+        if std::env::var_os("PYRS_TRACE_CPY_CTYPES_IMPORT").is_some()
+            && module_name.contains("ctypes")
+        {
+            eprintln!("[cpy-ctypes-import] PyImport_AddModuleObject name={module_name}");
+        }
         match cpython_import_add_module_by_name(context, &module_name) {
             Ok(module) => context.alloc_cpython_ptr_for_value(Value::Module(module)),
             Err(err) => {

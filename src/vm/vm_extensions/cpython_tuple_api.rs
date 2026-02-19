@@ -134,6 +134,7 @@ pub unsafe extern "C" fn PyTuple_SetItem(
             context.set_error("PyTuple_SetItem received unknown tuple pointer");
             return -1;
         };
+        let tuple_owned = context.owns_cpython_allocation_ptr(tuple);
         let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
             Some(value) => value,
             None => {
@@ -200,7 +201,7 @@ pub unsafe extern "C" fn PyTuple_SetItem(
             context.set_error("PyTuple_SetItem index out of range");
             return -1;
         }
-        if context.owns_cpython_allocation_ptr(tuple) {
+        if tuple_owned {
             // SAFETY: owned tuple pointers use CPython-compatible varobject header
             // followed by contiguous `PyObject*` item slots.
             unsafe {

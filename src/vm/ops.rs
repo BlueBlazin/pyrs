@@ -1543,6 +1543,9 @@ fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
+    let repeat_count = |value: Value| {
+        value_to_int(value).map_err(|_| RuntimeError::new("unsupported operand type for *"))
+    };
     if let Some((left, right)) = integer_i64_pair(&left, &right) {
         if let Some(product) = left.checked_mul(right) {
             return Ok(Value::Int(product));
@@ -1571,14 +1574,14 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
 
     match (left, right) {
         (Value::Str(s), other) | (other, Value::Str(s)) => {
-            let count = value_to_int(other)?;
+            let count = repeat_count(other)?;
             if count <= 0 {
                 return Ok(Value::Str(String::new()));
             }
             Ok(Value::Str(s.repeat(count as usize)))
         }
         (Value::List(obj), other) | (other, Value::List(obj)) => {
-            let count = value_to_int(other)?;
+            let count = repeat_count(other)?;
             if count <= 0 {
                 return Ok(heap.alloc_list(Vec::new()));
             }
@@ -1593,7 +1596,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             Ok(heap.alloc_list(result))
         }
         (Value::Tuple(obj), other) | (other, Value::Tuple(obj)) => {
-            let count = value_to_int(other)?;
+            let count = repeat_count(other)?;
             if count <= 0 {
                 return Ok(heap.alloc_tuple(Vec::new()));
             }
@@ -1608,7 +1611,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             Ok(heap.alloc_tuple(result))
         }
         (Value::Bytes(obj), other) | (other, Value::Bytes(obj)) => {
-            let count = value_to_int(other)?;
+            let count = repeat_count(other)?;
             if count <= 0 {
                 return Ok(heap.alloc_bytes(Vec::new()));
             }
@@ -1623,7 +1626,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             Ok(heap.alloc_bytes(result))
         }
         (Value::ByteArray(obj), other) | (other, Value::ByteArray(obj)) => {
-            let count = value_to_int(other)?;
+            let count = repeat_count(other)?;
             if count <= 0 {
                 return Ok(heap.alloc_bytearray(Vec::new()));
             }

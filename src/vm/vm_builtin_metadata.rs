@@ -1010,6 +1010,60 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrTranslate, receiver))
             }
+            "title" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrTitle, receiver))
+            }
+            attr_name
+                if builtin == BuiltinFunction::Str
+                    && matches!(
+                        attr_name,
+                        "isupper"
+                            | "islower"
+                            | "isascii"
+                            | "isalpha"
+                            | "isalnum"
+                            | "isdigit"
+                            | "isspace"
+                            | "isidentifier"
+                    ) =>
+            {
+                let kind = match attr_name {
+                    "isupper" => NativeMethodKind::StrIsUpper,
+                    "islower" => NativeMethodKind::StrIsLower,
+                    "isascii" => NativeMethodKind::StrIsAscii,
+                    "isalpha" => NativeMethodKind::StrIsAlpha,
+                    "isalnum" => NativeMethodKind::StrIsAlNum,
+                    "isdigit" => NativeMethodKind::StrIsDigit,
+                    "isspace" => NativeMethodKind::StrIsSpace,
+                    "isidentifier" => NativeMethodKind::StrIsIdentifier,
+                    _ => unreachable!(),
+                };
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(kind, receiver))
+            }
             "__instancecheck__" if self.builtin_is_type_object(builtin) => Ok(self
                 .alloc_builtin_unbound_method(
                     "__builtin_unbound_method__",
@@ -1193,6 +1247,7 @@ impl Vm {
             "pop" => NativeMethodKind::ListPop,
             "count" => NativeMethodKind::ListCount,
             "copy" => NativeMethodKind::ListCopy,
+            "clear" => NativeMethodKind::ListClear,
             "index" => NativeMethodKind::ListIndex,
             "reverse" => NativeMethodKind::ListReverse,
             "sort" => NativeMethodKind::ListSort,
@@ -1312,6 +1367,7 @@ impl Vm {
             "upper" => NativeMethodKind::StrUpper,
             "lower" => NativeMethodKind::StrLower,
             "capitalize" => NativeMethodKind::StrCapitalize,
+            "title" => NativeMethodKind::StrTitle,
             "encode" => NativeMethodKind::StrEncode,
             "decode" => NativeMethodKind::StrDecode,
             "removeprefix" => NativeMethodKind::StrRemovePrefix,
@@ -2824,6 +2880,10 @@ impl Vm {
             .last()
             .map(|frame| (frame.ip, frame.active_exception.clone()))
             .unwrap_or((0, None));
+        let trace_class_call = std::env::var_os("PYRS_TRACE_CLASS_CALL_RUNTIME").is_some();
+        let callable_was_class = matches!(&callable, Value::Class(_));
+        let trace_callable_repr =
+            (trace_class_call && callable_was_class).then(|| format_repr(&callable));
 
         let needs_run = match callable {
             Value::Function(func) => {
@@ -2968,12 +3028,46 @@ impl Vm {
                 return Err(RuntimeError::new("attempted to call non-function"));
             }
             Value::Class(class) => {
+                let (class_name, metaclass_name) = match &*class.kind() {
+                    Object::Class(class_data) => {
+                        let metaclass_name = class_data.metaclass.as_ref().map(|meta| match &*meta.kind() {
+                            Object::Class(meta_data) => meta_data.name.clone(),
+                            _ => "<non-class-meta>".to_string(),
+                        });
+                        (class_data.name.clone(), metaclass_name)
+                    }
+                    _ => ("<non-class>".to_string(), None),
+                };
+                if trace_class_call {
+                    eprintln!(
+                        "[class-call] enter class={} metaclass={} args={} kwargs={}",
+                        class_name,
+                        metaclass_name.unwrap_or_else(|| "<none>".to_string()),
+                        args.len(),
+                        kwargs.len()
+                    );
+                }
                 let proxy_value = Value::Class(class.clone());
                 if Self::cpython_proxy_raw_ptr_from_value(&proxy_value).is_some() {
                     let value = self.call_cpython_proxy_object(&proxy_value, args, kwargs)?;
+                    if trace_class_call {
+                        eprintln!(
+                            "[class-call] proxy-return class={} type={}",
+                            class_name,
+                            self.value_type_name_for_error(&value)
+                        );
+                    }
                     return Ok(InternalCallOutcome::Value(value));
                 }
                 if let Some(call_target) = self.resolve_metaclass_call_target(&class)? {
+                    if trace_class_call {
+                        eprintln!(
+                            "[class-call] metaclass-dispatch class={} target_type={} target_repr={}",
+                            class_name,
+                            self.value_type_name_for_error(&call_target),
+                            format_repr(&call_target)
+                        );
+                    }
                     return self.call_internal(call_target, args, kwargs);
                 }
                 if let Some(message) = self.class_disallow_instantiation_message(&class) {
@@ -2993,6 +3087,14 @@ impl Vm {
                             !matches!(callable, Value::Builtin(BuiltinFunction::ObjectNew))
                         })
                     {
+                        if trace_class_call {
+                            eprintln!(
+                                "[class-call] __new__ class={} callable_type={} callable_repr={}",
+                                class_name,
+                                self.value_type_name_for_error(&new_callable),
+                                format_repr(&new_callable)
+                            );
+                        }
                         used_custom_new = true;
                         let prepend_class_arg = !matches!(new_callable, Value::BoundMethod(_));
                         let mut new_args =
@@ -3004,9 +3106,24 @@ impl Vm {
                         match self.call_internal(new_callable, new_args, kwargs.clone())? {
                             InternalCallOutcome::Value(value) => {
                                 if !self.value_is_instance_of(&value, &class_value)? {
+                                    if trace_class_call {
+                                        eprintln!(
+                                            "[class-call] __new__ non-instance class={} value_type={} value_repr={}",
+                                            class_name,
+                                            self.value_type_name_for_error(&value),
+                                            format_repr(&value)
+                                        );
+                                    }
                                     return Ok(InternalCallOutcome::Value(value));
                                 }
                                 let Value::Instance(created_instance) = value else {
+                                    if trace_class_call {
+                                        eprintln!(
+                                            "[class-call] __new__ non-instance-variant class={} value_type={}",
+                                            class_name,
+                                            self.value_type_name_for_error(&value)
+                                        );
+                                    }
                                     return Ok(InternalCallOutcome::Value(value));
                                 };
                                 instance = created_instance;
@@ -3018,8 +3135,22 @@ impl Vm {
                     }
                     let init = class_attr_lookup(&class, "__init__");
                     if let Some(init_callable) = init {
+                        if trace_class_call {
+                            eprintln!(
+                                "[class-call] __init__ class={} callable_type={} callable_repr={}",
+                                class_name,
+                                self.value_type_name_for_error(&init_callable),
+                                format_repr(&init_callable)
+                            );
+                        }
                         if matches!(init_callable, Value::Builtin(BuiltinFunction::ObjectInit)) {
                             if used_custom_new {
+                                if trace_class_call {
+                                    eprintln!(
+                                        "[class-call] return-used-custom-new class={} type=instance",
+                                        class_name
+                                    );
+                                }
                                 return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
                             }
                             if let Some(fields) = self.class_namedtuple_fields(&class) {
@@ -3029,6 +3160,12 @@ impl Vm {
                                     args.clone(),
                                     kwargs.clone(),
                                 )?;
+                                if trace_class_call {
+                                    eprintln!(
+                                        "[class-call] return-namedtuple-bind class={} type=instance",
+                                        class_name
+                                    );
+                                }
                                 return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
                             }
                         }
@@ -3072,6 +3209,12 @@ impl Vm {
                             init_args.extend(args);
                             match self.call_internal(init_callable, init_args, kwargs)? {
                                 InternalCallOutcome::Value(Value::None) => {
+                                    if trace_class_call {
+                                        eprintln!(
+                                            "[class-call] return-init-none class={} type=instance",
+                                            class_name
+                                        );
+                                    }
                                     self.push_value(Value::Instance(instance));
                                     false
                                 }
@@ -3083,10 +3226,22 @@ impl Vm {
                         }
                     } else {
                         if used_custom_new {
+                            if trace_class_call {
+                                eprintln!(
+                                    "[class-call] return-custom-new-no-init class={} type=instance",
+                                    class_name
+                                );
+                            }
                             self.push_value(Value::Instance(instance));
                             false
                         } else if let Some(fields) = self.class_namedtuple_fields(&class) {
                             self.bind_namedtuple_instance_fields(&instance, &fields, args, kwargs)?;
+                            if trace_class_call {
+                                eprintln!(
+                                    "[class-call] return-namedtuple-no-init class={} type=instance",
+                                    class_name
+                                );
+                            }
                             self.push_value(Value::Instance(instance));
                             false
                         } else {
@@ -3361,6 +3516,12 @@ impl Vm {
                                     "class constructor takes no arguments",
                                 ));
                             }
+                            if trace_class_call {
+                                eprintln!(
+                                    "[class-call] return-default class={} type=instance",
+                                    class_name
+                                );
+                            }
                             self.push_value(Value::Instance(instance));
                             false
                         }
@@ -3428,6 +3589,17 @@ impl Vm {
         run_result?;
 
         if self.frames.len() < caller_depth {
+            if trace_class_call
+                && callable_was_class
+                && let Some(callable_repr) = &trace_callable_repr
+            {
+                eprintln!(
+                    "[class-call] caller-frame-dropped callable={} depth_before={} depth_now={}",
+                    callable_repr,
+                    caller_depth,
+                    self.frames.len()
+                );
+            }
             return Ok(InternalCallOutcome::CallerExceptionHandled);
         }
 
@@ -3436,13 +3608,53 @@ impl Vm {
             .get(caller_depth - 1)
             .ok_or_else(|| RuntimeError::new("caller frame missing"))?;
         if caller.ip != caller_ip {
+            if trace_class_call
+                && callable_was_class
+                && let Some(callable_repr) = &trace_callable_repr
+            {
+                eprintln!(
+                    "[class-call] caller-ip-mismatch callable={} before={} after={}",
+                    callable_repr,
+                    caller_ip,
+                    caller.ip
+                );
+            }
             return Ok(InternalCallOutcome::CallerExceptionHandled);
         }
         if caller.active_exception != caller_active_exception {
+            if trace_class_call
+                && callable_was_class
+                && let Some(callable_repr) = &trace_callable_repr
+            {
+                eprintln!(
+                    "[class-call] caller-active-exception-changed callable={} before={} after={}",
+                    callable_repr,
+                    caller_active_exception
+                        .as_ref()
+                        .map(format_repr)
+                        .unwrap_or_else(|| "<none>".to_string()),
+                    caller
+                        .active_exception
+                        .as_ref()
+                        .map(format_repr)
+                        .unwrap_or_else(|| "<none>".to_string())
+                );
+            }
             return Ok(InternalCallOutcome::CallerExceptionHandled);
         }
 
         let value = self.pop_value()?;
+        if trace_class_call
+            && callable_was_class
+            && let Some(callable_repr) = &trace_callable_repr
+        {
+            eprintln!(
+                "[class-call] return callable={} value_type={} value_repr={}",
+                callable_repr,
+                self.value_type_name_for_error(&value),
+                format_repr(&value)
+            );
+        }
         Ok(InternalCallOutcome::Value(value))
     }
 
@@ -4328,7 +4540,7 @@ impl Vm {
             return Err(RuntimeError::new("attribute access unsupported type"));
         }
 
-        if let Some(attr) = self.load_attr_property_instance(instance, attr_name) {
+        if let Some(attr) = self.load_attr_property_instance(instance, attr_name)? {
             return Ok(AttrAccessOutcome::Value(attr));
         }
         if let Some(attr) = self.load_attr_cached_property_instance(instance, attr_name) {

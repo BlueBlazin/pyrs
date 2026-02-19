@@ -187,31 +187,26 @@ impl Vm {
             // extension import trees (NumPy random/scipy bring-up hit this).
             //
             // If the active loop is already draining to an equal-or-shallower
-            // depth, just let it continue; it will execute these queued frames.
-            // Extension C-API callbacks are the exception: C code can import a
-            // module and immediately read attributes from it before control
-            // returns to the VM loop, so those imports must still be drained
-            // synchronously.
+            // depth, we still need synchronous import semantics: the caller must
+            // not observe a partially initialized module.
+            //
+            // Re-entering the run loop here is intentionally conservative for
+            // correctness. If this becomes a recursion hot-path again, replace
+            // this with an iterative same-loop drain rather than returning early.
             if active_stop_depth <= caller_depth {
-                if cpython_context_active {
-                    if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
-                        eprintln!(
-                            "[import-pending-force] caller_depth={} active_stop_depth={} frames={} reason=cpython-context",
-                            caller_depth,
-                            active_stop_depth,
-                            self.frames.len()
-                        );
-                    }
-                } else {
-                    if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
-                        eprintln!(
-                            "[import-pending-skip] caller_depth={} active_stop_depth={} frames={}",
-                            caller_depth,
-                            active_stop_depth,
-                            self.frames.len()
-                        );
-                    }
-                    return Ok(());
+                if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+                    let reason = if cpython_context_active {
+                        "cpython-context"
+                    } else {
+                        "sync-semantic"
+                    };
+                    eprintln!(
+                        "[import-pending-force] caller_depth={} active_stop_depth={} frames={} reason={}",
+                        caller_depth,
+                        active_stop_depth,
+                        self.frames.len(),
+                        reason
+                    );
                 }
             } else {
                 // Rare case: nested caller asks to drain farther than current stop

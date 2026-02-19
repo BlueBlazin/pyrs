@@ -103,6 +103,11 @@ If a probed local module is not installed, its dependent cases are recorded as `
 
 ## Current Expected State
 
+- 2026-02-19 import-state checkpoint:
+  - fixed source-module failure cleanup so failed imports no longer leave partial modules in `sys.modules` (tracked via internal module-initializing marker + unwind cleanup).
+  - concrete closure: after `import numpy`, attempting `import ctypes` now raises `ModuleNotFoundError: module '_ctypes' not found` (no stale partial `ctypes` module with missing `CFUNCTYPE`).
+  - SciPy direct-mode blocker has moved forward to:
+    - `AttributeError: extension 'scipy._lib._ccallback_c' initializer 'PyInit__ccallback_c' Py_mod_exec failed: type 'type' has no attribute 'register'`.
 - 2026-02-19 checkpoint (current):
   - closed direct blockers hit in the latest scientific-stack pass:
     - `PyBytes_Resize` + `_PyBytes_Resize` exported and kept alive (Mach-O symbol closure for Pillow/matplotlib dependency chain),

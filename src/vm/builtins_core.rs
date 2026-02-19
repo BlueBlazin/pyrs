@@ -18,6 +18,7 @@ use super::{
     runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
     with_bytes_like_source,
+    xor_values,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -2617,6 +2618,9 @@ impl Vm {
             {
                 return Ok(Value::Str(backing));
             }
+            if matches!(object, Value::Class(_)) {
+                return Ok(Value::Str(format_value(&object)));
+            }
             if !matches!(object, Value::Str(_)) {
                 let str_method = self.builtin_getattr(
                     vec![object.clone(), Value::Str("__str__".to_string())],
@@ -3157,7 +3161,15 @@ impl Vm {
             return Err(RuntimeError::new("callable() expects one argument"));
         }
         let value = args.remove(0);
-        Ok(Value::Bool(self.is_callable_value(&value)))
+        let callable = self.is_callable_value(&value);
+        if !callable && std::env::var_os("PYRS_TRACE_CALLABLE_FALSE").is_some() {
+            eprintln!(
+                "[callable-false] type={} repr={}",
+                self.value_type_name_for_error(&value),
+                format_repr(&value)
+            );
+        }
+        Ok(Value::Bool(callable))
     }
 
     pub(super) fn types_module_class(&self, name: &str) -> Option<ObjRef> {
@@ -3913,7 +3925,7 @@ impl Vm {
                 "property() got an unexpected keyword argument",
             ));
         }
-        Ok(self.build_property_descriptor(fget, fset, fdel, doc))
+        Ok(self.build_property_descriptor(fget, fset, fdel, doc, None))
     }
 
     pub(super) fn builtin_object_new(
@@ -6350,22 +6362,106 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        let trace = std::env::var_os("PYRS_TRACE_BINARY_OR_RUNTIME").is_some();
         match or_values(left.clone(), right.clone(), &self.heap) {
             Ok(value) => Ok(value),
             Err(err)
                 if err.message.contains("unsupported operand type")
                     && err.message.contains("for |") =>
             {
+                if trace {
+                    eprintln!(
+                        "[bin-or] unsupported fallback left={} right={}",
+                        format_repr(&left),
+                        format_repr(&right)
+                    );
+                }
                 if let Some(value) =
                     self.call_binary_special_method(&left, "__or__", right.clone())?
                     && !self.is_not_implemented_singleton(&value)
                 {
+                    if trace {
+                        eprintln!(
+                            "[bin-or] used __or__ -> repr={} type={}",
+                            format_repr(&value),
+                            self.value_type_name_for_error(&value)
+                        );
+                    }
                     return Ok(value);
+                }
+                if trace {
+                    eprintln!("[bin-or] __or__ missing/NotImplemented");
                 }
                 if let Some(value) = self.call_binary_special_method(&right, "__ror__", left)?
                     && !self.is_not_implemented_singleton(&value)
                 {
+                    if trace {
+                        eprintln!(
+                            "[bin-or] used __ror__ -> repr={} type={}",
+                            format_repr(&value),
+                            self.value_type_name_for_error(&value)
+                        );
+                    }
                     return Ok(value);
+                }
+                if trace {
+                    eprintln!("[bin-or] __ror__ missing/NotImplemented");
+                }
+                Err(err)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn binary_xor_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        let trace = std::env::var_os("PYRS_TRACE_BINARY_XOR_RUNTIME").is_some();
+        match xor_values(left.clone(), right.clone(), &self.heap) {
+            Ok(value) => Ok(value),
+            Err(err)
+                if err.message.contains("unsupported operand type")
+                    && err.message.contains("for ^") =>
+            {
+                if trace {
+                    eprintln!(
+                        "[bin-xor] unsupported fallback left={} right={}",
+                        format_repr(&left),
+                        format_repr(&right)
+                    );
+                }
+                if let Some(value) =
+                    self.call_binary_special_method(&left, "__xor__", right.clone())?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    if trace {
+                        eprintln!(
+                            "[bin-xor] used __xor__ -> repr={} type={}",
+                            format_repr(&value),
+                            self.value_type_name_for_error(&value)
+                        );
+                    }
+                    return Ok(value);
+                }
+                if trace {
+                    eprintln!("[bin-xor] __xor__ missing/NotImplemented");
+                }
+                if let Some(value) = self.call_binary_special_method(&right, "__rxor__", left)?
+                    && !self.is_not_implemented_singleton(&value)
+                {
+                    if trace {
+                        eprintln!(
+                            "[bin-xor] used __rxor__ -> repr={} type={}",
+                            format_repr(&value),
+                            self.value_type_name_for_error(&value)
+                        );
+                    }
+                    return Ok(value);
+                }
+                if trace {
+                    eprintln!("[bin-xor] __rxor__ missing/NotImplemented");
                 }
                 Err(err)
             }
@@ -6903,6 +6999,13 @@ impl Vm {
             | Value::BoundMethod(_)
             | Value::Class(_)
             | Value::ExceptionType(_) => true,
+            Value::Module(module) => match &*module.kind() {
+                Object::Module(module_data) if module_data.name == "__staticmethod__" => module_data
+                    .globals
+                    .get("__func__")
+                    .is_some_and(|func| self.is_callable_value(func)),
+                _ => false,
+            },
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
                     class_attr_lookup(&instance_data.class, "__call__").is_some()

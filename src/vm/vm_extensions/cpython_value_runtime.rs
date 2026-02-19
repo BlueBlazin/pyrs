@@ -4,9 +4,9 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyBytes_Type, PyComplex_Type,
-    PyDict_Type, PyDictProxy_Type, PyFloat_Type, PyFrozenSet_Type, PyList_Type, PyLong_Type,
-    PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type, PySet_Type,
-    PySlice_Type, PySuper_Type, PyTuple_Type, PyType_Type, PyUnicode_Type,
+    PyDict_Type, PyDictProxy_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type, PyList_Type,
+    PyLong_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type, PyNone_Type, PyRange_Type,
+    PySet_Type, PySlice_Type, PySuper_Type, PyTuple_Type, PyType_Type, PyUnicode_Type,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -29,6 +29,7 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
         Value::Module(_) => std::ptr::addr_of_mut!(PyModule_Type).cast(),
         Value::Slice(_) => std::ptr::addr_of_mut!(PySlice_Type).cast(),
         Value::Super(_) => std::ptr::addr_of_mut!(PySuper_Type).cast(),
+        Value::Function(_) => std::ptr::addr_of_mut!(PyFunction_Type).cast(),
         Value::BoundMethod(_) => std::ptr::addr_of_mut!(PyMethod_Type).cast(),
         Value::Class(_) => std::ptr::addr_of_mut!(PyType_Type).cast(),
         Value::Builtin(_) => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),
@@ -68,6 +69,7 @@ pub(super) fn cpython_builtin_type_ptr_for_class_name(class_name: &str) -> Optio
         "int" => std::ptr::addr_of_mut!(PyLong_Type).cast(),
         "float" => std::ptr::addr_of_mut!(PyFloat_Type).cast(),
         "complex" => std::ptr::addr_of_mut!(PyComplex_Type).cast(),
+        "function" => std::ptr::addr_of_mut!(PyFunction_Type).cast(),
         "str" => std::ptr::addr_of_mut!(PyUnicode_Type).cast(),
         "bytes" => std::ptr::addr_of_mut!(PyBytes_Type).cast(),
         "bytearray" => std::ptr::addr_of_mut!(PyByteArray_Type).cast(),
@@ -96,6 +98,8 @@ pub(super) fn cpython_builtin_type_name_for_ptr(ptr: *mut c_void) -> Option<&'st
         Some("float")
     } else if ptr == std::ptr::addr_of_mut!(PyComplex_Type).cast() {
         Some("complex")
+    } else if ptr == std::ptr::addr_of_mut!(PyFunction_Type).cast() {
+        Some("function")
     } else if ptr == std::ptr::addr_of_mut!(PyUnicode_Type).cast() {
         Some("str")
     } else if ptr == std::ptr::addr_of_mut!(PyBytes_Type).cast() {

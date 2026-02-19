@@ -10,7 +10,8 @@ use super::{
     LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry, ModuleObject,
     NativeMethodKind, NativeMethodObject, ObjRef, Object, OneArgCallHotPath,
     OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, QuickenedSiteKind, Rc, RuntimeError,
-    TraceFrame, Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
+    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values,
+    apply_bindings, bind_arguments, builtin_exception_parent,
     class_attr_lookup, class_attr_lookup_direct, classify_runtime_error, decode_call_counts,
     deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value,
     dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
@@ -18,12 +19,13 @@ use super::{
     extract_prefixed_exception_message, extract_runtime_error_exception_name,
     extract_runtime_error_final_message, floor_div_values, format_repr, format_value,
     infer_os_error_errno, is_comprehension_code, is_import_error_family, is_os_error_family,
+    is_truthy,
     lshift_values, memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
     memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
     module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
     slot_names_from_value, strip_sqlite_exception_metadata, value_from_bigint, value_to_int,
-    value_to_optional_index, xor_values,
+    value_to_optional_index,
 };
 use crate::runtime::SliceValue;
 
@@ -64,6 +66,37 @@ impl Vm {
             Value::Bool(flag) => Value::Bool(*flag),
             Value::None => Value::None,
             _ => value.clone(),
+        }
+    }
+
+    #[inline]
+    fn finalize_module_frame_success(&mut self, frame: &Frame) {
+        if !frame.is_module {
+            return;
+        }
+        self.clear_module_initializing(&frame.module);
+        self.sync_re_module_flag_aliases(&frame.module);
+    }
+
+    #[inline]
+    fn cleanup_failed_module_frame(&mut self, frame: &Frame) {
+        if !frame.is_module {
+            return;
+        }
+        self.clear_module_initializing(&frame.module);
+        let (module_name, loader_name) = match &*frame.module.kind() {
+            Object::Module(module_data) => (
+                module_data.name.clone(),
+                Vm::module_loader_name(&frame.module).unwrap_or_default(),
+            ),
+            _ => return,
+        };
+        if module_name.is_empty() || module_name == "__main__" {
+            return;
+        }
+        let import_loader = loader_name == SOURCE_FILE_LOADER || loader_name == SOURCELESS_FILE_LOADER;
+        if import_loader {
+            self.remove_module_entry_and_parent_binding(&module_name);
         }
     }
 
@@ -453,9 +486,7 @@ impl Vm {
                 if let Some(module_dict) = frame.module_locals_dict.take() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
                 }
-                if frame.is_module {
-                    self.sync_re_module_flag_aliases(&frame.module);
-                }
+                self.finalize_module_frame_success(&frame);
                 let can_recycle = !frame.is_module
                     && frame.generator_owner.is_none()
                     && !frame.return_class
@@ -2204,7 +2235,8 @@ impl Vm {
             Opcode::BinaryXor => {
                 let right = self.pop_value()?;
                 let left = self.pop_value()?;
-                self.push_value(xor_values(left, right, &self.heap)?);
+                let value = self.binary_xor_runtime(left, right)?;
+                self.push_value(value);
             }
             Opcode::BinaryOr => {
                 let right = self.pop_value()?;
@@ -5723,6 +5755,7 @@ impl Vm {
                 if let Some(module_dict) = frame.module_locals_dict.take() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
                 }
+                self.finalize_module_frame_success(&frame);
                 if frame.expect_none_return && value != Value::None {
                     return Err(RuntimeError::new("__init__() should return None"));
                 }
@@ -5908,6 +5941,7 @@ impl Vm {
                 if let Some(module_dict) = frame.module_locals_dict.take() {
                     self.sync_module_locals_dict_to_module(&frame.module, &module_dict);
                 }
+                self.finalize_module_frame_success(&frame);
                 if frame.expect_none_return && value != Value::None {
                     return Err(RuntimeError::new("__init__() should return None"));
                 }
@@ -6070,6 +6104,7 @@ impl Vm {
             }
 
             let frame = self.frames.pop().expect("frame exists");
+            self.cleanup_failed_module_frame(&frame);
             if let Some(owner) = frame.generator_owner {
                 self.generator_states.remove(&owner.id());
                 let _ = self.set_generator_running(&owner, false);
@@ -7227,7 +7262,31 @@ impl Vm {
             _ => return Ok(()),
         };
         for (name, value) in attrs {
-            let Some(set_name) = self.lookup_bound_special_method(&value, "__set_name__")? else {
+            let set_name = match self.call_internal_preserving_caller(
+                Value::Builtin(BuiltinFunction::GetAttr),
+                vec![value.clone(), Value::Str("__set_name__".to_string())],
+                HashMap::new(),
+            ) {
+                Ok(InternalCallOutcome::Value(value)) => Some(value),
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    if self.active_exception_is("AttributeError") {
+                        self.clear_active_exception();
+                        None
+                    } else {
+                        return Err(self.runtime_error_from_active_exception(
+                            "__set_name__ lookup during class creation failed",
+                        ));
+                    }
+                }
+                Err(err) => {
+                    if classify_runtime_error(&err.message) == "AttributeError" {
+                        None
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
+            let Some(set_name) = set_name else {
                 continue;
             };
             match self.call_internal_preserving_caller(
@@ -9896,7 +9955,7 @@ impl Vm {
     pub(super) fn property_descriptor_parts(
         &self,
         descriptor: &ObjRef,
-    ) -> Option<(Value, Value, Value, Value)> {
+    ) -> Option<(Value, Value, Value, Value, Option<Value>)> {
         let descriptor_kind = descriptor.kind();
         let instance_data = match &*descriptor_kind {
             Object::Instance(instance_data) => instance_data,
@@ -9926,7 +9985,8 @@ impl Vm {
             .get("__doc__")
             .cloned()
             .unwrap_or(Value::None);
-        Some((fget, fset, fdel, doc))
+        let explicit_name = instance_data.attrs.get("__name__").cloned();
+        Some((fget, fset, fdel, doc, explicit_name))
     }
 
     pub(super) fn cached_property_descriptor_parts(
@@ -9965,6 +10025,7 @@ impl Vm {
         fset: Value,
         fdel: Value,
         doc: Value,
+        explicit_name: Option<Value>,
     ) -> Value {
         let class = match self
             .heap
@@ -9981,6 +10042,9 @@ impl Vm {
         instance.attrs.insert("fset".to_string(), fset);
         instance.attrs.insert("fdel".to_string(), fdel);
         instance.attrs.insert("__doc__".to_string(), doc);
+        if let Some(name) = explicit_name {
+            instance.attrs.insert("__name__".to_string(), name);
+        }
         self.heap.alloc_instance(instance)
     }
 
@@ -9991,8 +10055,9 @@ impl Vm {
         fset: Option<Value>,
         fdel: Option<Value>,
         doc: Option<Value>,
+        explicit_name: Option<Option<Value>>,
     ) -> Result<Value, RuntimeError> {
-        let Some((current_get, current_set, current_del, current_doc)) =
+        let Some((current_get, current_set, current_del, current_doc, current_name)) =
             self.property_descriptor_parts(descriptor)
         else {
             return Err(RuntimeError::new(
@@ -10004,40 +10069,117 @@ impl Vm {
             fset.unwrap_or(current_set),
             fdel.unwrap_or(current_del),
             doc.unwrap_or(current_doc),
+            explicit_name.unwrap_or(current_name),
         ))
     }
 
+    pub(super) fn optional_getattr_value(
+        &mut self,
+        target: Value,
+        attr_name: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let outcome = self.call_internal_preserving_caller(
+            Value::Builtin(BuiltinFunction::GetAttr),
+            vec![target, Value::Str(attr_name.to_string())],
+            HashMap::new(),
+        );
+        match outcome {
+            Ok(InternalCallOutcome::Value(value)) => Ok(Some(value)),
+            Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                if self.active_exception_is("AttributeError") {
+                    self.clear_active_exception();
+                    Ok(None)
+                } else {
+                    Err(self.runtime_error_from_active_exception(
+                        "property attribute lookup failed",
+                    ))
+                }
+            }
+            Err(err) => {
+                if classify_runtime_error(&err.message) == "AttributeError" {
+                    Ok(None)
+                } else {
+                    Err(err)
+                }
+            }
+        }
+    }
+
+    pub(super) fn property_descriptor_name(
+        &mut self,
+        fget: &Value,
+        explicit_name: Option<&Value>,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if let Some(name) = explicit_name {
+            return Ok(Some(name.clone()));
+        }
+        if matches!(fget, Value::None) {
+            return Ok(None);
+        }
+        self.optional_getattr_value(fget.clone(), "__name__")
+    }
+
+    pub(super) fn property_descriptor_is_abstract(
+        &mut self,
+        fget: &Value,
+        fset: &Value,
+        fdel: &Value,
+    ) -> Result<bool, RuntimeError> {
+        for value in [fget, fset, fdel] {
+            if matches!(value, Value::None) {
+                continue;
+            }
+            if let Some(flag) = self.optional_getattr_value(value.clone(), "__isabstractmethod__")?
+                && is_truthy(&flag)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn load_attr_property_instance(
-        &self,
+        &mut self,
         instance: &ObjRef,
         attr_name: &str,
-    ) -> Option<Value> {
-        let (fget, fset, fdel, doc) = self.property_descriptor_parts(instance)?;
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some((fget, fset, fdel, doc, explicit_name)) = self.property_descriptor_parts(instance)
+        else {
+            return Ok(None);
+        };
         match attr_name {
-            "fget" => Some(fget),
-            "fset" => Some(fset),
-            "fdel" => Some(fdel),
-            "__doc__" => Some(doc),
-            "__isabstractmethod__" => Some(Value::Bool(false)),
-            "__get__" => Some(
+            "fget" => Ok(Some(fget)),
+            "fset" => Ok(Some(fset)),
+            "fdel" => Ok(Some(fdel)),
+            "__doc__" => Ok(Some(doc)),
+            "__name__" => self.property_descriptor_name(&fget, explicit_name.as_ref()),
+            "__isabstractmethod__" => {
+                let abstract_flag = self.property_descriptor_is_abstract(&fget, &fset, &fdel)?;
+                Ok(Some(Value::Bool(abstract_flag)))
+            }
+            "__get__" => Ok(Some(
                 self.alloc_native_bound_method(NativeMethodKind::PropertyGet, instance.clone()),
-            ),
-            "__set__" => Some(
+            )),
+            "__set__" => Ok(Some(
                 self.alloc_native_bound_method(NativeMethodKind::PropertySet, instance.clone()),
-            ),
-            "__delete__" => Some(
+            )),
+            "__delete__" => Ok(Some(
                 self.alloc_native_bound_method(NativeMethodKind::PropertyDelete, instance.clone()),
-            ),
-            "getter" => Some(
+            )),
+            "__set_name__" => Ok(Some(self.alloc_native_bound_method(
+                NativeMethodKind::PropertySetName,
+                instance.clone(),
+            ))),
+            "getter" => Ok(Some(
                 self.alloc_native_bound_method(NativeMethodKind::PropertyGetter, instance.clone()),
-            ),
-            "setter" => Some(
+            )),
+            "setter" => Ok(Some(
                 self.alloc_native_bound_method(NativeMethodKind::PropertySetter, instance.clone()),
-            ),
-            "deleter" => Some(
+            )),
+            "deleter" => Ok(Some(
                 self.alloc_native_bound_method(NativeMethodKind::PropertyDeleter, instance.clone()),
-            ),
-            _ => None,
+            )),
+            _ => Ok(None),
         }
     }
 

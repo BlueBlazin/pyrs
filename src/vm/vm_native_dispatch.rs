@@ -82,6 +82,41 @@ fn c_contiguous_strides_for_shape(
 }
 
 impl Vm {
+    fn str_predicate_receiver_text(
+        &self,
+        receiver: &ObjRef,
+        args: &mut Vec<Value>,
+        method_name: &str,
+    ) -> Result<String, RuntimeError> {
+        let Object::Module(module_data) = &*receiver.kind() else {
+            return Err(RuntimeError::new("str receiver is invalid"));
+        };
+        if let Some(Value::Str(value)) = module_data.globals.get("value") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(format!("{method_name}() expects no arguments")));
+            }
+            return Ok(value.clone());
+        }
+        if matches!(
+            module_data.globals.get("owner"),
+            Some(Value::Builtin(BuiltinFunction::Str))
+        ) {
+            if args.len() != 1 {
+                return Err(RuntimeError::new(format!(
+                    "{method_name}() descriptor requires a str argument"
+                )));
+            }
+            return match args.remove(0) {
+                Value::Str(value) => Ok(value),
+                Value::Instance(instance) => self
+                    .instance_backing_str(&instance)
+                    .ok_or_else(|| RuntimeError::new("str receiver is invalid")),
+                _ => Err(RuntimeError::new("str receiver is invalid")),
+            };
+        }
+        Err(RuntimeError::new("str receiver is invalid"))
+    }
+
     pub(super) fn call_native_method(
         &mut self,
         kind: NativeMethodKind,
@@ -115,11 +150,36 @@ impl Vm {
                     | NativeMethodKind::CodecsIncrementalEncoderSetState
                     | NativeMethodKind::CodecsIncrementalDecoderSetState
                     | NativeMethodKind::CodeReplace
+                    | NativeMethodKind::RePatternSearch
+                    | NativeMethodKind::RePatternMatch
+                    | NativeMethodKind::RePatternFullMatch
                     | NativeMethodKind::FunctionAnnotate
                     | NativeMethodKind::Builtin(_)
             )
         {
-            return Err(RuntimeError::new("native methods do not accept keywords"));
+            if std::env::var_os("PYRS_TRACE_NATIVE_KW_REJECT").is_some() {
+                let mut kw_names = kwargs.keys().cloned().collect::<Vec<_>>();
+                kw_names.sort();
+                let receiver_type = match &*receiver.kind() {
+                    Object::List(_) => "list",
+                    Object::Tuple(_) => "tuple",
+                    Object::Dict(_) => "dict",
+                    Object::Set(_) => "set",
+                    Object::FrozenSet(_) => "frozenset",
+                    Object::Instance(_) => "instance",
+                    Object::Class(_) => "class",
+                    Object::Function(_) => "function",
+                    Object::Module(_) => "module",
+                    _ => "object",
+                };
+                eprintln!(
+                    "[native-kw-reject] kind={kind:?} kwargs={kw_names:?} receiver_type={}",
+                    receiver_type
+                );
+            }
+            return Err(RuntimeError::new(
+                "TypeError: native methods do not accept keywords",
+            ));
         }
         match kind {
             NativeMethodKind::Builtin(builtin) => {
@@ -887,6 +947,17 @@ impl Vm {
                     self.heap.alloc_list(values.clone()),
                 ))
             }
+            NativeMethodKind::ListClear => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("list.clear() expects no arguments"));
+                }
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::List(values) = &mut *receiver_kind else {
+                    return Err(RuntimeError::new("list.clear() receiver must be list"));
+                };
+                values.clear();
+                Ok(NativeCallResult::Value(Value::None))
+            }
             cmp_kind @ (NativeMethodKind::ListEq | NativeMethodKind::ListNe) => {
                 if args.len() != 1 {
                     let method_name = if matches!(cmp_kind, NativeMethodKind::ListEq) {
@@ -1551,6 +1622,25 @@ impl Vm {
                 let mut out = String::new();
                 out.extend(first.to_uppercase());
                 out.push_str(chars.as_str().to_lowercase().as_str());
+                Ok(NativeCallResult::Value(Value::Str(out)))
+            }
+            NativeMethodKind::StrTitle => {
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "title")?;
+                let mut out = String::new();
+                let mut previous_is_cased = false;
+                for ch in text.chars() {
+                    if ch.is_lowercase() || ch.is_uppercase() {
+                        if previous_is_cased {
+                            out.extend(ch.to_lowercase());
+                        } else {
+                            out.extend(ch.to_uppercase());
+                        }
+                        previous_is_cased = true;
+                    } else {
+                        out.push(ch);
+                        previous_is_cased = false;
+                    }
+                }
                 Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrEncode => {
@@ -3020,16 +3110,7 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrIsUpper => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("isupper() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "isupper")?;
                 let mut has_upper = false;
                 for ch in text.chars() {
                     if ch.is_lowercase() {
@@ -3042,16 +3123,7 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Bool(has_upper)))
             }
             NativeMethodKind::StrIsLower => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("islower() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "islower")?;
                 let mut has_lower = false;
                 for ch in text.chars() {
                     if ch.is_uppercase() {
@@ -3064,85 +3136,32 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Bool(has_lower)))
             }
             NativeMethodKind::StrIsAscii => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("isascii() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "isascii")?;
                 Ok(NativeCallResult::Value(Value::Bool(text.is_ascii())))
             }
             NativeMethodKind::StrIsAlpha => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("isalpha() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "isalpha")?;
                 let is_alpha = !text.is_empty() && text.chars().all(|ch| ch.is_alphabetic());
                 Ok(NativeCallResult::Value(Value::Bool(is_alpha)))
             }
             NativeMethodKind::StrIsDigit => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("isdigit() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "isdigit")?;
                 let is_digit = !text.is_empty() && text.chars().all(|ch| ch.is_numeric());
                 Ok(NativeCallResult::Value(Value::Bool(is_digit)))
             }
             NativeMethodKind::StrIsAlNum => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("isalnum() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "isalnum")?;
                 let is_alnum = !text.is_empty() && text.chars().all(|ch| ch.is_alphanumeric());
                 Ok(NativeCallResult::Value(Value::Bool(is_alnum)))
             }
             NativeMethodKind::StrIsSpace => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("isspace() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "isspace")?;
                 let is_space = !text.is_empty() && text.chars().all(|ch| ch.is_whitespace());
                 Ok(NativeCallResult::Value(Value::Bool(is_space)))
             }
             NativeMethodKind::StrIsIdentifier => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("isidentifier() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
-                };
+                let text =
+                    self.str_predicate_receiver_text(&receiver, &mut args, "isidentifier")?;
                 let mut chars = text.chars();
                 let Some(first) = chars.next() else {
                     return Ok(NativeCallResult::Value(Value::Bool(false)));
@@ -4010,8 +4029,48 @@ impl Vm {
             NativeMethodKind::RePatternSearch
             | NativeMethodKind::RePatternMatch
             | NativeMethodKind::RePatternFullMatch => {
-                if args.is_empty() {
-                    return Err(RuntimeError::new("pattern method expects string"));
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "TypeError: pattern method expects string and optional pos/endpos",
+                    ));
+                }
+                let mut keyword_pos = None;
+                let mut keyword_endpos = None;
+                for (name, value) in kwargs {
+                    match name.as_str() {
+                        "pos" => {
+                            if keyword_pos.is_some() {
+                                return Err(RuntimeError::new(
+                                    "TypeError: pattern method got multiple values for argument 'pos'",
+                                ));
+                            }
+                            keyword_pos = Some(value);
+                        }
+                        "endpos" => {
+                            if keyword_endpos.is_some() {
+                                return Err(RuntimeError::new(
+                                    "TypeError: pattern method got multiple values for argument 'endpos'",
+                                ));
+                            }
+                            keyword_endpos = Some(value);
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "TypeError: pattern method got an unexpected keyword argument '{}'",
+                                name
+                            )));
+                        }
+                    }
+                }
+                if args.len() >= 2 && keyword_pos.is_some() {
+                    return Err(RuntimeError::new(
+                        "TypeError: pattern method got multiple values for argument 'pos'",
+                    ));
+                }
+                if args.len() >= 3 && keyword_endpos.is_some() {
+                    return Err(RuntimeError::new(
+                        "TypeError: pattern method got multiple values for argument 'endpos'",
+                    ));
                 }
                 let mode = match kind {
                     NativeMethodKind::RePatternSearch => ReMode::Search,
@@ -4020,7 +4079,18 @@ impl Vm {
                     _ => unreachable!(),
                 };
                 let mut forwarded = vec![Value::Module(receiver.clone())];
-                forwarded.extend(args);
+                forwarded.push(args[0].clone());
+                let pos = args.get(1).cloned().or(keyword_pos);
+                let endpos = args.get(2).cloned().or(keyword_endpos);
+                if let Some(pos) = pos {
+                    forwarded.push(pos);
+                }
+                if let Some(endpos) = endpos {
+                    if forwarded.len() == 2 {
+                        forwarded.push(Value::Int(0));
+                    }
+                    forwarded.push(endpos);
+                }
                 Ok(NativeCallResult::Value(self.builtin_re_match_mode(
                     forwarded,
                     HashMap::new(),
@@ -4560,7 +4630,7 @@ impl Vm {
                 if matches!(obj, Value::None) {
                     return Ok(NativeCallResult::Value(Value::Instance(receiver)));
                 }
-                let Some((fget, _, _, _)) = self.property_descriptor_parts(&receiver) else {
+                let Some((fget, _, _, _, _)) = self.property_descriptor_parts(&receiver) else {
                     return Err(RuntimeError::new("property receiver is invalid"));
                 };
                 if matches!(fget, Value::None) {
@@ -4579,7 +4649,7 @@ impl Vm {
                 }
                 let obj = args.first().cloned().expect("checked len");
                 let value = args.get(1).cloned().expect("checked len");
-                let Some((_, fset, _, _)) = self.property_descriptor_parts(&receiver) else {
+                let Some((_, fset, _, _, _)) = self.property_descriptor_parts(&receiver) else {
                     return Err(RuntimeError::new("property receiver is invalid"));
                 };
                 if matches!(fset, Value::None) {
@@ -4597,7 +4667,7 @@ impl Vm {
                     return Err(RuntimeError::new("__delete__() expects 1 argument"));
                 }
                 let obj = args.first().cloned().expect("checked len");
-                let Some((_, _, fdel, _)) = self.property_descriptor_parts(&receiver) else {
+                let Some((_, _, fdel, _, _)) = self.property_descriptor_parts(&receiver) else {
                     return Err(RuntimeError::new("property receiver is invalid"));
                 };
                 if matches!(fdel, Value::None) {
@@ -4619,7 +4689,14 @@ impl Vm {
                     return Err(RuntimeError::new("getter() argument must be callable"));
                 }
                 let updated =
-                    self.clone_property_descriptor_with(&receiver, Some(getter), None, None, None)?;
+                    self.clone_property_descriptor_with(
+                        &receiver,
+                        Some(getter),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?;
                 Ok(NativeCallResult::Value(updated))
             }
             NativeMethodKind::PropertySetter => {
@@ -4631,7 +4708,14 @@ impl Vm {
                     return Err(RuntimeError::new("setter() argument must be callable"));
                 }
                 let updated =
-                    self.clone_property_descriptor_with(&receiver, None, Some(setter), None, None)?;
+                    self.clone_property_descriptor_with(
+                        &receiver,
+                        None,
+                        Some(setter),
+                        None,
+                        None,
+                        None,
+                    )?;
                 Ok(NativeCallResult::Value(updated))
             }
             NativeMethodKind::PropertyDeleter => {
@@ -4648,8 +4732,22 @@ impl Vm {
                     None,
                     Some(deleter),
                     None,
+                    None,
                 )?;
                 Ok(NativeCallResult::Value(updated))
+            }
+            NativeMethodKind::PropertySetName => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("__set_name__() expects 2 arguments"));
+                }
+                let explicit_name = args.get(1).cloned().expect("checked len");
+                if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("__name__".to_string(), explicit_name);
+                    return Ok(NativeCallResult::Value(Value::None));
+                }
+                Err(RuntimeError::new("property receiver is invalid"))
             }
             NativeMethodKind::CachedPropertyGet => {
                 if args.len() != 2 {
@@ -7119,11 +7217,20 @@ impl Vm {
                 self.builtin_collections_count_elements(args, kwargs)
             }
             BuiltinFunction::InspectSignature => self.builtin_inspect_signature(args, kwargs),
+            BuiltinFunction::InspectSignatureInit => {
+                self.builtin_inspect_signature_init(args, kwargs)
+            }
             BuiltinFunction::InspectSignatureStr => {
                 self.builtin_inspect_signature_str(args, kwargs)
             }
             BuiltinFunction::InspectSignatureRepr => {
                 self.builtin_inspect_signature_repr(args, kwargs)
+            }
+            BuiltinFunction::InspectSignatureReplace => {
+                self.builtin_inspect_signature_replace(args, kwargs)
+            }
+            BuiltinFunction::InspectParameterInit => {
+                self.builtin_inspect_parameter_init(args, kwargs)
             }
             BuiltinFunction::InspectGetModule => self.builtin_inspect_getmodule(args, kwargs),
             BuiltinFunction::InspectGetFile => self.builtin_inspect_getfile(args, kwargs),

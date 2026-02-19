@@ -7485,6 +7485,58 @@ fn failed_import_removes_partial_target_module_from_sys_modules() {
 }
 
 #[test]
+fn caught_failed_import_does_not_leave_partial_module_in_sys_modules() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_failed_import_caught_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("broken_dep.py"), "value = 7\n").expect("write dependency module");
+    std::fs::write(
+        temp_dir.join("broken.py"),
+        "x = 1\nfrom broken_dep import missing\ny = 2\n",
+    )
+    .expect("write broken module");
+
+    let source = "import sys\nfor _ in range(2):\n    try:\n        import broken\n    except Exception:\n        pass\nm = sys.modules.get('broken')\nok = (m is None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("broken.py"));
+    let _ = std::fs::remove_file(temp_dir.join("broken_dep.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn successful_import_clears_internal_initializing_marker() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_success_import_marker_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("good.py"), "value = 11\n").expect("write module");
+
+    let source = "import good\nok = (good.value == 11) and ('__pyrs_module_initializing__' not in good.__dict__)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("good.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn executes_namespace_package_import() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -8918,8 +8970,28 @@ fn executes_property_setter_decorator() {
 
 #[test]
 fn property_accepts_keyword_arguments() {
+    let source = "def getv(self):\n    return 7\np = property(fget=getv, doc='hello')\nok = (p.fget is getv and p.__doc__ == 'hello')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn property_exposes_name_from_getter() {
     let source =
-        "def getv(self):\n    return 7\np = property(fget=getv, doc='hello')\nok = (p.fget is getv and p.__doc__ == 'hello')\n";
+        "class C:\n    @property\n    def value(self):\n        return 42\nok = (C.value.__name__ == 'value')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn property_set_name_hook_sets_name_for_empty_property() {
+    let source = "class C:\n    value = property()\nok = (C.value.__name__ == 'value')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

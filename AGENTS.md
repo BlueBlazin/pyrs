@@ -62,6 +62,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 
 ## Current Snapshot (2026-02-14)
 - Scientific-stack closure checkpoint (2026-02-19):
+  - import-state root-cause fix:
+    - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.
+    - module frames that unwind with unhandled exceptions now clear the marker and remove failed source/sourceless modules from `sys.modules`.
+    - this closes the prior NumPy-side corruption where `ctypes` remained partially initialized after a failed import path.
+  - current scientific-stack blocker shift:
+    - SciPy is no longer blocked by partial `ctypes`; direct-mode failure now surfaces in `_ccallback_c` with `type 'type' has no attribute 'register'`.
   - landed substrate fixes this round:
     - builtin-attribute write/delete support for `Value::Builtin` targets (`StoreAttr`/`setattr`/`delattr` paths),
     - namedtuple runtime parity improvements (defaults + subclass `super().__new__(cls, ...)` path),

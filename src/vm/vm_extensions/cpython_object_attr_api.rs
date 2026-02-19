@@ -52,6 +52,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             name.as_str(),
             "BitGenerator" | "SeedSequence" | "SeedlessSeedSequence" | "generate_state"
         );
+    let trace_getattr_slots = std::env::var_os("PYRS_TRACE_GETATTR_SLOTS").is_some();
     let trace_proxy_getattr = std::env::var_os("PYRS_TRACE_PROXY_GETATTR").is_some()
         && matches!(name.as_str(), "__repr__" | "__str__");
     let trace_dot_getattr =
@@ -162,6 +163,18 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     // Keep owned-compat objects on the internal fallback path to avoid
                     // recursive/self-referential generic getattr behavior.
                 } else {
+                if trace_getattr_slots {
+                    eprintln!(
+                        "[cpy-getattr-slot] branch=tp_getattro object={:p} attr={} type={:p} slot={:p} owned={} known={} generic={}",
+                        object,
+                        name,
+                        type_ptr,
+                        tp_getattro,
+                        is_owned,
+                        is_known_compat,
+                        is_generic_getattro
+                    );
+                }
                 if trace_dot_getattr {
                     eprintln!(
                         "[proxy-getattr-dot] branch=tp_getattro object={:p} is_owned={} is_known_compat={} tp_getattro={:p} generic={}",
@@ -193,6 +206,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 );
             }
             if !tp_getattr.is_null() {
+                if trace_getattr_slots {
+                    eprintln!(
+                        "[cpy-getattr-slot] branch=tp_getattr object={:p} attr={} type={:p} slot={:p} owned={} known={}",
+                        object, name, type_ptr, tp_getattr, is_owned, is_known_compat
+                    );
+                }
                 if trace_dot_getattr {
                     eprintln!(
                         "[proxy-getattr-dot] branch=tp_getattr object={:p} is_owned={} is_known_compat={} tp_getattr={:p}",
@@ -956,7 +975,11 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             }
             let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
             let is_owned = context.owns_cpython_allocation_ptr(object);
-            if is_known_compat {
+            let is_type_object = super::cpython_is_type_object_ptr(object);
+            // Keep owned known-compat non-type objects on builtin setattr path to avoid
+            // recursive generic setattr behavior, but let type objects use native slots so
+            // metatype/class dict writes (e.g. pybind11 enum __entries) stay authoritative.
+            if is_known_compat && is_owned && !is_type_object {
                 return None;
             }
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.

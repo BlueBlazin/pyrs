@@ -1,15 +1,37 @@
 use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_int, c_uint, c_void};
+use std::mem::align_of;
 
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    _PyObject_New, _PyObject_NewVar, CpythonHeapTypeInfo, CpythonMethodDef, CpythonObjectHead,
-    CpythonTypeObject, CpythonTypeSpec, InternalCallOutcome, ModuleCapiContext,
+    _PyObject_New, _PyObject_NewVar, CpythonAsyncMethods, CpythonBufferProcs,
+    CpythonHeapTypeInfo, CpythonMappingMethods, CpythonMethodDef, CpythonNumberMethods,
+    CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, CpythonTypeSpec,
+    InternalCallOutcome, ModuleCapiContext,
+    PY_TYPE_SLOT_AM_AITER, PY_TYPE_SLOT_AM_ANEXT, PY_TYPE_SLOT_AM_AWAIT, PY_TYPE_SLOT_AM_SEND,
+    PY_TYPE_SLOT_BF_GETBUFFER, PY_TYPE_SLOT_BF_RELEASEBUFFER, PY_TYPE_SLOT_MP_ASS_SUBSCRIPT,
+    PY_TYPE_SLOT_MP_LENGTH, PY_TYPE_SLOT_MP_SUBSCRIPT, PY_TYPE_SLOT_NB_ABSOLUTE,
+    PY_TYPE_SLOT_NB_ADD, PY_TYPE_SLOT_NB_AND, PY_TYPE_SLOT_NB_BOOL, PY_TYPE_SLOT_NB_DIVMOD,
+    PY_TYPE_SLOT_NB_FLOAT, PY_TYPE_SLOT_NB_FLOOR_DIVIDE, PY_TYPE_SLOT_NB_INDEX,
+    PY_TYPE_SLOT_NB_INPLACE_ADD, PY_TYPE_SLOT_NB_INPLACE_AND,
+    PY_TYPE_SLOT_NB_INPLACE_FLOOR_DIVIDE, PY_TYPE_SLOT_NB_INPLACE_LSHIFT,
+    PY_TYPE_SLOT_NB_INPLACE_MATRIX_MULTIPLY, PY_TYPE_SLOT_NB_INPLACE_MULTIPLY,
+    PY_TYPE_SLOT_NB_INPLACE_OR, PY_TYPE_SLOT_NB_INPLACE_POWER,
+    PY_TYPE_SLOT_NB_INPLACE_REMAINDER, PY_TYPE_SLOT_NB_INPLACE_RSHIFT,
+    PY_TYPE_SLOT_NB_INPLACE_SUBTRACT, PY_TYPE_SLOT_NB_INPLACE_TRUE_DIVIDE,
+    PY_TYPE_SLOT_NB_INPLACE_XOR, PY_TYPE_SLOT_NB_INT, PY_TYPE_SLOT_NB_INVERT,
+    PY_TYPE_SLOT_NB_LSHIFT, PY_TYPE_SLOT_NB_MATRIX_MULTIPLY, PY_TYPE_SLOT_NB_MULTIPLY,
+    PY_TYPE_SLOT_NB_NEGATIVE, PY_TYPE_SLOT_NB_OR, PY_TYPE_SLOT_NB_POSITIVE,
+    PY_TYPE_SLOT_NB_POWER, PY_TYPE_SLOT_NB_REMAINDER, PY_TYPE_SLOT_NB_RSHIFT,
+    PY_TYPE_SLOT_NB_SUBTRACT, PY_TYPE_SLOT_NB_TRUE_DIVIDE, PY_TYPE_SLOT_NB_XOR,
     PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE,
     PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
     PY_TPFLAGS_TUPLE_SUBCLASS, PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS,
-    PY_TYPE_SLOT_MAX, PY_TYPE_SLOT_TP_ALLOC, PY_TYPE_SLOT_TP_BASE, PY_TYPE_SLOT_TP_BASES,
+    PY_TYPE_SLOT_MAX, PY_TYPE_SLOT_SQ_ASS_ITEM, PY_TYPE_SLOT_SQ_CONCAT, PY_TYPE_SLOT_SQ_CONTAINS,
+    PY_TYPE_SLOT_SQ_INPLACE_CONCAT, PY_TYPE_SLOT_SQ_INPLACE_REPEAT, PY_TYPE_SLOT_SQ_ITEM,
+    PY_TYPE_SLOT_SQ_LENGTH, PY_TYPE_SLOT_SQ_REPEAT, PY_TYPE_SLOT_TP_ALLOC,
+    PY_TYPE_SLOT_TP_BASE, PY_TYPE_SLOT_TP_BASES,
     PY_TYPE_SLOT_TP_CALL, PY_TYPE_SLOT_TP_CLEAR, PY_TYPE_SLOT_TP_DEALLOC, PY_TYPE_SLOT_TP_DEL,
     PY_TYPE_SLOT_TP_DESCR_GET, PY_TYPE_SLOT_TP_DESCR_SET, PY_TYPE_SLOT_TP_DOC,
     PY_TYPE_SLOT_TP_FINALIZE, PY_TYPE_SLOT_TP_FREE, PY_TYPE_SLOT_TP_GETATTR,
@@ -20,9 +42,9 @@ use super::{
     PY_TYPE_SLOT_TP_STR, PY_TYPE_SLOT_TP_TOKEN, PY_TYPE_SLOT_TP_TRAVERSE,
     PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type, PyBool_Type,
     PyByteArray_Type, PyBytes_Type, PyComplex_Type, PyDescr_NewClassMethod, PyDescr_NewMethod,
-    PyDict_New, PyDict_SetItemString, PyDict_Type, PyErr_BadInternalCall, PyExc_MemoryError,
-    PyExc_SystemError, PyExc_TypeError, PyFloat_Type, PyFrozenSet_Type, PyList_Type, PyLong_Type,
-    PyMemoryView_Type, PyModule_GetState, PyObject_Free, PyRange_Type, PySet_Type, PySlice_Type,
+    PyDict_DelItemString, PyDict_New, PyDict_SetItemString, PyDict_Type, PyErr_BadInternalCall, PyExc_AttributeError,
+    PyExc_MemoryError, PyExc_SystemError, PyExc_TypeError, PyFloat_Type, PyFrozenSet_Type, PyList_Type, PyLong_Type,
+    PyMemoryView_Type, PyModule_GetState, PyObject_Free, PyProperty_Type, PyRange_Type, PySet_Type, PySlice_Type,
     PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyTuple_Type, PyType_Type,
     PyUnicode_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
     cpython_heap_type_registry, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
@@ -68,6 +90,8 @@ fn cpython_builtin_ctor_for_type_ptr(ty: *mut CpythonTypeObject) -> Option<Built
         BuiltinFunction::Slice
     } else if ptr == std::ptr::addr_of_mut!(PyRange_Type).cast() {
         BuiltinFunction::Range
+    } else if ptr == std::ptr::addr_of_mut!(PyProperty_Type).cast() {
+        BuiltinFunction::Property
     } else {
         return None;
     })
@@ -195,7 +219,26 @@ unsafe fn cpython_type_populate_method_descriptors(ty: *mut CpythonTypeObject) -
     if method.is_null() {
         return 0;
     }
+    let method_align = align_of::<CpythonMethodDef>();
+    if (method as usize) % method_align != 0 {
+        if std::env::var_os("PYRS_TRACE_CPY_TYPE_METHODS").is_some() {
+            eprintln!(
+                "[cpy-type-methods] skip unaligned method table ty={:p} tp_methods={:p}",
+                ty, method
+            );
+        }
+        return 0;
+    }
     loop {
+        if (method as usize) % method_align != 0 {
+            if std::env::var_os("PYRS_TRACE_CPY_TYPE_METHODS").is_some() {
+                eprintln!(
+                    "[cpy-type-methods] stop on unaligned entry ty={:p} method={:p}",
+                    ty, method
+                );
+            }
+            return 0;
+        }
         // SAFETY: method table is terminated by null ml_name.
         let method_name_ptr = unsafe { (*method).ml_name };
         if method_name_ptr.is_null() {
@@ -219,6 +262,243 @@ unsafe fn cpython_type_populate_method_descriptors(ty: *mut CpythonTypeObject) -
         method = unsafe { method.add(1) };
     }
     0
+}
+
+pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
+    object: *mut c_void,
+    name: *mut c_void,
+) -> *mut c_void {
+    if object.is_null() || name.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let attr_name = match cpython_value_from_ptr(name) {
+        Ok(Value::Str(text)) => text,
+        Ok(_) => {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "type attribute name must be str",
+            );
+            return std::ptr::null_mut();
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    let type_ptr = object.cast::<CpythonTypeObject>();
+    let trace_type_getattr = std::env::var_os("PYRS_TRACE_TYPE_GETATTR").is_some();
+    if !type_ptr.is_null() {
+        let type_name = cpython_type_name_from_tp_name(type_ptr);
+        if trace_type_getattr
+            && (type_name.contains("pybind11")
+                || matches!(
+                    attr_name.as_str(),
+                    "_pybind11_conduit_v1_" | "__int__" | "__index__" | "__entries"
+                ))
+        {
+            eprintln!(
+                "[cpy-type-getattr] object={:p} type={} attr={}",
+                object, type_name, attr_name
+            );
+        }
+        if attr_name == "__name__" {
+            return cpython_new_ptr_for_value(Value::Str(type_name));
+        }
+        if attr_name == "__qualname__" {
+            return cpython_new_ptr_for_value(Value::Str(cpython_type_qualname_from_tp_name(
+                type_ptr,
+            )));
+        }
+        if attr_name == "__module__" {
+            let module_name = cpython_heap_type_registry()
+                .lock()
+                .ok()
+                .and_then(|registry| registry.get(&(type_ptr as usize)).map(|info| info.module_name.clone()))
+                .unwrap_or_else(|| cpython_type_module_name_from_tp_name(type_ptr));
+            return cpython_new_ptr_for_value(Value::Str(module_name));
+        }
+        if attr_name == "__dict__" {
+            // SAFETY: `type_ptr` is non-null and points to a type object.
+            let dict_ptr = unsafe { (*type_ptr).tp_dict };
+            if !dict_ptr.is_null() {
+                unsafe { Py_IncRef(dict_ptr) };
+                return dict_ptr;
+            }
+        }
+    }
+    if let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
+        context
+            .lookup_type_attr_via_tp_dict(object, &attr_name)
+            .or_else(|| context.lookup_type_attr_via_runtime_mro(object, &attr_name))
+    }) && !attr_ptr.is_null()
+    {
+        if trace_type_getattr {
+            eprintln!(
+                "[cpy-type-getattr] lookup-hit object={:p} attr={} ptr={:p}",
+                object, attr_name, attr_ptr
+            );
+        }
+        return attr_ptr;
+    }
+    // Type attribute lookup also consults metatype attributes/descriptors.
+    if let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
+        // SAFETY: `object` follows type slot dispatch contract.
+        let metatype = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<c_void>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if metatype.is_null() {
+            return None;
+        }
+        context
+            .lookup_type_attr_via_tp_dict(metatype, &attr_name)
+            .or_else(|| context.lookup_type_attr_via_runtime_mro(metatype, &attr_name))
+    }) && !attr_ptr.is_null()
+    {
+        if trace_type_getattr {
+            eprintln!(
+                "[cpy-type-getattr] metatype-hit object={:p} attr={} ptr={:p}",
+                object, attr_name, attr_ptr
+            );
+        }
+        return attr_ptr;
+    }
+    // SAFETY: object pointer follows type slot dispatch contract.
+    let type_ptr = unsafe {
+        object
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    let type_name = if type_ptr.is_null() {
+        "type".to_string()
+    } else {
+        unsafe { c_name_to_string((*type_ptr).tp_name) }.unwrap_or_else(|_| "type".to_string())
+    };
+    cpython_set_typed_error(
+        unsafe { PyExc_AttributeError },
+        format!("type '{type_name}' has no attribute '{attr_name}'"),
+    );
+    if trace_type_getattr {
+        eprintln!(
+            "[cpy-type-getattr] lookup-miss object={:p} type={} attr={}",
+            object, type_name, attr_name
+        );
+    }
+    std::ptr::null_mut()
+}
+
+pub(super) unsafe extern "C" fn cpython_type_tp_setattro(
+    object: *mut c_void,
+    name: *mut c_void,
+    value: *mut c_void,
+) -> c_int {
+    if object.is_null() || name.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1;
+    }
+    let attr_name = match cpython_value_from_ptr(name) {
+        Ok(Value::Str(text)) => text,
+        Ok(_) => {
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "type attribute name must be str",
+            );
+            return -1;
+        }
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+    let trace_type_setattr = std::env::var_os("PYRS_TRACE_TYPE_SETATTR").is_some();
+    let type_name = if object.is_null() {
+        "<null>".to_string()
+    } else {
+        // SAFETY: object pointer follows type slot dispatch contract.
+        unsafe {
+            object
+                .cast::<CpythonTypeObject>()
+                .as_ref()
+                .map(|ty| cpython_type_name_from_tp_name(ty as *const _ as *mut _))
+                .unwrap_or_else(|| "<invalid>".to_string())
+        }
+    };
+    if trace_type_setattr
+        && (type_name.contains("pybind11")
+            || attr_name.starts_with("__")
+            || attr_name.contains("entries"))
+    {
+        eprintln!(
+            "[cpy-type-setattr] object={:p} type={} attr={} value={:p}",
+            object, type_name, attr_name, value
+        );
+    }
+    if let Ok(Some(status)) = with_active_cpython_context_mut(|context| {
+        // SAFETY: `object` is expected to be a valid type object for tp_setattro.
+        let type_ptr = object.cast::<CpythonTypeObject>();
+        if type_ptr.is_null() {
+            return None;
+        }
+        // SAFETY: type pointer shape is validated by CPython slot dispatch contract.
+        let dict_ptr = unsafe { (*type_ptr).tp_dict };
+        if dict_ptr.is_null() {
+            return None;
+        }
+        let key_ptr = match context.scratch_c_string_ptr(&attr_name) {
+            Ok(ptr) => ptr,
+            Err(err) => {
+                context.set_error(err);
+                return Some(-1);
+            }
+        };
+        let result = if value.is_null() {
+            // SAFETY: dict pointer + key follow PyDict C-API contract.
+            unsafe { PyDict_DelItemString(dict_ptr, key_ptr) }
+        } else {
+            // SAFETY: dict pointer + key/value follow PyDict C-API contract.
+            unsafe { PyDict_SetItemString(dict_ptr, key_ptr, value) }
+        };
+        if result == 0 {
+            if trace_type_setattr {
+                eprintln!(
+                    "[cpy-type-setattr] dict-write-ok type={} attr={} delete={}",
+                    type_name,
+                    attr_name,
+                    value.is_null()
+                );
+            }
+            return Some(0);
+        }
+        if trace_type_setattr {
+            eprintln!(
+                "[cpy-type-setattr] dict-write-miss type={} attr={} delete={}",
+                type_name,
+                attr_name,
+                value.is_null()
+            );
+        }
+        None
+    })
+    {
+        return status;
+    }
+    cpython_set_typed_error(
+        unsafe { PyExc_AttributeError },
+        format!("cannot set attribute '{attr_name}' on type object"),
+    );
+    if trace_type_setattr {
+        eprintln!(
+            "[cpy-type-setattr] reject type={} attr={} value={:p}",
+            type_name, attr_name, value
+        );
+    }
+    -1
 }
 
 pub(super) unsafe extern "C" fn cpython_type_tp_call(
@@ -647,13 +927,255 @@ fn cpython_type_module_name_from_tp_name(type_ptr: *mut CpythonTypeObject) -> St
         .unwrap_or_else(|| "builtins".to_string())
 }
 
+#[derive(Default)]
+struct CpythonTypeSlotScratch {
+    async_allocated: bool,
+    number_allocated: bool,
+    sequence_allocated: bool,
+    mapping_allocated: bool,
+    buffer_allocated: bool,
+}
+
+fn cpython_clone_or_alloc_slot_table<T>(
+    current: *mut c_void,
+    allocated: &mut bool,
+    table_name: &str,
+) -> Result<*mut T, String> {
+    if current.is_null() {
+        let raw = unsafe { calloc(1, std::mem::size_of::<T>()) }.cast::<T>();
+        if raw.is_null() {
+            return Err(format!("failed to allocate {table_name} table"));
+        }
+        let _ = with_active_cpython_context_mut(|context| {
+            context.register_aux_allocation(raw.cast::<c_void>());
+        });
+        *allocated = true;
+        return Ok(raw);
+    }
+    if *allocated {
+        return Ok(current.cast::<T>());
+    }
+    let raw = unsafe { calloc(1, std::mem::size_of::<T>()) }.cast::<T>();
+    if raw.is_null() {
+        return Err(format!("failed to allocate {table_name} table"));
+    }
+    // SAFETY: source and destination are valid pointers to `T`.
+    unsafe { std::ptr::copy_nonoverlapping(current.cast::<T>(), raw, 1) };
+    let _ = with_active_cpython_context_mut(|context| {
+        context.register_aux_allocation(raw.cast::<c_void>());
+    });
+    *allocated = true;
+    Ok(raw)
+}
+
+fn cpython_ensure_async_methods<'a>(
+    ty: &'a mut CpythonTypeObject,
+    scratch: &mut CpythonTypeSlotScratch,
+) -> Result<&'a mut CpythonAsyncMethods, String> {
+    let raw = cpython_clone_or_alloc_slot_table::<CpythonAsyncMethods>(
+        ty.tp_as_async,
+        &mut scratch.async_allocated,
+        "tp_as_async",
+    )?;
+    ty.tp_as_async = raw.cast::<c_void>();
+    // SAFETY: `raw` points to a valid allocated table.
+    Ok(unsafe { &mut *raw })
+}
+
+fn cpython_ensure_number_methods<'a>(
+    ty: &'a mut CpythonTypeObject,
+    scratch: &mut CpythonTypeSlotScratch,
+) -> Result<&'a mut CpythonNumberMethods, String> {
+    let raw = cpython_clone_or_alloc_slot_table::<CpythonNumberMethods>(
+        ty.tp_as_number,
+        &mut scratch.number_allocated,
+        "tp_as_number",
+    )?;
+    ty.tp_as_number = raw.cast::<c_void>();
+    // SAFETY: `raw` points to a valid allocated table.
+    Ok(unsafe { &mut *raw })
+}
+
+fn cpython_ensure_sequence_methods<'a>(
+    ty: &'a mut CpythonTypeObject,
+    scratch: &mut CpythonTypeSlotScratch,
+) -> Result<&'a mut CpythonSequenceMethods, String> {
+    let raw = cpython_clone_or_alloc_slot_table::<CpythonSequenceMethods>(
+        ty.tp_as_sequence,
+        &mut scratch.sequence_allocated,
+        "tp_as_sequence",
+    )?;
+    ty.tp_as_sequence = raw.cast::<c_void>();
+    // SAFETY: `raw` points to a valid allocated table.
+    Ok(unsafe { &mut *raw })
+}
+
+fn cpython_ensure_mapping_methods<'a>(
+    ty: &'a mut CpythonTypeObject,
+    scratch: &mut CpythonTypeSlotScratch,
+) -> Result<&'a mut CpythonMappingMethods, String> {
+    let raw = cpython_clone_or_alloc_slot_table::<CpythonMappingMethods>(
+        ty.tp_as_mapping,
+        &mut scratch.mapping_allocated,
+        "tp_as_mapping",
+    )?;
+    ty.tp_as_mapping = raw.cast::<c_void>();
+    // SAFETY: `raw` points to a valid allocated table.
+    Ok(unsafe { &mut *raw })
+}
+
+fn cpython_ensure_buffer_procs<'a>(
+    ty: &'a mut CpythonTypeObject,
+    scratch: &mut CpythonTypeSlotScratch,
+) -> Result<&'a mut CpythonBufferProcs, String> {
+    let raw = cpython_clone_or_alloc_slot_table::<CpythonBufferProcs>(
+        ty.tp_as_buffer,
+        &mut scratch.buffer_allocated,
+        "tp_as_buffer",
+    )?;
+    ty.tp_as_buffer = raw.cast::<c_void>();
+    // SAFETY: `raw` points to a valid allocated table.
+    Ok(unsafe { &mut *raw })
+}
+
 fn cpython_apply_type_slot(
     ty: &mut CpythonTypeObject,
     slot: c_int,
     pfunc: *mut c_void,
     token: &mut usize,
+    scratch: &mut CpythonTypeSlotScratch,
 ) -> Result<(), String> {
     match slot {
+        PY_TYPE_SLOT_BF_GETBUFFER => {
+            let table = cpython_ensure_buffer_procs(ty, scratch)?;
+            table.bf_getbuffer = if pfunc.is_null() {
+                None
+            } else {
+                Some(unsafe { std::mem::transmute(pfunc) })
+            };
+        }
+        PY_TYPE_SLOT_BF_RELEASEBUFFER => {
+            let table = cpython_ensure_buffer_procs(ty, scratch)?;
+            table.bf_releasebuffer = if pfunc.is_null() {
+                None
+            } else {
+                Some(unsafe { std::mem::transmute(pfunc) })
+            };
+        }
+        PY_TYPE_SLOT_MP_ASS_SUBSCRIPT => {
+            cpython_ensure_mapping_methods(ty, scratch)?.mp_ass_subscript = pfunc;
+        }
+        PY_TYPE_SLOT_MP_LENGTH => {
+            cpython_ensure_mapping_methods(ty, scratch)?.mp_length = pfunc;
+        }
+        PY_TYPE_SLOT_MP_SUBSCRIPT => {
+            cpython_ensure_mapping_methods(ty, scratch)?.mp_subscript = pfunc;
+        }
+        PY_TYPE_SLOT_NB_ABSOLUTE => cpython_ensure_number_methods(ty, scratch)?.nb_absolute = pfunc,
+        PY_TYPE_SLOT_NB_ADD => cpython_ensure_number_methods(ty, scratch)?.nb_add = pfunc,
+        PY_TYPE_SLOT_NB_AND => cpython_ensure_number_methods(ty, scratch)?.nb_and = pfunc,
+        PY_TYPE_SLOT_NB_BOOL => cpython_ensure_number_methods(ty, scratch)?.nb_bool = pfunc,
+        PY_TYPE_SLOT_NB_DIVMOD => cpython_ensure_number_methods(ty, scratch)?.nb_divmod = pfunc,
+        PY_TYPE_SLOT_NB_FLOAT => cpython_ensure_number_methods(ty, scratch)?.nb_float = pfunc,
+        PY_TYPE_SLOT_NB_FLOOR_DIVIDE => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_floor_divide = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INDEX => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_index = if pfunc.is_null() {
+                None
+            } else {
+                Some(unsafe { std::mem::transmute(pfunc) })
+            };
+        }
+        PY_TYPE_SLOT_NB_INPLACE_ADD => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_add = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_AND => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_and = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_FLOOR_DIVIDE => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_floor_divide = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_LSHIFT => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_lshift = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_MATRIX_MULTIPLY => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_matrix_multiply = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_MULTIPLY => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_multiply = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_OR => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_or = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_POWER => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_power = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_REMAINDER => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_remainder = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_RSHIFT => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_rshift = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_SUBTRACT => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_subtract = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_TRUE_DIVIDE => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_true_divide = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INPLACE_XOR => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_inplace_xor = pfunc;
+        }
+        PY_TYPE_SLOT_NB_INT => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_int = if pfunc.is_null() {
+                None
+            } else {
+                Some(unsafe { std::mem::transmute(pfunc) })
+            };
+        }
+        PY_TYPE_SLOT_NB_INVERT => cpython_ensure_number_methods(ty, scratch)?.nb_invert = pfunc,
+        PY_TYPE_SLOT_NB_LSHIFT => cpython_ensure_number_methods(ty, scratch)?.nb_lshift = pfunc,
+        PY_TYPE_SLOT_NB_MATRIX_MULTIPLY => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_matrix_multiply = pfunc;
+        }
+        PY_TYPE_SLOT_NB_MULTIPLY => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_multiply = pfunc;
+        }
+        PY_TYPE_SLOT_NB_NEGATIVE => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_negative = pfunc;
+        }
+        PY_TYPE_SLOT_NB_OR => cpython_ensure_number_methods(ty, scratch)?.nb_or = pfunc,
+        PY_TYPE_SLOT_NB_POSITIVE => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_positive = pfunc;
+        }
+        PY_TYPE_SLOT_NB_POWER => cpython_ensure_number_methods(ty, scratch)?.nb_power = pfunc,
+        PY_TYPE_SLOT_NB_REMAINDER => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_remainder = pfunc;
+        }
+        PY_TYPE_SLOT_NB_RSHIFT => cpython_ensure_number_methods(ty, scratch)?.nb_rshift = pfunc,
+        PY_TYPE_SLOT_NB_SUBTRACT => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_subtract = pfunc;
+        }
+        PY_TYPE_SLOT_NB_TRUE_DIVIDE => {
+            cpython_ensure_number_methods(ty, scratch)?.nb_true_divide = pfunc;
+        }
+        PY_TYPE_SLOT_NB_XOR => cpython_ensure_number_methods(ty, scratch)?.nb_xor = pfunc,
+        PY_TYPE_SLOT_SQ_ASS_ITEM => {
+            cpython_ensure_sequence_methods(ty, scratch)?.sq_ass_item = pfunc;
+        }
+        PY_TYPE_SLOT_SQ_CONCAT => cpython_ensure_sequence_methods(ty, scratch)?.sq_concat = pfunc,
+        PY_TYPE_SLOT_SQ_CONTAINS => {
+            cpython_ensure_sequence_methods(ty, scratch)?.sq_contains = pfunc;
+        }
+        PY_TYPE_SLOT_SQ_INPLACE_CONCAT => {
+            cpython_ensure_sequence_methods(ty, scratch)?.sq_inplace_concat = pfunc;
+        }
+        PY_TYPE_SLOT_SQ_INPLACE_REPEAT => {
+            cpython_ensure_sequence_methods(ty, scratch)?.sq_inplace_repeat = pfunc;
+        }
+        PY_TYPE_SLOT_SQ_ITEM => cpython_ensure_sequence_methods(ty, scratch)?.sq_item = pfunc,
+        PY_TYPE_SLOT_SQ_LENGTH => cpython_ensure_sequence_methods(ty, scratch)?.sq_length = pfunc,
+        PY_TYPE_SLOT_SQ_REPEAT => cpython_ensure_sequence_methods(ty, scratch)?.sq_repeat = pfunc,
         PY_TYPE_SLOT_TP_ALLOC => ty.tp_alloc = pfunc,
         PY_TYPE_SLOT_TP_BASE => ty.tp_base = pfunc.cast::<CpythonTypeObject>(),
         PY_TYPE_SLOT_TP_BASES => ty.tp_bases = pfunc,
@@ -682,10 +1204,13 @@ fn cpython_apply_type_slot(
         PY_TYPE_SLOT_TP_MEMBERS => ty.tp_members = pfunc,
         PY_TYPE_SLOT_TP_GETSET => ty.tp_getset = pfunc,
         PY_TYPE_SLOT_TP_FREE => ty.tp_free = pfunc,
+        PY_TYPE_SLOT_AM_AWAIT => cpython_ensure_async_methods(ty, scratch)?.am_await = pfunc,
+        PY_TYPE_SLOT_AM_AITER => cpython_ensure_async_methods(ty, scratch)?.am_aiter = pfunc,
+        PY_TYPE_SLOT_AM_ANEXT => cpython_ensure_async_methods(ty, scratch)?.am_anext = pfunc,
         PY_TYPE_SLOT_TP_FINALIZE => ty.tp_finalize = pfunc,
+        PY_TYPE_SLOT_AM_SEND => cpython_ensure_async_methods(ty, scratch)?.am_send = pfunc,
         PY_TYPE_SLOT_TP_VECTORCALL => ty.tp_vectorcall = pfunc,
         PY_TYPE_SLOT_TP_TOKEN => *token = pfunc as usize,
-        1..=PY_TYPE_SLOT_MAX => {}
         _ => return Err(format!("invalid type slot id {slot}")),
     }
     Ok(())
@@ -700,7 +1225,373 @@ fn cpython_type_slot_from_type_object(
     }
     // SAFETY: caller provides a valid type pointer.
     let ty = unsafe { &*type_ptr };
+    let async_methods = ty.tp_as_async.cast::<CpythonAsyncMethods>();
+    let number_methods = ty.tp_as_number.cast::<CpythonNumberMethods>();
+    let sequence_methods = ty.tp_as_sequence.cast::<CpythonSequenceMethods>();
+    let mapping_methods = ty.tp_as_mapping.cast::<CpythonMappingMethods>();
+    let buffer_methods = ty.tp_as_buffer.cast::<CpythonBufferProcs>();
     match slot {
+        PY_TYPE_SLOT_BF_GETBUFFER => {
+            if buffer_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: non-null buffer table pointer.
+                unsafe {
+                    (*buffer_methods)
+                        .bf_getbuffer
+                        .map(|func| func as *mut c_void)
+                        .unwrap_or(std::ptr::null_mut())
+                }
+            }
+        }
+        PY_TYPE_SLOT_BF_RELEASEBUFFER => {
+            if buffer_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: non-null buffer table pointer.
+                unsafe {
+                    (*buffer_methods)
+                        .bf_releasebuffer
+                        .map(|func| func as *mut c_void)
+                        .unwrap_or(std::ptr::null_mut())
+                }
+            }
+        }
+        PY_TYPE_SLOT_MP_ASS_SUBSCRIPT => {
+            if mapping_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: non-null mapping table pointer.
+                unsafe { (*mapping_methods).mp_ass_subscript }
+            }
+        }
+        PY_TYPE_SLOT_MP_LENGTH => {
+            if mapping_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: non-null mapping table pointer.
+                unsafe { (*mapping_methods).mp_length }
+            }
+        }
+        PY_TYPE_SLOT_MP_SUBSCRIPT => {
+            if mapping_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                // SAFETY: non-null mapping table pointer.
+                unsafe { (*mapping_methods).mp_subscript }
+            }
+        }
+        PY_TYPE_SLOT_NB_ABSOLUTE => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_absolute }
+            }
+        }
+        PY_TYPE_SLOT_NB_ADD => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_add }
+            }
+        }
+        PY_TYPE_SLOT_NB_AND => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_and }
+            }
+        }
+        PY_TYPE_SLOT_NB_BOOL => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_bool }
+            }
+        }
+        PY_TYPE_SLOT_NB_DIVMOD => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_divmod }
+            }
+        }
+        PY_TYPE_SLOT_NB_FLOAT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_float }
+            }
+        }
+        PY_TYPE_SLOT_NB_FLOOR_DIVIDE => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_floor_divide }
+            }
+        }
+        PY_TYPE_SLOT_NB_INDEX => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe {
+                    (*number_methods)
+                        .nb_index
+                        .map(|func| func as *mut c_void)
+                        .unwrap_or(std::ptr::null_mut())
+                }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_ADD => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_add }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_AND => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_and }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_FLOOR_DIVIDE => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_floor_divide }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_LSHIFT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_lshift }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_MATRIX_MULTIPLY => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_matrix_multiply }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_MULTIPLY => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_multiply }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_OR => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_or }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_POWER => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_power }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_REMAINDER => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_remainder }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_RSHIFT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_rshift }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_SUBTRACT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_subtract }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_TRUE_DIVIDE => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_true_divide }
+            }
+        }
+        PY_TYPE_SLOT_NB_INPLACE_XOR => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_inplace_xor }
+            }
+        }
+        PY_TYPE_SLOT_NB_INT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe {
+                    (*number_methods)
+                        .nb_int
+                        .map(|func| func as *mut c_void)
+                        .unwrap_or(std::ptr::null_mut())
+                }
+            }
+        }
+        PY_TYPE_SLOT_NB_INVERT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_invert }
+            }
+        }
+        PY_TYPE_SLOT_NB_LSHIFT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_lshift }
+            }
+        }
+        PY_TYPE_SLOT_NB_MATRIX_MULTIPLY => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_matrix_multiply }
+            }
+        }
+        PY_TYPE_SLOT_NB_MULTIPLY => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_multiply }
+            }
+        }
+        PY_TYPE_SLOT_NB_NEGATIVE => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_negative }
+            }
+        }
+        PY_TYPE_SLOT_NB_OR => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_or }
+            }
+        }
+        PY_TYPE_SLOT_NB_POSITIVE => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_positive }
+            }
+        }
+        PY_TYPE_SLOT_NB_POWER => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_power }
+            }
+        }
+        PY_TYPE_SLOT_NB_REMAINDER => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_remainder }
+            }
+        }
+        PY_TYPE_SLOT_NB_RSHIFT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_rshift }
+            }
+        }
+        PY_TYPE_SLOT_NB_SUBTRACT => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_subtract }
+            }
+        }
+        PY_TYPE_SLOT_NB_TRUE_DIVIDE => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_true_divide }
+            }
+        }
+        PY_TYPE_SLOT_NB_XOR => {
+            if number_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*number_methods).nb_xor }
+            }
+        }
+        PY_TYPE_SLOT_SQ_ASS_ITEM => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_ass_item }
+            }
+        }
+        PY_TYPE_SLOT_SQ_CONCAT => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_concat }
+            }
+        }
+        PY_TYPE_SLOT_SQ_CONTAINS => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_contains }
+            }
+        }
+        PY_TYPE_SLOT_SQ_INPLACE_CONCAT => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_inplace_concat }
+            }
+        }
+        PY_TYPE_SLOT_SQ_INPLACE_REPEAT => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_inplace_repeat }
+            }
+        }
+        PY_TYPE_SLOT_SQ_ITEM => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_item }
+            }
+        }
+        PY_TYPE_SLOT_SQ_LENGTH => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_length }
+            }
+        }
+        PY_TYPE_SLOT_SQ_REPEAT => {
+            if sequence_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*sequence_methods).sq_repeat }
+            }
+        }
         PY_TYPE_SLOT_TP_ALLOC => ty.tp_alloc,
         PY_TYPE_SLOT_TP_BASE => ty.tp_base.cast::<c_void>(),
         PY_TYPE_SLOT_TP_BASES => ty.tp_bases,
@@ -729,7 +1620,35 @@ fn cpython_type_slot_from_type_object(
         PY_TYPE_SLOT_TP_MEMBERS => ty.tp_members,
         PY_TYPE_SLOT_TP_GETSET => ty.tp_getset,
         PY_TYPE_SLOT_TP_FREE => ty.tp_free,
+        PY_TYPE_SLOT_AM_AWAIT => {
+            if async_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*async_methods).am_await }
+            }
+        }
+        PY_TYPE_SLOT_AM_AITER => {
+            if async_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*async_methods).am_aiter }
+            }
+        }
+        PY_TYPE_SLOT_AM_ANEXT => {
+            if async_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*async_methods).am_anext }
+            }
+        }
         PY_TYPE_SLOT_TP_FINALIZE => ty.tp_finalize,
+        PY_TYPE_SLOT_AM_SEND => {
+            if async_methods.is_null() {
+                std::ptr::null_mut()
+            } else {
+                unsafe { (*async_methods).am_send }
+            }
+        }
         PY_TYPE_SLOT_TP_VECTORCALL => ty.tp_vectorcall,
         _ => std::ptr::null_mut(),
     }
@@ -870,6 +1789,7 @@ fn cpython_type_from_spec_impl(
     type_value.tp_flags &= !PY_TPFLAGS_READY;
 
     let mut token = 0usize;
+    let mut slot_scratch = CpythonTypeSlotScratch::default();
     let mut slot_map: HashMap<c_int, usize> = HashMap::new();
     if !spec.slots.is_null() {
         let mut slot = spec.slots;
@@ -887,8 +1807,13 @@ fn cpython_type_from_spec_impl(
                     slot_entry.pfunc
                 };
             slot_map.insert(slot_entry.slot, slot_pfunc as usize);
-            if let Err(err) =
-                cpython_apply_type_slot(&mut type_value, slot_entry.slot, slot_pfunc, &mut token)
+            if let Err(err) = cpython_apply_type_slot(
+                &mut type_value,
+                slot_entry.slot,
+                slot_pfunc,
+                &mut token,
+                &mut slot_scratch,
+            )
             {
                 cpython_set_typed_error(unsafe { PyExc_SystemError }, err);
                 return std::ptr::null_mut();
@@ -1074,6 +1999,7 @@ pub unsafe extern "C" fn PyType_GetFullyQualifiedName(ty: *mut c_void) -> *mut c
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_GetSlot(ty: *mut c_void, slot: c_int) -> *mut c_void {
+    let trace_slots = std::env::var_os("PYRS_TRACE_TYPE_SLOT_GET").is_some();
     if ty.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return std::ptr::null_mut();
@@ -1084,22 +2010,32 @@ pub unsafe extern "C" fn PyType_GetSlot(ty: *mut c_void, slot: c_int) -> *mut c_
     }
     let type_ptr = ty.cast::<CpythonTypeObject>();
     let type_key = type_ptr as usize;
-    if let Ok(registry) = cpython_heap_type_registry().lock()
+    let result = if let Ok(registry) = cpython_heap_type_registry().lock()
         && let Some(info) = registry.get(&type_key)
     {
         if slot == PY_TYPE_SLOT_TP_TOKEN {
-            return info.token as *mut c_void;
-        }
-        if let Some(raw) = info.slots.get(&slot)
+            info.token as *mut c_void
+        } else if let Some(raw) = info.slots.get(&slot)
             && *raw != 0
         {
-            return *raw as *mut c_void;
+            *raw as *mut c_void
+        } else {
+            std::ptr::null_mut()
         }
+    } else if slot == PY_TYPE_SLOT_TP_TOKEN {
+        std::ptr::null_mut()
+    } else {
+        cpython_type_slot_from_type_object(type_ptr, slot)
+    };
+    if trace_slots && result.is_null() {
+        let type_name = unsafe { c_name_to_string((*type_ptr).tp_name) }
+            .unwrap_or_else(|_| "<unnamed>".to_string());
+        eprintln!(
+            "[type-slot-get] null type={:p} name={} slot={}",
+            ty, type_name, slot
+        );
     }
-    if slot == PY_TYPE_SLOT_TP_TOKEN {
-        return std::ptr::null_mut();
-    }
-    cpython_type_slot_from_type_object(type_ptr, slot)
+    result
 }
 
 #[unsafe(no_mangle)]
@@ -1326,28 +2262,88 @@ pub unsafe extern "C" fn PyType_GetFlags(ty: *mut c_void) -> usize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void) -> i32 {
+    let trace = std::env::var_os("PYRS_TRACE_TYPE_SUBTYPE").is_some();
+    let type_name_for = |ptr: *mut c_void| -> String {
+        if ptr.is_null() {
+            return "<null>".to_string();
+        }
+        // SAFETY: best-effort tracing only.
+        unsafe {
+            ptr.cast::<CpythonTypeObject>()
+                .as_ref()
+                .and_then(|ty| c_name_to_string(ty.tp_name).ok())
+                .unwrap_or_else(|| "<unknown>".to_string())
+        }
+    };
     if subtype.is_null() || ty.is_null() {
+        if trace {
+            eprintln!(
+                "[type-subtype] early-null subtype={:p} ty={:p}",
+                subtype, ty
+            );
+        }
         return 0;
     }
     const MIN_VALID_PTR: usize = 0x1_0000_0000;
     const TYPE_ALIGN: usize = std::mem::align_of::<CpythonTypeObject>();
     if (subtype as usize) < MIN_VALID_PTR || (ty as usize) < MIN_VALID_PTR {
+        if trace {
+            eprintln!(
+                "[type-subtype] below-min subtype={:p} ty={:p}",
+                subtype, ty
+            );
+        }
         return 0;
     }
     if (subtype as usize) % TYPE_ALIGN != 0 || (ty as usize) % TYPE_ALIGN != 0 {
+        if trace {
+            eprintln!(
+                "[type-subtype] unaligned subtype={:p} ty={:p}",
+                subtype, ty
+            );
+        }
         return 0;
+    }
+    if trace {
+        eprintln!(
+            "[type-subtype] start subtype={:p}({}) target={:p}({})",
+            subtype,
+            type_name_for(subtype),
+            ty,
+            type_name_for(ty)
+        );
     }
     let target = ty.cast::<CpythonTypeObject>();
     let mut current = subtype.cast::<CpythonTypeObject>();
     let mut guard = 0usize;
     while !current.is_null() {
         if guard > 8192 {
+            if trace {
+                eprintln!(
+                    "[type-subtype] guard-hit subtype={:p} target={:p}",
+                    subtype, ty
+                );
+            }
             return 0;
         }
         if (current as usize) < MIN_VALID_PTR || (current as usize) % TYPE_ALIGN != 0 {
+            if trace {
+                eprintln!(
+                    "[type-subtype] invalid-current current={:p} guard={}",
+                    current, guard
+                );
+            }
             return 0;
         }
         if current == target {
+            if trace {
+                eprintln!(
+                    "[type-subtype] match current={:p}({}) guard={}",
+                    current.cast::<c_void>(),
+                    type_name_for(current.cast()),
+                    guard
+                );
+            }
             return 1;
         }
         // SAFETY: current is checked non-null.
@@ -1362,22 +2358,36 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
             break;
         }
         if (next as usize) < MIN_VALID_PTR || (next as usize) % TYPE_ALIGN != 0 {
+            if trace {
+                eprintln!(
+                    "[type-subtype] invalid-next next={:p} current={:p} guard={}",
+                    next, current, guard
+                );
+            }
             return 0;
         }
         if next == target {
+            if trace {
+                eprintln!(
+                    "[type-subtype] match-next next={:p}({}) guard={}",
+                    next.cast::<c_void>(),
+                    type_name_for(next.cast()),
+                    guard
+                );
+            }
             return 1;
-        }
-        let next_known = with_active_cpython_context_mut(|context| {
-            context.is_known_type_ptr(next.cast::<c_void>())
-        })
-        .unwrap_or_else(|_| {
-            ModuleCapiContext::is_probable_type_object_without_metatype(next.cast())
-        });
-        if !next_known {
-            return 0;
         }
         current = next;
         guard += 1;
+    }
+    if trace {
+        eprintln!(
+            "[type-subtype] no-match subtype={:p}({}) target={:p}({})",
+            subtype,
+            type_name_for(subtype),
+            ty,
+            type_name_for(ty)
+        );
     }
     0
 }

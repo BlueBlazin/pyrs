@@ -2812,6 +2812,86 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
+    pub(super) fn builtin_inspect_signature_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Signature.__init__")?;
+        if args.len() > 2 {
+            return Err(RuntimeError::new(
+                "Signature.__init__() takes at most 2 positional arguments",
+            ));
+        }
+        let positional_parameters = args.first().cloned();
+        let positional_return = args.get(1).cloned();
+        let parameters = kwargs
+            .remove("parameters")
+            .or(positional_parameters)
+            .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()));
+        let return_annotation = kwargs
+            .remove("return_annotation")
+            .or(positional_return)
+            .unwrap_or(Value::None);
+        kwargs.remove("__validate_parameters__");
+        if let Some(name) = kwargs.into_keys().next() {
+            return Err(RuntimeError::new(format!(
+                "Signature.__init__() got an unexpected keyword argument '{name}'"
+            )));
+        }
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            if !instance_data.attrs.contains_key("__text__") {
+                instance_data
+                    .attrs
+                    .insert("__text__".to_string(), Value::Str("()".to_string()));
+            }
+            instance_data
+                .attrs
+                .insert("parameters".to_string(), parameters);
+            instance_data
+                .attrs
+                .insert("return_annotation".to_string(), return_annotation);
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_inspect_parameter_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Parameter.__init__")?;
+        if args.len() > 2 {
+            return Err(RuntimeError::new(
+                "Parameter.__init__() takes at most 2 positional arguments",
+            ));
+        }
+        let name = kwargs
+            .remove("name")
+            .or_else(|| args.first().cloned())
+            .unwrap_or(Value::Str(String::new()));
+        let kind = kwargs
+            .remove("kind")
+            .or_else(|| args.get(1).cloned())
+            .unwrap_or(Value::Int(1));
+        let default = kwargs.remove("default").unwrap_or(Value::None);
+        let annotation = kwargs.remove("annotation").unwrap_or(Value::None);
+        if let Some(key) = kwargs.into_keys().next() {
+            return Err(RuntimeError::new(format!(
+                "Parameter.__init__() got an unexpected keyword argument '{key}'"
+            )));
+        }
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data.attrs.insert("name".to_string(), name);
+            instance_data.attrs.insert("kind".to_string(), kind);
+            instance_data.attrs.insert("default".to_string(), default);
+            instance_data
+                .attrs
+                .insert("annotation".to_string(), annotation);
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_inspect_signature_str(
         &mut self,
         args: Vec<Value>,
@@ -2844,6 +2924,50 @@ impl Vm {
             Some(Value::Str(text)) => Ok(Value::Str(format!("<Signature {text}>"))),
             _ => Ok(Value::Str("<Signature instance>".to_string())),
         }
+    }
+
+    pub(super) fn builtin_inspect_signature_replace(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Signature.replace")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("replace() takes no positional arguments"));
+        }
+        let parameters_override = kwargs.remove("parameters");
+        let return_annotation_override = kwargs.remove("return_annotation");
+        if let Some(name) = kwargs.into_keys().next() {
+            return Err(RuntimeError::new(format!(
+                "replace() got an unexpected keyword argument '{name}'"
+            )));
+        }
+        let class = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => return Err(RuntimeError::new("replace() receiver must be Signature instance")),
+        };
+        let copied_text = Self::instance_attr_get(&instance, "__text__");
+        let copied_parameters = Self::instance_attr_get(&instance, "parameters");
+        let copied_return_annotation = Self::instance_attr_get(&instance, "return_annotation");
+        let replacement = match self.heap.alloc_instance(InstanceObject::new(class)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(replacement_data) = &mut *replacement.kind_mut() {
+            if let Some(text) = copied_text {
+                replacement_data.attrs.insert("__text__".to_string(), text);
+            }
+            replacement_data.attrs.insert(
+                "parameters".to_string(),
+                parameters_override.unwrap_or_else(|| copied_parameters.unwrap_or(Value::None)),
+            );
+            replacement_data.attrs.insert(
+                "return_annotation".to_string(),
+                return_annotation_override
+                    .unwrap_or_else(|| copied_return_annotation.unwrap_or(Value::None)),
+            );
+        }
+        Ok(Value::Instance(replacement))
     }
 
     pub(super) fn builtin_inspect_isfunction(

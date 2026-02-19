@@ -2780,6 +2780,9 @@ impl Vm {
             module_data
                 .globals
                 .insert("maxsize".to_string(), Value::Int((1_i64 << 62) - 1));
+            module_data
+                .globals
+                .insert("maxunicode".to_string(), Value::Int(0x10ffff));
             let float_info = match self.heap.alloc_module(ModuleObject::new("sys.float_info")) {
                 Value::Module(obj) => obj,
                 _ => unreachable!(),
@@ -7943,6 +7946,17 @@ fn bind_arguments(
         && func.code.kwarg.is_none()
     {
         if positional.len() != total_positional {
+            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+                eprintln!(
+                    "[bind-args] fn={} file={} count-mismatch positional={} expected={} posonly={:?} params={:?}",
+                    func.code.name,
+                    func.code.filename,
+                    positional.len(),
+                    total_positional,
+                    func.code.posonly_params,
+                    func.code.params
+                );
+            }
             return Err(RuntimeError::new("argument count mismatch"));
         }
         if posonly_len == 0 {
@@ -7971,6 +7985,15 @@ fn bind_arguments(
     let mut extra_positional = Vec::new();
     if positional.len() > total_positional {
         if func.code.vararg.is_none() {
+            if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+                eprintln!(
+                    "[bind-args] fn={} file={} extra-positional={} max={} (no vararg)",
+                    func.code.name,
+                    func.code.filename,
+                    positional.len(),
+                    total_positional
+                );
+            }
             return Err(RuntimeError::new("argument count mismatch"));
         }
         extra_positional = positional.split_off(total_positional);
@@ -8042,6 +8065,17 @@ fn bind_arguments(
     for (idx, slot) in bound.iter_mut().enumerate().take(total_positional) {
         if slot.is_none() {
             if idx < required {
+                if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
+                    eprintln!(
+                        "[bind-args] fn={} file={} missing-required positional index={} required={} signature posonly={:?} params={:?}",
+                        func.code.name,
+                        func.code.filename,
+                        idx,
+                        required,
+                        func.code.posonly_params,
+                        func.code.params
+                    );
+                }
                 return Err(RuntimeError::new("argument count mismatch"));
             }
             let default_index = idx - required;

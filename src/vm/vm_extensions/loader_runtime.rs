@@ -13,8 +13,9 @@ use crate::vm::ExtensionCapsuleRegistryEntry;
 
 use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
-    _Py_NoneStruct, CpythonModuleDef, CpythonModuleDefSlot, ExtensionCallableKind,
-    ExtensionInitScopeGuard, ModuleCapiContext, ObjRef, PYRS_DATETIME_CAPI,
+    _Py_NoneStruct, CpythonModuleDef, CpythonModuleDefSlot, CpythonObjectHead,
+    CpythonTypeObject, ExtensionCallableKind, ExtensionInitScopeGuard, ModuleCapiContext, ObjRef,
+    PYRS_DATETIME_CAPI,
     PYRS_DATETIME_CAPSULE_NAME, PyType_Type, Vm, c_name_to_string,
 };
 
@@ -470,6 +471,32 @@ impl Vm {
                                     // Py_mod_exec(module) -> int status.
                                     let exec: unsafe extern "C" fn(*mut c_void) -> i32 =
                                         unsafe { std::mem::transmute(value) };
+                                    if trace_slots {
+                                        let (module_type, module_type_name) = if module_ptr.is_null()
+                                        {
+                                            (std::ptr::null_mut(), "<null>".to_string())
+                                        } else {
+                                            // SAFETY: best-effort diagnostics before exec slot call.
+                                            unsafe {
+                                                let ty = module_ptr
+                                                    .cast::<CpythonObjectHead>()
+                                                    .as_ref()
+                                                    .map(|head| {
+                                                        head.ob_type.cast::<CpythonTypeObject>()
+                                                    })
+                                                    .unwrap_or(std::ptr::null_mut());
+                                                let ty_name = ty
+                                                    .as_ref()
+                                                    .and_then(|raw| c_name_to_string(raw.tp_name).ok())
+                                                    .unwrap_or_else(|| "<unknown>".to_string());
+                                                (ty.cast::<c_void>(), ty_name)
+                                            }
+                                        };
+                                        eprintln!(
+                                            "[ext-slot] module={} slot=2 exec={:p} module_ptr={:p} module_type={:p} module_type_name={}",
+                                            module_name, value, module_ptr, module_type, module_type_name
+                                        );
+                                    }
                                     let status = unsafe { exec(module_ptr) };
                                     if status != 0 {
                                         if module_ctx.last_error.is_none()

@@ -235,6 +235,7 @@ pub enum NativeMethodKind {
     ListPop,
     ListCount,
     ListCopy,
+    ListClear,
     ListEq,
     ListNe,
     TupleCount,
@@ -253,6 +254,7 @@ pub enum NativeMethodKind {
     StrUpper,
     StrLower,
     StrCapitalize,
+    StrTitle,
     StrEncode,
     StrDecode,
     BytesDecode,
@@ -340,6 +342,7 @@ pub enum NativeMethodKind {
     PropertyGet,
     PropertySet,
     PropertyDelete,
+    PropertySetName,
     PropertyGetter,
     PropertySetter,
     PropertyDeleter,
@@ -2843,8 +2846,11 @@ pub enum BuiltinFunction {
     InspectIsCode,
     InspectUnwrap,
     InspectSignature,
+    InspectSignatureInit,
     InspectSignatureStr,
     InspectSignatureRepr,
+    InspectSignatureReplace,
+    InspectParameterInit,
     InspectGetModule,
     InspectGetFile,
     InspectGetDoc,
@@ -4342,6 +4348,15 @@ impl BuiltinFunction {
                     module_data
                         .globals
                         .insert("__func__".to_string(), args[0].clone());
+                    module_data
+                        .globals
+                        .insert("__wrapped__".to_string(), args[0].clone());
+                    module_data
+                        .globals
+                        .insert("__doc__".to_string(), Value::None);
+                    module_data
+                        .globals
+                        .insert("__isabstractmethod__".to_string(), Value::Bool(false));
                 }
                 Ok(Value::Module(wrapped))
             }
@@ -4357,6 +4372,15 @@ impl BuiltinFunction {
                     module_data
                         .globals
                         .insert("__func__".to_string(), args[0].clone());
+                    module_data
+                        .globals
+                        .insert("__wrapped__".to_string(), args[0].clone());
+                    module_data
+                        .globals
+                        .insert("__doc__".to_string(), Value::None);
+                    module_data
+                        .globals
+                        .insert("__isabstractmethod__".to_string(), Value::Bool(false));
                 }
                 Ok(Value::Module(wrapped))
             }
@@ -5638,8 +5662,11 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectIsCode
             | BuiltinFunction::InspectUnwrap
             | BuiltinFunction::InspectSignature
+            | BuiltinFunction::InspectSignatureInit
             | BuiltinFunction::InspectSignatureStr
             | BuiltinFunction::InspectSignatureRepr
+            | BuiltinFunction::InspectSignatureReplace
+            | BuiltinFunction::InspectParameterInit
             | BuiltinFunction::InspectGetModule
             | BuiltinFunction::InspectGetFile
             | BuiltinFunction::InspectGetDoc
@@ -7100,6 +7127,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::ListPop => "<bound method list.pop>".to_string(),
                     NativeMethodKind::ListCount => "<bound method list.count>".to_string(),
                     NativeMethodKind::ListCopy => "<bound method list.copy>".to_string(),
+                    NativeMethodKind::ListClear => "<bound method list.clear>".to_string(),
                     NativeMethodKind::ListEq => "<bound method list.__eq__>".to_string(),
                     NativeMethodKind::ListNe => "<bound method list.__ne__>".to_string(),
                     NativeMethodKind::TupleCount => "<bound method tuple.count>".to_string(),
@@ -7120,6 +7148,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrUpper => "<bound method str.upper>".to_string(),
                     NativeMethodKind::StrLower => "<bound method str.lower>".to_string(),
                     NativeMethodKind::StrCapitalize => "<bound method str.capitalize>".to_string(),
+                    NativeMethodKind::StrTitle => "<bound method str.title>".to_string(),
                     NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
                     NativeMethodKind::StrDecode => "<bound method str.decode>".to_string(),
                     NativeMethodKind::BytesDecode => "<bound method bytes.decode>".to_string(),
@@ -7264,6 +7293,9 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::PropertySet => "<bound method property.__set__>".to_string(),
                     NativeMethodKind::PropertyDelete => {
                         "<bound method property.__delete__>".to_string()
+                    }
+                    NativeMethodKind::PropertySetName => {
+                        "<bound method property.__set_name__>".to_string()
                     }
                     NativeMethodKind::PropertyGetter => {
                         "<bound method property.getter>".to_string()

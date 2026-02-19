@@ -13,6 +13,8 @@ use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
 };
 
+const PYRS_MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
+
 impl Vm {
     fn sys_str_value(&self, name: &str) -> Option<String> {
         let sys_module = self.modules.get("sys")?.clone();
@@ -174,6 +176,7 @@ impl Vm {
                 .map_err(|err| {
                     RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
                 })?;
+        self.mark_module_initializing(module);
         let code = Rc::new(code);
         let cells = self.build_cells(&code, Vec::new());
         let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
@@ -3919,6 +3922,10 @@ impl Vm {
                 .attrs
                 .insert("__module__".to_string(), Value::Str("inspect".to_string()));
             class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignatureInit),
+            );
+            class_data.attrs.insert(
                 "__str__".to_string(),
                 Value::Builtin(BuiltinFunction::InspectSignatureStr),
             );
@@ -3926,11 +3933,19 @@ impl Vm {
                 "__repr__".to_string(),
                 Value::Builtin(BuiltinFunction::InspectSignatureRepr),
             );
+            class_data.attrs.insert(
+                "replace".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignatureReplace),
+            );
         }
         if let Object::Class(class_data) = &mut *inspect_parameter_class.kind_mut() {
             class_data
                 .attrs
                 .insert("__module__".to_string(), Value::Str("inspect".to_string()));
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::InspectParameterInit),
+            );
             class_data
                 .attrs
                 .insert("empty".to_string(), inspect_sentinel.clone());
@@ -6010,6 +6025,22 @@ impl Vm {
     }
 
     pub(super) fn unregister_module(&mut self, name: &str) {
+        if std::env::var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
+            && (name == "ctypes" || name == "_ctypes")
+        {
+            eprintln!(
+                "[module-unregister] name={} frames={} stack={}",
+                name,
+                self.frames.len(),
+                self.frames
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                    .collect::<Vec<_>>()
+                    .join(" <- ")
+            );
+        }
         self.modules.remove(name);
         if matches!(name, "pickle" | "_pickle" | "copyreg") {
             self.pickle_symbol_cache.clear();
@@ -6173,6 +6204,22 @@ impl Vm {
     }
 
     pub(super) fn register_module(&mut self, name: &str, module: ObjRef) {
+        if std::env::var_os("PYRS_TRACE_MODULE_CTYPES").is_some()
+            && (name == "ctypes" || name == "_ctypes")
+        {
+            eprintln!(
+                "[module-register] name={} frames={} stack={}",
+                name,
+                self.frames.len(),
+                self.frames
+                    .iter()
+                    .rev()
+                    .take(8)
+                    .map(|frame| format!("{}@{}", frame.code.name, frame.code.filename))
+                    .collect::<Vec<_>>()
+                    .join(" <- ")
+            );
+        }
         self.modules.insert(name.to_string(), module);
         self.refresh_sys_modules_dict();
     }
@@ -6294,6 +6341,7 @@ impl Vm {
                     });
                 match pyc_result {
                     Ok(code) => {
+                        self.mark_module_initializing(module);
                         let code = Rc::new(code);
                         let cells = self.build_cells(&code, Vec::new());
                         let mut frame = Frame::new(code, module.clone(), true, false, cells, None);
@@ -7199,13 +7247,13 @@ impl Vm {
     }
 
     pub(super) fn module_is_uninitialized(module: &ObjRef) -> bool {
+        if Self::module_is_initializing(module) {
+            return true;
+        }
         let module_kind = module.kind();
         let Object::Module(module_data) = &*module_kind else {
             return false;
         };
-        if module_data.globals.contains_key("__builtins__") {
-            return false;
-        }
         module_data.globals.keys().all(|key| {
             matches!(
                 key.as_str(),
@@ -7218,6 +7266,31 @@ impl Vm {
                     | "__path__"
             )
         })
+    }
+
+    pub(super) fn mark_module_initializing(&self, module: &ObjRef) {
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data
+                .globals
+                .insert(PYRS_MODULE_INITIALIZING_FLAG.to_string(), Value::Bool(true));
+        }
+    }
+
+    pub(super) fn clear_module_initializing(&self, module: &ObjRef) {
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            module_data.globals.remove(PYRS_MODULE_INITIALIZING_FLAG);
+        }
+    }
+
+    pub(super) fn module_is_initializing(module: &ObjRef) -> bool {
+        let module_kind = module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return false;
+        };
+        matches!(
+            module_data.globals.get(PYRS_MODULE_INITIALIZING_FLAG),
+            Some(Value::Bool(true))
+        )
     }
 
     pub(super) fn module_loader_name(module: &ObjRef) -> Option<String> {
