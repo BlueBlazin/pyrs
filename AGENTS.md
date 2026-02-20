@@ -85,6 +85,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - relaxed proxy pointer gating for transient Cython metatype pointers (`ob_refcnt == 0`) only when their metatype chain still validates as a real `type` lineage.
   - SciPy blocker moved forward from `type 'type' has no attribute 'register'` to `_ctypes` substrate absence:
     - `ModuleNotFoundError: module '_ctypes' not found` during `scipy._lib._ccallback_c` init.
+- Scientific-stack closure checkpoint (2026-02-20, later round):
+  - `PyFrame_New` no longer materializes a generic module-layout object; it now allocates a frame-compatible C layout (`CpythonFrameCompatObject`) with valid `f_lineno` offset used by Cython traceback paths.
+  - frame-handle refcount zero path now explicitly releases frame-owned refs (`f_code`/`f_globals`/`f_locals`) and frees frame allocations eagerly, preventing prior allocator-corruption/trap behavior in deep extension init.
+  - direct `import pandas._libs._cyutility` no longer aborts with allocator trap; blocker shifted to deterministic `numpy.random.mtrand` `Py_mod_exec` failure:
+    - `expected a sequence of integers or a single integer, got '<class 'numpy.uint32'>'`.
+  - `PyNumber_Long` now raises typed `TypeError` (not generic runtime error) on non-int-compatible inputs in slot fallback paths; this preserves CPython exception-class semantics during extension error handling.
 - NumPy import warning cleanup (2026-02-17):
   - fixed `PyInterpreterState_Main`/`PyThreadState_Get()->interp` baseline so NumPy no longer reports the sub-interpreter warning during import.
   - narrowed `types.MethodType` detection to Python-bound methods (not native bound methods), removing the prior `add_newdoc` warning flood for extension callables.

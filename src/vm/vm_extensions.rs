@@ -31,6 +31,7 @@ const CPY_PROXY_CLASS_NAME: &str = "__pyrs_cpython_proxy__";
 const CPY_PROXY_PTR_ATTR: &str = "__pyrs_cpython_proxy_ptr__";
 const CPY_PROXY_MARKER_ATTR: &str = "__pyrs_cpython_proxy_marker__";
 const CPY_EXCEPTION_TYPE_PTR_ATTR: &str = "__pyrs_cpython_exception_type_ptr__";
+const CPY_FRAME_MODULE_NAME: &str = "__pyframe__";
 const CPY_RICHCMP_LT: i32 = 0;
 const CPY_RICHCMP_LE: i32 = 1;
 const CPY_RICHCMP_EQ: i32 = 2;
@@ -158,7 +159,7 @@ use self::cpython_descriptor_method_api::{
     PySlice_AdjustIndices, PySlice_GetIndices, PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack,
     PyStaticMethod_New, PyWrapper_New, _PyClassMethod_New, _PyStaticMethod_New,
     cpython_cfunction_tp_call, cpython_cfunction_tp_getattro, cpython_invoke_method_from_values,
-    cpython_method_descriptor_tp_call,
+    cpython_method_descriptor_tp_call, cpython_method_descriptor_tp_descr_get,
 };
 use self::cpython_dict_api::{
     _PyDict_GetItem_KnownHash, _PyDict_NewPresized, _PyDict_Pop, PyDict_Clear, PyDict_Contains,
@@ -167,6 +168,7 @@ use self::cpython_dict_api::{
     PyDict_Items, PyDict_Keys, PyDict_Merge, PyDict_MergeFromSeq2, PyDict_New, PyDict_Next,
     PyDict_Pop, PyDict_PopString, PyDict_SetDefault, PyDict_SetDefaultRef, PyDict_SetItem,
     PyDict_SetItemString, PyDict_Size, PyDict_Update, PyDict_Values, PyDictProxy_New,
+    PY_DICT_MAPPING_METHODS,
 };
 use self::cpython_error_numeric_api::{
     Py_GenericAlias, PyComplex_AsCComplex, PyComplex_FromCComplex, PyComplex_FromDoubles,
@@ -680,6 +682,18 @@ struct CpythonFloatCompatObject {
 struct CpythonComplexCompatObject {
     ob_base: CpythonObjectHead,
     cval: CpythonComplexValue,
+}
+
+#[repr(C)]
+struct CpythonFrameCompatObject {
+    ob_base: CpythonVarObjectHead,
+    f_back: *mut c_void,
+    f_trace: *mut c_void,
+    f_lineno: c_int,
+    _padding: c_int,
+    f_code: *mut c_void,
+    f_globals: *mut c_void,
+    f_locals: *mut c_void,
 }
 
 #[repr(C)]
@@ -1961,7 +1975,10 @@ fn initialize_cpython_compat_type_objects() {
         PyCFunction_Type.tp_call = cpython_cfunction_tp_call as *mut c_void;
         PyCFunction_Type.tp_getattro = cpython_cfunction_tp_getattro as *mut c_void;
         PyMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
+        PyMethodDescr_Type.tp_descr_get = cpython_method_descriptor_tp_descr_get as *mut c_void;
         PyClassMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
+        PyClassMethodDescr_Type.tp_descr_get =
+            cpython_method_descriptor_tp_descr_get as *mut c_void;
         PyFloat_Type.tp_new = cpython_float_tp_new as *mut c_void;
         PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
 
@@ -1991,6 +2008,7 @@ fn initialize_cpython_compat_type_objects() {
             std::ptr::addr_of_mut!(PyEllipsis_Type),
             std::ptr::addr_of_mut!(PyEnum_Type),
             std::ptr::addr_of_mut!(PyFilter_Type),
+            std::ptr::addr_of_mut!(PyFrame_Type),
             std::ptr::addr_of_mut!(PyFloat_Type),
             std::ptr::addr_of_mut!(PyFrozenSet_Type),
             std::ptr::addr_of_mut!(PyFunction_Type),
@@ -2051,6 +2069,8 @@ fn initialize_cpython_compat_type_objects() {
         PyBool_Type.tp_as_number = std::ptr::addr_of_mut!(PY_LONG_NUMBER_METHODS).cast();
         PyFloat_Type.tp_basicsize = 24;
         PyFloat_Type.tp_itemsize = 0;
+        PyFrame_Type.tp_basicsize = std::mem::size_of::<CpythonFrameCompatObject>() as isize;
+        PyFrame_Type.tp_itemsize = 0;
         PyComplex_Type.tp_basicsize = std::mem::size_of::<CpythonComplexCompatObject>() as isize;
         PyComplex_Type.tp_itemsize = 0;
         PyBytes_Type.tp_basicsize = 33;
@@ -2065,6 +2085,7 @@ fn initialize_cpython_compat_type_objects() {
         PyList_Type.tp_as_mapping = std::ptr::addr_of_mut!(PY_LIST_MAPPING_METHODS).cast();
         PyDict_Type.tp_basicsize = 48;
         PyDict_Type.tp_itemsize = 0;
+        PyDict_Type.tp_as_mapping = std::ptr::addr_of_mut!(PY_DICT_MAPPING_METHODS).cast();
         PySet_Type.tp_basicsize = 200;
         PySet_Type.tp_itemsize = 0;
         PySlice_Type.tp_basicsize = 40;
@@ -6811,7 +6832,118 @@ impl ModuleCapiContext {
         Err(format!("invalid object handle {}", handle))
     }
 
+    fn is_frame_module_value(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::Module(module_obj)
+                if matches!(&*module_obj.kind(), Object::Module(module_data) if module_data.name == CPY_FRAME_MODULE_NAME)
+        )
+    }
+
+    fn release_frame_object_handle(&mut self, handle: PyrsObjectHandle) {
+        let Some(slot) = self.objects.remove(&handle) else {
+            return;
+        };
+        if let Some(object_id) = Self::identity_object_id(&slot.value)
+            && self
+                .cpython_object_handles_by_id
+                .get(&object_id)
+                .copied()
+                == Some(handle)
+        {
+            self.cpython_object_handles_by_id.remove(&object_id);
+        }
+        self.cpython_sync_in_progress.remove(&handle);
+        self.module_dict_handles.remove(&handle);
+        if self.thread_state_dict_handle == Some(handle) {
+            self.thread_state_dict_handle = None;
+        }
+        if self.interpreter_state_dict_handle == Some(handle) {
+            self.interpreter_state_dict_handle = None;
+        }
+        if let Some(ptr) = self.cpython_ptr_by_handle.remove(&handle) {
+            let ptr_addr = ptr as usize;
+            self.cpython_objects_by_ptr.remove(&ptr_addr);
+            if let Some(index) = self
+                .cpython_allocations
+                .iter()
+                .position(|owned| owned.cast::<c_void>() == ptr)
+            {
+                self.cpython_allocations.swap_remove(index);
+            }
+            self.cpython_owned_ptrs.remove(&ptr_addr);
+            self.cpython_known_type_ptrs.remove(&ptr_addr);
+            self.cpython_descriptors.remove(&ptr_addr);
+            if let Some((buffer, _)) = self.cpython_list_buffers.remove(&handle)
+                && !buffer.is_null()
+            {
+                self.cpython_owned_ptrs.remove(&(buffer as usize));
+                // SAFETY: list buffer pointer was allocated through C allocator.
+                unsafe {
+                    free(buffer.cast());
+                }
+            }
+            // SAFETY: frame pointer was created by PyFrame_New and points to frame-compatible
+            // storage with referenced object pointers that need balanced decref.
+            unsafe {
+                let raw_frame = ptr.cast::<CpythonFrameCompatObject>();
+                let back = (*raw_frame).f_back;
+                let trace = (*raw_frame).f_trace;
+                let code = (*raw_frame).f_code;
+                let globals = (*raw_frame).f_globals;
+                let locals = (*raw_frame).f_locals;
+                (*raw_frame).f_back = std::ptr::null_mut();
+                (*raw_frame).f_trace = std::ptr::null_mut();
+                (*raw_frame).f_code = std::ptr::null_mut();
+                (*raw_frame).f_globals = std::ptr::null_mut();
+                (*raw_frame).f_locals = std::ptr::null_mut();
+                Py_XDecRef(back);
+                Py_XDecRef(trace);
+                Py_XDecRef(code);
+                Py_XDecRef(globals);
+                Py_XDecRef(locals);
+                free(ptr);
+            }
+            if !self.vm.is_null() {
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                vm.extension_cpython_ptr_values.remove(&ptr_addr);
+                if let Some(object_id) = Self::identity_object_id(&slot.value)
+                    && vm
+                        .extension_cpython_ptr_by_object_id
+                        .get(&object_id)
+                        .copied()
+                        == Some(ptr_addr)
+                {
+                    vm.extension_cpython_ptr_by_object_id.remove(&object_id);
+                }
+                vm.extension_pinned_cpython_allocation_set.remove(&ptr_addr);
+                vm.extension_pinned_capsule_names.remove(&ptr_addr);
+                vm.extension_freed_cpython_allocations.insert(ptr_addr);
+            }
+        }
+    }
+
     fn decref(&mut self, handle: PyrsObjectHandle) -> Result<(), String> {
+        let is_frame = self
+            .objects
+            .get(&handle)
+            .is_some_and(|slot| Self::is_frame_module_value(&slot.value));
+        if is_frame {
+            let mut should_release = false;
+            if let Some(slot) = self.objects.get_mut(&handle) {
+                if slot.refcount > 0 {
+                    slot.refcount -= 1;
+                }
+                should_release = slot.refcount == 0;
+            }
+            if should_release {
+                self.release_frame_object_handle(handle);
+            } else {
+                self.sync_cpython_header_refcount(handle);
+            }
+            return Ok(());
+        }
         if let Some(slot) = self.objects.get_mut(&handle) {
             // CPython ABI callers can keep raw pointers alive across opaque C paths where we
             // cannot accurately mirror ownership in this shim. Keep handles pinned for the

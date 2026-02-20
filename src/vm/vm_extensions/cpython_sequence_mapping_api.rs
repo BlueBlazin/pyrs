@@ -5,7 +5,7 @@ use crate::runtime::{BuiltinFunction, IteratorKind, IteratorObject, Object, Valu
 use crate::vm::{add_values, is_truthy, mul_values};
 
 use super::{
-    CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, Py_DecRef, Py_XDecRef,
+    CpythonMappingMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, Py_DecRef, Py_XDecRef,
     Py_XIncRef, PyCallable_Check, PyDict_Items, PyDict_Keys, PyDict_Values, PyErr_BadInternalCall,
     PyErr_Clear, PyExc_TypeError, PyLong_FromSsize_t, PyObject_CallNoArgs, PyObject_DelItem,
     PyObject_GetAttrString, PyObject_GetItem, PyObject_HasAttrString,
@@ -648,29 +648,119 @@ pub unsafe extern "C" fn PyMapping_GetItemString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyMapping_Check(object: *mut c_void) -> i32 {
+    let trace_mapping_check = std::env::var_os("PYRS_TRACE_PYMAPPING_CHECK").is_some();
     if object.is_null() {
         return 0;
     }
+    if let Ok(result) = with_active_cpython_context_mut(|context| {
+        if let Some(value) = context.cpython_value_from_ptr_or_proxy(object) {
+            if matches!(
+                value,
+                Value::Dict(_)
+                    | Value::List(_)
+                    | Value::Tuple(_)
+                    | Value::Str(_)
+                    | Value::Bytes(_)
+                    | Value::ByteArray(_)
+                    | Value::MemoryView(_)
+            ) {
+                return 1;
+            }
+        }
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if (object as usize) < MIN_VALID_PTR
+            || (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+        {
+            return 0;
+        }
+        // SAFETY: best-effort slot lookup for CPython-compatible object pointers.
+        let type_ptr = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if type_ptr.is_null()
+            || (type_ptr as usize) < MIN_VALID_PTR
+            || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+        {
+            return 0;
+        }
+        // SAFETY: `type_ptr` is validated non-null/aligned.
+        let as_mapping = unsafe {
+            (*type_ptr)
+                .tp_as_mapping
+                .cast::<CpythonMappingMethods>()
+                .as_ref()
+        };
+        if as_mapping.is_some_and(|methods| !methods.mp_subscript.is_null()) {
+            return 1;
+        }
+        // SAFETY: `type_ptr` is validated non-null/aligned.
+        let as_sequence = unsafe {
+            (*type_ptr)
+                .tp_as_sequence
+                .cast::<CpythonSequenceMethods>()
+                .as_ref()
+        };
+        if as_sequence.is_some_and(|methods| !methods.sq_item.is_null()) {
+            return 1;
+        }
+        0
+    }) {
+        if result != 0 {
+            return 1;
+        }
+    }
     match cpython_value_from_ptr(object) {
-        Ok(
-            Value::Dict(_)
-            | Value::List(_)
-            | Value::Tuple(_)
-            | Value::Str(_)
-            | Value::Bytes(_)
-            | Value::ByteArray(_),
-        ) => 1,
         Ok(_) => {
             let status =
                 unsafe { PyObject_HasAttrStringWithError(object, c"__getitem__".as_ptr()) };
             if status < 0 {
                 unsafe { PyErr_Clear() };
+                if trace_mapping_check {
+                    eprintln!(
+                        "[cpy-mapping-check] object={:p} status=0 reason=hasattr-error",
+                        object
+                    );
+                }
                 0
             } else {
+                if trace_mapping_check {
+                    let _ = with_active_cpython_context_mut(|context| {
+                        let object_tag = context
+                            .cpython_value_from_ptr_or_proxy(object)
+                            .map(|value| super::cpython_value_debug_tag(&value))
+                            .unwrap_or_else(|| "<unknown>".to_string());
+                        let type_name = super::cpython_safe_object_type_name(object)
+                            .unwrap_or_else(|| "<unknown>".to_string());
+                        eprintln!(
+                            "[cpy-mapping-check] object={:p} status={} object_tag={} type_name={} reason=hasattr",
+                            object, status, object_tag, type_name
+                        );
+                    });
+                }
                 status
             }
         }
-        Err(_) => 0,
+        Err(_) => {
+            if trace_mapping_check {
+                let _ = with_active_cpython_context_mut(|context| {
+                    let object_tag = context
+                        .cpython_value_from_ptr_or_proxy(object)
+                        .map(|value| super::cpython_value_debug_tag(&value))
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let type_name = super::cpython_safe_object_type_name(object)
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    eprintln!(
+                        "[cpy-mapping-check] object={:p} status=0 object_tag={} type_name={} reason=unknown-ptr",
+                        object, object_tag, type_name
+                    );
+                });
+            }
+            0
+        }
     }
 }
 

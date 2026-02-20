@@ -12,8 +12,9 @@ use super::cpython_numeric_runtime::{
 };
 use super::{
     CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
-    ModuleCapiContext, PyErr_Occurred, PyFloat_AsDouble, PyLong_AsSsize_t, c_name_to_string,
-    cpython_call_builtin, cpython_new_ptr_for_value, cpython_set_error,
+    ModuleCapiContext, PyErr_Occurred, PyExc_TypeError, PyFloat_AsDouble, PyLong_AsSsize_t,
+    c_name_to_string, cpython_call_builtin, cpython_new_ptr_for_value, cpython_set_error,
+    cpython_set_typed_error,
     cpython_try_binary_number_slot, cpython_value_debug_tag, cpython_value_from_ptr,
     is_cpython_proxy_class, value_to_int, with_active_cpython_context_mut,
 };
@@ -546,7 +547,10 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                         context.alloc_cpython_ptr_for_value(Value::BigInt(bigint))
                     }
                     _ => {
-                        context.set_error("PyNumber_Long requires int-compatible object");
+                        cpython_set_typed_error(
+                            unsafe { PyExc_TypeError },
+                            "PyNumber_Long requires int-compatible object",
+                        );
                         std::ptr::null_mut()
                     }
                 };
@@ -608,7 +612,10 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     object, slot_object, mapped_tag, type_ptr, type_name
                 );
             }
-            context.set_error("PyNumber_Long requires int-compatible object");
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "PyNumber_Long requires int-compatible object",
+            );
             return std::ptr::null_mut();
         };
         let converter = number_methods.nb_int.or(number_methods.nb_index);
@@ -628,7 +635,10 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     object, slot_object, mapped_tag, type_ptr, type_name
                 );
             }
-            context.set_error("PyNumber_Long requires int-compatible object");
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                "PyNumber_Long requires int-compatible object",
+            );
             return std::ptr::null_mut();
         };
         // SAFETY: `converter` is a valid nb_int/nb_index slot for this object type.

@@ -6294,7 +6294,12 @@ impl Vm {
             SOURCE_FILE_LOADER => {
                 self.queue_source_module_execution(module, name, &source_info.path)
             }
-            EXTENSION_FILE_LOADER => self.exec_extension_module(module, name, &source_info.path),
+            EXTENSION_FILE_LOADER => {
+                self.mark_module_initializing(module);
+                let result = self.exec_extension_module(module, name, &source_info.path);
+                self.clear_module_initializing(module);
+                result
+            }
             SOURCELESS_FILE_LOADER => {
                 if self.import_perf_enabled {
                     self.import_perf_counters.pyc_load_attempts = self
@@ -7060,7 +7065,11 @@ impl Vm {
             } else {
                 false
             };
-            if !keep_cached_builtin {
+            let keep_cached_initializing = self
+                .modules
+                .get(name)
+                .is_some_and(Self::module_is_initializing);
+            if !keep_cached_builtin && !keep_cached_initializing {
                 self.modules.remove(name);
             }
         }

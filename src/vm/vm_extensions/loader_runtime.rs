@@ -219,10 +219,11 @@ impl Vm {
             }
             if let Some(existing) = self.modules.get(module_name).cloned()
                 && existing.id() != module.id()
-                && let Object::Module(existing_data) = &*existing.kind()
-                && let Object::Module(current_data) = &mut *module.kind_mut()
             {
-                current_data.globals = existing_data.globals.clone();
+                // Keep canonical cache authoritative. The caller will resolve through
+                // `canonical_imported_module_for_name`, so cloning large globals maps into
+                // transient duplicate module objects is unnecessary churn.
+                self.modules.insert(module_name.to_string(), existing);
             }
             return Ok(());
         }
@@ -264,52 +265,59 @@ impl Vm {
             },
         }
 
-        let (resolved_symbol, resolved_init): (String, ResolvedInit) = if symbol
-            .starts_with("PyInit_")
-        {
-            let (handle, init) = load_dynamic_symbol::<CpythonExtensionInit>(library_path, symbol)
-                .map_err(RuntimeError::new)?;
-            (
-                symbol.to_string(),
-                ResolvedInit::Cpython {
-                    handle,
-                    initializer: init,
-                },
-            )
-        } else {
-            match load_dynamic_initializer(library_path, symbol) {
-                Ok((handle, init)) => (
+        let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
+        let mut active_module = module.clone();
+        let (resolved_symbol, resolved_init): (String, ResolvedInit) = {
+            // Some extensions (notably pybind11-based modules) execute static initializers during
+            // `dlopen` that query CPython thread/interpreter state. Keep a live active context
+            // while resolving/loading dynamic symbols so those probes observe initialized state.
+            let _active_context_guard =
+                ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(module_ctx));
+            if symbol.starts_with("PyInit_") {
+                let (handle, init) =
+                    load_dynamic_symbol::<CpythonExtensionInit>(library_path, symbol)
+                        .map_err(RuntimeError::new)?;
+                (
                     symbol.to_string(),
-                    ResolvedInit::Pyrs {
+                    ResolvedInit::Cpython {
                         handle,
                         initializer: init,
                     },
-                ),
-                Err(pyrs_err) if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 => {
-                    let cpython_symbol = Self::cpython_init_symbol_for_module(module_name);
-                    match load_dynamic_symbol::<CpythonExtensionInit>(library_path, &cpython_symbol)
-                    {
-                        Ok((handle, init)) => (
-                            cpython_symbol,
-                            ResolvedInit::Cpython {
-                                handle,
-                                initializer: init,
-                            },
-                        ),
-                        Err(cpython_err) => {
-                            return Err(RuntimeError::new(format!(
-                                "{pyrs_err}; fallback '{}' also failed: {cpython_err}",
-                                cpython_symbol
-                            )));
+                )
+            } else {
+                match load_dynamic_initializer(library_path, symbol) {
+                    Ok((handle, init)) => (
+                        symbol.to_string(),
+                        ResolvedInit::Pyrs {
+                            handle,
+                            initializer: init,
+                        },
+                    ),
+                    Err(pyrs_err) if symbol == PYRS_DYNAMIC_INIT_SYMBOL_V1 => {
+                        let cpython_symbol = Self::cpython_init_symbol_for_module(module_name);
+                        match load_dynamic_symbol::<CpythonExtensionInit>(
+                            library_path,
+                            &cpython_symbol,
+                        ) {
+                            Ok((handle, init)) => (
+                                cpython_symbol,
+                                ResolvedInit::Cpython {
+                                    handle,
+                                    initializer: init,
+                                },
+                            ),
+                            Err(cpython_err) => {
+                                return Err(RuntimeError::new(format!(
+                                    "{pyrs_err}; fallback '{}' also failed: {cpython_err}",
+                                    cpython_symbol
+                                )));
+                            }
                         }
                     }
+                    Err(err) => return Err(RuntimeError::new(err)),
                 }
-                Err(err) => return Err(RuntimeError::new(err)),
             }
         };
-
-        let mut module_ctx = ModuleCapiContext::new(self as *mut Vm, module.clone());
-        let mut active_module = module.clone();
         if matches!(&resolved_init, ResolvedInit::Cpython { .. }) {
             module_ctx.run_capsule_destructors_on_drop = false;
             module_ctx.strict_capsule_refcount = false;
@@ -557,9 +565,24 @@ impl Vm {
                                             .clone()
                                             .or_else(|| module_ctx.first_error.clone())
                                             .unwrap_or_else(|| "Py_mod_exec failed".to_string());
+                                        let detailed_message = if module_ctx.vm.is_null() {
+                                            message.clone()
+                                        } else {
+                                            // SAFETY: module C-API context owns a valid VM pointer
+                                            // for the duration of extension initialization.
+                                            let vm = unsafe { &mut *module_ctx.vm };
+                                            let detail = vm
+                                                .runtime_error_from_active_exception(&message)
+                                                .message;
+                                            if detail.is_empty() {
+                                                message.clone()
+                                            } else {
+                                                detail
+                                            }
+                                        };
                                         let full_error = format!(
                                             "extension '{}' initializer '{}' Py_mod_exec failed: {}",
-                                            module_name, resolved_symbol, message
+                                            module_name, resolved_symbol, detailed_message
                                         );
                                         if std::env::var_os("PYRS_TRACE_EXT_SLOT_MODULE_KEYS")
                                             .is_some()
@@ -606,7 +629,7 @@ impl Vm {
                                         if trace_slots {
                                             eprintln!(
                                                 "[ext-load] module={} slot_exec_error={}",
-                                                module_name, message
+                                                module_name, detailed_message
                                             );
                                         }
                                         return Err(RuntimeError::new(full_error));

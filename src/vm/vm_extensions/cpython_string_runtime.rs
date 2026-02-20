@@ -3,11 +3,19 @@ use std::ffi::{CStr, c_char};
 use super::Cwchar;
 
 pub(super) unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
+    const MAX_C_STRING_BYTES: usize = 1 << 20; // 1 MiB safety cap for native C strings.
     if name.is_null() {
         return Err("received null C string pointer".to_string());
     }
-    // SAFETY: caller ensures pointer is a valid NUL-terminated C string.
-    let c_name = unsafe { CStr::from_ptr(name) };
+    // SAFETY: caller provides at least a readable C string; cap scan length to avoid
+    // runaway reads from malformed pointers/doc strings.
+    let raw_bytes = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), MAX_C_STRING_BYTES + 1) };
+    let Some(end) = raw_bytes.iter().position(|byte| *byte == 0) else {
+        return Err("received unterminated C string (exceeds 1 MiB)".to_string());
+    };
+    let with_nul = &raw_bytes[..=end];
+    let c_name = CStr::from_bytes_with_nul(with_nul)
+        .map_err(|_| "received invalid C string bytes".to_string())?;
     c_name
         .to_str()
         .map(|text| text.to_string())

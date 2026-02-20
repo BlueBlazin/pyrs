@@ -5,18 +5,20 @@ use crate::runtime::{ModuleObject, Value};
 
 use super::{
     _Py_EllipsisObject, _Py_FalseStruct, _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct,
+    CPY_FRAME_MODULE_NAME,
     CPYTHON_CONSTANT_EMPTY_BYTES_PTR, CPYTHON_CONSTANT_EMPTY_STR_PTR,
     CPYTHON_CONSTANT_EMPTY_TUPLE_PTR, CPYTHON_CONSTANT_ONE_PTR, CPYTHON_CONSTANT_ZERO_PTR,
     CPYTHON_IS_INITIALIZED, CPYTHON_THREAD_STATE_COMPAT_SIZE, CURRENT_THREAD_STATE_PTR,
-    CpythonModuleDef, CpythonObjectHead, CpythonThreadStateCompat, Object, Py_IncRef,
+    CpythonFrameCompatObject, CpythonModuleDef, CpythonObjectHead, CpythonThreadStateCompat,
+    CpythonVarObjectHead, Object, Py_IncRef, PyFrame_Type,
     PyBytes_FromStringAndSize, PyErr_BadInternalCall, PyExc_SystemError, PyLong_FromLong,
     PyTuple_New, PyUnicode_FromStringAndSize, calloc, cpython_bind_module_def,
     cpython_current_thread_state_ptr, cpython_get_or_init_constant_ptr,
     cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
     cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
     cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr, cpython_set_error,
-    cpython_set_typed_error, cpython_thread_state_allocations, free, vm_current_thread_ident,
-    with_active_cpython_context_mut,
+    cpython_set_typed_error, cpython_thread_state_allocations, free, malloc,
+    vm_current_thread_ident, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -184,7 +186,7 @@ pub unsafe extern "C" fn PyFrame_New(
         let vm = unsafe { &mut *context.vm };
         let frame_obj = match vm
             .heap
-            .alloc_module(ModuleObject::new("__pyframe__".to_string()))
+            .alloc_module(ModuleObject::new(CPY_FRAME_MODULE_NAME.to_string()))
         {
             Value::Module(obj) => obj,
             _ => unreachable!(),
@@ -206,8 +208,56 @@ pub unsafe extern "C" fn PyFrame_New(
             module_data
                 .globals
                 .insert("f_locals".to_string(), locals_value);
+            module_data
+                .globals
+                .insert("f_lineno".to_string(), Value::Int(0));
         }
-        context.alloc_cpython_ptr_for_value(Value::Module(frame_obj))
+        let frame_value = Value::Module(frame_obj);
+        let handle = context.alloc_object(frame_value);
+        // SAFETY: allocate a frame-compatible object so extension code that writes f_lineno
+        // at the expected offset does not corrupt adjacent heap allocations.
+        let raw = unsafe { malloc(std::mem::size_of::<CpythonFrameCompatObject>()) }
+            .cast::<CpythonFrameCompatObject>();
+        if raw.is_null() {
+            context.release_frame_object_handle(handle);
+            context.set_error("out of memory allocating CPython frame compat object");
+            return std::ptr::null_mut();
+        }
+        // Frame object owns strong references to code/globals/locals.
+        if !code.is_null() {
+            unsafe { Py_IncRef(code) };
+        }
+        if !globals.is_null() {
+            unsafe { Py_IncRef(globals) };
+        }
+        if !locals.is_null() {
+            unsafe { Py_IncRef(locals) };
+        }
+        // SAFETY: `raw` points to writable frame-compatible storage.
+        unsafe {
+            raw.write(CpythonFrameCompatObject {
+                ob_base: CpythonVarObjectHead {
+                    ob_base: CpythonObjectHead {
+                        ob_refcnt: 1,
+                        ob_type: std::ptr::addr_of_mut!(PyFrame_Type).cast(),
+                    },
+                    ob_size: 0,
+                },
+                f_back: std::ptr::null_mut(),
+                f_trace: std::ptr::null_mut(),
+                f_lineno: 0,
+                _padding: 0,
+                f_code: code,
+                f_globals: globals,
+                f_locals: locals,
+            });
+        }
+        let frame_ptr = raw.cast::<c_void>();
+        context.cpython_allocations.push(raw.cast());
+        context.cpython_owned_ptrs.insert(frame_ptr as usize);
+        context.cpython_ptr_by_handle.insert(handle, frame_ptr);
+        context.cpython_objects_by_ptr.insert(frame_ptr as usize, handle);
+        frame_ptr
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
@@ -234,8 +284,30 @@ pub unsafe extern "C" fn PyFrame_GetCode(frame: *mut c_void) -> *mut c_void {
             };
             return context.alloc_cpython_ptr_for_value(Value::Code(active.code.clone()));
         }
-        if let Some(Value::Code(code_obj)) = context.cpython_value_from_ptr_or_proxy(frame) {
-            return context.alloc_cpython_ptr_for_value(Value::Code(code_obj));
+        if context.owns_cpython_allocation_ptr(frame) {
+            // SAFETY: direct header/type inspection for owned compatibility allocations.
+            let is_frame = unsafe {
+                (*frame.cast::<CpythonObjectHead>()).ob_type == std::ptr::addr_of_mut!(PyFrame_Type).cast()
+            };
+            if is_frame {
+                // SAFETY: frame pointer is validated as owned frame-compatible allocation.
+                let code_ptr = unsafe { (*frame.cast::<CpythonFrameCompatObject>()).f_code };
+                if !code_ptr.is_null() {
+                    unsafe { Py_IncRef(code_ptr) };
+                    return code_ptr;
+                }
+            }
+        }
+        if let Some(frame_value) = context.cpython_value_from_ptr_or_proxy(frame) {
+            if let Value::Code(code_obj) = frame_value {
+                return context.alloc_cpython_ptr_for_value(Value::Code(code_obj));
+            }
+            if let Value::Module(frame_obj) = frame_value
+                && let Object::Module(module_data) = &*frame_obj.kind()
+                && let Some(code_value) = module_data.globals.get("f_code").cloned()
+            {
+                return context.alloc_cpython_ptr_for_value(code_value);
+            }
         }
         context.set_error("PyFrame_GetCode expected frame object");
         std::ptr::null_mut()
@@ -264,6 +336,20 @@ pub unsafe extern "C" fn PyFrame_GetBack(frame: *mut c_void) -> *mut c_void {
             }
             let back_frame = &vm.frames[vm.frames.len() - 2];
             return context.alloc_cpython_ptr_for_value(Value::Code(back_frame.code.clone()));
+        }
+        if context.owns_cpython_allocation_ptr(frame) {
+            // SAFETY: direct header/type inspection for owned compatibility allocations.
+            let is_frame = unsafe {
+                (*frame.cast::<CpythonObjectHead>()).ob_type == std::ptr::addr_of_mut!(PyFrame_Type).cast()
+            };
+            if is_frame {
+                // SAFETY: frame pointer is validated as owned frame-compatible allocation.
+                let back_ptr = unsafe { (*frame.cast::<CpythonFrameCompatObject>()).f_back };
+                if !back_ptr.is_null() {
+                    unsafe { Py_IncRef(back_ptr) };
+                    return back_ptr;
+                }
+            }
         }
         if let Some(Value::Module(frame_obj)) = context.cpython_value_from_ptr_or_proxy(frame)
             && let Object::Module(module_data) = &*frame_obj.kind()
@@ -308,12 +394,40 @@ pub unsafe extern "C" fn PyFrame_GetLineNumber(frame: *mut c_void) -> i32 {
                 .map(|loc| loc.line as i32)
                 .unwrap_or(0);
         }
+        if context.owns_cpython_allocation_ptr(frame)
+            && let Some(handle) = context.cpython_handle_from_ptr(frame)
+            && context
+                .objects
+                .get(&handle)
+                .is_some_and(|slot| match &slot.value {
+                    Value::Module(module_obj) => matches!(
+                        &*module_obj.kind(),
+                        Object::Module(module_data) if module_data.name == CPY_FRAME_MODULE_NAME
+                    ),
+                    _ => false,
+                })
+        {
+            // SAFETY: handle has been verified as a frame-compatible allocation.
+            let raw_frame = frame.cast::<CpythonFrameCompatObject>();
+            // SAFETY: field access is valid for frame-compatible layout.
+            let line = unsafe { (*raw_frame).f_lineno };
+            if line != 0 {
+                return line;
+            }
+        }
         if let Some(Value::Code(code_obj)) = context.cpython_value_from_ptr_or_proxy(frame) {
             return code_obj
                 .locations
                 .first()
                 .map(|loc| loc.line as i32)
                 .unwrap_or(0);
+        }
+        if let Some(Value::Module(frame_obj)) = context.cpython_value_from_ptr_or_proxy(frame)
+            && let Object::Module(module_data) = &*frame_obj.kind()
+            && let Some(Value::Int(line)) = module_data.globals.get("f_lineno")
+            && let Ok(line) = i32::try_from(*line)
+        {
+            return line;
         }
         0
     })

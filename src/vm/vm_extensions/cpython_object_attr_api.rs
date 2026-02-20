@@ -1090,6 +1090,24 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
             Some(-1)
         });
         if let Some(status) = native_status {
+            if status == 0 {
+                let attr_name_for_sync = name_text.clone();
+                let _ = with_active_cpython_context_mut(|context| {
+                    let Some(Value::Module(module_obj)) =
+                        context.cpython_value_from_ptr_or_proxy(object)
+                    else {
+                        return;
+                    };
+                    if value_ptr.is_null() {
+                        let _ = context.sync_module_dict_del(&module_obj, &attr_name_for_sync);
+                        return;
+                    }
+                    if let Some(attr_value) = context.cpython_value_from_ptr_or_proxy(value_ptr) {
+                        let _ =
+                            context.sync_module_dict_set(&module_obj, &attr_name_for_sync, &attr_value);
+                    }
+                });
+            }
             if trace_pybind11_attr {
                 eprintln!(
                     "[pybind11-attr] branch=native object={:p} name={} value={:p} status={}",

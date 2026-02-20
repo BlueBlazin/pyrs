@@ -14,6 +14,187 @@ use super::{
     dict_remove_value, dict_set_value_checked, with_active_cpython_context_mut, ModuleCapiContext,
 };
 
+fn cpython_dict_set_key_error_for_value(context: &mut ModuleCapiContext, key: Value) {
+    let key_ptr = context.alloc_cpython_ptr_for_value(key);
+    if key_ptr.is_null() {
+        context.set_error("dict key lookup failed");
+        return;
+    }
+    // SAFETY: `key_ptr` is a temporary strong reference owned by this context.
+    unsafe {
+        PyErr_SetObject(PyExc_KeyError, key_ptr);
+        Py_DecRef(key_ptr);
+    }
+}
+
+unsafe extern "C" fn cpython_dict_mp_length_slot(dict: *mut c_void) -> isize {
+    // SAFETY: mapping slot ABI forwards validated args.
+    unsafe { PyDict_Size(dict) }
+}
+
+unsafe extern "C" fn cpython_dict_mp_subscript_slot(
+    dict: *mut c_void,
+    key: *mut c_void,
+) -> *mut c_void {
+    let trace_slot = std::env::var_os("PYRS_TRACE_DICT_SLOT").is_some();
+    with_active_cpython_context_mut(|context| {
+        let Some(dict_value) = context.cpython_value_from_ptr_or_proxy(dict) else {
+            if trace_slot {
+                eprintln!(
+                    "[cpy-dict-slot] mp_subscript unknown dict ptr={:p} key={:p}",
+                    dict, key
+                );
+            }
+            context.set_error("dict mp_subscript received unknown dict pointer");
+            return std::ptr::null_mut();
+        };
+        let Value::Dict(dict_obj) = dict_value else {
+            if trace_slot {
+                eprintln!(
+                    "[cpy-dict-slot] mp_subscript non-dict target ptr={:p} key={:p} tag={}",
+                    dict,
+                    key,
+                    cpython_value_debug_tag(&dict_value)
+                );
+            }
+            context.set_error("dict mp_subscript expected dict object");
+            return std::ptr::null_mut();
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            if trace_slot {
+                let key_type =
+                    cpython_safe_object_type_name(key).unwrap_or_else(|| "<unknown>".to_string());
+                eprintln!(
+                    "[cpy-dict-slot] mp_subscript unknown key ptr={:p} key_type={} dict={:p}",
+                    key, key_type, dict
+                );
+            }
+            context.set_error("dict mp_subscript received unknown key pointer");
+            return std::ptr::null_mut();
+        };
+        if trace_slot {
+            eprintln!(
+                "[cpy-dict-slot] mp_subscript dict={:p} key={}",
+                dict,
+                cpython_debug_compare_value(&key_value)
+            );
+        }
+        match dict_contains_key_checked(&dict_obj, &key_value) {
+            Ok(true) => dict_get_value(&dict_obj, &key_value)
+                .map(|value| context.alloc_cpython_ptr_for_value(value))
+                .unwrap_or_else(|| {
+                    cpython_dict_set_key_error_for_value(context, key_value);
+                    std::ptr::null_mut()
+                }),
+            Ok(false) => {
+                cpython_dict_set_key_error_for_value(context, key_value);
+                std::ptr::null_mut()
+            }
+            Err(err) => {
+                context.set_error(err.message);
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+unsafe extern "C" fn cpython_dict_mp_ass_subscript_slot(
+    dict: *mut c_void,
+    key: *mut c_void,
+    value: *mut c_void,
+) -> c_int {
+    let trace_slot = std::env::var_os("PYRS_TRACE_DICT_SLOT").is_some();
+    with_active_cpython_context_mut(|context| {
+        let module_target = context.module_dict_module_for_ptr(dict);
+        let Some(dict_value) = context.cpython_value_from_ptr_or_proxy(dict) else {
+            if trace_slot {
+                eprintln!(
+                    "[cpy-dict-slot] mp_ass_subscript unknown dict ptr={:p} key={:p} value={:p}",
+                    dict, key, value
+                );
+            }
+            context.set_error("dict mp_ass_subscript received unknown dict pointer");
+            return -1;
+        };
+        let Value::Dict(dict_obj) = dict_value else {
+            if trace_slot {
+                eprintln!(
+                    "[cpy-dict-slot] mp_ass_subscript non-dict target ptr={:p} key={:p} value={:p} tag={}",
+                    dict,
+                    key,
+                    value,
+                    cpython_value_debug_tag(&dict_value)
+                );
+            }
+            context.set_error("dict mp_ass_subscript expected dict object");
+            return -1;
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            if trace_slot {
+                let key_type =
+                    cpython_safe_object_type_name(key).unwrap_or_else(|| "<unknown>".to_string());
+                eprintln!(
+                    "[cpy-dict-slot] mp_ass_subscript unknown key ptr={:p} key_type={} dict={:p}",
+                    key, key_type, dict
+                );
+            }
+            context.set_error("dict mp_ass_subscript received unknown key pointer");
+            return -1;
+        };
+        if value.is_null() {
+            match dict_remove_value(&dict_obj, &key_value) {
+                Some(_) => {
+                    if let Some(module_obj) = module_target
+                        && let Value::Str(name) = &key_value
+                        && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+                    {
+                        module_data.globals.remove(name);
+                    }
+                    0
+                }
+                None => {
+                    cpython_dict_set_key_error_for_value(context, key_value);
+                    -1
+                }
+            }
+        } else {
+            let Some(value_obj) = context.cpython_value_from_ptr_or_proxy(value) else {
+                context.set_error("dict mp_ass_subscript received unknown value pointer");
+                return -1;
+            };
+            match dict_set_value_checked(&dict_obj, key_value.clone(), value_obj.clone()) {
+                Ok(()) => {
+                    if let Some(module_obj) = module_target
+                        && let Value::Str(name) = key_value
+                        && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+                    {
+                        module_data.globals.insert(name, value_obj);
+                    }
+                    0
+                }
+                Err(err) => {
+                    context.set_error(err.message);
+                    -1
+                }
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+pub(super) static mut PY_DICT_MAPPING_METHODS: CpythonMappingMethods = CpythonMappingMethods {
+    mp_length: cpython_dict_mp_length_slot as *mut c_void,
+    mp_subscript: cpython_dict_mp_subscript_slot as *mut c_void,
+    mp_ass_subscript: cpython_dict_mp_ass_subscript_slot as *mut c_void,
+};
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyDict_New() -> *mut c_void {
     with_active_cpython_context_mut(|context| {

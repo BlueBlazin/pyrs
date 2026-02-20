@@ -196,6 +196,37 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             arg_tags,
             kw_entries.join(", ")
         );
+        if method_name == "dot"
+            && std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING_BT").is_some()
+        {
+            let vm_stack = if context.vm.is_null() {
+                "<no-vm>".to_string()
+            } else {
+                // SAFETY: active context owns a live VM pointer.
+                let vm = unsafe { &mut *context.vm };
+                vm.frames
+                    .iter()
+                    .rev()
+                    .take(12)
+                    .map(|frame| {
+                        format!(
+                            "{}@{}:{}",
+                            frame.code.name, frame.code.filename, frame.ip
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" <- ")
+            };
+            eprintln!(
+                "[numpy-method-binding-bt] name=dot self={:p} class={:p} args_len={} kwargs_len={} stack={}\n{:?}",
+                self_obj,
+                class_obj,
+                args.len(),
+                kwargs.len(),
+                vm_stack,
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
     }
     if flags & METH_METHOD != 0 {
         if flags & (METH_FASTCALL | METH_KEYWORDS) != (METH_FASTCALL | METH_KEYWORDS) {
@@ -1644,6 +1675,101 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
             class_obj,
             positional,
             keyword_args,
+        )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_tp_descr_get(
+    descriptor: *mut c_void,
+    obj: *mut c_void,
+    objtype: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if descriptor.is_null() {
+            context.set_error("method descriptor __get__ received null descriptor");
+            return std::ptr::null_mut();
+        }
+        let descriptor_key = descriptor as usize;
+        let descriptor_kind = if let Some(kind) = context.cpython_descriptors.get(&descriptor_key) {
+            Some(*kind)
+        } else {
+            CPYTHON_DESCRIPTOR_REGISTRY
+                .with(|registry| registry.borrow().get(&descriptor_key).copied())
+        };
+        let Some(CpythonDescriptorKind::Method {
+            owner_type,
+            method_def,
+            class_method,
+        }) = descriptor_kind
+        else {
+            context.set_error("descriptor __get__ expected method descriptor");
+            return std::ptr::null_mut();
+        };
+        if owner_type.is_null() || method_def.is_null() {
+            context.set_error("descriptor __get__ has invalid method metadata");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: method definition pointer is validated above.
+        let flags = unsafe { (*method_def).ml_flags };
+        let class_arg = if (flags & METH_METHOD) != 0 {
+            owner_type.cast::<c_void>()
+        } else {
+            std::ptr::null_mut()
+        };
+        let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+        if class_method {
+            let mut target = if !objtype.is_null() {
+                objtype
+            } else {
+                std::ptr::null_mut()
+            };
+            if target.is_null() && !obj.is_null() && obj != none_ptr {
+                // SAFETY: `obj` is a live object pointer while descriptor lookup is active.
+                target = unsafe {
+                    obj.cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type)
+                        .unwrap_or(std::ptr::null_mut())
+                };
+            }
+            if target.is_null() {
+                target = owner_type.cast::<c_void>();
+            }
+            return context.alloc_cpython_method_cfunction_ptr(
+                method_def,
+                target,
+                std::ptr::null_mut(),
+                class_arg,
+            );
+        }
+        if obj.is_null() || obj == none_ptr {
+            unsafe { Py_XIncRef(descriptor) };
+            return descriptor;
+        }
+        // SAFETY: `obj` is a live object pointer while descriptor lookup is active.
+        let receiver_type = unsafe {
+            obj.cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if receiver_type.is_null()
+            || unsafe {
+                PyType_IsSubtype(receiver_type.cast::<c_void>(), owner_type.cast::<c_void>())
+            } == 0
+        {
+            context.set_error("descriptor receiver is not an instance/subclass of owner type");
+            return std::ptr::null_mut();
+        }
+        context.alloc_cpython_method_cfunction_ptr(
+            method_def,
+            obj,
+            std::ptr::null_mut(),
+            class_arg,
         )
     })
     .unwrap_or_else(|err| {

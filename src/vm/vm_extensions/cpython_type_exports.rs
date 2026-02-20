@@ -129,6 +129,7 @@ static PY_TYPE_NAME_ELLIPSIS: &[u8; 9] = b"ellipsis\0";
 static PY_TYPE_NAME_ENUM: &[u8; 5] = b"enum\0";
 static PY_TYPE_NAME_FILTER: &[u8; 7] = b"filter\0";
 static PY_TYPE_NAME_FLOAT: &[u8; 6] = b"float\0";
+static PY_TYPE_NAME_FRAME: &[u8; 6] = b"frame\0";
 static PY_TYPE_NAME_FROZENSET: &[u8; 10] = b"frozenset\0";
 static PY_TYPE_NAME_FUNCTION: &[u8; 9] = b"function\0";
 static PY_TYPE_NAME_GENERATOR: &[u8; 10] = b"generator\0";
@@ -267,6 +268,9 @@ pub static mut PyFilter_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_FILTER
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyFloat_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_FLOAT.as_ptr().cast());
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyFrame_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_FRAME.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyFrozenSet_Type: CpythonTypeObject =
