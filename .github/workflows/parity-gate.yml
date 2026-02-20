@@ -49,6 +49,9 @@ jobs:
       - name: Run full test suite
         run: cargo test -q
 
+      - name: CPython harness parity lane
+        run: cargo test -q --test cpython_harness
+
       - name: Extension smoke lane
         run: cargo test -q --test extension_smoke
 

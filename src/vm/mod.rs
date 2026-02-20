@@ -7793,20 +7793,6 @@ fn format_strftime(format: &str, parts: TimeParts) -> String {
     out
 }
 
-fn current_utc_iso() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| Duration::from_secs(0));
-    let total_secs = now.as_secs() as i64;
-    let days = total_secs.div_euclid(86_400);
-    let sec_of_day = total_secs.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let hour = sec_of_day / 3600;
-    let minute = (sec_of_day % 3600) / 60;
-    let second = sec_of_day % 60;
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
 fn is_truthy(value: &Value) -> bool {
     match value {
         Value::None => false,

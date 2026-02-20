@@ -4087,6 +4087,35 @@ for proto in range(pickle.HIGHEST_PROTOCOL + 1):
 }
 
 #[test]
+fn pickle_complex_subclass_roundtrip_preserves_value_and_instance_attrs() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping pickle complex-subclass roundtrip test (CPython Lib path not available)");
+        return;
+    };
+    let source = r#"import pickle
+class MyComplex(complex):
+    pass
+
+ok = True
+for proto in range(pickle.HIGHEST_PROTOCOL + 1):
+    x = MyComplex(1.5, -2.0)
+    x.tag = "ready"
+    y = pickle.loads(pickle.dumps(x, proto))
+    ok = ok and (
+        type(y) is MyComplex and
+        complex(y) == complex(x) and
+        y.tag == "ready"
+    )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn pickle_compat_emits_legacy_globals_for_range_and_map() {
     let Some(lib_path) = cpython_lib_path() else {
         eprintln!("skipping pickle compat global test (CPython Lib path not available)");
@@ -6318,6 +6347,16 @@ fn none_dunder_new_matches_object_new() {
 #[test]
 fn dynamic_class_attribute_subclass_is_constructible() {
     let source = "from types import DynamicClassAttribute\nclass P(DynamicClassAttribute):\n    pass\nclass Box:\n    @P\n    def value(self):\n        return 42\nok = Box().value == 42\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn list_subclass_constructor_populates_backing_storage_from_args() {
+    let source = "class MyList(list):\n    pass\nx = MyList([1, 2, 3])\ny = MyList((4, 5))\nok = (list(x) == [1, 2, 3] and x == [1, 2, 3] and len(x) == 3 and x[1] == 2 and list(y) == [4, 5])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
