@@ -1787,13 +1787,14 @@ impl Vm {
             self.ensure_exception_default_attrs(&exception);
             return exception;
         }
-        let classified = classify_runtime_error(&err.message);
-        let exception_type = if classified == "RuntimeError" {
-            extract_runtime_error_exception_name(&err.message)
-                .unwrap_or_else(|| classified.to_string())
-        } else {
-            classified.to_string()
-        };
+        let exception_type = extract_runtime_error_exception_name(&err.message).unwrap_or_else(|| {
+            let classified = classify_runtime_error(&err.message);
+            if classified == "RuntimeError" {
+                "RuntimeError".to_string()
+            } else {
+                classified.to_string()
+            }
+        });
         let mut exception_message = Some(err.message.clone());
         if let Some(from_traceback) =
             extract_runtime_error_final_message(&err.message, &exception_type)
@@ -9674,13 +9675,13 @@ fn runtime_error_matches_exception(err: &RuntimeError, expected: &str) -> bool {
     {
         return true;
     }
-    let classified = classify_runtime_error(&err.message);
-    if classified == expected || exception_type_is_subclass(classified, expected) {
-        return true;
-    }
     if let Some(exception_name) = extract_runtime_error_exception_name(&err.message)
         && (exception_name == expected || exception_type_is_subclass(&exception_name, expected))
     {
+        return true;
+    }
+    let classified = classify_runtime_error(&err.message);
+    if classified == expected || exception_type_is_subclass(classified, expected) {
         return true;
     }
     let Some(last_non_empty_line) = err
