@@ -871,7 +871,7 @@ impl Drop for Vm {
             if !raw.is_null() {
                 let addr = raw as usize;
                 self.capi_registry_mark_pending_free(addr);
-                if !self.extension_pinned_cpython_allocation_set.contains(&addr) {
+                if !self.capi_owned_ptr_is_pinned(addr) {
                     if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=not-in-set", raw);
                     }
@@ -898,6 +898,7 @@ impl Drop for Vm {
                 unsafe {
                     free(raw);
                 }
+                self.capi_unpin_owned_ptr(addr);
                 self.capi_registry_mark_freed(addr);
             }
         }
