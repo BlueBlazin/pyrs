@@ -48,6 +48,7 @@ Required evidence:
 ## Gate 1: Semantic Contract Conformance (P0)
 
 No operation is considered done until CPython-visible behavior matches for the in-scope contract.
+There is no supported "pyrs-specific semantic variant" mode for core behavior.
 
 Required for mutable/container APIs:
 - in-place mutation guarantees (`list.sort`, `list.reverse`, `dict.update`, etc.)
@@ -59,6 +60,7 @@ Required evidence:
 1. targeted regression tests in `tests/vm.rs`
 2. differential tests against CPython for the exact API surface
 3. explicit edge-case list (empty/singleton/large, mixed comparable types, exceptional callbacks)
+4. tests must assert CPython behavior even when current pyrs behavior differs (do not lock tests to current interpreter quirks)
 
 ## Gate 2: Algorithmic Complexity Conformance (P0/P1)
 

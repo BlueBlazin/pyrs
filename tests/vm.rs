@@ -296,7 +296,7 @@ fn pyexpat_parser_create_parse_baseline() {
 
 #[test]
 fn pyexpat_parse_error_exposes_code_lineno_offset() {
-    let source = "import pyexpat\np = pyexpat.ParserCreate()\ncaught = False\ncode = -1\nline = -1\noffset = -1\ntry:\n    p.Parse('<a>', True)\nexcept pyexpat.error as exc:\n    caught = True\n    code = exc.code\n    line = exc.lineno\n    offset = exc.offset\nok = (caught and code == 1 and line >= 1 and offset >= 0)\n";
+    let source = "import pyexpat\np = pyexpat.ParserCreate()\ncaught = False\ncode = -1\nline = -1\noffset = -1\ntry:\n    p.Parse('<a>', True)\nexcept pyexpat.error as exc:\n    caught = True\n    code = exc.code\n    line = exc.lineno\n    offset = exc.offset\nok = (caught and code == 3 and line == 1 and offset == 3)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1005,7 +1005,7 @@ fn exposes_time_perf_counter_helpers() {
 
 #[test]
 fn exposes_sys_jit_probe_flags() {
-    let source = "import sys\nok = hasattr(sys, '_jit') and (not sys._jit.is_enabled()) and (not sys._jit.is_available())\n";
+    let source = "import sys\nok = hasattr(sys, '_jit') and isinstance(sys._jit.is_enabled(), bool) and isinstance(sys._jit.is_available(), bool)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1016,7 +1016,8 @@ fn exposes_sys_jit_probe_flags() {
 
 #[test]
 fn imports_sysconfigdata_module_for_platform() {
-    let source = "import sys\nname = '_sysconfigdata__' + sys.platform + '_'\nm = __import__(name)\nok = hasattr(m, 'build_time_vars')\n";
+    let source =
+        "import sysconfig\nname = sysconfig._get_sysconfigdata_name()\nm = __import__(name)\nok = hasattr(m, 'build_time_vars')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1027,7 +1028,7 @@ fn imports_sysconfigdata_module_for_platform() {
 
 #[test]
 fn exposes_inspect_signature_and_co_flags() {
-    let source = "import inspect\nsig = inspect.signature(lambda x, y=1, /, z=2, *, w=3, **kw: x + y)\nparams = sig.parameters\nok = isinstance(params, dict) and params['x'][0] == 'POSITIONAL_ONLY' and params['y'][1] == 1 and params['z'][0] == 'POSITIONAL_OR_KEYWORD' and params['w'][0] == 'KEYWORD_ONLY' and params['kw'][0] == 'VAR_KEYWORD' and sig.return_annotation is None and inspect.CO_VARARGS == 4 and inspect.CO_VARKEYWORDS == 8 and inspect.CO_COROUTINE == 128\n";
+    let source = "import inspect\nsig = inspect.signature(lambda x, y=1, /, z=2, *, w=3, **kw: x + y)\nparams = sig.parameters\nok = (params['x'].kind is inspect.Parameter.POSITIONAL_ONLY and params['y'].default == 1 and params['z'].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD and params['w'].kind is inspect.Parameter.KEYWORD_ONLY and params['kw'].kind is inspect.Parameter.VAR_KEYWORD and sig.return_annotation is inspect.Signature.empty and inspect.CO_VARARGS == 4 and inspect.CO_VARKEYWORDS == 8 and inspect.CO_COROUTINE == 128)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1038,7 +1039,7 @@ fn exposes_inspect_signature_and_co_flags() {
 
 #[test]
 fn exposes_inspect_private_mro_helpers() {
-    let source = "import inspect\nclass A:\n    pass\nclass B(A):\n    pass\nmro = inspect._static_getmro(B)\nd = inspect._get_dunder_dict_of_class(B)\nbuiltins_ns = inspect._get_dunder_dict_of_class(int)\ns = inspect._sentinel\nok = (mro[0] is B) and (mro[1] is A) and ('__name__' in d) and isinstance(builtins_ns, dict) and (inspect._sentinel is s)\n";
+    let source = "import inspect\nclass A:\n    pass\nclass B(A):\n    pass\nmro = inspect._static_getmro(B)\nd = inspect._get_dunder_dict_of_class(B)\nbuiltins_ns = inspect._get_dunder_dict_of_class(int)\nmappingproxy = type(type.__dict__)\ns = inspect._sentinel\nok = (mro[0] is B) and (mro[1] is A) and ('__module__' in d) and isinstance(d, mappingproxy) and isinstance(builtins_ns, mappingproxy) and (inspect._sentinel is s)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1293,7 +1294,7 @@ fn executes_generator_throw_into_suspended_frame() {
 
 #[test]
 fn executes_generator_reentrancy_error() {
-    let source = "caught = False\ndef gen():\n    global caught\n    try:\n        g.__next__()\n    except RuntimeError:\n        caught = True\n    yield 1\ng = gen()\na = g.__next__()\n";
+    let source = "caught = False\ndef gen():\n    global caught\n    try:\n        g.__next__()\n    except ValueError:\n        caught = True\n    yield 1\ng = gen()\na = g.__next__()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -1628,7 +1629,7 @@ except Exception as exc:
 try:
     len(NonInteger())
 except Exception as exc:
-    nonint = '__len__() should return an integer' in str(exc)
+    nonint = "'str' object cannot be interpreted as an integer" in str(exc)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -1727,7 +1728,8 @@ class Thing:
     def __eq__(self, other):
         return Flag(False)
 
-ok = (Thing() == Thing()) is False
+result = (Thing() == Thing())
+ok = (isinstance(result, Flag) and bool(result) is False)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -2395,11 +2397,11 @@ is_mod = inspect.ismodule(mod)\n\
 is_class = inspect.isclass(Dummy)\n\
 is_gen = inspect.isgenerator((x for x in [1]))\n\
 \n\
-today = datetime.today()\n\
-now = datetime.now()\n\
+today = datetime.date.today().isoformat()\n\
+now = datetime.datetime.now().isoformat()\n\
 cwd = os.getcwd()\n\
-joined = pathlib.joinpath(cwd, 'foo')\n\
-pth = pathlib.Path(cwd, 'bar')\n\
+joined = str(pathlib.Path(cwd).joinpath('foo'))\n\
+pth = str(pathlib.Path(cwd, 'bar'))\n\
 t = time.time()\n\
 m = time.monotonic()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -4425,7 +4427,11 @@ fn recursive_list_equality_does_not_stack_overflow() {
 a.append(a)
 b = []
 b.append(b)
-ok = (a == a and a == b and not (a != b))
+ok = False
+try:
+    _ = (a == a and a == b and not (a != b))
+except RecursionError:
+    ok = True
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -4454,7 +4460,7 @@ fn object_repr_on_instance_uses_fallback_without_recursing() {
 c = C()
 c.foo = 1
 text = repr(c)
-ok = ("instance" in text)
+ok = (text.startswith("<__main__.C object at 0x") and text.endswith(">"))
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -5054,7 +5060,7 @@ except Exception as exc:
 try:
     buf.cast("B", format="B")
 except Exception as exc:
-    multi = "multiple values for argument 'format'" in str(exc)
+    multi = "given by name ('format') and position (1)" in str(exc)
 try:
     buf.cast("B", nope=[2, 2])
 except Exception as exc:
@@ -5289,7 +5295,7 @@ ok = (buf == bytearray(b"abc")) and range_error
 #[test]
 fn io_buffered_writer_blocking_error_exposes_characters_written() {
     let source = r#"import _io
-class Raw(_io.RawIOBase):
+class Raw(_io._RawIOBase):
     def __init__(self):
         self.block = False
     def writable(self):
@@ -5312,7 +5318,7 @@ except BlockingIOError as exc:
     caught = True
     chars = getattr(exc, "characters_written", None)
     errno = getattr(exc, "errno", None)
-ok = caught and isinstance(chars, int) and chars >= 0 and errno == 11
+ok = caught and isinstance(chars, int) and chars >= 0 and isinstance(errno, int) and errno >= 0
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -5445,7 +5451,7 @@ ok = (d.strftime('%Y-%m-%d') == '2024-02-29' and d.strftime('%w') == '4' and dt.
 fn datetime_fromtimestamp_and_astimezone_support_fixed_offset_tz() {
     let source = "import datetime\n\
 dt = datetime.datetime.fromtimestamp(0, datetime.timezone.utc)\n\
-tz = datetime.timezone(7200, 'EET')\n\
+tz = datetime.timezone(datetime.timedelta(seconds=7200), 'EET')\n\
 shifted = dt.astimezone(tz)\n\
 ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shifted.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 02:00:00 +0200')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -5459,11 +5465,11 @@ ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shi
 fn threading_condition_supports_context_manager_protocol() {
     let source = r#"import threading
 c = threading.Condition()
-enter_ok = (c.__enter__() is True and c._locked)
-exit_ok = (c.__exit__(None, None, None) is False and (not c._locked))
+enter_ok = (c.__enter__() is True and c._lock.locked())
+exit_ok = (c.__exit__(None, None, None) is None and (not c._lock.locked()))
 with c:
-    inside = c._locked
-ok = (enter_ok and exit_ok and inside and (not c._locked))
+    inside = c._lock.locked()
+ok = (enter_ok and exit_ok and inside and (not c._lock.locked()))
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -5955,7 +5961,7 @@ fn executes_raise_from_and_exception_chaining_metadata() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_exception_global(&vm, "cause", "ValueError", Some("inner"));
-    assert_eq!(vm.get_global("context"), Some(Value::None));
+    assert_exception_global(&vm, "context", "ValueError", Some("inner"));
     assert_eq!(vm.get_global("suppressed"), Some(Value::Bool(true)));
 }
 
@@ -6163,7 +6169,7 @@ fn class_metaclass_conflict_raises_type_error() {
 
 #[test]
 fn metaclass_super_new_handles_keyword_passthrough() {
-    let source = "class Meta(type):\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['seen'] = kw.get('tag')\n        return super().__new__(mcls, name, bases, namespace, **kw)\nclass Sample(metaclass=Meta, tag=7):\n    pass\nok = (Sample.seen == 7 and isinstance(Sample, Meta))\n";
+    let source = "class Base:\n    def __init_subclass__(cls, **kw):\n        pass\nclass Meta(type):\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['seen'] = kw.get('tag')\n        return super().__new__(mcls, name, bases, namespace, **kw)\nclass Sample(Base, metaclass=Meta, tag=7):\n    pass\nok = (Sample.seen == 7 and isinstance(Sample, Meta))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -6173,7 +6179,7 @@ fn metaclass_super_new_handles_keyword_passthrough() {
 
 #[test]
 fn metaclass_prepare_namespace_drives_class_body_mapping_semantics() {
-    let source = "class NS(dict):\n    def __init__(self):\n        self.marker = 99\n\nclass Meta(type):\n    @classmethod\n    def __prepare__(mcls, name, bases, **kw):\n        ns = NS()\n        ns['prepared'] = kw['flag']\n        return ns\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['marker_seen'] = namespace.marker\n        return super().__new__(mcls, name, bases, namespace, **kw)\n\nclass Sample(metaclass=Meta, flag=7):\n    first = 1\n    second = 2\n\nok = (Sample.prepared == 7 and Sample.first == 1 and Sample.second == 2 and Sample.marker_seen == 99)\n";
+    let source = "class NS(dict):\n    def __init__(self):\n        self.marker = 99\n\nclass Base:\n    def __init_subclass__(cls, **kw):\n        pass\n\nclass Meta(type):\n    @classmethod\n    def __prepare__(mcls, name, bases, **kw):\n        ns = NS()\n        ns['prepared'] = kw['flag']\n        return ns\n    def __new__(mcls, name, bases, namespace, **kw):\n        namespace['marker_seen'] = namespace.marker\n        return super().__new__(mcls, name, bases, namespace, **kw)\n\nclass Sample(Base, metaclass=Meta, flag=7):\n    first = 1\n    second = 2\n\nok = (Sample.prepared == 7 and Sample.first == 1 and Sample.second == 2 and Sample.marker_seen == 99)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -6193,7 +6199,7 @@ fn decorated_function_in_prepare_namespace_is_stored_once() {
 
 #[test]
 fn none_dunder_new_matches_object_new() {
-    let source = "ok = (None.__new__ is object.__new__)\n";
+    let source = "ok = (None.__new__ is not object.__new__)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -7099,7 +7105,7 @@ fn imports_using_importlib_module_helpers() {
     std::fs::write(temp_dir.join("mod.py"), "value = 107\n").expect("write module");
     let path_literal = temp_dir.to_string_lossy().replace('\\', "\\\\");
     let source = format!(
-        "import sys\nimport importlib\nimport importlib.util\nsys.path = ['{path_literal}']\nspec = importlib.find_spec('mod')\nname = spec['name']\nname_attr = spec.name\nloader = spec['loader']\nloader_attr = spec.loader\nm = importlib.import_module('mod')\nu_spec = importlib.util.find_spec('mod')\nu_name = u_spec['name']\nu_name_attr = u_spec.name\nx = m.value\n"
+        "import sys\nimport importlib\nimport importlib.util\nsys.path = ['{path_literal}']\nspec = importlib.find_spec('mod')\nname = spec.name\nloader_name = type(spec.loader).__name__\nsubscript_fails = False\ntry:\n    spec['name']\nexcept TypeError:\n    subscript_fails = True\nm = importlib.import_module('mod')\nu_spec = importlib.util.find_spec('mod')\nu_name = u_spec.name\nx = m.value\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -7108,22 +7114,11 @@ fn imports_using_importlib_module_helpers() {
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("name"), Some(Value::Str("mod".to_string())));
     assert_eq!(
-        vm.get_global("name_attr"),
-        Some(Value::Str("mod".to_string()))
+        vm.get_global("loader_name"),
+        Some(Value::Str("SourceFileLoader".to_string()))
     );
-    assert_eq!(
-        vm.get_global("loader"),
-        Some(Value::Str("pyrs.SourceFileLoader".to_string()))
-    );
-    assert_eq!(
-        vm.get_global("loader_attr"),
-        Some(Value::Str("pyrs.SourceFileLoader".to_string()))
-    );
+    assert_eq!(vm.get_global("subscript_fails"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("u_name"), Some(Value::Str("mod".to_string())));
-    assert_eq!(
-        vm.get_global("u_name_attr"),
-        Some(Value::Str("mod".to_string()))
-    );
     assert_eq!(vm.get_global("x"), Some(Value::Int(107)));
 
     let _ = std::fs::remove_file(temp_dir.join("mod.py"));
@@ -7143,7 +7138,7 @@ fn exposes_importlib_cache_path_helpers() {
 
 #[test]
 fn exposes_importlib_invalidate_caches_and_spec_from_file_location() {
-    let source = "import sys\nimport importlib\nimport importlib.util\nsys.path_importer_cache['/tmp/demo'] = 42\nbefore = '/tmp/demo' in sys.path_importer_cache\nimportlib.invalidate_caches()\nafter = '/tmp/demo' in sys.path_importer_cache\nspec = importlib.util.spec_from_file_location('demo', '/tmp/demo.py')\nok = before and (not after) and spec['name'] == 'demo' and spec.name == 'demo' and spec['origin'] == '/tmp/demo.py' and spec.origin == '/tmp/demo.py' and spec['loader'] == 'pyrs.SourceFileLoader' and spec.loader == 'pyrs.SourceFileLoader' and spec['has_location'] and spec.has_location and spec['cached'][-4:] == '.pyc' and spec.cached[-4:] == '.pyc'\n";
+    let source = "import sys\nimport importlib\nimport importlib.util\nsys.path_importer_cache['/tmp/demo'] = 42\nbefore = '/tmp/demo' in sys.path_importer_cache\nimportlib.invalidate_caches()\nafter = '/tmp/demo' in sys.path_importer_cache\nspec = importlib.util.spec_from_file_location('demo', '/tmp/demo.py')\nloader_name = type(spec.loader).__name__\nsubscript_fails = False\ntry:\n    spec['name']\nexcept TypeError:\n    subscript_fails = True\nok = before and after and subscript_fails and spec.name == 'demo' and spec.origin == '/tmp/demo.py' and loader_name == 'SourceFileLoader' and spec.has_location and spec.cached[-4:] == '.pyc'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -7165,7 +7160,7 @@ fn exposes_os_error_family_exception_types() {
 
 #[test]
 fn main_module_spec_supports_attribute_access() {
-    let source = "import sys\nok = (sys.modules['__main__'].__spec__.name == '__main__')\n";
+    let source = "import sys\nspec = sys.modules['__main__'].__spec__\nok = (spec is None or spec.name == '__main__')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -7777,13 +7772,12 @@ fn executes_len_on_list() {
 
 #[test]
 fn executes_len_with_keyword() {
-    let source = "x = len(obj=[1, 2])";
+    let source = "ok = False\ntry:\n    len(obj=[1, 2])\nexcept TypeError:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
-    let value = vm.execute(&code).expect("execution should succeed");
-    assert_eq!(value, Value::None);
-    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
@@ -8792,23 +8786,17 @@ fn executes_inspect_async_predicates() {
 
 #[test]
 fn executes_threading_and_signal_foundations() {
-    let source = "import signal\nimport threading\nseen = 0\ndef handler(signum, frame):\n    global seen\n    seen = signum\nold = signal.signal(signal.SIGINT, handler)\nsignal.raise_signal(signal.SIGINT)\nident = threading.get_ident()\ncount = threading.active_count()\n";
+    let source = "import signal\nimport threading\nseen = 0\ndef handler(signum, frame):\n    global seen\n    seen = signum\nold = signal.signal(signal.SIGINT, handler)\nsignal.raise_signal(signal.SIGINT)\nident = threading.get_ident()\ncount = threading.active_count()\nok = (seen == signal.SIGINT and callable(old) and isinstance(ident, int) and count >= 1)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
     vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("seen"), Some(Value::Int(2)));
-    assert_eq!(vm.get_global("old"), Some(Value::Int(0)));
-    assert_eq!(vm.get_global("count"), Some(Value::Int(1)));
-    match vm.get_global("ident") {
-        Some(Value::Int(value)) => assert!(value > 0),
-        other => panic!("expected integer thread id, got {other:?}"),
-    }
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]
 fn threading_module_exposes_dangling_registry_baseline() {
-    let source = "import threading\nok = hasattr(threading, '_dangling') and isinstance(threading._dangling, set) and len(threading._dangling) >= 0\n";
+    let source = "import threading\nimport _weakrefset\nok = hasattr(threading, '_dangling') and isinstance(threading._dangling, _weakrefset.WeakSet) and len(threading._dangling) >= 0\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9104,7 +9092,7 @@ fn str_subclass_str_and_subscript_follow_backing_value() {
 
 #[test]
 fn property_getter_exception_does_not_surface_stack_underflow() {
-    let source = "class C:\n    @property\n    def value(self):\n        return ''.join([1])\nmsg = ''\ntry:\n    C().value\nexcept Exception as exc:\n    msg = str(exc)\nok = ('stack underflow' not in msg and 'join' in msg)\n";
+    let source = "class C:\n    @property\n    def value(self):\n        return ''.join([1])\nmsg = ''\ntry:\n    C().value\nexcept Exception as exc:\n    msg = str(exc)\nok = ('stack underflow' not in msg and 'expected str instance' in msg)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9134,7 +9122,7 @@ fn list_pop_supports_default_and_index() {
 
 #[test]
 fn exposes_sys_getframe_locals() {
-    let source = "import sys\ndef f():\n    local_value = 1\n    frame = sys._getframe()\n    return isinstance(frame.f_locals, dict)\nok = f()\n";
+    let source = "import sys\ndef f():\n    local_value = 1\n    frame = sys._getframe()\n    return ('local_value' in frame.f_locals) and (type(frame.f_locals).__name__ == 'FrameLocalsProxy')\nok = f()\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9144,7 +9132,8 @@ fn exposes_sys_getframe_locals() {
 
 #[test]
 fn executes_class_register_fallback() {
-    let source = "class C:\n    pass\nresult = C.register(int)\nok = result == int\n";
+    let source =
+        "import abc\nclass C(metaclass=abc.ABCMeta):\n    pass\nresult = C.register(int)\nok = result == int\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9204,7 +9193,7 @@ fn executes_custom_metaclass_fallback() {
 
 #[test]
 fn imports_gc_errno_weakref_and_array_modules() {
-    let source = "import gc\nimport errno\nimport weakref\nimport _weakref\nimport array\nvals = array.array('B', b'AB')\nref_value = weakref.ref(1)\nout = []\nfor x in vals:\n    out.append(x)\nok = gc.isenabled() and errno.ENOENT == 2 and len(vals) == 2 and vals.itemsize == 1 and out == [65, 66] and ref_value == 1\n";
+    let source = "import gc\nimport errno\nimport weakref\nimport _weakref\nimport array\nclass Box:\n    pass\nbox = Box()\nvals = array.array('B', b'AB')\nref_value = weakref.ref(box)\nout = []\nfor x in vals:\n    out.append(x)\nok = gc.isenabled() and errno.ENOENT == 2 and len(vals) == 2 and vals.itemsize == 1 and out == [65, 66] and (ref_value() is box)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9214,7 +9203,7 @@ fn imports_gc_errno_weakref_and_array_modules() {
 
 #[test]
 fn gc_module_exposes_threshold_and_state_controls() {
-    let source = "import gc\nbefore = gc.get_threshold()\ngc.set_threshold(17, 3, 2)\nafter = gc.get_threshold()\ngc.disable()\ndisabled = gc.isenabled() is False\ngc.enable()\nenabled = gc.isenabled() is True\ncounts = gc.get_count()\ncollected = gc.collect()\nok = before == (700, 10, 10) and after == (17, 3, 2) and disabled and enabled and len(counts) == 3 and isinstance(collected, int)\n";
+    let source = "import gc\nbefore = gc.get_threshold()\ngc.set_threshold(17, 3, 2)\nafter = gc.get_threshold()\ngc.disable()\ndisabled = gc.isenabled() is False\ngc.enable()\nenabled = gc.isenabled() is True\ncounts = gc.get_count()\ncollected = gc.collect()\nok = len(before) == 3 and after[0] == 17 and after[1] == 3 and disabled and enabled and len(counts) == 3 and isinstance(collected, int)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9279,7 +9268,7 @@ ok = (
 
 #[test]
 fn from_import_missing_name_raises_importerror() {
-    let source = "ok = False\ntry:\n    from _testinternalcapi import hamt\nexcept ImportError:\n    ok = True\n";
+    let source = "ok = False\ntry:\n    from math import __pyrs_missing_symbol__\nexcept ImportError:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9313,7 +9302,7 @@ fn sys_exit_raises_systemexit() {
 
 #[test]
 fn time_module_localtime_and_strftime_work() {
-    let source = "import time\nt = time.localtime(0)\ns = time.strftime('%Y-%m-%d %H:%M:%S', t)\nok = (t[0], t[1], t[2]) == (1970, 1, 1) and s == '1970-01-01 00:00:00'\n";
+    let source = "import time\nt = time.gmtime(0)\ns = time.strftime('%Y-%m-%d %H:%M:%S', t)\nok = (t[0], t[1], t[2]) == (1970, 1, 1) and s == '1970-01-01 00:00:00'\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9427,7 +9416,7 @@ fn functools_wraps_accepts_bound_method_inputs() {
 
 #[test]
 fn enumerate_accepts_iterator_inputs() {
-    let source = "it = (x for x in [10, 20])\nout = enumerate(it, start=3)\nok = (out == [(3, 10), (4, 20)])\n";
+    let source = "it = (x for x in [10, 20])\nout = enumerate(it, start=3)\nok = (list(out) == [(3, 10), (4, 20)])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9437,7 +9426,7 @@ fn enumerate_accepts_iterator_inputs() {
 
 #[test]
 fn filter_builtin_supports_callable_and_none_predicate() {
-    let source = "a = filter(lambda x: x % 2 == 0, [1, 2, 3, 4])\nb = filter(None, [0, 1, '', 'ok'])\nok = (a == [2, 4] and b == [1, 'ok'])\n";
+    let source = "a = filter(lambda x: x % 2 == 0, [1, 2, 3, 4])\nb = filter(None, [0, 1, '', 'ok'])\nok = (list(a) == [2, 4] and list(b) == [1, 'ok'])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9496,8 +9485,7 @@ ok = (hasattr(desc, '__get__') and desc.attrname == 'value')
 
 #[test]
 fn exposes_functools_total_ordering_decorator() {
-    let source =
-        "import functools\n@functools.total_ordering\nclass C:\n    pass\nok = C is not None\n";
+    let source = "import functools\n@functools.total_ordering\nclass C:\n    def __init__(self, v):\n        self.v = v\n    def __eq__(self, other):\n        return self.v == other.v\n    def __lt__(self, other):\n        return self.v < other.v\na = C(1)\nb = C(2)\nok = (a < b and a <= b and b > a and b >= a)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9804,7 +9792,7 @@ except ValueError:
 fn _io_stringio_and_bytesio_extra_method_surface_parity() {
     let source = r#"import _io
 s = _io.StringIO("a\nb\n")
-readlines_hint_ok = (s.readlines(2) == ["a\n"])
+readlines_hint_ok = (s.readlines(2) == ["a\n", "b\n"])
 s.seek(0)
 trunc_ok = (s.truncate(1) == 1 and s.getvalue() == "a")
 flush_open_ok = (s.flush() is None)
@@ -9853,7 +9841,7 @@ ok = (
 #[test]
 fn _io_buffered_rwpair_isatty_or_semantics() {
     let source = r#"import _io
-class Reader(_io.RawIOBase):
+class Reader(_io._RawIOBase):
     def readable(self):
         return True
     def writable(self):
@@ -9863,7 +9851,7 @@ class Reader(_io.RawIOBase):
     def isatty(self):
         return False
 
-class Writer(_io.RawIOBase):
+class Writer(_io._RawIOBase):
     def readable(self):
         return False
     def writable(self):
@@ -9886,7 +9874,7 @@ ok = (pair.isatty() is True)
 #[test]
 fn _io_buffered_rwpair_close_prefers_reader_error_with_writer_context() {
     let source = r#"import _io
-class Reader(_io.RawIOBase):
+class Reader(_io._RawIOBase):
     def readable(self):
         return True
     def writable(self):
@@ -9896,7 +9884,7 @@ class Reader(_io.RawIOBase):
     def close(self):
         reader_non_existing
 
-class Writer(_io.RawIOBase):
+class Writer(_io._RawIOBase):
     def readable(self):
         return False
     def writable(self):
@@ -10033,7 +10021,7 @@ except _io.UnsupportedOperation:
 #[test]
 fn _io_bufferedreader_seek_and_tell_on_unseekable_raise_unsupported_operation() {
     let source = r#"import _io
-class Raw(_io.RawIOBase):
+class Raw(_io._RawIOBase):
     def readinto(self, b): return 0
     def readable(self): return True
     def write(self, b): return len(b)
@@ -10047,10 +10035,7 @@ try:
     buf.seek(0)
 except _io.UnsupportedOperation:
     seek_ok = True
-try:
-    buf.tell()
-except _io.UnsupportedOperation:
-    tell_ok = True
+tell_ok = (buf.tell() == 0)
 ok = seek_ok and tell_ok
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -10084,7 +10069,7 @@ fn _io_bufferedreader_seek_cur_uses_logical_position_with_prefetch_cache() {
 #[test]
 fn _io_bufferedreader_close_prefers_close_error_with_flush_context() {
     let source = r#"import _io
-class Raw(_io.RawIOBase):
+class Raw(_io._RawIOBase):
     def readinto(self, b): return 0
     def readable(self): return True
     def read(self, n=-1): return b""
@@ -10121,9 +10106,9 @@ ok = args_ok and context_ok and closed_ok
 #[test]
 fn _io_bufferedreader_flush_error_on_close_still_closes_raw_and_buffered() {
     let source = r#"import _io
-class Raw(_io.RawIOBase):
+class Raw(_io._RawIOBase):
     def __init__(self):
-        self.closed = False
+        self.closed_flag = False
     def readinto(self, b): return 0
     def readable(self): return True
     def read(self, n=-1): return b""
@@ -10132,7 +10117,7 @@ class Raw(_io.RawIOBase):
     def seek(self, o, w=0): return 0
     def tell(self): return 0
     def close(self):
-        self.closed = True
+        self.closed_flag = True
 raw = Raw()
 buf = _io.BufferedReader(raw)
 state = []
@@ -10148,7 +10133,7 @@ try:
 except OSError as exc:
     caught = True
     args_ok = (exc.args == ("flush",))
-    closed_ok = (buf.closed is True and raw.closed is True and state == [(False, False)])
+    closed_ok = (buf.closed is False and raw.closed_flag is True and state == [(False, False)])
 ok = caught and args_ok and closed_ok
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -10162,7 +10147,7 @@ ok = caught and args_ok and closed_ok
 fn _io_base_destructor_closes_and_flushes_receiver() {
     let source = r#"import _io, gc
 record = []
-class MyIO(_io.BufferedIOBase):
+class MyIO(_io._BufferedIOBase):
     def __init__(self):
         self.on_del = 1
         self.on_close = 2
@@ -10218,7 +10203,7 @@ ok = (wro() is None and wrq() is None)
 #[test]
 fn _io_rawiobase_default_read_and_readall_use_readinto() {
     let source = r#"import _io
-class Reader(_io.RawIOBase):
+class Reader(_io._RawIOBase):
     def __init__(self, avail):
         self.avail = avail
     def readinto(self, b):
@@ -11298,7 +11283,7 @@ fn handles_except_tuple_types() {
 
 #[test]
 fn executes_str_encode_decode_and_unicode_subclass_handling() {
-    let source = "text = 'abc'\nencoded = text.encode('utf-8')\ndecoded = text.decode('utf-8')\ncaught = False\ntry:\n    raise UnicodeDecodeError\nexcept UnicodeError:\n    caught = True\nok = isinstance(encoded, bytes) and decoded == text and caught\n";
+    let source = "text = 'abc'\nencoded = text.encode('utf-8')\ndecoded = encoded.decode('utf-8')\ncaught = False\ntry:\n    b'\\xff'.decode('utf-8')\nexcept UnicodeDecodeError:\n    caught = True\nok = isinstance(encoded, bytes) and decoded == text and caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -11318,7 +11303,7 @@ fn executes_unicode_escape_codec_variants() {
 
 #[test]
 fn executes_itertools_batched_builtin() {
-    let source = "import itertools\nchunks = itertools.batched([1, 2, 3, 4, 5], 2)\nok = chunks == [(1, 2), (3, 4), (5,)]\n";
+    let source = "import itertools\nchunks = itertools.batched([1, 2, 3, 4, 5], 2)\nok = list(chunks) == [(1, 2), (3, 4), (5,)]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -11436,7 +11421,7 @@ fn executes_atexit_register_unregister_run_and_clear() {
 
 #[test]
 fn executes_decimal_context_helpers() {
-    let source = "import decimal\nctx = decimal.getcontext()\ndecimal.setcontext(ctx)\nctx2 = decimal.localcontext()\nok = (ctx is ctx2)\n";
+    let source = "import decimal\nctx = decimal.getcontext()\ndecimal.setcontext(ctx)\nwith decimal.localcontext() as ctx2:\n    same = (ctx2 is decimal.getcontext())\nok = same\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -11482,7 +11467,7 @@ fn executes_pure_decimal_getcontext_and_addition() {
 
 #[test]
 fn executes_thread_start_new_thread_baseline() {
-    let source = "import _thread\nout = []\ndef fn(x, y=0):\n    out.append(x + y)\ntid = _thread.start_new_thread(fn, (2,), {'y': 3})\nok = isinstance(tid, int) and out == [5]\n";
+    let source = "import _thread\nout = []\nlock = _thread.allocate_lock()\nlock.acquire()\ndef fn(x, y=0):\n    out.append(x + y)\n    lock.release()\ntid = _thread.start_new_thread(fn, (2,), {'y': 3})\nacquired = lock.acquire(timeout=1.0)\nok = isinstance(tid, int) and acquired and out == [5]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -11493,7 +11478,7 @@ fn executes_thread_start_new_thread_baseline() {
 #[test]
 fn executes_thread_count_baseline() {
     let source =
-        "import _thread\nok = isinstance(_thread._count(), int) and _thread._count() >= 1\n";
+        "import _thread\nok = isinstance(_thread._count(), int) and _thread._count() >= 0\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -11588,7 +11573,7 @@ fn executes_socket_object_methods_baseline() {
 
 #[test]
 fn executes_uuid_and_reduce_ex_baseline() {
-    let source = "import uuid\nu = uuid.uuid4()\nv = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')\nu3 = uuid.uuid3(uuid.NAMESPACE_DNS, 'example.com')\nnode = uuid.getnode()\nred = object.__reduce_ex__(object(), 4)\nok = isinstance(u, uuid.UUID) and u.version == 4 and isinstance(v.hex, str) and isinstance(u3, uuid.UUID) and isinstance(node, int) and isinstance(red, tuple) and len(red) == 3\n";
+    let source = "import uuid\nu = uuid.uuid4()\nv = uuid.UUID('6ba7b810-9dad-11d1-80b4-00c04fd430c8')\nu3 = uuid.uuid3(uuid.NAMESPACE_DNS, 'example.com')\nnode = uuid.getnode()\nred = object.__reduce_ex__(object(), 4)\nok = isinstance(u, uuid.UUID) and u.version == 4 and isinstance(v.hex, str) and isinstance(u3, uuid.UUID) and isinstance(node, int) and isinstance(red, tuple) and len(red) == 5 and red[1] == (object,)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -11663,7 +11648,7 @@ fn contextvars_get_set_reset_round_trip() {
 
 #[test]
 fn exposes_types_coroutine_decorator() {
-    let source = "import types\ndef f():\n    return 1\ng = types.coroutine(f)\nok = (g is f) and callable(g)\n";
+    let source = "import types\ndef f():\n    return 1\ng = types.coroutine(f)\nok = (g is not f) and callable(g) and g.__name__ == f.__name__\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12039,7 +12024,7 @@ fn executes_frozen_importlib_external_helpers() {
 
 #[test]
 fn executes_frozen_importlib_spec_from_loader_helper() {
-    let source = "import _frozen_importlib as frozen\nspec = frozen.spec_from_loader('pkg.mod', None, origin='x.py', is_package=False)\nfrozen._verbose_message('x')\nok = spec['name'] == 'pkg.mod' and spec['parent'] == 'pkg' and spec['origin'] == 'x.py' and not spec['is_package']\n";
+    let source = "import _frozen_importlib as frozen\nspec = frozen.spec_from_loader('pkg.mod', None, origin='x.py', is_package=False)\nfrozen._verbose_message('x')\nok = (spec.name == 'pkg.mod' and spec.parent == 'pkg' and spec.origin == 'x.py' and spec.submodule_search_locations is None)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12049,7 +12034,7 @@ fn executes_frozen_importlib_spec_from_loader_helper() {
 
 #[test]
 fn executes_opcode_metadata_helpers() {
-    let source = "import _opcode\nse = _opcode.stack_effect(82)\nok = (_opcode.has_arg(82) and _opcode.has_const(82) and _opcode.has_name(92) and _opcode.has_jump(70) and _opcode.has_free(97) and _opcode.has_local(84) and _opcode.has_exc(6) and (not _opcode.has_arg(27)) and isinstance(se, int) and _opcode.get_executor(None, 0) is None)\n";
+    let source = "import _opcode\nse = _opcode.stack_effect(82)\nexecutor_type_error = False\ntry:\n    _opcode.get_executor(None, 0)\nexcept TypeError:\n    executor_type_error = True\nok = (_opcode.has_arg(82) and _opcode.has_const(82) and _opcode.has_name(92) and _opcode.has_jump(70) and _opcode.has_free(97) and _opcode.has_local(84) and (not _opcode.has_exc(6)) and (not _opcode.has_arg(27)) and isinstance(se, int) and executor_type_error)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12139,22 +12124,24 @@ fn supports_subclassing_enumerate_builtin() {
 fn itertools_long_tail_helpers_work() {
     let source = r#"import itertools
 import operator
-acc = itertools.accumulate([1, 2, 3])
-acc_init = itertools.accumulate([1, 2], initial=10)
-comb = itertools.combinations('ABC', 2)
-comb_rep = itertools.combinations_with_replacement([1, 2], 2)
-comp = itertools.compress('ABCDEF', [1, 0, 1, 0, 1, 1])
-dw = itertools.dropwhile(lambda x: x < 3, [1, 2, 3, 2, 1])
-ff = itertools.filterfalse(lambda x: x % 2, [0, 1, 2, 3, 4])
-ff_none = itertools.filterfalse(None, [0, 1, '', 2])
-grp = itertools.groupby('AAABBC')
-isl1 = itertools.islice(range(10), 3)
-isl2 = itertools.islice(range(10), 2, 8, 3)
-pw = itertools.pairwise([10, 20, 30])
-sm = itertools.starmap(operator.add, [(1, 2), (3, 4)])
-tw = itertools.takewhile(lambda x: x < 4, [1, 2, 3, 4, 1])
+acc = list(itertools.accumulate([1, 2, 3]))
+acc_init = list(itertools.accumulate([1, 2], initial=10))
+comb = list(itertools.combinations('ABC', 2))
+comb_rep = list(itertools.combinations_with_replacement([1, 2], 2))
+comp = list(itertools.compress('ABCDEF', [1, 0, 1, 0, 1, 1]))
+dw = list(itertools.dropwhile(lambda x: x < 3, [1, 2, 3, 2, 1]))
+ff = list(itertools.filterfalse(lambda x: x % 2, [0, 1, 2, 3, 4]))
+ff_none = list(itertools.filterfalse(None, [0, 1, '', 2]))
+grp = [(k, list(g)) for k, g in itertools.groupby('AAABBC')]
+isl1 = list(itertools.islice(range(10), 3))
+isl2 = list(itertools.islice(range(10), 2, 8, 3))
+pw = list(itertools.pairwise([10, 20, 30]))
+sm = list(itertools.starmap(operator.add, [(1, 2), (3, 4)]))
+tw = list(itertools.takewhile(lambda x: x < 4, [1, 2, 3, 4, 1]))
 t1, t2 = itertools.tee([7, 8], 2)
-zl = itertools.zip_longest([1, 2], [10], fillvalue=0)
+t1 = list(t1)
+t2 = list(t2)
+zl = list(itertools.zip_longest([1, 2], [10], fillvalue=0))
 ok = (
     acc == [1, 3, 6]
     and acc_init == [10, 11, 13]
@@ -12267,7 +12254,7 @@ fn socket_byteorder_and_timeout_helpers_work() {
 
 #[test]
 fn socket_hostname_addrinfo_and_fromfd_smoke() {
-    let source = "import _socket\nname = _socket.gethostname()\nhost = _socket.gethostbyname('127.0.0.1')\ninfo = _socket.getaddrinfo('127.0.0.1', 80)\nsock = _socket.fromfd(5, _socket.AF_INET, _socket.SOCK_STREAM)\nok = (isinstance(name, str) and len(name) >= 1 and host == '127.0.0.1' and len(info) >= 1 and sock is not None)\n";
+    let source = "import _socket\nimport socket\nname = _socket.gethostname()\nhost = _socket.gethostbyname('127.0.0.1')\ninfo = _socket.getaddrinfo('127.0.0.1', 80)\nok = (isinstance(name, str) and len(name) >= 1 and host == '127.0.0.1' and len(info) >= 1 and hasattr(socket, 'fromfd') and callable(socket.fromfd))\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12277,7 +12264,7 @@ fn socket_hostname_addrinfo_and_fromfd_smoke() {
 
 #[test]
 fn pylong_basic_helpers_work() {
-    let source = "import _pylong\nv = _pylong.int_from_string('1_234 ')\ns = _pylong.int_to_decimal_string(-42)\nq, r = _pylong.int_divmod(-7, 3)\np = _pylong.compute_powers(5, 2, 3)\nbig = _pylong.int_from_string('123456789012345678901234567890')\nbig_s = _pylong.int_to_decimal_string(big)\nbq, br = _pylong.int_divmod(big, 97)\nok = (v == 1234 and s == '-42' and q == -3 and r == 2 and p[4] == 16 and p[5] == 32 and big_s == '123456789012345678901234567890' and bq * 97 + br == big and 0 <= br and br < 97)\n";
+    let source = "import _pylong\nv = _pylong.int_from_string('1_234 ')\ns = _pylong.int_to_decimal_string(-42)\nq, r = _pylong.int_divmod(-7, 3)\np = _pylong.compute_powers(5, 2, 3)\nbig = _pylong.int_from_string('123456789012345678901234567890')\nbig_s = _pylong.int_to_decimal_string(big)\nbq, br = _pylong.int_divmod(big, 97)\nok = (v == 1234 and s == '-42' and q == -3 and r == 2 and p == {2: 4} and big_s == '123456789012345678901234567890' and bq * 97 + br == big and 0 <= br and br < 97)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12301,7 +12288,7 @@ fn float_fromhex_and_hex_helpers_work() {
     let source = "a = float.fromhex('0x1.8p+1')\n\
 b = float.hex(3.0)\n\
 c = float.fromhex('inf')\n\
-ok = (a == 3.0 and b.startswith('0x1.8p+') and c > 1e300)\n";
+ok = (a == 3.0 and b.startswith('0x1.8') and b.endswith('p+1') and c > 1e300)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12471,10 +12458,16 @@ ok = (a == [b'x', b'y', b'z'] and b == [b'x\\n', b'y\\r\\n', b'z'] and c == [byt
 
 #[test]
 fn string_find_accepts_optional_bounds_and_keywords() {
-    let source = "a = 'abcabc'.find('bc')\n\
-b = 'abcabc'.find('bc', 2)\n\
-c = 'abcabc'.find('bc', end=3)\n\
-ok = (a == 1 and b == 4 and c == 1)\n";
+    let source = r#"a = 'abcabc'.find('bc')
+b = 'abcabc'.find('bc', 2)
+c = 'abcabc'.find('bc', 0, 3)
+kw = False
+try:
+    'abcabc'.find('bc', end=3)
+except TypeError:
+    kw = True
+ok = (a == 1 and b == 4 and c == 1 and kw)
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12757,11 +12750,22 @@ ok = (raised and values == [1, 2, 3])
 fn object_reduce_ex_reconstructs_builtin_payloads() {
     let source = r#"lst = [1, 2, 3]
 dct = {'a': 1, 'b': 2}
-lst_ctor, lst_args, lst_state = object.__reduce_ex__(lst, 4)
-dct_ctor, dct_args, dct_state = object.__reduce_ex__(dct, 4)
+lst_ctor, lst_args, lst_state, lst_items, lst_dictitems = object.__reduce_ex__(lst, 4)
+dct_ctor, dct_args, dct_state, dct_items, dct_dictitems = object.__reduce_ex__(dct, 4)
 lst_roundtrip = lst_ctor(*lst_args)
+for item in lst_items:
+    lst_roundtrip.append(item)
 dct_roundtrip = dct_ctor(*dct_args)
-ok = (lst_roundtrip == lst and dct_roundtrip == dct and lst_state is None and dct_state is None)
+for key, value in dct_dictitems:
+    dct_roundtrip[key] = value
+ok = (
+    lst_roundtrip == lst
+    and dct_roundtrip == dct
+    and lst_state is None
+    and dct_state is None
+    and lst_dictitems is None
+    and dct_items is None
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -12849,7 +12853,7 @@ ok = isinstance(value, AuthenticationString) and bytes(value) == b'abc'
 
 #[test]
 fn bound_method_doc_lookup_is_supported() {
-    let source = "class T:\n    def test_one(self):\n        'doc'\n        return 1\nm = T().test_one\nok = (m.__doc__ == None)\n";
+    let source = "class T:\n    def test_one(self):\n        'doc'\n        return 1\nm = T().test_one\nok = (m.__doc__ == 'doc')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12869,7 +12873,7 @@ fn os_urandom_returns_requested_number_of_bytes() {
 
 #[test]
 fn os_terminal_size_helpers_are_available() {
-    let source = "import os\na = os.get_terminal_size()\nb = os.terminal_size((100, 40))\nok = (a.columns == 80 and a.lines == 24 and b.columns == 100 and b.lines == 40)\n";
+    let source = "import os\nhave_terminal_size = False\ntry:\n    a = os.get_terminal_size()\n    have_terminal_size = isinstance(a.columns, int) and isinstance(a.lines, int)\nexcept OSError:\n    have_terminal_size = True\nb = os.terminal_size((100, 40))\nok = (have_terminal_size and b.columns == 100 and b.lines == 40)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -12979,7 +12983,7 @@ ok = (
     line == "started"
     and n == 4
     and "seen:ack" in out
-    and isinstance(err, str)
+    and err is None
     and p.returncode == 0
 )
 "#;
@@ -13618,7 +13622,7 @@ if prior is not None:
     os.putenv(key, prior)
 else:
     os.unsetenv(key)
-ok = (seen_environ == "set-via-putenv" and seen_getenv == "set-via-putenv" and missing is None)
+ok = (seen_environ is None and seen_getenv is None and missing is None)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -13767,10 +13771,16 @@ fn bytes_count_supports_bytes_int_and_start_end_keywords() {
 ok = (
     payload.count(b"ba") == 2
     and payload.count(b"ba", 2) == 1
-    and payload.count(b"ba", start=1, end=5) == 2
+    and payload.count(b"ba", 1, 5) == 2
     and payload.count(97) == 3
     and payload.count(b"", 1, 4) == 4
 )
+kw = False
+try:
+    payload.count(b"ba", start=1, end=5)
+except TypeError:
+    kw = True
+ok = ok and kw
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -13785,8 +13795,14 @@ fn bytearray_count_supports_bytes_and_integer_needles() {
 ok = (
     buf.count(48) == 4
     and buf.count(b"01") == 2
-    and buf.count(b"01", start=1) == 2
+    and buf.count(b"01", 1) == 2
 )
+kw = False
+try:
+    buf.count(b"01", start=1)
+except TypeError:
+    kw = True
+ok = ok and kw
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -13801,14 +13817,15 @@ fn inspect_helpers_cover_getmodule_file_and_predicates() {
 def sample():
     return 1
 class C:
-    pass
-method = C().__str__
+    def method(self):
+        return 1
+method = C().method
 module = inspect.getmodule(sample)
 source_file = inspect.getsourcefile(sample)
 code_file = inspect.getfile(sample)
 ok = (
     module is not None
-    and isinstance(source_file, str)
+    and (source_file is None or isinstance(source_file, str))
     and isinstance(code_file, str)
     and inspect.ismethod(method)
     and inspect.isroutine(sample)
@@ -13826,8 +13843,11 @@ ok = (
 #[test]
 fn inspect_getdoc_reads_and_cleans_docstrings() {
     let source = r#"import inspect
-doc = inspect.getdoc("\n\talpha\n\t    beta\n")
-ok = (doc == "alpha\n    beta" and inspect.getdoc(None) is None)
+def sample():
+    "\n\talpha\n\t    beta\n"
+doc = inspect.getdoc(sample)
+none_doc = inspect.getdoc(None)
+ok = (doc == "alpha\n    beta" and isinstance(none_doc, str) and "None" in none_doc)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -13924,7 +13944,7 @@ fn temporary_iterable_with_del_keeps_collection_results() {
 
 x = list(C())
 y = enumerate(C())
-ok = (x == [1, 2, 3] and y == [(0, 1), (1, 2), (2, 3)])
+ok = (x == [1, 2, 3] and list(y) == [(0, 1), (1, 2), (2, 3)])
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -14282,8 +14302,9 @@ except StopIteration as exc:
 #[test]
 fn sys_clear_type_descriptors_exists_and_is_callable() {
     let source = r#"import sys
-sys._clear_type_descriptors()
-ok = True
+class C:
+    pass
+ok = (sys._clear_type_descriptors(C) is None)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
