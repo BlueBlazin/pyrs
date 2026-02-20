@@ -81,10 +81,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - fixed deterministic post-NumPy teardown aborts (`SIGABRT` / pointer-not-allocated) rooted in stale owned-pointer state across realloc/free paths.
   - list-buffer `realloc` now migrates owned-pointer + registry pin state when the buffer address changes.
   - context-drop free paths now remove compat/list-buffer/aux pointers from owned-pointer sets before free to prevent stale ownership reuse on recycled addresses.
+  - owned-pointer checks are now provenance-specific (`OwnedCompat` only), so externally pinned proxy pointers are no longer misclassified as owned pointers in iterator paths.
+  - NumPy proxy iterability + repr parity recovered:
+    - `iter(np.arange(...))` works in direct mode again.
+    - `repr(np.arange(0, 10, 0.5))` now returns arrayprint output rather than `<numpy.ndarray object at ...>`.
   - stress regressions are stable again:
     - `numpy_repeated_axis_sum_remains_stable_across_calls` passes repeatedly,
     - `numpy_axis_sum_and_repr_stress_stays_stable` passes.
-  - remaining adjacent blocker: ndarray `repr` parity regression (`numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder`) is still open and should be treated as a separate P0 semantic closure item.
+    - `numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder` now passes.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,

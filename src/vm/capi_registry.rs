@@ -266,6 +266,42 @@ impl CapiObjectRegistry {
             .is_some_and(|entry| entry.external_pins > 0)
     }
 
+    pub(crate) fn is_owned_pinned(&self, ptr: usize) -> bool {
+        self.entries.get(&ptr).is_some_and(|entry| {
+            entry.provenance == CapiPtrProvenance::OwnedCompat
+                && entry.lifecycle != CapiPtrLifecycleState::Freed
+                && entry.external_pins > 0
+        })
+    }
+
+    pub(crate) fn is_owned_compat(&self, ptr: usize) -> bool {
+        self.entries.get(&ptr).is_some_and(|entry| {
+            entry.provenance == CapiPtrProvenance::OwnedCompat
+                && entry.lifecycle != CapiPtrLifecycleState::Freed
+        })
+    }
+
+    pub(crate) fn ensure_owned_compat_entry(&mut self, ptr: usize) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        if let Some(entry) = self.entries.get_mut(&ptr) {
+            if entry.provenance != CapiPtrProvenance::OwnedCompat {
+                return false;
+            }
+            if entry.lifecycle == CapiPtrLifecycleState::Freed {
+                entry.borrowed_refs = 0;
+                entry.owned_refs = 0;
+                entry.stolen_refs = 0;
+                entry.external_pins = 0;
+            }
+            entry.lifecycle = CapiPtrLifecycleState::Alive;
+            return true;
+        }
+        self.register_ptr(ptr, CapiPtrProvenance::OwnedCompat, None);
+        true
+    }
+
     pub(crate) fn mark_pending_free(&mut self, ptr: usize) {
         if ptr == 0 {
             return;
@@ -460,6 +496,32 @@ mod tests {
         assert!(!registry.pin_owned_once(0x88));
         registry.unpin_owned(0x88);
         assert!(!registry.is_pinned(0x88));
+        assert!(!registry.is_owned_pinned(0x88));
+        assert!(!registry.is_owned_compat(0x88));
+    }
+
+    #[test]
+    fn owned_pin_queries_are_provenance_specific() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x91, CapiPtrProvenance::OwnedCompat, None);
+        registry.register_ptr(0x92, CapiPtrProvenance::ExternalRef, None);
+        assert!(registry.is_owned_compat(0x91));
+        assert!(!registry.is_owned_compat(0x92));
+        assert!(!registry.is_owned_pinned(0x91));
+        assert!(registry.pin_owned_once(0x91));
+        assert!(registry.is_owned_pinned(0x91));
+        assert!(registry.pin_external_once(0x92));
+        assert!(registry.is_pinned(0x92));
+        assert!(!registry.is_owned_pinned(0x92));
+    }
+
+    #[test]
+    fn ensure_owned_compat_entry_rejects_non_owned_entries() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x93, CapiPtrProvenance::ExternalRef, None);
+        assert!(!registry.ensure_owned_compat_entry(0x93));
+        assert!(registry.ensure_owned_compat_entry(0x94));
+        assert!(registry.is_owned_compat(0x94));
     }
 
     #[test]

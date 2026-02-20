@@ -1072,8 +1072,9 @@ impl Vm {
         if ptr == 0 {
             return false;
         }
-        self.capi_object_registry
-            .register_ptr(ptr, CapiPtrProvenance::OwnedCompat, None);
+        if !self.capi_object_registry.ensure_owned_compat_entry(ptr) {
+            return false;
+        }
         let _ = self.capi_object_registry.pin_owned_once(ptr);
         let inserted = self.extension_pinned_cpython_allocation_set.insert(ptr);
         if inserted {
@@ -1085,7 +1086,12 @@ impl Vm {
 
     pub(super) fn capi_owned_ptr_is_pinned(&self, ptr: usize) -> bool {
         self.extension_pinned_cpython_allocation_set.contains(&ptr)
-            || self.capi_object_registry.is_pinned(ptr)
+            || self.capi_object_registry.is_owned_pinned(ptr)
+    }
+
+    pub(super) fn capi_ptr_is_owned_compat(&self, ptr: usize) -> bool {
+        self.extension_pinned_cpython_allocation_set.contains(&ptr)
+            || self.capi_object_registry.is_owned_compat(ptr)
     }
 
     pub(super) fn capi_unpin_owned_ptr(&mut self, ptr: usize) -> bool {

@@ -244,7 +244,7 @@ impl Vm {
         if !ModuleCapiContext::is_probable_external_cpython_object_ptr(raw_ptr) {
             return Some(Err(RuntimeError::type_error("object is not iterable")));
         }
-        if self.capi_owned_ptr_is_pinned(raw_ptr as usize) {
+        if self.capi_ptr_is_owned_compat(raw_ptr as usize) {
             return Some(Err(RuntimeError::type_error("object is not iterable")));
         }
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
