@@ -13516,6 +13516,40 @@ ok = (
 }
 
 #[test]
+fn numpy_proxy_ndarray_len_iter_setitem_dunders_are_slot_backed() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let Some(site_packages) = numpy_site_packages_path() else {
+        return;
+    };
+    run_with_large_stack("vm-numpy-proxy-ndarray-dunders", move || {
+        let source = r#"import numpy as np
+
+a = np.arange(5)
+iter_obj = a.__iter__()
+ret = a.__setitem__(2, 42)
+ok = (
+    hasattr(a, "__len__")
+    and hasattr(a, "__iter__")
+    and hasattr(a, "__setitem__")
+    and a.__len__() == 5
+    and int(next(iter_obj)) == 0
+    and ret is None
+    and int(a[2]) == 42
+)
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.add_module_path(site_packages);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn io_text_encoding_handles_none_and_strings() {
     let Some(lib) = cpython_lib_path() else {
         return;
