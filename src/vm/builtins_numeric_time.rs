@@ -86,54 +86,74 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if args.len() > 3 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "randrange() expected at most 3 arguments",
             ));
         }
-        let mut start_kw = kwargs.remove("start");
-        let mut stop_kw = kwargs.remove("stop");
-        let mut step_kw = kwargs.remove("step");
-        if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "randrange() got an unexpected keyword argument",
-            ));
+        let mut start = match args.len() {
+            0 => None,
+            _ => Some(args[0].clone()),
+        };
+        let mut stop = match args.len() {
+            0 | 1 => None,
+            _ => Some(args[1].clone()),
+        };
+        let mut step = if args.len() >= 3 {
+            Some(args[2].clone())
+        } else {
+            None
+        };
+
+        for (name, value) in kwargs.drain() {
+            match name.as_str() {
+                "start" => {
+                    if start.is_some() {
+                        return Err(RuntimeError::type_error(
+                            "randrange() got multiple values for argument 'start'",
+                        ));
+                    }
+                    start = Some(value);
+                }
+                "stop" => {
+                    if stop.is_some() {
+                        return Err(RuntimeError::type_error(
+                            "randrange() got multiple values for argument 'stop'",
+                        ));
+                    }
+                    stop = Some(value);
+                }
+                "step" => {
+                    if step.is_some() {
+                        return Err(RuntimeError::type_error(
+                            "randrange() got multiple values for argument 'step'",
+                        ));
+                    }
+                    step = Some(value);
+                }
+                _ => {
+                    return Err(RuntimeError::type_error(format!(
+                        "randrange() got an unexpected keyword argument '{}'",
+                        name
+                    )));
+                }
+            }
         }
+        let mut start_value = start
+            .ok_or_else(|| RuntimeError::type_error("randrange() missing required argument 'start'"))?;
+        let stop_value = if let Some(stop_value) = stop {
+            stop_value
+        } else {
+            let only = start_value;
+            start_value = Value::Int(0);
+            only
+        };
+        let step_value = step.unwrap_or(Value::Int(1));
 
-        match args.len() {
-            0 => {}
-            1 => {
-                if stop_kw.is_some() {
-                    return Err(RuntimeError::new("randrange() got multiple values"));
-                }
-                stop_kw = Some(args.remove(0));
-            }
-            2 => {
-                if start_kw.is_some() || stop_kw.is_some() {
-                    return Err(RuntimeError::new("randrange() got multiple values"));
-                }
-                start_kw = Some(args.remove(0));
-                stop_kw = Some(args.remove(0));
-            }
-            3 => {
-                if start_kw.is_some() || stop_kw.is_some() || step_kw.is_some() {
-                    return Err(RuntimeError::new("randrange() got multiple values"));
-                }
-                start_kw = Some(args.remove(0));
-                stop_kw = Some(args.remove(0));
-                step_kw = Some(args.remove(0));
-            }
-            _ => unreachable!(),
-        }
-
-        let stop = stop_kw.ok_or_else(|| RuntimeError::new("randrange() missing stop"))?;
-        let start = start_kw.unwrap_or(Value::Int(0));
-        let step = step_kw.unwrap_or(Value::Int(1));
-
-        let start = value_to_int(start)?;
-        let stop = value_to_int(stop)?;
-        let step = value_to_int(step)?;
+        let start = value_to_int(start_value)?;
+        let stop = value_to_int(stop_value)?;
+        let step = value_to_int(step_value)?;
         if step == 0 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::value_error(
                 "randrange() step argument must not be zero",
             ));
         }

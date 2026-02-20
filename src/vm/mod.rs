@@ -3929,7 +3929,7 @@ fn value_to_bigint(value: Value) -> Result<BigInt, RuntimeError> {
         Value::Int(value) => Ok(BigInt::from_i64(value)),
         Value::Bool(value) => Ok(BigInt::from_i64(if value { 1 } else { 0 })),
         Value::BigInt(value) => Ok(*value),
-        _ => Err(RuntimeError::new("range() expects integers")),
+        _ => Err(RuntimeError::type_error("range() expects integers")),
     }
 }
 
@@ -4063,7 +4063,7 @@ fn bigint_to_fixed_bytes(
 fn parse_decimal_bigint_literal(text: &str) -> Result<BigInt, RuntimeError> {
     let cleaned = text.trim_end();
     if cleaned.is_empty() {
-        return Err(RuntimeError::new("invalid literal for int() with base 10"));
+        return Err(RuntimeError::value_error("invalid literal for int() with base 10"));
     }
     let (negative, digits) = if let Some(rest) = cleaned.strip_prefix('+') {
         (false, rest)
@@ -4073,9 +4073,9 @@ fn parse_decimal_bigint_literal(text: &str) -> Result<BigInt, RuntimeError> {
         (false, cleaned)
     };
     let normalized = normalize_decimal_int_digits(digits)
-        .ok_or_else(|| RuntimeError::new("invalid literal for int() with base 10"))?;
+        .ok_or_else(|| RuntimeError::value_error("invalid literal for int() with base 10"))?;
     let mut value = BigInt::from_str_radix(&normalized, 10)
-        .ok_or_else(|| RuntimeError::new("invalid literal for int() with base 10"))?;
+        .ok_or_else(|| RuntimeError::value_error("invalid literal for int() with base 10"))?;
     if negative {
         value = value.negated();
     }
@@ -4148,17 +4148,17 @@ fn seed_from_value(value: &Value) -> Result<u64, RuntimeError> {
 
 fn random_range_count(start: i64, stop: i64, step: i64) -> Result<i64, RuntimeError> {
     if step == 0 {
-        return Err(RuntimeError::new("empty range for randrange()"));
+        return Err(RuntimeError::value_error("empty range for randrange()"));
     }
     if step > 0 {
         if start >= stop {
-            return Err(RuntimeError::new("empty range for randrange()"));
+            return Err(RuntimeError::value_error("empty range for randrange()"));
         }
         let count = ((stop as i128 - start as i128 - 1) / step as i128) + 1;
         return i64::try_from(count).map_err(|_| RuntimeError::overflow_error("integer overflow"));
     }
     if start <= stop {
-        return Err(RuntimeError::new("empty range for randrange()"));
+        return Err(RuntimeError::value_error("empty range for randrange()"));
     }
     let step_mag = -(step as i128);
     let count = ((start as i128 - stop as i128 - 1) / step_mag) + 1;
@@ -8143,21 +8143,33 @@ fn bind_arguments(
                     func.code.kwarg
                 );
             }
-            return Err(RuntimeError::new("unexpected keyword argument"));
+            return Err(RuntimeError::type_error(format!(
+                "{}() got an unexpected keyword argument '{}'",
+                func.code.name, name
+            )));
         }
         if let Some(index) = func.code.params.iter().position(|param| param == &name) {
             if bound[posonly_len + index].is_some() {
-                return Err(RuntimeError::new("multiple values for argument"));
+                return Err(RuntimeError::type_error(format!(
+                    "{}() got multiple values for argument '{}'",
+                    func.code.name, name
+                )));
             }
             bound[posonly_len + index] = Some(value);
         } else if func.code.kwonly_params.iter().any(|param| param == &name) {
             if kwonly_values.contains_key(&name) {
-                return Err(RuntimeError::new("multiple values for argument"));
+                return Err(RuntimeError::type_error(format!(
+                    "{}() got multiple values for argument '{}'",
+                    func.code.name, name
+                )));
             }
             kwonly_values.insert(name, value);
         } else if func.code.kwarg.is_some() {
             if extra_kwargs.contains_key(&name) {
-                return Err(RuntimeError::new("duplicate keyword argument"));
+                return Err(RuntimeError::type_error(format!(
+                    "{}() got multiple values for argument '{}'",
+                    func.code.name, name
+                )));
             }
             extra_kwargs.insert(name, value);
         } else {
@@ -8176,7 +8188,10 @@ fn bind_arguments(
                     func.code.kwarg
                 );
             }
-            return Err(RuntimeError::new("unexpected keyword argument"));
+            return Err(RuntimeError::type_error(format!(
+                "{}() got an unexpected keyword argument '{}'",
+                func.code.name, name
+            )));
         }
     }
 
@@ -8194,7 +8209,7 @@ fn bind_arguments(
                         func.code.params
                     );
                 }
-                return Err(RuntimeError::new("argument count mismatch"));
+                return Err(RuntimeError::type_error("argument count mismatch"));
             }
             let default_index = idx - required;
             *slot = Some(func.defaults[default_index].clone());
@@ -8218,7 +8233,7 @@ fn bind_arguments(
         } else if let Some(default) = func.kwonly_defaults.get(name) {
             kwonly.push(default.clone());
         } else {
-            return Err(RuntimeError::new("missing keyword-only argument"));
+            return Err(RuntimeError::type_error("missing keyword-only argument"));
         }
     }
     let vararg = func
@@ -8353,9 +8368,15 @@ fn call_builtin_with_kwargs(
             let mut stop = kwargs.remove("stop");
             let mut step = kwargs.remove("step");
             if !kwargs.is_empty() {
-                return Err(RuntimeError::new(
-                    "range() got an unexpected keyword argument",
-                ));
+                let keyword = kwargs
+                    .keys()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                return Err(RuntimeError::type_error(format!(
+                    "range() got an unexpected keyword argument '{}'",
+                    keyword
+                )));
             }
 
             match args.len() {
@@ -8381,10 +8402,10 @@ fn call_builtin_with_kwargs(
                     stop = Some(args.remove(0));
                     step = Some(args.remove(0));
                 }
-                _ => return Err(RuntimeError::new("range() expects 1-3 arguments")),
+                _ => return Err(RuntimeError::type_error("range() expects 1-3 arguments")),
             }
 
-            let stop = stop.ok_or_else(|| RuntimeError::new("range() missing stop"))?;
+            let stop = stop.ok_or_else(|| RuntimeError::type_error("range expected at least 1 argument, got 0"))?;
             let start = start.unwrap_or(Value::Int(0));
             let step = step.unwrap_or(Value::Int(1));
 
@@ -8392,7 +8413,7 @@ fn call_builtin_with_kwargs(
             let stop_big = value_to_bigint(stop)?;
             let step_big = value_to_bigint(step)?;
             if step_big.is_zero() {
-                return Err(RuntimeError::new("range() step cannot be zero"));
+                return Err(RuntimeError::value_error("range() step cannot be zero"));
             }
 
             Ok(Value::Iterator(heap.alloc(Object::Iterator(

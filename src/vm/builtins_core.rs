@@ -1327,7 +1327,7 @@ impl Vm {
             ));
         }
         if args.len() != 1 {
-            return Err(RuntimeError::new("len() expects one argument"));
+            return Err(RuntimeError::type_error("len() expects one argument"));
         }
         if let Value::Instance(instance) = &args[0] {
             if let Some(values) = self.namedtuple_instance_values(instance) {
@@ -1378,7 +1378,7 @@ impl Vm {
         let receiver = args
             .into_iter()
             .next()
-            .ok_or_else(|| RuntimeError::new("len() expects one argument"))?;
+            .ok_or_else(|| RuntimeError::type_error("len() expects one argument"))?;
         if let Some(proxy_result) = self.cpython_proxy_len(&receiver) {
             let raw = proxy_result?;
             return self.normalize_len_result(raw);
@@ -2397,7 +2397,7 @@ impl Vm {
                 {
                     return value_to_bigint(index_value);
                 }
-                Err(RuntimeError::new("range() expects integers"))
+                Err(RuntimeError::type_error("range() expects integers"))
             }
         }
     }
@@ -2411,9 +2411,15 @@ impl Vm {
         let mut stop = kwargs.remove("stop");
         let mut step = kwargs.remove("step");
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "range() got an unexpected keyword argument",
-            ));
+            let keyword = kwargs
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(RuntimeError::type_error(format!(
+                "range() got an unexpected keyword argument '{}'",
+                keyword
+            )));
         }
         match args.len() {
             0 => {}
@@ -2438,10 +2444,10 @@ impl Vm {
                 stop = Some(args.remove(0));
                 step = Some(args.remove(0));
             }
-            _ => return Err(RuntimeError::new("range() expects 1-3 arguments")),
+            _ => return Err(RuntimeError::type_error("range() expects 1-3 arguments")),
         }
 
-        let stop = stop.ok_or_else(|| RuntimeError::new("range() missing stop"))?;
+        let stop = stop.ok_or_else(|| RuntimeError::type_error("range expected at least 1 argument, got 0"))?;
         let start = start.unwrap_or(Value::Int(0));
         let step = step.unwrap_or(Value::Int(1));
 
@@ -2449,7 +2455,7 @@ impl Vm {
         let stop_big = self.coerce_index_bigint_for_range(stop)?;
         let step_big = self.coerce_index_bigint_for_range(step)?;
         if step_big.is_zero() {
-            return Err(RuntimeError::new("range() step cannot be zero"));
+            return Err(RuntimeError::value_error("range() step cannot be zero"));
         }
 
         Ok(Value::Iterator(self.heap.alloc(Object::Iterator(

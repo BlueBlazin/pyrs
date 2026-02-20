@@ -942,7 +942,7 @@ impl Vm {
 
     pub(super) fn random_randbelow(&mut self, upper: i64) -> Result<i64, RuntimeError> {
         if upper <= 0 {
-            return Err(RuntimeError::new("empty range for randrange()"));
+            return Err(RuntimeError::value_error("empty range for randrange()"));
         }
         let upper = upper as u64;
         let zone = u64::MAX - (u64::MAX % upper);

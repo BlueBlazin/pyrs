@@ -3353,7 +3353,7 @@ impl BuiltinFunction {
             )),
             BuiltinFunction::Len => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::new("len() expects one argument"));
+                    return Err(RuntimeError::type_error("len() expects one argument"));
                 }
                 match &args[0] {
                     Value::Str(value) => Ok(Value::Int(value.chars().count() as i64)),
@@ -3439,7 +3439,7 @@ impl BuiltinFunction {
             }
             BuiltinFunction::Range => {
                 if args.is_empty() || args.len() > 3 {
-                    return Err(RuntimeError::new("range() expects 1-3 arguments"));
+                    return Err(RuntimeError::type_error("range() expects 1-3 arguments"));
                 }
 
                 let mut nums = Vec::new();
@@ -3447,7 +3447,7 @@ impl BuiltinFunction {
                     match arg {
                         Value::Int(value) => nums.push(*value),
                         Value::Bool(value) => nums.push(if *value { 1 } else { 0 }),
-                        _ => return Err(RuntimeError::new("range() expects integers")),
+                        _ => return Err(RuntimeError::type_error("range() expects integers")),
                     }
                 }
 
@@ -3458,7 +3458,7 @@ impl BuiltinFunction {
                 };
 
                 if step == 0 {
-                    return Err(RuntimeError::new("range() step cannot be zero"));
+                    return Err(RuntimeError::value_error("range() step cannot be zero"));
                 }
 
                 let mut values = Vec::new();
@@ -3836,7 +3836,7 @@ impl BuiltinFunction {
                                 total = add_numeric_values(total, value.clone())?;
                             }
                         }
-                        _ => return Err(RuntimeError::new("sum() expects list or tuple")),
+                        _ => return Err(RuntimeError::type_error("sum() expects list or tuple")),
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => {
@@ -3844,9 +3844,9 @@ impl BuiltinFunction {
                                 total = add_numeric_values(total, value.clone())?;
                             }
                         }
-                        _ => return Err(RuntimeError::new("sum() expects list or tuple")),
+                        _ => return Err(RuntimeError::type_error("sum() expects list or tuple")),
                     },
-                    _ => return Err(RuntimeError::new("sum() expects list or tuple")),
+                    _ => return Err(RuntimeError::type_error("sum() expects list or tuple")),
                 }
 
                 Ok(total)
@@ -4812,7 +4812,7 @@ impl BuiltinFunction {
 
                             Ok(heap.alloc_list(result))
                         }
-                        _ => Err(RuntimeError::new("sorted() expects list or tuple")),
+                        _ => Err(RuntimeError::type_error("sorted() expects list or tuple")),
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => {
@@ -4838,9 +4838,9 @@ impl BuiltinFunction {
 
                             Ok(heap.alloc_list(result))
                         }
-                        _ => Err(RuntimeError::new("sorted() expects list or tuple")),
+                        _ => Err(RuntimeError::type_error("sorted() expects list or tuple")),
                     },
-                    _ => Err(RuntimeError::new("sorted() expects list or tuple")),
+                    _ => Err(RuntimeError::type_error("sorted() expects list or tuple")),
                 }
             }
             BuiltinFunction::CollectionsNamedTuple => {
@@ -6024,13 +6024,13 @@ fn builtin_min_max(args: Vec<Value>, preferred: Ordering) -> Result<Value, Runti
         match &args[0] {
             Value::List(obj) => match &*obj.kind() {
                 Object::List(values) => values.clone(),
-                _ => return Err(RuntimeError::new("min/max expects list or tuple")),
+                _ => return Err(RuntimeError::type_error("min/max expects list or tuple")),
             },
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(values) => values.clone(),
-                _ => return Err(RuntimeError::new("min/max expects list or tuple")),
+                _ => return Err(RuntimeError::type_error("min/max expects list or tuple")),
             },
-            _ => return Err(RuntimeError::new("min/max expects list or tuple")),
+            _ => return Err(RuntimeError::type_error("min/max expects list or tuple")),
         }
     } else {
         args
@@ -6147,23 +6147,23 @@ fn parse_complex_literal(text: &str) -> Result<(f64, f64), RuntimeError> {
             let real = real_part
                 .trim()
                 .parse::<f64>()
-                .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+                .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
             let imag = imag_part
                 .trim()
                 .parse::<f64>()
-                .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+                .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
             Ok((real, imag))
         } else {
             let imag = core
                 .trim()
                 .parse::<f64>()
-                .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+                .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
             Ok((0.0, imag))
         }
     } else {
         let real = trimmed
             .parse::<f64>()
-            .map_err(|_| RuntimeError::new("complex() invalid literal"))?;
+            .map_err(|_| RuntimeError::value_error("complex() invalid literal"))?;
         Ok((real, 0.0))
     }
 }

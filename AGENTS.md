@@ -105,6 +105,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - format-spec decode path (`memoryview: format <fmt> not supported`),
     - `tolist()` unsupported-format path (`memoryview: unsupported format`).
   - regression landed: `memoryview_tolist_unsupported_format_raises_not_implemented`.
+  - latest typed-contract closure wave (2026-02-20, later):
+    - `range(...)` zero-arg/keyword contracts now raise typed `TypeError` with CPython-style messages where applicable; step-zero remains typed `ValueError`.
+    - VM Python-function argument binding now raises typed `TypeError` for unexpected keywords and duplicate argument binding (`got multiple values for argument '<name>'`) instead of generic runtime errors.
+    - fallback `_random` `randrange(start, stop=None, step=1)` binding now follows CPython parameter semantics (duplicate/missing-arg/step-zero typed behavior).
+    - regressions landed: `range_error_contracts_are_typed`, `randrange_duplicate_and_empty_range_contracts_are_typed`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

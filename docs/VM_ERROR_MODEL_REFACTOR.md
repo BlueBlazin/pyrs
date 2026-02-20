@@ -95,6 +95,21 @@ Status: in progress (phase 1 + initial phase 2 landed).
    - `memoryview_format_for_view(...)` now raises typed `NotImplementedError` for unsupported format specs with CPython-style messaging (`memoryview: format <fmt> not supported`).
    - `memoryview.tolist()` unsupported-format paths now raise typed `NotImplementedError` (`memoryview: unsupported format`) instead of message-only runtime errors.
 35. Added regression `memoryview_tolist_unsupported_format_raises_not_implemented` to lock this behavior.
+36. `range(...)` contract typing was completed across runtime call paths:
+   - zero-arg arity now raises typed `TypeError` (`range expected at least 1 argument, got 0`),
+   - invalid keyword names now raise typed `TypeError` with the offending keyword,
+   - step-zero remains typed `ValueError`.
+37. VM Python-function argument binding now emits typed `TypeError` (instead of untyped runtime errors) for:
+   - unexpected keyword arguments,
+   - duplicate/multiple values for arguments,
+   - generic argument-count/required-kwonly mismatches.
+38. Fallback `_random` module `randrange(...)` binding was corrected to CPython parameter semantics (`start, stop=None, step=1`):
+   - duplicate keyword+positional combinations now raise typed `TypeError` naming the argument,
+   - missing required `start` now raises typed `TypeError`,
+   - `step == 0` now raises typed `ValueError`.
+39. Added typed-conformance regressions in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `range_error_contracts_are_typed`
+   - `randrange_duplicate_and_empty_range_contracts_are_typed`
 
 ## Why This Exists
 

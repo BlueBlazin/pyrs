@@ -8143,6 +8143,54 @@ except Exception as exc:
 }
 
 #[test]
+fn range_error_contracts_are_typed() {
+    let source = r#"arity_ok = False
+type_ok = False
+zero_ok = False
+try:
+    range()
+except Exception as exc:
+    arity_ok = (type(exc).__name__ == "TypeError")
+try:
+    range("a")
+except Exception as exc:
+    type_ok = (type(exc).__name__ == "TypeError")
+try:
+    range(1, 3, 0)
+except Exception as exc:
+    zero_ok = (type(exc).__name__ == "ValueError")
+ok = arity_ok and type_ok and zero_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn randrange_duplicate_and_empty_range_contracts_are_typed() {
+    let source = r#"import random
+dup_ok = False
+empty_ok = False
+try:
+    random.randrange(5, start=1)
+except Exception as exc:
+    dup_ok = (type(exc).__name__ == "TypeError")
+try:
+    random.randrange(1, 1)
+except Exception as exc:
+    empty_ok = (type(exc).__name__ == "ValueError")
+ok = dup_ok and empty_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

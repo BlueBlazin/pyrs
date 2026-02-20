@@ -40,8 +40,8 @@ impl Vm {
     fn coerce_sre_int_arg(&mut self, value: Value) -> Result<i64, RuntimeError> {
         let coerced = self
             .builtin_int(vec![value], HashMap::new())
-            .map_err(|_| RuntimeError::new("an integer is required"))?;
-        value_to_int(coerced).map_err(|_| RuntimeError::new("an integer is required"))
+            .map_err(|_| RuntimeError::type_error("an integer is required"))?;
+        value_to_int(coerced).map_err(|_| RuntimeError::type_error("an integer is required"))
     }
 
     fn re_match_groupindex_from_pattern_arg(&self, pattern_arg: &Value) -> Value {
@@ -638,7 +638,7 @@ impl Vm {
                 | Value::ByteArray(_)
                 | Value::MemoryView(_)
                 | Value::None => {}
-                _ => return Err(RuntimeError::new("an integer is required")),
+                _ => return Err(RuntimeError::type_error("an integer is required")),
             }
         }
         Ok(args[1].clone())
@@ -1361,7 +1361,7 @@ fn parse_sre_char_arg(
         )));
     }
     let value =
-        value_to_int(args[0].clone()).map_err(|_| RuntimeError::new("an integer is required"))?;
+        value_to_int(args[0].clone()).map_err(|_| RuntimeError::type_error("an integer is required"))?;
     if !(0..=0x10ffff).contains(&value) {
         return Err(RuntimeError::new("character code out of range"));
     }
