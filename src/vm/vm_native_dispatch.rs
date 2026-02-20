@@ -3661,7 +3661,7 @@ impl Vm {
                         _ => match self.getitem_value(table.clone(), Value::Int(code)) {
                             Ok(value) => Some(value),
                             Err(err)
-                                if runtime_error_matches_exception(&err.message, "KeyError") =>
+                                if runtime_error_matches_exception(&err, "KeyError") =>
                             {
                                 None
                             }
@@ -5653,9 +5653,9 @@ impl Vm {
                             frame.blocks = caller_blocks.clone();
                             frame.active_exception = caller_active_exception.clone();
                         }
-                        if runtime_error_matches_exception(&err.message, "StopIteration")
+                        if runtime_error_matches_exception(&err, "StopIteration")
                             || (is_cpython_proxy_iterator
-                                && runtime_error_matches_exception(&err.message, "IndexError"))
+                                && runtime_error_matches_exception(&err, "IndexError"))
                         {
                             unsafe { PyErr_Clear() };
                             Ok(GeneratorResumeOutcome::Complete(Value::None))
@@ -6099,7 +6099,7 @@ impl Vm {
                         }
                         let _ = target;
                         let err = self.runtime_error_from_active_exception("__getitem__() failed");
-                        if runtime_error_matches_exception(&err.message, "IndexError")
+                        if runtime_error_matches_exception(&err, "IndexError")
                             || err.message.contains("index out of range")
                             || err.message.contains("out of bounds for axis")
                         {
@@ -6109,7 +6109,7 @@ impl Vm {
                         Err(err)
                     }
                     Err(err) => {
-                        if runtime_error_matches_exception(&err.message, "IndexError")
+                        if runtime_error_matches_exception(&err, "IndexError")
                             || err.message.contains("index out of range")
                             || err.message.contains("out of bounds for axis")
                         {
@@ -6138,10 +6138,8 @@ impl Vm {
                             return Ok(Some(value));
                         }
                         Err(err) => {
-                            let treat_as_end = runtime_error_matches_exception(
-                                &err.message,
-                                "IndexError",
-                            ) || err.message.contains("index out of range")
+                            let treat_as_end = runtime_error_matches_exception(&err, "IndexError")
+                                || err.message.contains("index out of range")
                                 || err.message.contains("out of bounds for axis");
                             if treat_as_end {
                                 unsafe { PyErr_Clear() };
@@ -6164,10 +6162,8 @@ impl Vm {
                         Ok(Some(value))
                     }
                     Err(err) => {
-                        let treat_as_end = runtime_error_matches_exception(
-                            &err.message,
-                            "IndexError",
-                        ) || err.message.contains("index out of range")
+                        let treat_as_end = runtime_error_matches_exception(&err, "IndexError")
+                            || err.message.contains("index out of range")
                             || err.message.contains("out of bounds for axis");
                         if treat_as_end {
                             unsafe { PyErr_Clear() };

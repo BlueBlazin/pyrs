@@ -21,9 +21,9 @@ use super::{
     is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
     memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
     mod_values, module_globals_version, pos_value, pow_values, rshift_values,
-    runtime_error_line_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, strip_sqlite_exception_metadata, value_from_bigint, value_to_int,
-    value_to_optional_index,
+    runtime_error_line_matches_exception, runtime_error_matches_exception,
+    slice_bounds_for_step_one, slice_indices, slot_names_from_value,
+    strip_sqlite_exception_metadata, value_from_bigint, value_to_int, value_to_optional_index,
 };
 use crate::runtime::SliceValue;
 
@@ -3740,7 +3740,7 @@ impl Vm {
                         ) {
                             Ok(callable) => Some(callable),
                             Err(err)
-                                if classify_runtime_error(&err.message) == "AttributeError" =>
+                                if runtime_error_matches_exception(&err, "AttributeError") =>
                             {
                                 None
                             }
@@ -6157,6 +6157,15 @@ impl Vm {
             }
         }
         if let Value::Exception(exc_data) = &mut exc {
+            let implicit_context = self
+                .frames
+                .last()
+                .and_then(|frame| frame.active_exception.clone())
+                .map(|current| self.normalize_exception_value(current))
+                .transpose()?;
+            if let Some(Value::Exception(context_data)) = implicit_context {
+                exc_data.context = Some(context_data);
+            }
             if let Some(cause_value) = explicit_cause {
                 if matches!(cause_value, Value::None) {
                     exc_data.suppress_context = true;
@@ -6168,21 +6177,13 @@ impl Vm {
                         exc_data.suppress_context = true;
                     }
                 }
-            } else if let Some(current) = self
-                .frames
-                .last()
-                .and_then(|frame| frame.active_exception.clone())
-            {
-                let context = self.normalize_exception_value(current)?;
-                if let Value::Exception(context_data) = context {
-                    exc_data.context = Some(context_data);
-                }
             }
         }
         self.unwind_exception(exc)
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
+        let RuntimeError { message, exception } = err;
         if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
             let active = self
                 .frames
@@ -6205,13 +6206,22 @@ impl Vm {
                 .last()
                 .map(|frame| frame.blocks.len())
                 .unwrap_or(0);
-            eprintln!("[handle-runtime] msg={}", err.message);
+            eprintln!("[handle-runtime] msg={}", message);
             eprintln!("[handle-runtime] active={}", active);
             eprintln!(
                 "[handle-runtime] last_ip={} handler={handler:?} blocks={block_len}",
                 last_ip
             );
         }
+        if let Some(exception) = exception {
+            let exception = *exception;
+            self.ensure_exception_default_attrs(&exception);
+            return self.raise_exception(Value::Exception(Box::new(exception)));
+        }
+        let err = RuntimeError {
+            message,
+            exception: None,
+        };
         let classified = classify_runtime_error(&err.message);
         let exception_type = if classified == "RuntimeError" {
             extract_runtime_error_exception_name(&err.message)
@@ -7278,7 +7288,7 @@ impl Vm {
                     }
                 }
                 Err(err) => {
-                    if classify_runtime_error(&err.message) == "AttributeError" {
+                    if runtime_error_matches_exception(&err, "AttributeError") {
                         None
                     } else {
                         return Err(err);
@@ -10094,7 +10104,7 @@ impl Vm {
                 }
             }
             Err(err) => {
-                if classify_runtime_error(&err.message) == "AttributeError" {
+                if runtime_error_matches_exception(&err, "AttributeError") {
                     Ok(None)
                 } else {
                     Err(err)

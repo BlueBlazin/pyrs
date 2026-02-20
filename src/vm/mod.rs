@@ -1726,7 +1726,67 @@ impl Vm {
         }
     }
 
-    fn runtime_error_to_exception_value(&mut self, err: RuntimeError) -> Value {
+    fn ensure_exception_default_attrs(&mut self, exception: &ExceptionObject) {
+        let message_value = exception
+            .message
+            .as_ref()
+            .map(|text| Value::Str(text.clone()))
+            .unwrap_or(Value::None);
+        if is_import_error_family(exception.name.as_str()) {
+            let mut attrs = exception.attrs.borrow_mut();
+            if !attrs.contains_key("msg") {
+                attrs.insert("msg".to_string(), message_value.clone());
+            }
+            if !attrs.contains_key("name") {
+                attrs.insert("name".to_string(), Value::None);
+            }
+            if !attrs.contains_key("path") {
+                attrs.insert("path".to_string(), Value::None);
+            }
+        }
+        if exception.attrs.borrow().contains_key("args") {
+            return;
+        }
+        let (os_errno, os_strerror) = {
+            let attrs = exception.attrs.borrow();
+            let errno = attrs.get("errno").and_then(|value| match value {
+                Value::Int(errno) => Some(*errno),
+                _ => None,
+            });
+            let strerror = attrs.get("strerror").and_then(|value| match value {
+                Value::Str(text) => Some(text.clone()),
+                _ => None,
+            });
+            (errno, strerror)
+        };
+        let args = if is_os_error_family(exception.name.as_str()) {
+            if let Some(errno) = os_errno {
+                let mut values = vec![Value::Int(errno)];
+                if let Some(strerror) = os_strerror {
+                    values.push(Value::Str(strerror));
+                }
+                self.heap.alloc_tuple(values)
+            } else if let Some(strerror) = os_strerror {
+                self.heap.alloc_tuple(vec![Value::Str(strerror)])
+            } else if let Some(message) = &exception.message {
+                self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+            } else {
+                self.heap.alloc_tuple(Vec::new())
+            }
+        } else if let Some(message) = &exception.message {
+            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+        } else {
+            self.heap.alloc_tuple(Vec::new())
+        };
+        exception.attrs.borrow_mut().insert("args".to_string(), args);
+    }
+
+    fn runtime_error_to_exception_object(&mut self, err: RuntimeError) -> ExceptionObject {
+        if let Some(exception) = err.exception {
+            let exception = *exception;
+            self.ensure_exception_default_attrs(&exception);
+            return exception;
+        }
         let classified = classify_runtime_error(&err.message);
         let exception_type = if classified == "RuntimeError" {
             extract_runtime_error_exception_name(&err.message)
@@ -1770,7 +1830,12 @@ impl Vm {
                 attrs.insert("sqlite_errorname".to_string(), Value::Str(name));
             }
         }
-        Value::Exception(Box::new(exception))
+        self.ensure_exception_default_attrs(&exception);
+        exception
+    }
+
+    fn runtime_error_to_exception_value(&mut self, err: RuntimeError) -> Value {
+        Value::Exception(Box::new(self.runtime_error_to_exception_object(err)))
     }
 
     fn emit_unraisable_exception(
@@ -9569,17 +9634,23 @@ fn is_runtime_type_name_marker(name: &str) -> bool {
     )
 }
 
-fn runtime_error_matches_exception(message: &str, expected: &str) -> bool {
-    let classified = classify_runtime_error(message);
+fn runtime_error_matches_exception(err: &RuntimeError, expected: &str) -> bool {
+    if let Some(exception_name) = err.exception_name()
+        && (exception_name == expected || exception_type_is_subclass(exception_name, expected))
+    {
+        return true;
+    }
+    let classified = classify_runtime_error(&err.message);
     if classified == expected || exception_type_is_subclass(classified, expected) {
         return true;
     }
-    if let Some(exception_name) = extract_runtime_error_exception_name(message)
+    if let Some(exception_name) = extract_runtime_error_exception_name(&err.message)
         && (exception_name == expected || exception_type_is_subclass(&exception_name, expected))
     {
         return true;
     }
-    let Some(last_non_empty_line) = message
+    let Some(last_non_empty_line) = err
+        .message
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())

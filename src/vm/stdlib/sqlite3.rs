@@ -1,7 +1,8 @@
 use super::super::{
     BigInt, BuiltinFunction, HashMap, InternalCallOutcome, ObjRef, Object, RuntimeError, Value, Vm,
-    bytes_like_from_value, classify_runtime_error, dict_get_value, dict_set_value_checked,
-    format_repr, is_truthy, slice_indices, value_to_f64, value_to_int, vm_current_thread_ident,
+    bytes_like_from_value, dict_get_value, dict_set_value_checked, format_repr, is_truthy,
+    runtime_error_matches_exception, slice_indices, value_to_f64, value_to_int,
+    vm_current_thread_ident,
 };
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
@@ -1354,7 +1355,7 @@ fn sqlite_non_negative_u32(
         Ok(number) => number,
         Err(err)
             if err.message.contains("integer overflow")
-                || classify_runtime_error(&err.message) == "OverflowError" =>
+                || runtime_error_matches_exception(&err, "OverflowError") =>
         {
             return Err(sqlite_error("OverflowError", overflow_message));
         }
@@ -1971,7 +1972,7 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                         Ok(value) => value_to_int(value).map_err(|_| {
                             sqlite_error("ProgrammingError", "parameters are of unsupported type")
                         })?,
-                        Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+                        Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                             return Err(sqlite_error(
                                 "ProgrammingError",
                                 "parameters are of unsupported type",
@@ -2378,7 +2379,7 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                                     ));
                                 }
                             }
-                            Err(err) if classify_runtime_error(&err.message) == "KeyError" => None,
+                            Err(err) if runtime_error_matches_exception(&err, "KeyError") => None,
                             Err(err) => return Err(err),
                         }
                     } else if let Value::Instance(instance) = &mapping {
@@ -2407,7 +2408,7 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
                                         }
                                     }
                                     Err(err)
-                                        if classify_runtime_error(&err.message) == "KeyError" =>
+                                        if runtime_error_matches_exception(&err, "KeyError") =>
                                     {
                                         None
                                     }

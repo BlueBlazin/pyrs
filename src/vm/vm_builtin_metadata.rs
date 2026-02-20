@@ -10,8 +10,8 @@ use super::{
     STR_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, apply_bindings,
     bind_arguments, bytes_like_source_is_readonly, class_attr_lookup, class_attr_lookup_direct,
     class_attr_walk, class_inherits_dynamic_instance_dict, class_name_for_instance,
-    classify_runtime_error, collect_slot_names, dict_get_value, dict_remove_value, dict_set_value,
-    format_repr, memoryview_bounds, value_from_bigint, with_bytes_like_source,
+    collect_slot_names, dict_get_value, dict_remove_value, dict_set_value, format_repr,
+    memoryview_bounds, runtime_error_matches_exception, value_from_bigint, with_bytes_like_source,
 };
 
 thread_local! {
@@ -4442,7 +4442,7 @@ impl Vm {
                     self.clear_active_exception();
                 }
                 Err(err) => {
-                    if classify_runtime_error(&err.message) != "AttributeError" {
+                    if !runtime_error_matches_exception(&err, "AttributeError") {
                         return Err(err);
                     }
                 }

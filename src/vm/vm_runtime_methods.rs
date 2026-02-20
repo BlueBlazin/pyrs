@@ -1,11 +1,11 @@
 use super::{
     BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
     InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
-    RuntimeError, Value, Vm, builtin_exception_parent, classify_runtime_error, dict_get_value,
-    dict_set_value_checked, ensure_hashable, format_repr, memoryview_bounds,
-    memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
-    memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
-    module_globals_version, slice_bounds_for_step_one, slice_indices, value_from_bigint,
+    RuntimeError, Value, Vm, builtin_exception_parent, dict_get_value, dict_set_value_checked,
+    ensure_hashable, format_repr, memoryview_bounds, memoryview_decode_element,
+    memoryview_element_offset, memoryview_format_for_view, memoryview_layout_1d,
+    memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts, module_globals_version,
+    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices, value_from_bigint,
     value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
 use crate::runtime::SliceValue;
@@ -812,7 +812,7 @@ impl Vm {
         let _source_guard = source.clone();
         let iter = match self.to_iterator_value(source) {
             Ok(iter) => iter,
-            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+            Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                 if std::env::var("PYRS_DEBUG_EXPECTED_ITERABLE").is_ok() {
                     let frames = self
                         .frames
@@ -1664,7 +1664,7 @@ impl Vm {
                     HashMap::new(),
                 ) {
                     Ok(callable) => Some(callable),
-                    Err(err) if classify_runtime_error(&err.message) == "AttributeError" => None,
+                    Err(err) if runtime_error_matches_exception(&err, "AttributeError") => None,
                     Err(err) => return Err(err),
                 }
             };

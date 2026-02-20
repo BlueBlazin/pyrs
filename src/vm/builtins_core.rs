@@ -2676,7 +2676,7 @@ impl Vm {
                         }
                     }
                     Err(err) => {
-                        if !runtime_error_matches_exception(&err.message, "AttributeError") {
+                        if !runtime_error_matches_exception(&err, "AttributeError") {
                             return Err(err);
                         }
                     }
@@ -4833,7 +4833,7 @@ impl Vm {
             HashMap::new(),
         ) {
             Ok(callable) => callable,
-            Err(err) if runtime_error_matches_exception(&err.message, "AttributeError") => {
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
                 return Ok(false);
             }
             Err(err) => return Err(err),
@@ -5769,7 +5769,7 @@ impl Vm {
                 Ok(true) => return Ok(Some(Ordering::Less)),
                 Ok(false) => {}
                 Err(err) => {
-                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                    if !runtime_error_matches_exception(&err, "TypeError") {
                         return Err(err);
                     }
                 }
@@ -5780,7 +5780,7 @@ impl Vm {
                 Ok(true) => return Ok(Some(Ordering::Greater)),
                 Ok(false) => {}
                 Err(err) => {
-                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                    if !runtime_error_matches_exception(&err, "TypeError") {
                         return Err(err);
                     }
                 }
@@ -5791,7 +5791,7 @@ impl Vm {
                 Ok(true) => return Ok(Some(Ordering::Less)),
                 Ok(false) => {}
                 Err(err) => {
-                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                    if !runtime_error_matches_exception(&err, "TypeError") {
                         return Err(err);
                     }
                 }
@@ -5802,7 +5802,7 @@ impl Vm {
                 Ok(true) => return Ok(Some(Ordering::Greater)),
                 Ok(false) => {}
                 Err(err) => {
-                    if !runtime_error_matches_exception(&err.message, "TypeError") {
+                    if !runtime_error_matches_exception(&err, "TypeError") {
                         return Err(err);
                     }
                 }
@@ -5944,7 +5944,7 @@ impl Vm {
             match self.builtin_getattr(vec![receiver, method_name], HashMap::new()) {
                 Ok(callable) => callable,
                 Err(err) => {
-                    if runtime_error_matches_exception(&err.message, "AttributeError") {
+                    if runtime_error_matches_exception(&err, "AttributeError") {
                         return Ok(None);
                     }
                     return Err(err);

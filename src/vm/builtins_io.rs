@@ -2,11 +2,8 @@ use super::{
     AsRawFd, BigInt, BuiltinFunction, ClassObject, ExceptionObject, GeneratorResumeOutcome,
     HashMap, InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek,
     SeekFrom, StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
-    bytes_like_from_value, class_attr_walk, classify_runtime_error, decode_text_bytes,
-    encode_text_bytes, extract_os_error_errno, extract_os_error_strerror,
-    extract_prefixed_exception_message, extract_runtime_error_exception_name,
-    extract_runtime_error_final_message, format_value, fs, infer_os_error_errno,
-    is_os_error_family, is_truthy, memoryview_bounds, value_to_f64, value_to_int,
+    bytes_like_from_value, class_attr_walk, decode_text_bytes, encode_text_bytes, format_value,
+    fs, is_truthy, memoryview_bounds, value_to_f64, value_to_int,
 };
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
@@ -2264,62 +2261,7 @@ impl Vm {
         &mut self,
         err: RuntimeError,
     ) -> Result<ExceptionObject, RuntimeError> {
-        let classified = classify_runtime_error(&err.message);
-        let exception_type = if classified == "RuntimeError" {
-            extract_runtime_error_exception_name(&err.message)
-                .unwrap_or_else(|| classified.to_string())
-        } else {
-            classified.to_string()
-        };
-        let mut exception_message = Some(err.message.clone());
-        if let Some(from_traceback) =
-            extract_runtime_error_final_message(&err.message, &exception_type)
-        {
-            exception_message = from_traceback;
-        } else if let Some(from_prefixed) =
-            extract_prefixed_exception_message(&err.message, &exception_type)
-        {
-            exception_message = from_prefixed;
-        }
-        let exception = ExceptionObject::new(exception_type.clone(), exception_message);
-        if is_os_error_family(exception_type.as_str()) {
-            if let Some(errno) =
-                extract_os_error_errno(&err.message).or_else(|| infer_os_error_errno(&err.message))
-            {
-                exception
-                    .attrs
-                    .borrow_mut()
-                    .insert("errno".to_string(), Value::Int(errno));
-            }
-            if let Some(strerror) = extract_os_error_strerror(&err.message) {
-                exception
-                    .attrs
-                    .borrow_mut()
-                    .insert("strerror".to_string(), Value::Str(strerror));
-            }
-        }
-        let args = if is_os_error_family(exception_type.as_str()) {
-            if let Some(errno) = exception.attrs.borrow().get("errno").cloned() {
-                let mut items = vec![errno];
-                if let Some(strerror) = exception.attrs.borrow().get("strerror").cloned() {
-                    items.push(strerror);
-                }
-                self.heap.alloc_tuple(items)
-            } else if let Some(message) = &exception.message {
-                self.heap.alloc_tuple(vec![Value::Str(message.clone())])
-            } else {
-                self.heap.alloc_tuple(Vec::new())
-            }
-        } else if let Some(message) = &exception.message {
-            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
-        } else {
-            self.heap.alloc_tuple(Vec::new())
-        };
-        exception
-            .attrs
-            .borrow_mut()
-            .insert("args".to_string(), args);
-        Ok(exception)
+        Ok(self.runtime_error_to_exception_object(err))
     }
 
     fn io_exception_value_from_runtime_error(

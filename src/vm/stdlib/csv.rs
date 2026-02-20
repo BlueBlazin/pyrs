@@ -1,7 +1,7 @@
 use super::super::{
     BuiltinFunction, GeneratorResumeOutcome, HashMap, InternalCallOutcome, ModuleObject,
-    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, classify_runtime_error,
-    format_value, is_truthy, runtime_error_matches_exception, value_to_int,
+    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, format_value, is_truthy,
+    runtime_error_matches_exception, value_to_int,
 };
 
 impl Vm {
@@ -46,7 +46,7 @@ impl Vm {
         }
         let iterator = match self.to_iterator_value(source) {
             Ok(iterator) => iterator,
-            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+            Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                 return Err(RuntimeError::new("expected iterable"));
             }
             Err(err) => return Err(err),
@@ -447,7 +447,7 @@ impl Vm {
             HashMap::new(),
         ) {
             Ok(value) => value,
-            Err(err) if runtime_error_matches_exception(&err.message, "OSError") => {
+            Err(err) if runtime_error_matches_exception(&err, "OSError") => {
                 return Err(err);
             }
             Err(_) => {
@@ -669,7 +669,7 @@ impl Vm {
         let rows = args.remove(0);
         let iterator = match self.to_iterator_value(rows.clone()) {
             Ok(iterator) => iterator,
-            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+            Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                 return Err(RuntimeError::new("expected iterable"));
             }
             Err(err) => return Err(err),
@@ -711,7 +711,7 @@ impl Vm {
                 }
                 Ok(values)
             }
-            Err(err) if classify_runtime_error(&err.message) == "TypeError" => {
+            Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                 if let Some(getitem) = self.lookup_bound_special_method(&row, "__getitem__")? {
                     let mut values = Vec::new();
                     let mut index: i64 = 0;
@@ -726,11 +726,8 @@ impl Vm {
                                 return Err(RuntimeError::new("__getitem__() failed"));
                             }
                             Err(err)
-                                if runtime_error_matches_exception(&err.message, "IndexError")
-                                    || runtime_error_matches_exception(
-                                        &err.message,
-                                        "StopIteration",
-                                    ) =>
+                                if runtime_error_matches_exception(&err, "IndexError")
+                                    || runtime_error_matches_exception(&err, "StopIteration") =>
                             {
                                 break;
                             }
@@ -759,8 +756,14 @@ impl Vm {
         }
         match active {
             Some(Value::Exception(exception)) => {
-                RuntimeError::new(self.format_exception_object(&exception))
+                let exception = *exception;
+                let message = self.format_exception_object(&exception);
+                RuntimeError {
+                    message,
+                    exception: Some(Box::new(exception)),
+                }
             }
+            Some(Value::ExceptionType(name)) => RuntimeError::with_exception(name, None),
             Some(value) => RuntimeError::new(format_value(&value)),
             None => RuntimeError::new(fallback),
         }
@@ -861,7 +864,7 @@ impl Vm {
             HashMap::new(),
         ) {
             Ok(value) => Ok(Some(value)),
-            Err(err) if classify_runtime_error(&err.message) == "AttributeError" => Ok(None),
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(None),
             Err(err) => Err(err),
         }
     }
@@ -1032,7 +1035,7 @@ impl Vm {
         };
         let load_attr_or_none = |vm: &mut Vm, name: &str| match load_attr(vm, name) {
             Ok(value) => Ok(value),
-            Err(err) if classify_runtime_error(&err.message) == "AttributeError" => Ok(Value::None),
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => Ok(Value::None),
             Err(err) => Err(err),
         };
         let delimiter = csv_char_from_value(load_attr_or_none(self, "delimiter")?, "delimiter")?;

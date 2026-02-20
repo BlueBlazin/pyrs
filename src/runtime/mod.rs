@@ -7702,6 +7702,7 @@ fn is_truthy_value(value: &Value) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeError {
     pub message: String,
+    pub exception: Option<Box<ExceptionObject>>,
 }
 
 impl RuntimeError {
@@ -7713,7 +7714,50 @@ impl RuntimeError {
             eprintln!("[non-function] {}", message);
             eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
         }
-        Self { message }
+        Self {
+            message,
+            exception: None,
+        }
+    }
+
+    pub fn with_exception(name: impl Into<String>, message: Option<String>) -> Self {
+        let exception = ExceptionObject::new(name, message);
+        Self::from_exception(exception)
+    }
+
+    pub fn from_exception(exception: ExceptionObject) -> Self {
+        let message = match &exception.message {
+            Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
+            _ => exception.name.clone(),
+        };
+        Self {
+            message,
+            exception: Some(Box::new(exception)),
+        }
+    }
+
+    pub fn exception_name(&self) -> Option<&str> {
+        self.exception.as_ref().map(|exception| exception.name.as_str())
+    }
+
+    pub fn type_error(message: impl Into<String>) -> Self {
+        Self::with_exception("TypeError", Some(message.into()))
+    }
+
+    pub fn value_error(message: impl Into<String>) -> Self {
+        Self::with_exception("ValueError", Some(message.into()))
+    }
+
+    pub fn attribute_error(message: impl Into<String>) -> Self {
+        Self::with_exception("AttributeError", Some(message.into()))
+    }
+
+    pub fn index_error(message: impl Into<String>) -> Self {
+        Self::with_exception("IndexError", Some(message.into()))
+    }
+
+    pub fn key_error(message: impl Into<String>) -> Self {
+        Self::with_exception("KeyError", Some(message.into()))
     }
 }
 

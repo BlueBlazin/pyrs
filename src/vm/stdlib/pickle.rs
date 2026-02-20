@@ -1840,7 +1840,7 @@ impl Vm {
         );
         let write_method = match write_method {
             Ok(method) => method,
-            Err(err) if runtime_error_matches_exception(&err.message, "AttributeError") => {
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
                 return Err(RuntimeError::new(
                     "TypeError: file must have a 'write' attribute",
                 ));
