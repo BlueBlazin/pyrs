@@ -3,7 +3,7 @@ use super::{
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
     apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
-    format_repr, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
+    format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
     parse_uuid_like_string, split_unix_timestamp, uuid_hash_mix_bytes, uuid_node_from_hostname,
     uuid_random_bytes, uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
 };
@@ -1618,30 +1618,6 @@ impl Vm {
             || args.is_empty()
             || args.len() > 3;
         if invalid_call {
-            if std::env::var_os("PYRS_TRACE_THREAD_LOCK").is_some() {
-                let arg_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
-                let mut kw_entries = kwargs
-                    .iter()
-                    .map(|(name, value)| format!("{name}={}", format_repr(value)))
-                    .collect::<Vec<_>>();
-                kw_entries.sort();
-                eprintln!(
-                    "[thread-lock-acquire] invalid args_len={} kwargs_len={} args=[{}] kwargs=[{}]",
-                    args.len(),
-                    kwargs.len(),
-                    arg_summary,
-                    kw_entries.join(", ")
-                );
-                let stack = self
-                    .frames
-                    .iter()
-                    .rev()
-                    .take(12)
-                    .map(|frame| format!("{}@{}:{}", frame.code.name, frame.code.filename, frame.ip))
-                    .collect::<Vec<_>>()
-                    .join(" <- ");
-                eprintln!("[thread-lock-acquire] stack={stack}");
-            }
             return Err(RuntimeError::new(
                 "_thread.lock.acquire() got unexpected arguments",
             ));

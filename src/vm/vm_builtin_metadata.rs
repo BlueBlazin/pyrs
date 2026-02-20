@@ -4816,16 +4816,6 @@ impl Vm {
                     .as_ref()
                     .is_some_and(|owner| matches!(&*owner.kind(), Object::Class(class_data)
                         if matches!(class_data.attrs.get("__pyrs_user_class__"), Some(Value::Bool(true)))));
-                if std::env::var_os("PYRS_TRACE_LOCK_ATTR_BINDING").is_some()
-                    && attr_name == "acquire"
-                    && matches!(&*class_ref.kind(), Object::Class(class_data) if class_data.name == "_thread.lock")
-                {
-                    eprintln!(
-                        "[lock-attr-binding] owner_is_user_class={} attr={} builtin={builtin:?}",
-                        owner_is_user_class,
-                        attr_name
-                    );
-                }
                 if owner_is_user_class {
                     return Ok(AttrAccessOutcome::Value(Value::Builtin(builtin)));
                 }

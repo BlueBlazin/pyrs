@@ -534,19 +534,6 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     );
                 }
             }
-            if std::env::var_os("PYRS_TRACE_CPY_LONG_CLASS_BT").is_some()
-                && let Value::Class(class_obj) = &value
-            {
-                let class_name = match &*class_obj.kind() {
-                    Object::Class(class_data) => class_data.name.clone(),
-                    _ => "<invalid-class>".to_string(),
-                };
-                eprintln!(
-                    "[cpy-long-class-bt] object={:p} class={class_name}\n{}",
-                    object,
-                    Backtrace::capture()
-                );
-            }
             if let Ok(int_value) = value_to_int(value.clone()) {
                 return context.alloc_cpython_ptr_for_value(Value::Int(int_value));
             }

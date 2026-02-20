@@ -11,7 +11,7 @@ use super::{
     normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
     parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
     re_pattern_from_compiled_module, runtime_error_matches_exception, split_formatter_field_name,
-    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source, format_repr,
+    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
 };
 
 unsafe extern "C" {
@@ -6407,46 +6407,6 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if std::env::var_os("PYRS_TRACE_THREAD_LOCK_CALL_BUILTIN").is_some()
-            && matches!(
-                builtin,
-                BuiltinFunction::ThreadLockAcquire
-                    | BuiltinFunction::ThreadLockEnter
-                    | BuiltinFunction::ThreadLockRelease
-                    | BuiltinFunction::ThreadLockLocked
-            )
-        {
-            let arg_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
-            let mut kw_entries = kwargs
-                .iter()
-                .map(|(name, value)| format!("{name}={}", format_repr(value)))
-                .collect::<Vec<_>>();
-            kw_entries.sort();
-            let stack = self
-                .frames
-                .iter()
-                .rev()
-                .take(12)
-                .map(|frame| format!("{}@{}:{}", frame.code.name, frame.code.filename, frame.ip))
-                .collect::<Vec<_>>()
-                .join(" <- ");
-            eprintln!(
-                "[thread-lock-call-builtin] builtin={builtin:?} args_len={} kwargs_len={} args=[{}] kwargs=[{}] stack={stack}",
-                args.len(),
-                kwargs.len(),
-                arg_summary,
-                kw_entries.join(", ")
-            );
-            if args.is_empty()
-                && matches!(builtin, BuiltinFunction::ThreadLockEnter)
-                && std::env::var_os("PYRS_TRACE_THREAD_LOCK_BT").is_some()
-            {
-                eprintln!(
-                    "[thread-lock-call-builtin-bt]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         match builtin {
             BuiltinFunction::Print => self.builtin_print(args, kwargs),
             BuiltinFunction::Input => self.builtin_input(args, kwargs),

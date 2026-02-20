@@ -54,8 +54,6 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             name.as_str(),
             "BitGenerator" | "SeedSequence" | "SeedlessSeedSequence" | "generate_state"
         );
-    let trace_lock_attr = std::env::var_os("PYRS_TRACE_CPY_LOCK_ATTR").is_some()
-        && matches!(name.as_str(), "acquire" | "__enter__" | "__exit__");
     let trace_getattr_slots = std::env::var_os("PYRS_TRACE_GETATTR_SLOTS").is_some();
     let trace_proxy_getattr = std::env::var_os("PYRS_TRACE_PROXY_GETATTR").is_some()
         && matches!(name.as_str(), "__repr__" | "__str__");
@@ -414,14 +412,6 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             object, tag, name, owned, known
         );
     }
-    if trace_lock_attr {
-        eprintln!(
-            "[cpy-lock-attr] object={:p} name={} object_tag={}",
-            object,
-            name,
-            cpython_value_debug_tag(&object_value)
-        );
-    }
     if trace_exit_lookup {
         eprintln!(
             "[cpy-attr-exit-lookup] object={:p} object_tag={}",
@@ -457,13 +447,6 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
         vec![object_value, Value::Str(name.clone())],
     ) {
         Ok(value) => {
-            if trace_lock_attr {
-                eprintln!(
-                    "[cpy-lock-attr] name={} resolved_tag={}",
-                    name,
-                    cpython_value_debug_tag(&value)
-                );
-            }
             let ptr = cpython_new_ptr_for_value(value);
             if trace_exit_lookup {
                 eprintln!("[cpy-attr-exit-lookup] result={:p}", ptr);
@@ -536,17 +519,6 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
-    let trace_lock_attr = std::env::var_os("PYRS_TRACE_CPY_LOCK_ATTR").is_some()
-        && with_active_cpython_context_mut(|context| {
-            context
-                .cpython_value_from_borrowed_ptr(name)
-                .and_then(|value| match value {
-                    Value::Str(text) if matches!(text.as_str(), "acquire" | "__enter__" | "__exit__") => Some(true),
-                    _ => None,
-                })
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
     let trace_generate_state = std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
         && with_active_cpython_context_mut(|context| {
             context
@@ -716,24 +688,6 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             return std::ptr::null_mut();
         }
     };
-    if trace_lock_attr {
-        let attr_name = with_active_cpython_context_mut(|context| {
-            context
-                .cpython_value_from_borrowed_ptr(name)
-                .and_then(|value| match value {
-                    Value::Str(text) => Some(text),
-                    _ => None,
-                })
-                .unwrap_or_else(|| "<non-str>".to_string())
-        })
-        .unwrap_or_else(|_| "<no-context>".to_string());
-        eprintln!(
-            "[cpy-lock-attr] PyObject_GetAttr object={:p} attr={} object_tag={}",
-            object,
-            attr_name,
-            cpython_value_debug_tag(&object_value)
-        );
-    }
     let name_value = match cpython_value_from_ptr(name) {
         Ok(value) => value,
         Err(err) => {
@@ -797,12 +751,6 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
     let name_debug_for_err = cpython_value_debug_tag(&name_value);
     match cpython_call_builtin(BuiltinFunction::GetAttr, vec![object_value, name_value]) {
         Ok(value) => {
-            if trace_lock_attr {
-                eprintln!(
-                    "[cpy-lock-attr] PyObject_GetAttr resolved_tag={}",
-                    cpython_value_debug_tag(&value)
-                );
-            }
             let ptr = cpython_new_ptr_for_value(value);
             if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
                 eprintln!(
