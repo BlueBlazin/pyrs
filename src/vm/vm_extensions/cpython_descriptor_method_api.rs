@@ -20,7 +20,7 @@ use super::{
     PyLong_AsLong, PyLong_AsLongLong, PyLong_AsSsize_t, PyLong_AsUnsignedLong,
     PyLong_AsUnsignedLongLong, PyLong_FromLong, PyLong_FromLongLong, PyLong_FromSsize_t,
     PyLong_FromUnsignedLong, PyLong_FromUnsignedLongLong, PyMemberDescr_Type, PyMethodDescr_Type,
-    PyObject_Call, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyType_IsSubtype,
+    PyMethod_New, PyObject_Call, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyType_IsSubtype,
     PyUnicode_FromString, PyUnicode_FromStringAndSize, PyUnicode_InternFromString,
     TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
     cpython_call_internal_in_context, cpython_debug_compare_value,
@@ -163,7 +163,14 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     if std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING").is_some()
         && matches!(
             method_name.as_str(),
-            "copyto" | "dot" | "arange" | "empty_like" | "empty" | "result_type" | "generate_state"
+            "copyto"
+                | "dot"
+                | "arange"
+                | "empty_like"
+                | "empty"
+                | "zeros"
+                | "result_type"
+                | "generate_state"
         )
     {
         let arg_tags = args
@@ -196,7 +203,10 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             arg_tags,
             kw_entries.join(", ")
         );
-        if method_name == "dot" && std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING_BT").is_some()
+        if std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING_BT").is_some()
+            && (method_name == "dot"
+                || (method_name == "zeros"
+                    && matches!(args.first(), Some(Value::Class(_)))))
         {
             let vm_stack = if context.vm.is_null() {
                 "<no-vm>".to_string()
@@ -214,7 +224,8 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
                     .join(" <- ")
             };
             eprintln!(
-                "[numpy-method-binding-bt] name=dot self={:p} class={:p} args_len={} kwargs_len={} stack={}\n{:?}",
+                "[numpy-method-binding-bt] name={} self={:p} class={:p} args_len={} kwargs_len={} stack={}\n{:?}",
+                method_name,
                 self_obj,
                 class_obj,
                 args.len(),
@@ -1661,6 +1672,34 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
                 return std::ptr::null_mut();
             }
         };
+        if let Some(builtin) = context
+            .cpython_builtin_by_method_def
+            .get(&(method_def as usize))
+            .copied()
+        {
+            let mut positional_with_self = positional;
+            let method_def_ptr = method_def.cast::<c_void>();
+            if !self_obj.is_null() && self_obj != method_def_ptr {
+                let Some(receiver) = context.cpython_value_from_ptr_or_proxy(self_obj) else {
+                    context.set_error("failed to decode cfunction bound receiver");
+                    return std::ptr::null_mut();
+                };
+                positional_with_self.insert(0, receiver);
+            }
+            let result = match cpython_call_internal_in_context(
+                context,
+                Value::Builtin(builtin),
+                positional_with_self,
+                keyword_args,
+            ) {
+                Ok(value) => value,
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
+            return context.alloc_cpython_ptr_for_value(result);
+        }
         cpython_invoke_method_from_values(
             context,
             method_def,
@@ -1674,6 +1713,64 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
         cpython_set_error(err);
         std::ptr::null_mut()
     })
+}
+
+pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_descr_get(
+    descriptor: *mut c_void,
+    obj: *mut c_void,
+    _objtype: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if descriptor.is_null() {
+            context.set_error("cfunction __get__ received null descriptor");
+            return std::ptr::null_mut();
+        }
+        let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+        if obj.is_null() || obj == none_ptr {
+            unsafe { Py_XIncRef(descriptor) };
+            return descriptor;
+        }
+        let raw = descriptor.cast::<CpythonCFunctionCompatObject>();
+        // SAFETY: descriptor pointer is expected to be a cfunction compat object.
+        let method_def = unsafe { (*raw).m_ml };
+        if method_def.is_null() {
+            context.set_error("cfunction __get__ missing method definition");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: descriptor pointer is expected to be a cfunction compat object.
+        let module_obj = unsafe { (*raw).m_module };
+        // SAFETY: descriptor pointer is expected to be a cfunction compat object.
+        let class_obj = unsafe { (*raw).m_class };
+        // SAFETY: descriptor pointer is expected to be a cfunction compat object.
+        let existing_self = unsafe { (*raw).m_self };
+        let method_def_ptr = method_def.cast::<c_void>();
+        if !existing_self.is_null() && existing_self != method_def_ptr {
+            unsafe { Py_XIncRef(descriptor) };
+            return descriptor;
+        }
+        context.alloc_cpython_method_cfunction_ptr(method_def, obj, module_obj, class_obj)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_function_tp_descr_get(
+    descriptor: *mut c_void,
+    obj: *mut c_void,
+    _objtype: *mut c_void,
+) -> *mut c_void {
+    if descriptor.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return std::ptr::null_mut();
+    }
+    let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+    if obj.is_null() || obj == none_ptr {
+        unsafe { Py_XIncRef(descriptor) };
+        return descriptor;
+    }
+    unsafe { PyMethod_New(descriptor, obj) }
 }
 
 pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_tp_descr_get(

@@ -534,6 +534,19 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                     );
                 }
             }
+            if std::env::var_os("PYRS_TRACE_CPY_LONG_CLASS_BT").is_some()
+                && let Value::Class(class_obj) = &value
+            {
+                let class_name = match &*class_obj.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "<invalid-class>".to_string(),
+                };
+                eprintln!(
+                    "[cpy-long-class-bt] object={:p} class={class_name}\n{}",
+                    object,
+                    Backtrace::capture()
+                );
+            }
             if let Ok(int_value) = value_to_int(value.clone()) {
                 return context.alloc_cpython_ptr_for_value(Value::Int(int_value));
             }
@@ -546,6 +559,15 @@ pub unsafe extern "C" fn PyNumber_Long(object: *mut c_void) -> *mut c_void {
                         context.alloc_cpython_ptr_for_value(Value::BigInt(bigint))
                     }
                     _ => {
+                        if std::env::var_os("PYRS_TRACE_CPY_LONG").is_some()
+                            || std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+                        {
+                            eprintln!(
+                                "[cpy-long-debug] builtin-int returned non-int object={:p} mapped={}",
+                                object,
+                                cpython_value_debug_tag(&converted)
+                            );
+                        }
                         cpython_set_typed_error(
                             unsafe { PyExc_TypeError },
                             "PyNumber_Long requires int-compatible object",

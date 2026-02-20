@@ -209,9 +209,9 @@ impl Vm {
             // depth, we still need synchronous import semantics: the caller must
             // not observe a partially initialized module.
             //
-            // Re-entering the run loop here is intentionally conservative for
-            // correctness. If this becomes a recursion hot-path again, replace
-            // this with an iterative same-loop drain rather than returning early.
+            // If an outer pending-import drain is already running, nested
+            // Python-side import paths can rely on it and skip another `run()`
+            // re-entry. C-extension contexts still force local drain semantics.
             if active_stop_depth <= caller_depth {
                 if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
                     let reason = if cpython_context_active {
@@ -226,6 +226,9 @@ impl Vm {
                         self.frames.len(),
                         reason
                     );
+                }
+                if self.pending_import_drain_depth > 0 && !cpython_context_active {
+                    return Ok(());
                 }
             } else {
                 // Rare case: nested caller asks to drain farther than current stop
@@ -252,7 +255,12 @@ impl Vm {
         };
         let previous_stop = self.run_stop_depth;
         self.run_stop_depth = Some(caller_depth);
+        self.pending_import_drain_depth += 1;
         let run_result = self.run();
+        self.pending_import_drain_depth = self
+            .pending_import_drain_depth
+            .checked_sub(1)
+            .expect("import drain depth underflow");
         self.run_stop_depth = previous_stop;
         if let Err(err) = run_result {
             if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {

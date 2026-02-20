@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::backtrace::Backtrace;
 use std::ffi::{CString, c_char, c_int, c_uint, c_void};
 use std::mem::align_of;
 
@@ -569,6 +570,18 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
         unsafe { PyExc_AttributeError },
         format!("type '{type_name}' has no attribute '{attr_name}'"),
     );
+    if attr_name == "__getitem__"
+        && type_name == "type"
+        && std::env::var_os("PYRS_TRACE_TYPE_GETATTR_BT").is_some()
+    {
+        eprintln!(
+            "[cpy-type-getattr-bt] object={:p} attr={} type={}\n{}",
+            object,
+            attr_name,
+            type_name,
+            Backtrace::capture()
+        );
+    }
     if trace_type_getattr {
         eprintln!(
             "[cpy-type-getattr] lookup-miss object={:p} type={} attr={}",

@@ -3,7 +3,7 @@ use std::ffi::{CString, c_char, c_int, c_void};
 use std::rc::Rc;
 
 use crate::bytecode::CodeObject;
-use crate::runtime::{BoundMethod, BuiltinFunction, Object, Value};
+use crate::runtime::{BoundMethod, BuiltinFunction, ObjRef, Object, Value};
 
 use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
@@ -1387,7 +1387,41 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
     }
     if trace_vectorcall_decode {
         let callable_desc = cpython_value_from_ptr(callable)
-            .map(|value| cpython_value_debug_tag(&value))
+            .map(|value| match value {
+                Value::BoundMethod(method_obj) => {
+                    let describe_obj = |obj: &ObjRef| -> String {
+                        match &*obj.kind() {
+                            Object::Class(class_data) => format!("Class({})", class_data.name),
+                            Object::Function(function_data) => {
+                                format!("Function({})", function_data.code.name)
+                            }
+                            Object::Module(module_data) => {
+                                format!("Module({})", module_data.name)
+                            }
+                            Object::Instance(instance_data) => {
+                                let class_name = match &*instance_data.class.kind() {
+                                    Object::Class(class_data) => class_data.name.clone(),
+                                    _ => "<non-class>".to_string(),
+                                };
+                                format!("Instance({class_name})")
+                            }
+                            Object::BoundMethod(_) => "BoundMethod".to_string(),
+                            Object::NativeMethod(native_data) => {
+                                format!("NativeMethod({:?})", native_data.kind)
+                            }
+                            _ => "<obj>".to_string(),
+                        }
+                    };
+                    let (receiver_desc, function_desc) = match &*method_obj.kind() {
+                        Object::BoundMethod(data) => {
+                            (describe_obj(&data.receiver), describe_obj(&data.function))
+                        }
+                        _ => ("<invalid>".to_string(), "<invalid>".to_string()),
+                    };
+                    format!("BoundMethod(receiver={receiver_desc}, function={function_desc})")
+                }
+                other => cpython_value_debug_tag(&other),
+            })
             .unwrap_or_else(|_| format!("<callable:{callable:p}>"));
         let arg_desc = values
             .iter()

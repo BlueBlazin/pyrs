@@ -159,8 +159,10 @@ use self::cpython_descriptor_method_api::{
     PyCMethod_New, PyClassMethod_New, PyDescr_NewClassMethod, PyDescr_NewGetSet, PyDescr_NewMember,
     PyDescr_NewMethod, PyMember_GetOne, PyMember_SetOne, PySlice_AdjustIndices, PySlice_GetIndices,
     PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack, PyStaticMethod_New, PyWrapper_New,
-    cpython_cfunction_tp_call, cpython_cfunction_tp_getattro, cpython_invoke_method_from_values,
-    cpython_method_descriptor_tp_call, cpython_method_descriptor_tp_descr_get,
+    cpython_cfunction_tp_call, cpython_cfunction_tp_descr_get, cpython_cfunction_tp_getattro,
+    cpython_function_tp_descr_get,
+    cpython_invoke_method_from_values, cpython_method_descriptor_tp_call,
+    cpython_method_descriptor_tp_descr_get,
 };
 use self::cpython_dict_api::{
     _PyDict_GetItem_KnownHash, _PyDict_NewPresized, _PyDict_Pop, PY_DICT_MAPPING_METHODS,
@@ -2814,6 +2816,8 @@ fn initialize_cpython_compat_type_objects() {
         PyBaseObject_Type.tp_str = cpython_object_tp_str as *mut c_void;
         PyCFunction_Type.tp_call = cpython_cfunction_tp_call as *mut c_void;
         PyCFunction_Type.tp_getattro = cpython_cfunction_tp_getattro as *mut c_void;
+        PyCFunction_Type.tp_descr_get = cpython_cfunction_tp_descr_get as *mut c_void;
+        PyFunction_Type.tp_descr_get = cpython_function_tp_descr_get as *mut c_void;
         PyMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
         PyMethodDescr_Type.tp_descr_get = cpython_method_descriptor_tp_descr_get as *mut c_void;
         PyClassMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
@@ -6690,6 +6694,9 @@ impl ModuleCapiContext {
                 // materialized by PyType_Ready are visible here.
                 let external_value_ptr = self.external_mapping_get_item_string(dict_ptr, attr_name);
                 if !external_value_ptr.is_null() {
+                    let trace_generate_state_lookup =
+                        attr_name == "generate_state"
+                            && std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some();
                     // SAFETY: best-effort descriptor probe on external tp_dict entry.
                     let descriptor_type = unsafe {
                         external_value_ptr
@@ -6698,9 +6705,30 @@ impl ModuleCapiContext {
                             .map(|head| head.ob_type.cast::<CpythonTypeObject>())
                             .unwrap_or(std::ptr::null_mut())
                     };
+                    if trace_generate_state_lookup {
+                        let descriptor_type_name = if descriptor_type.is_null() {
+                            "<null>".to_string()
+                        } else {
+                            // SAFETY: descriptor type pointer is checked above.
+                            unsafe {
+                                c_name_to_string((*descriptor_type).tp_name)
+                                    .unwrap_or_else(|_| "<invalid>".to_string())
+                            }
+                        };
+                        eprintln!(
+                            "[generate-state-lookup] object={:p} current={:p} dict={:p} value_ptr={:p} descriptor_type={:p} descriptor_type_name={}",
+                            object, current, dict_ptr, external_value_ptr, descriptor_type, descriptor_type_name
+                        );
+                    }
                     if !descriptor_type.is_null() {
                         // SAFETY: descriptor type pointer was loaded from object header above.
                         let descriptor_get = unsafe { (*descriptor_type).tp_descr_get };
+                        if trace_generate_state_lookup {
+                            eprintln!(
+                                "[generate-state-lookup] descriptor_get={:p}",
+                                descriptor_get
+                            );
+                        }
                         if !descriptor_get.is_null() {
                             let descriptor_get: unsafe extern "C" fn(
                                 *mut c_void,
@@ -6722,6 +6750,15 @@ impl ModuleCapiContext {
                             // SAFETY: descriptor access mirrors CPython descriptor invocation.
                             let bound =
                                 unsafe { descriptor_get(external_value_ptr, self_ptr, owner_ptr) };
+                            if trace_generate_state_lookup {
+                                eprintln!(
+                                    "[generate-state-lookup] descriptor_get_result={:p} pyerr={:p} self_ptr={:p} owner_ptr={:p}",
+                                    bound,
+                                    unsafe { PyErr_Occurred() },
+                                    self_ptr,
+                                    owner_ptr
+                                );
+                            }
                             if !bound.is_null() {
                                 if trace_lookup_branch {
                                     eprintln!(
@@ -6730,6 +6767,11 @@ impl ModuleCapiContext {
                                     );
                                 }
                                 return Some(bound);
+                            }
+                            // If descriptor binding raised an exception, propagate the failure
+                            // instead of silently returning the unbound descriptor object.
+                            if unsafe { !PyErr_Occurred().is_null() } {
+                                return Some(std::ptr::null_mut());
                             }
                         }
                     }

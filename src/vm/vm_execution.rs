@@ -268,13 +268,43 @@ impl Vm {
         receiver: &Value,
         method_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
+        let trace_lock_special = std::env::var_os("PYRS_TRACE_LOCK_SPECIAL").is_some();
         let Some(class_ref) = self.class_of_value(receiver) else {
             return Ok(None);
         };
         let Some(method) = class_attr_lookup(&class_ref, method_name) else {
             return Ok(None);
         };
-        if let Some(bound) = self.bind_descriptor_method(method.clone(), receiver)? {
+        let bound = self.bind_descriptor_method(method.clone(), receiver)?;
+        if trace_lock_special
+            && (method_name == "__enter__" || method_name == "__exit__")
+            && (matches!(
+                receiver,
+                Value::Instance(instance_obj)
+                    if matches!(
+                        &*instance_obj.kind(),
+                        Object::Instance(instance_data)
+                            if matches!(
+                                &*instance_data.class.kind(),
+                                Object::Class(class_data) if class_data.name == "_thread.lock"
+                            )
+                    )
+            ) || self
+                .class_of_value(receiver)
+                .is_some_and(|class_obj| matches!(&*class_obj.kind(), Object::Class(class_data) if class_data.name == "__pyrs_cpython_proxy__")))
+        {
+            let receiver_tag = format_repr(receiver);
+            let method_tag = format_repr(&method);
+            let bound_tag = bound
+                .as_ref()
+                .map(format_repr)
+                .unwrap_or_else(|| "<none>".to_string());
+            eprintln!(
+                "[lock-special] method_name={} receiver={} raw_method={} bound={}",
+                method_name, receiver_tag, method_tag, bound_tag
+            );
+        }
+        if let Some(bound) = bound {
             Ok(Some(bound))
         } else {
             Ok(Some(method))
@@ -4438,6 +4468,17 @@ impl Vm {
                 if !matches!(self_or_null, Value::None) {
                     args.insert(0, self_or_null);
                 }
+                if std::env::var_os("PYRS_TRACE_LOCK_CALL").is_some()
+                    && matches!(func, Value::Builtin(BuiltinFunction::ThreadLockAcquire))
+                {
+                    let arg_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
+                    eprintln!(
+                        "[lock-call] func=builtin::ThreadLockAcquire args_len={} kwargs_len={} args=[{}]",
+                        args.len(),
+                        kwargs.len(),
+                        arg_summary
+                    );
+                }
 
                 let mut fast_dispatched = false;
                 if kwargs.is_empty() {
@@ -4852,6 +4893,67 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::new("call args must be list")),
                 };
+                if std::env::var_os("PYRS_TRACE_CALL_FUNCTION_VAR").is_some() {
+                    let arg_summary = args.iter().map(format_repr).collect::<Vec<_>>().join(", ");
+                    let mut kw_entries = kwargs.iter().collect::<Vec<_>>();
+                    kw_entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+                    let kw_summary = kw_entries
+                        .into_iter()
+                        .map(|(name, value)| format!("{name}={}", format_repr(value)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let func_summary = match &func {
+                        Value::BoundMethod(method_obj) => match &*method_obj.kind() {
+                            Object::BoundMethod(data) => {
+                                let function_kind = match &*data.function.kind() {
+                                    Object::NativeMethod(native) => {
+                                        format!("NativeMethod({:?})", native.kind)
+                                    }
+                                    Object::Function(func_data) => {
+                                        format!("Function({})", func_data.code.name)
+                                    }
+                                    Object::Module(module_data) => {
+                                        format!("Module({})", module_data.name)
+                                    }
+                                    _ => "<non-callable>".to_string(),
+                                };
+                                format!("BoundMethod({function_kind})")
+                            }
+                            _ => "BoundMethod(<invalid>)".to_string(),
+                        },
+                        other => format!("{}({})", self.value_type_name_for_error(other), format_repr(other)),
+                    };
+                    eprintln!(
+                        "[call-function-var] func={} args=[{}] kwargs=[{}]",
+                        func_summary, arg_summary, kw_summary
+                    );
+                    let looks_like_seed_generate_state = matches!(
+                        (&func, args.get(0), args.get(1)),
+                        (Value::Instance(instance_obj), Some(Value::Int(_)), Some(Value::Class(_)))
+                            if matches!(
+                                &*instance_obj.kind(),
+                                Object::Instance(instance_data)
+                                    if matches!(
+                                        &*instance_data.class.kind(),
+                                        Object::Class(class_data)
+                                            if class_data.name == "cython_function_or_method"
+                                    )
+                            )
+                    );
+                    if looks_like_seed_generate_state {
+                        let stack = self
+                            .frames
+                            .iter()
+                            .rev()
+                            .take(12)
+                            .map(|frame| {
+                                format!("{}@{}:{}", frame.code.name, frame.code.filename, frame.ip)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" <- ");
+                        eprintln!("[call-function-var-stack] {stack}");
+                    }
+                }
 
                 match func {
                     Value::Function(func) => {
@@ -8647,6 +8749,22 @@ impl Vm {
                 self.push_function_call_one_arg_from_obj(&function, receiver_value)
             }
             Object::NativeMethod(native) => {
+                if std::env::var_os("PYRS_TRACE_LOCK_BOUND_CALL").is_some()
+                    && matches!(
+                        native.kind,
+                        NativeMethodKind::Builtin(
+                            BuiltinFunction::ThreadLockAcquire
+                                | BuiltinFunction::ThreadLockEnter
+                                | BuiltinFunction::ThreadLockExit
+                        )
+                    )
+                {
+                    eprintln!(
+                        "[lock-bound-call] arity=0 native_kind={:?} receiver={}",
+                        native.kind,
+                        format_repr(&self.receiver_value(&receiver)?)
+                    );
+                }
                 let caller_depth = self.frames.len();
                 let caller_idx = caller_depth.saturating_sub(1);
                 let caller_ip = self
@@ -8682,6 +8800,23 @@ impl Vm {
                 self.push_function_call_two_args_from_obj(&function, receiver_value, arg0)
             }
             Object::NativeMethod(native) => {
+                if std::env::var_os("PYRS_TRACE_LOCK_BOUND_CALL").is_some()
+                    && matches!(
+                        native.kind,
+                        NativeMethodKind::Builtin(
+                            BuiltinFunction::ThreadLockAcquire
+                                | BuiltinFunction::ThreadLockEnter
+                                | BuiltinFunction::ThreadLockExit
+                        )
+                    )
+                {
+                    eprintln!(
+                        "[lock-bound-call] arity=1 native_kind={:?} receiver={} arg0={}",
+                        native.kind,
+                        format_repr(&self.receiver_value(&receiver)?),
+                        format_repr(&arg0)
+                    );
+                }
                 let caller_depth = self.frames.len();
                 let caller_idx = caller_depth.saturating_sub(1);
                 let caller_ip = self

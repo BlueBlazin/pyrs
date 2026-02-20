@@ -729,6 +729,7 @@ pub struct Vm {
     active_generator_resume_boundary: Option<usize>,
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
     run_stop_depth: Option<usize>,
+    pending_import_drain_depth: usize,
     signal_handlers: HashMap<i64, Value>,
     socket_default_timeout: Option<f64>,
     open_files: HashMap<i64, fs::File>,
@@ -956,6 +957,7 @@ impl Vm {
             active_generator_resume_boundary: None,
             generator_resume_outcome: None,
             run_stop_depth: None,
+            pending_import_drain_depth: 0,
             signal_handlers: HashMap::new(),
             socket_default_timeout: None,
             open_files: HashMap::new(),
@@ -2523,6 +2525,7 @@ impl Vm {
         self.active_generator_resume_boundary = None;
         self.generator_resume_outcome = None;
         self.run_stop_depth = None;
+        self.pending_import_drain_depth = 0;
         let code = Rc::new(code.clone());
         let cells = self.build_cells(&code, Vec::new());
         self.frames.push(Box::new(Frame::new(
