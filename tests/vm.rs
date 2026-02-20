@@ -14102,6 +14102,29 @@ print(ok)
 }
 
 #[test]
+fn numpy_ndarray_proxy_iterability_is_preserved() {
+    let source = r#"import numpy as np
+x = np.arange(4)
+it = iter(x)
+ok = (float(next(it)) == 0.0 and float(next(it)) == 1.0 and [float(v) for v in x] == [0.0, 1.0, 2.0, 3.0])
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_arrayprint_array_repr_works_without_placeholder_fallback() {
+    let source = r#"import numpy as np
+import numpy._core.arrayprint as ap
+x = np.arange(0, 10, 0.5)
+text = ap.array_repr(x)
+ok = ("array([" in text and "<numpy.ndarray object at" not in text and "0.5" in text and "e+00" not in text)
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
 fn numpy_bool_truthiness_and_float_ordering_match_cpython() {
     let source = r#"import numpy as np
 ok = (

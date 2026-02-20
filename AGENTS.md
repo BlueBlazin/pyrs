@@ -89,6 +89,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `numpy_repeated_axis_sum_remains_stable_across_calls` passes repeatedly,
     - `numpy_axis_sum_and_repr_stress_stays_stable` passes.
     - `numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder` now passes.
+    - `numpy_ndarray_proxy_iterability_is_preserved` passes.
+    - `numpy_arrayprint_array_repr_works_without_placeholder_fallback` passes.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,
