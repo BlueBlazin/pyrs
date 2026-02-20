@@ -3303,6 +3303,15 @@ impl Drop for ModuleCapiContext {
                 preserve_aux_allocations = true;
                 continue;
             }
+            let identity_wrapper_handle = self
+                .cpython_objects_by_ptr
+                .get(&(raw as usize))
+                .copied()
+                .filter(|handle| {
+                    self.objects
+                        .get(handle)
+                        .is_some_and(|slot| self.should_keep_identity_cpython_wrapper(&slot.value))
+                });
             let mut keep_pinned = false;
             let interned_unicode = cpython_is_interned_unicode_ptr(raw.cast::<c_void>());
             if !self.vm.is_null() {
@@ -3311,6 +3320,25 @@ impl Drop for ModuleCapiContext {
                 keep_pinned = vm
                     .extension_pinned_cpython_allocation_set
                     .contains(&(raw as usize));
+                if !keep_pinned && let Some(handle) = identity_wrapper_handle {
+                    if vm
+                        .extension_pinned_cpython_allocation_set
+                        .insert(raw as usize)
+                    {
+                        vm.extension_freed_cpython_allocations
+                            .remove(&(raw as usize));
+                        if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                            eprintln!(
+                                "[pin-free] pin-insert ptr={:p} reason=identity_wrapper",
+                                raw.cast::<c_void>()
+                            );
+                        }
+                        vm.extension_pinned_cpython_allocations.push(raw.cast());
+                    }
+                    escaped_handles.insert(handle);
+                    self.persist_escaped_ptr_value(vm, handle, raw as usize);
+                    keep_pinned = true;
+                }
                 if !keep_pinned {
                     if interned_unicode {
                         if vm
@@ -7613,6 +7641,34 @@ impl ModuleCapiContext {
             | Value::Cell(obj) => Some(obj.id()),
             _ => None,
         }
+    }
+
+    fn should_keep_identity_cpython_wrapper(&self, value: &Value) -> bool {
+        matches!(
+            value,
+            Value::Function(_) | Value::BoundMethod(_) | Value::Module(_)
+        ) || matches!(
+            value,
+            Value::Instance(instance_obj) if self.instance_class_defines_call(instance_obj)
+        )
+    }
+
+    fn instance_class_defines_call(&self, instance_obj: &ObjRef) -> bool {
+        let Object::Instance(instance_data) = &*instance_obj.kind() else {
+            return false;
+        };
+        let Object::Class(class_data) = &*instance_data.class.kind() else {
+            return false;
+        };
+        if class_data.attrs.contains_key("__call__") {
+            return true;
+        }
+        class_data.mro.iter().any(|base| {
+            matches!(
+                &*base.kind(),
+                Object::Class(base_data) if base_data.attrs.contains_key("__call__")
+            )
+        })
     }
 
     fn alloc_capsule(

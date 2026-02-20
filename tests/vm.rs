@@ -4089,7 +4089,9 @@ for proto in range(pickle.HIGHEST_PROTOCOL + 1):
 #[test]
 fn pickle_complex_subclass_roundtrip_preserves_value_and_instance_attrs() {
     let Some(lib_path) = cpython_lib_path() else {
-        eprintln!("skipping pickle complex-subclass roundtrip test (CPython Lib path not available)");
+        eprintln!(
+            "skipping pickle complex-subclass roundtrip test (CPython Lib path not available)"
+        );
         return;
     };
     let source = r#"import pickle
@@ -14184,6 +14186,18 @@ ok = (
     and ret is None
     and int(a[2]) == 42
 )
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_repeated_axis_sum_remains_stable_across_calls() {
+    let source = r#"import numpy as np
+ok = True
+for _ in range(40):
+    value = np.array([0, 1, 2, 3]).reshape((2, 2)).sum(axis=0)
+    ok = ok and int(value[0]) == 2 and int(value[1]) == 4
 print(ok)
 "#;
     run_numpy_probe_subprocess(source);
