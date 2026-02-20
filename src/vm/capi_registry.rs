@@ -130,8 +130,15 @@ impl CapiObjectRegistry {
             return;
         }
         if let Some(existing) = self.entries.get_mut(&ptr) {
+            let was_freed = existing.lifecycle == CapiPtrLifecycleState::Freed;
             existing.provenance = provenance;
             existing.lifecycle = CapiPtrLifecycleState::Alive;
+            if was_freed {
+                existing.borrowed_refs = 0;
+                existing.owned_refs = 0;
+                existing.stolen_refs = 0;
+                existing.external_pins = 0;
+            }
             if object_id.is_some() {
                 existing.object_id = object_id;
             }
@@ -176,6 +183,9 @@ impl CapiObjectRegistry {
         let Some(entry) = self.entries.get_mut(&ptr) else {
             return;
         };
+        if entry.provenance != CapiPtrProvenance::ExternalRef {
+            return;
+        }
         entry.external_pins = entry.external_pins.saturating_add(1);
         entry.lifecycle = CapiPtrLifecycleState::Alive;
     }
@@ -187,6 +197,9 @@ impl CapiObjectRegistry {
         let Some(entry) = self.entries.get_mut(&ptr) else {
             return false;
         };
+        if entry.provenance != CapiPtrProvenance::ExternalRef {
+            return false;
+        }
         if entry.external_pins > 0 {
             return false;
         }
@@ -203,6 +216,9 @@ impl CapiObjectRegistry {
         let Some(entry) = self.entries.get_mut(&ptr) else {
             return;
         };
+        if entry.provenance != CapiPtrProvenance::ExternalRef {
+            return;
+        }
         if entry.external_pins > 0 {
             entry.external_pins -= 1;
         }
@@ -238,6 +254,7 @@ impl CapiObjectRegistry {
             return;
         };
         entry.lifecycle = CapiPtrLifecycleState::Freed;
+        entry.external_pins = 0;
         if let Some(id) = entry.object_id
             && self.object_ptr_by_id.get(&id).copied() == Some(ptr)
         {
@@ -315,14 +332,14 @@ mod tests {
     #[test]
     fn registry_tracks_lifecycle_and_pins() {
         let mut registry = CapiObjectRegistry::default();
-        registry.register_ptr(0x10, CapiPtrProvenance::OwnedCompat, Some(42));
+        registry.register_ptr(0x10, CapiPtrProvenance::ExternalRef, Some(42));
         registry.record_ref_kind(0x10, CapiRefKind::Owned);
         registry.pin_external(0x10);
         assert!(!registry.should_free_now(0x10));
         registry.mark_pending_free(0x10);
         assert!(!registry.should_free_now(0x10));
         registry.unpin_external(0x10);
-        assert!(registry.should_free_now(0x10));
+        assert!(!registry.should_free_now(0x10));
         registry.mark_freed(0x10);
         let stats = registry.stats();
         assert_eq!(stats.entries_total, 1);
@@ -381,5 +398,27 @@ mod tests {
         assert!(!registry.is_freed(0x99));
         registry.mark_freed(0x99);
         assert!(registry.is_freed(0x99));
+    }
+
+    #[test]
+    fn external_pin_apis_ignore_non_external_entries() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x77, CapiPtrProvenance::OwnedCompat, None);
+        assert!(!registry.pin_external_once(0x77));
+        registry.pin_external(0x77);
+        assert!(registry.should_free_now(0x77));
+        registry.unpin_external(0x77);
+        assert!(registry.should_free_now(0x77));
+    }
+
+    #[test]
+    fn re_registering_freed_entry_resets_pin_state() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x55, CapiPtrProvenance::ExternalRef, None);
+        assert!(registry.pin_external_once(0x55));
+        registry.mark_freed(0x55);
+        assert!(registry.is_freed(0x55));
+        registry.register_ptr(0x55, CapiPtrProvenance::OwnedCompat, None);
+        assert!(registry.should_free_now(0x55));
     }
 }
