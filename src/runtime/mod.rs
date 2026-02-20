@@ -7715,8 +7715,8 @@ impl RuntimeError {
             eprintln!("{:?}", std::backtrace::Backtrace::force_capture());
         }
         Self {
+            exception: runtime_error_exception_from_message(&message).map(Box::new),
             message,
-            exception: None,
         }
     }
 
@@ -7761,12 +7761,78 @@ impl RuntimeError {
     }
 }
 
+fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject> {
+    let candidate_line = if message.starts_with("Traceback (most recent call last):") {
+        message
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim)?
+    } else {
+        message.trim()
+    };
+    let (name, details) = if let Some((name, details)) = candidate_line.split_once(':') {
+        (name.trim(), Some(details.trim_start()))
+    } else {
+        (candidate_line, None)
+    };
+    if !is_runtime_error_exception_name(name) {
+        return None;
+    }
+    let message = details
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string);
+    Some(ExceptionObject::new(name.to_string(), message))
+}
+
+fn is_runtime_error_exception_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_uppercase() || first == '_') {
+        return false;
+    }
+    name.chars()
+        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         BoundMethod, ClassObject, DictKeysView, DictObject, Heap, IndexBucket, InstanceObject,
-        MemoryViewObject, Object, SetObject, SuperObject, Value, format_repr, is_truthy_value,
+        MemoryViewObject, Object, RuntimeError, SetObject, SuperObject, Value, format_repr,
+        is_truthy_value,
     };
+
+    #[test]
+    fn runtime_error_new_extracts_prefixed_exception() {
+        let error = RuntimeError::new("TypeError: expected int");
+        assert_eq!(error.exception_name(), Some("TypeError"));
+        assert_eq!(
+            error.exception.and_then(|exception| exception.message),
+            Some("expected int".to_string())
+        );
+    }
+
+    #[test]
+    fn runtime_error_new_extracts_traceback_exception() {
+        let error = RuntimeError::new(
+            "Traceback (most recent call last):\n  File \"<module>\", line 1\nValueError: bad",
+        );
+        assert_eq!(error.exception_name(), Some("ValueError"));
+        assert_eq!(
+            error.exception.and_then(|exception| exception.message),
+            Some("bad".to_string())
+        );
+    }
+
+    #[test]
+    fn runtime_error_new_ignores_non_exception_prefixes() {
+        let error = RuntimeError::new("open failed: no such file");
+        assert_eq!(error.exception_name(), None);
+    }
 
     #[test]
     fn gc_collects_self_referential_dict_keys_view() {

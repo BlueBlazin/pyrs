@@ -1,6 +1,25 @@
 # VM Error Model Refactor Plan (Remove String-Based Classification)
 
-Status: design approved for implementation planning (not implemented yet).
+Status: in progress (phase 1 + initial phase 2 landed).
+
+## Landed So Far
+
+1. `RuntimeError` now carries optional typed exception payload:
+   - `message: String`
+   - `exception: Option<Box<ExceptionObject>>`
+2. Added typed constructors/helpers:
+   - `with_exception`, `from_exception`, `exception_name`
+   - `type_error`, `value_error`, `attribute_error`, `index_error`, `key_error`
+3. `RuntimeError::new(...)` now auto-extracts exception type/message from:
+   - prefixed messages (`TypeError: ...`)
+   - traceback tails (`Traceback ... \nValueError: ...`)
+4. VM exception conversion is now centralized through:
+   - `runtime_error_to_exception_object(...)`
+   - `ensure_exception_default_attrs(...)`
+5. `runtime_error_matches_exception(...)` now matches on typed payload first, with legacy string fallback.
+6. Major call sites that previously compared `classify_runtime_error(&err.message)` are now using typed matching helpers.
+7. `runtime_error_from_active_exception(...)` now preserves the original `ExceptionObject` in `RuntimeError.exception` while retaining traceback text for compatibility.
+8. Explicit `raise ... from ...` now preserves `__context__` (in addition to `__cause__` + `__suppress_context__`) in VM raise plumbing.
 
 ## Why This Exists
 
