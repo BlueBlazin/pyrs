@@ -3218,20 +3218,24 @@ impl Vm {
                 };
                 let values = self.collect_iterable_values(args[0].clone())?;
                 let mut parts = Vec::with_capacity(values.len());
-                for value in values {
+                for (index, value) in values.into_iter().enumerate() {
                     match value {
                         Value::Str(text) => parts.push(text),
                         Value::Instance(instance) => {
                             if let Some(text) = self.instance_backing_str(&instance) {
                                 parts.push(text);
                             } else {
-                                return Err(RuntimeError::new(
-                                    "sequence item is not str for join()",
-                                ));
+                                return Err(RuntimeError::type_error(format!(
+                                    "sequence item {index}: expected str instance, {} found",
+                                    self.value_type_name_for_error(&Value::Instance(instance))
+                                )));
                             }
                         }
                         _ => {
-                            return Err(RuntimeError::new("sequence item is not str for join()"));
+                            return Err(RuntimeError::type_error(format!(
+                                "sequence item {index}: expected str instance, {} found",
+                                self.value_type_name_for_error(&value)
+                            )));
                         }
                     }
                 }
@@ -6478,6 +6482,7 @@ impl Vm {
             BuiltinFunction::Callable => self.builtin_callable(args, kwargs),
             BuiltinFunction::Type => self.builtin_type(args, kwargs),
             BuiltinFunction::TypeInit => self.builtin_type_init(args, kwargs),
+            BuiltinFunction::TypeMro => self.builtin_type_mro(args, kwargs),
             BuiltinFunction::IsInstance => self.builtin_isinstance(args, kwargs),
             BuiltinFunction::IsSubclass => self.builtin_issubclass(args, kwargs),
             BuiltinFunction::TypeInstanceCheck => self.builtin_type_instancecheck(args, kwargs),
@@ -6596,6 +6601,12 @@ impl Vm {
             BuiltinFunction::DecimalGetContext => self.builtin_decimal_getcontext(args, kwargs),
             BuiltinFunction::DecimalSetContext => self.builtin_decimal_setcontext(args, kwargs),
             BuiltinFunction::DecimalLocalContext => self.builtin_decimal_localcontext(args, kwargs),
+            BuiltinFunction::DecimalContextEnter => {
+                self.builtin_decimal_context_enter(args, kwargs)
+            }
+            BuiltinFunction::DecimalContextExit => {
+                self.builtin_decimal_context_exit(args, kwargs)
+            }
             BuiltinFunction::MathSqrt => self.builtin_math_sqrt(args, kwargs),
             BuiltinFunction::MathCopySign => self.builtin_math_copysign(args, kwargs),
             BuiltinFunction::MathFloor => self.builtin_math_floor(args, kwargs),
@@ -6707,6 +6718,11 @@ impl Vm {
             BuiltinFunction::OsPathRealPath => self.builtin_os_path_realpath(args, kwargs),
             BuiltinFunction::OsPathRelPath => self.builtin_os_path_relpath(args, kwargs),
             BuiltinFunction::OsPathCommonPrefix => self.builtin_os_path_commonprefix(args, kwargs),
+            BuiltinFunction::PathlibPathInit => self.builtin_pathlib_path_init(args, kwargs),
+            BuiltinFunction::PathlibPathJoinPath => {
+                self.builtin_pathlib_path_joinpath(args, kwargs)
+            }
+            BuiltinFunction::PathlibPathStr => self.builtin_pathlib_path_str(args, kwargs),
             BuiltinFunction::PosixSubprocessForkExec => {
                 self.builtin_posixsubprocess_fork_exec(args, kwargs)
             }
@@ -7526,12 +7542,14 @@ impl Vm {
             }
             BuiltinFunction::DateTimeAstimezone => self.builtin_datetime_astimezone(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
+            BuiltinFunction::DateTimeDeltaInit => self.builtin_datetime_delta_init(args, kwargs),
             BuiltinFunction::DateTimeTimezoneInit => {
                 self.builtin_datetime_timezone_init(args, kwargs)
             }
             BuiltinFunction::DateToOrdinal => self.builtin_date_toordinal(args, kwargs),
             BuiltinFunction::DateWeekday => self.builtin_date_weekday(args, kwargs),
             BuiltinFunction::DateIsoWeekday => self.builtin_date_isoweekday(args, kwargs),
+            BuiltinFunction::DateIsoFormat => self.builtin_date_isoformat(args, kwargs),
             BuiltinFunction::DateStrFTime => self.builtin_date_strftime(args, kwargs),
             BuiltinFunction::TimeInit => self.builtin_time_init(args, kwargs),
             BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),

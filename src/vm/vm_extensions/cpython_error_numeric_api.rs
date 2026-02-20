@@ -5,7 +5,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    ACTIVE_CPYTHON_INIT_CONTEXT, CPY_EXCEPTION_TYPE_PTR_ATTR, CpythonComplexValue,
+    _Py_NoneStruct, ACTIVE_CPYTHON_INIT_CONTEXT, CPY_EXCEPTION_TYPE_PTR_ATTR, CpythonComplexValue,
     CpythonErrorState, CpythonObjectHead, CpythonStructSeqTypeInfo, CpythonStructSequenceDesc,
     CpythonTypeObject, CpythonVarObjectHead, InternalCallOutcome, ModuleCapiContext,
     PY_TPFLAGS_BASETYPE, PY_TPFLAGS_READY, Py_DecRef, Py_IncRef, Py_XDecRef, Py_XIncRef,
@@ -920,7 +920,7 @@ pub unsafe extern "C" fn PyErr_NewException(
         let namespace = context
             .cpython_value_from_ptr_or_proxy(dict)
             .ok_or_else(|| "PyErr_NewException received invalid dict object".to_string())?;
-        let class_value = match vm.call_internal(
+        let mut class_value = match vm.call_internal(
             Value::Builtin(BuiltinFunction::Type),
             vec![Value::Str(class_name.to_string()), bases, namespace],
             HashMap::new(),
@@ -933,6 +933,13 @@ pub unsafe extern "C" fn PyErr_NewException(
             }
             Err(err) => return Err(err.message),
         };
+        if let Value::Class(class_obj) = &mut class_value
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str(module_name.to_string()));
+        }
         Ok(context.alloc_cpython_ptr_for_value(class_value))
     })
     .unwrap_or_else(|err| Err(err.to_string()));
@@ -944,6 +951,9 @@ pub unsafe extern "C" fn PyErr_NewException(
             std::ptr::null_mut()
         }
     };
+    if !result.is_null() && !modulename_obj.is_null() {
+        let _ = unsafe { PyObject_SetAttrString(result, c"__module__".as_ptr(), modulename_obj) };
+    }
     unsafe {
         Py_DecRef(module_key);
         Py_XDecRef(modulename_obj);
@@ -1665,7 +1675,7 @@ pub unsafe extern "C" fn PyErr_GetExcInfo(
         }
         if !p_traceback.is_null() {
             let value = cpython_exception_traceback_ptr_for_value(context, &handled)
-                .unwrap_or(std::ptr::null_mut());
+                .unwrap_or(std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>());
             // SAFETY: caller provided writable output pointer.
             unsafe { *p_traceback = value };
         }

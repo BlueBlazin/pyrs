@@ -1832,7 +1832,7 @@ impl Vm {
     }
 
     fn alloc_synthetic_reprenum_data_class(&mut self, name: &str) -> ObjRef {
-        let class = self.alloc_synthetic_class(name);
+        let class = self.synthetic_builtin_class(name);
         if let Object::Class(class_data) = &mut *class.kind_mut() {
             let new_builtin = match name {
                 "int" => BuiltinFunction::Int,
@@ -1844,6 +1844,86 @@ impl Vm {
                 .entry("__new__".to_string())
                 .or_insert(Value::Builtin(new_builtin));
         }
+        class
+    }
+
+    fn mark_synthetic_static_type(&mut self, class: &ObjRef, name: &str) {
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data
+                .attrs
+                .entry("__name__".to_string())
+                .or_insert_with(|| Value::Str(name.to_string()));
+            class_data
+                .attrs
+                .entry("__qualname__".to_string())
+                .or_insert_with(|| Value::Str(name.to_string()));
+            class_data
+                .attrs
+                .entry("__module__".to_string())
+                .or_insert_with(|| Value::Str("builtins".to_string()));
+            // These stand in for static builtin types in class-base resolution paths.
+            // Mark them as non-heap so copyreg._reduce_ex and similar stdlib logic
+            // treat them like CPython static types.
+            class_data
+                .attrs
+                .insert("__flags__".to_string(), Value::Int(0));
+        }
+    }
+
+    fn synthetic_builtin_class(&mut self, name: &str) -> ObjRef {
+        if let Some(existing) = self.synthetic_builtin_classes.get(name).cloned() {
+            return existing;
+        }
+        let class = self.alloc_synthetic_class(name);
+        self.mark_synthetic_static_type(&class, name);
+
+        let object_base = self.builtins.get("object").and_then(|value| match value {
+            Value::Class(class) => Some(class.clone()),
+            _ => None,
+        });
+        let default_meta = self.default_type_metaclass();
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            if class_data.bases.is_empty()
+                && name != "object"
+                && name != "type"
+                && let Some(base) = object_base
+            {
+                class_data.bases.push(base);
+            }
+            if class_data.metaclass.is_none() {
+                class_data.metaclass = default_meta;
+            }
+        }
+
+        let bases = match &*class.kind() {
+            Object::Class(class_data) => class_data.bases.clone(),
+            _ => Vec::new(),
+        };
+        let mro = if bases.is_empty() {
+            vec![class.clone()]
+        } else {
+            self.build_class_mro(&class, &bases).unwrap_or_else(|_| {
+                let mut fallback = vec![class.clone()];
+                fallback.extend(bases.iter().cloned());
+                fallback
+            })
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.mro = mro.clone();
+            class_data.attrs.insert(
+                "__bases__".to_string(),
+                self.heap
+                    .alloc_tuple(bases.iter().cloned().map(Value::Class).collect::<Vec<_>>()),
+            );
+            class_data.attrs.insert(
+                "__mro__".to_string(),
+                self.heap
+                    .alloc_tuple(mro.into_iter().map(Value::Class).collect::<Vec<_>>()),
+            );
+        }
+
+        self.synthetic_builtin_classes
+            .insert(name.to_string(), class.clone());
         class
     }
 
@@ -1876,8 +1956,8 @@ impl Vm {
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_exception_class(&name)),
             Value::Builtin(BuiltinFunction::Type) => Ok(self
                 .default_type_metaclass()
-                .unwrap_or_else(|| self.alloc_synthetic_class("type"))),
-            Value::Builtin(BuiltinFunction::Bool) => Ok(self.alloc_synthetic_class("bool")),
+                .unwrap_or_else(|| self.synthetic_builtin_class("type"))),
+            Value::Builtin(BuiltinFunction::Bool) => Ok(self.synthetic_builtin_class("bool")),
             Value::Builtin(BuiltinFunction::Int) => {
                 Ok(self.alloc_synthetic_reprenum_data_class("int"))
             }
@@ -1887,10 +1967,10 @@ impl Vm {
             Value::Builtin(BuiltinFunction::Str) => {
                 Ok(self.alloc_synthetic_reprenum_data_class("str"))
             }
-            Value::Builtin(BuiltinFunction::List) => Ok(self.alloc_synthetic_class("list")),
-            Value::Builtin(BuiltinFunction::Tuple) => Ok(self.alloc_synthetic_class("tuple")),
+            Value::Builtin(BuiltinFunction::List) => Ok(self.synthetic_builtin_class("list")),
+            Value::Builtin(BuiltinFunction::Tuple) => Ok(self.synthetic_builtin_class("tuple")),
             Value::Builtin(BuiltinFunction::Dict) => {
-                let class = self.alloc_synthetic_class("dict");
+                let class = self.synthetic_builtin_class("dict");
                 if let Object::Class(class_data) = &mut *class.kind_mut()
                     && !class_data.attrs.contains_key("fromkeys")
                 {
@@ -1906,7 +1986,7 @@ impl Vm {
                 Ok(class)
             }
             Value::Builtin(BuiltinFunction::Set) => {
-                let class = self.alloc_synthetic_class("set");
+                let class = self.synthetic_builtin_class("set");
                 if let Object::Class(class_data) = &mut *class.kind_mut()
                     && !class_data.attrs.contains_key("__reduce__")
                 {
@@ -1918,7 +1998,7 @@ impl Vm {
                 Ok(class)
             }
             Value::Builtin(BuiltinFunction::FrozenSet) => {
-                let class = self.alloc_synthetic_class("frozenset");
+                let class = self.synthetic_builtin_class("frozenset");
                 if let Object::Class(class_data) = &mut *class.kind_mut()
                     && !class_data.attrs.contains_key("__reduce__")
                 {
@@ -1930,34 +2010,36 @@ impl Vm {
                 Ok(class)
             }
             Value::Builtin(BuiltinFunction::Enumerate) => {
-                Ok(self.alloc_synthetic_class("enumerate"))
+                Ok(self.synthetic_builtin_class("enumerate"))
             }
-            Value::Builtin(BuiltinFunction::Bytes) => Ok(self.alloc_synthetic_class("bytes")),
+            Value::Builtin(BuiltinFunction::Bytes) => Ok(self.synthetic_builtin_class("bytes")),
             Value::Builtin(BuiltinFunction::ByteArray) => {
-                Ok(self.alloc_synthetic_class("bytearray"))
+                Ok(self.synthetic_builtin_class("bytearray"))
             }
             Value::Builtin(BuiltinFunction::MemoryView) => {
-                Ok(self.alloc_synthetic_class("memoryview"))
+                Ok(self.synthetic_builtin_class("memoryview"))
             }
-            Value::Builtin(BuiltinFunction::Complex) => Ok(self.alloc_synthetic_class("complex")),
+            Value::Builtin(BuiltinFunction::Complex) => Ok(self.synthetic_builtin_class("complex")),
             Value::Builtin(BuiltinFunction::ClassMethod) => {
-                Ok(self.alloc_synthetic_class("classmethod"))
+                Ok(self.synthetic_builtin_class("classmethod"))
             }
             Value::Builtin(BuiltinFunction::StaticMethod) => {
-                Ok(self.alloc_synthetic_class("staticmethod"))
+                Ok(self.synthetic_builtin_class("staticmethod"))
             }
-            Value::Builtin(BuiltinFunction::Property) => Ok(self.alloc_synthetic_class("property")),
+            Value::Builtin(BuiltinFunction::Property) => {
+                Ok(self.synthetic_builtin_class("property"))
+            }
             Value::Builtin(BuiltinFunction::FunctoolsPartial) => {
-                Ok(self.alloc_synthetic_class("partial"))
+                Ok(self.synthetic_builtin_class("partial"))
             }
             Value::Builtin(BuiltinFunction::CollectionsCounter) => {
-                Ok(self.alloc_synthetic_class("Counter"))
+                Ok(self.synthetic_builtin_class("Counter"))
             }
             Value::Builtin(BuiltinFunction::CollectionsDeque) => {
-                Ok(self.alloc_synthetic_class("deque"))
+                Ok(self.synthetic_builtin_class("deque"))
             }
             Value::Builtin(BuiltinFunction::CollectionsDefaultDict) => {
-                Ok(self.alloc_synthetic_class("defaultdict"))
+                Ok(self.synthetic_builtin_class("defaultdict"))
             }
             other => {
                 if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some() {

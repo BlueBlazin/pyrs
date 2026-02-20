@@ -1,5 +1,5 @@
 use super::{
-    AsRawFd, AtexitHandler, BigInt, BuiltinFunction, ClassObject, Command, Duration,
+    AsRawFd, AtexitHandler, BuiltinFunction, ClassObject, Command, Duration,
     ExceptionObject, ExitStatusExt, FormatterFieldKey, FromRawFd, HashMap, InstanceObject,
     InternalCallOutcome, IntoRawFd, IsTerminal, ModuleObject, NativeMethodKind, ObjRef, Object,
     Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio, SystemTime,
@@ -7,7 +7,9 @@ use super::{
     collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
     dict_get_value, encode_text_bytes, format_value, fs,
     is_pyrs_executable, is_truthy, normalize_codec_encoding, normalize_codec_errors,
+    mul_values,
     parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
+    pow_values,
     seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64, value_from_bigint,
     value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
 };
@@ -20,6 +22,7 @@ const SUBPROCESS_PIPE_PID_ATTR: &str = "__pyrs_pid";
 const SUBPROCESS_PIPE_KIND_ATTR: &str = "__pyrs_kind";
 const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
 const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
+const PATHLIB_PATH_VALUE_ATTR: &str = "__pyrs_path_value__";
 
 impl Vm {
     fn os_error_exception_name(err: &std::io::Error) -> &'static str {
@@ -2274,7 +2277,17 @@ impl Vm {
             .unwrap_or_else(|| self.heap.alloc_bytes(Vec::new()));
         let stderr_bytes = Self::instance_attr_get(&instance, "_pyrs_stderr")
             .unwrap_or_else(|| self.heap.alloc_bytes(Vec::new()));
-        let stdout = if text_mode {
+        let stdout_captured = matches!(
+            Self::instance_attr_get(&instance, "stdout"),
+            Some(Value::Instance(_))
+        );
+        let stderr_captured = matches!(
+            Self::instance_attr_get(&instance, "stderr"),
+            Some(Value::Instance(_))
+        );
+        let stdout = if !stdout_captured {
+            Value::None
+        } else if text_mode {
             match &stdout_bytes {
                 Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
                     Object::Bytes(bytes) => Value::Str(String::from_utf8_lossy(bytes).to_string()),
@@ -2285,7 +2298,9 @@ impl Vm {
         } else {
             stdout_bytes
         };
-        let stderr = if text_mode {
+        let stderr = if !stderr_captured {
+            Value::None
+        } else if text_mode {
             match &stderr_bytes {
                 Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
                     Object::Bytes(bytes) => Value::Str(String::from_utf8_lossy(bytes).to_string()),
@@ -3034,6 +3049,112 @@ impl Vm {
         Ok(path)
     }
 
+    fn pathlib_path_value_from_receiver(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
+        let receiver_ref = receiver.kind();
+        let Object::Instance(instance_data) = &*receiver_ref else {
+            return Err(RuntimeError::type_error(
+                "descriptor requires pathlib.Path instance",
+            ));
+        };
+        Ok(instance_data
+            .attrs
+            .get(PATHLIB_PATH_VALUE_ATTR)
+            .cloned()
+            .unwrap_or_else(|| Value::Str(".".to_string())))
+    }
+
+    pub(super) fn builtin_pathlib_path_init(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error("Path() takes no keyword arguments"));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::type_error("Path() missing self"));
+        }
+        let receiver = match &args[0] {
+            Value::Instance(instance) => instance.clone(),
+            _ => return Err(RuntimeError::type_error("Path() requires instance receiver")),
+        };
+
+        let path_value = if args.len() == 1 {
+            Value::Str(".".to_string())
+        } else {
+            self.builtin_os_path_join(args[1..].to_vec(), HashMap::new())?
+        };
+
+        let mut receiver_ref = receiver.kind_mut();
+        let Object::Instance(instance_data) = &mut *receiver_ref else {
+            return Err(RuntimeError::type_error("Path() requires instance receiver"));
+        };
+        instance_data
+            .attrs
+            .insert(PATHLIB_PATH_VALUE_ATTR.to_string(), path_value);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_pathlib_path_joinpath(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error("joinpath() takes no keyword arguments"));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::type_error("joinpath() missing self"));
+        }
+        let receiver = match &args[0] {
+            Value::Instance(instance) => instance.clone(),
+            _ => return Err(RuntimeError::type_error("joinpath() requires instance receiver")),
+        };
+        let class = {
+            let receiver_ref = receiver.kind();
+            let Object::Instance(instance_data) = &*receiver_ref else {
+                return Err(RuntimeError::type_error("joinpath() requires instance receiver"));
+            };
+            instance_data.class.clone()
+        };
+
+        let mut join_args = Vec::with_capacity(args.len());
+        join_args.push(self.pathlib_path_value_from_receiver(&receiver)?);
+        join_args.extend(args.into_iter().skip(1));
+        let joined = self.builtin_os_path_join(join_args, HashMap::new())?;
+        match self.call_internal(Value::Class(class), vec![joined], HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("Path.joinpath() failed"))
+            }
+        }
+    }
+
+    pub(super) fn builtin_pathlib_path_str(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error("__str__() takes no keyword arguments"));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error("__str__() takes no arguments"));
+        }
+        let receiver = match &args[0] {
+            Value::Instance(instance) => instance.clone(),
+            _ => return Err(RuntimeError::type_error("__str__ requires instance receiver")),
+        };
+        match self.pathlib_path_value_from_receiver(&receiver)? {
+            Value::Str(path) => Ok(Value::Str(path)),
+            Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
+                Object::Bytes(data) => Ok(Value::Str(String::from_utf8_lossy(data).into_owned())),
+                _ => Err(RuntimeError::type_error("__fspath__() must return str or bytes")),
+            },
+            _ => Err(RuntimeError::type_error("__fspath__() must return str or bytes")),
+        }
+    }
+
     pub(super) fn builtin_os_path_join(
         &mut self,
         mut args: Vec<Value>,
@@ -3608,7 +3729,10 @@ impl Vm {
                 "compute_powers() expects w, base, and more_than",
             ));
         }
-        let _need_hi = kwargs.remove("need_hi");
+        let need_hi = kwargs
+            .remove("need_hi")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
         let _show = kwargs.remove("show");
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
@@ -3626,55 +3750,68 @@ impl Vm {
         if w <= more_than {
             return Ok(self.heap.alloc_dict(Vec::new()));
         }
-        let max_entries = (w - more_than).min(2048) as usize;
-        if (w - more_than) as usize > max_entries {
-            return Err(RuntimeError::new("compute_powers() range too large"));
-        }
-        let mut entries = Vec::with_capacity(max_entries);
-        match base {
-            Value::Int(base) => {
-                let base_big = BigInt::from_i64(base);
-                for exponent in (more_than + 1)..=w {
-                    let exponent_u32 = u32::try_from(exponent)
-                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
-                    let value = base_big.pow_u64(exponent_u32 as u64);
-                    entries.push((Value::Int(exponent), value_from_bigint(value)));
-                }
+        let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut need: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut work = vec![w];
+        while let Some(current) = work.pop() {
+            if seen.contains(&current) || current <= more_than {
+                continue;
             }
-            Value::Bool(base) => {
-                let base_big = BigInt::from_i64(if base { 1 } else { 0 });
-                for exponent in (more_than + 1)..=w {
-                    let exponent_u32 = u32::try_from(exponent)
-                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
-                    let value = base_big.pow_u64(exponent_u32 as u64);
-                    entries.push((Value::Int(exponent), value_from_bigint(value)));
-                }
-            }
-            Value::BigInt(base_big) => {
-                for exponent in (more_than + 1)..=w {
-                    let exponent_u32 = u32::try_from(exponent)
-                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
-                    let value = base_big.pow_u64(exponent_u32 as u64);
-                    entries.push((Value::Int(exponent), value_from_bigint(value)));
-                }
-            }
-            Value::Float(base) => {
-                for exponent in (more_than + 1)..=w {
-                    let exponent = i32::try_from(exponent)
-                        .map_err(|_| RuntimeError::new("compute_powers() exponent out of range"))?;
-                    entries.push((
-                        Value::Int(exponent as i64),
-                        Value::Float(base.powi(exponent)),
-                    ));
-                }
-            }
-            _ => {
-                return Err(RuntimeError::new(
-                    "compute_powers() base must be int, bool, bigint, or float",
-                ));
+            seen.insert(current);
+            let lo = current >> 1;
+            let hi = current - lo;
+            let which = if need_hi { hi } else { lo };
+            need.insert(which);
+            work.push(which);
+            if lo != hi {
+                work.push(current - which);
             }
         }
-        Ok(self.heap.alloc_dict(entries))
+
+        let mut cands = need.clone();
+        let mut extra: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        while let Some(current) = cands.iter().copied().max() {
+            cands.remove(&current);
+            let lo = current >> 1;
+            if lo > more_than && !cands.contains(&(current - 1)) && !cands.contains(&lo) {
+                extra.insert(lo);
+                cands.insert(lo);
+            }
+        }
+
+        let mut exponents = need.union(&extra).copied().collect::<Vec<_>>();
+        exponents.sort_unstable();
+        let mut computed: HashMap<i64, Value> = HashMap::new();
+        for exponent in exponents {
+            let lo = exponent >> 1;
+            let hi = exponent - lo;
+            let result = if let Some(previous) = computed.get(&(exponent - 1)).cloned() {
+                mul_values(previous, base.clone(), &self.heap)?
+            } else if let Some(square_base) = computed.get(&lo).cloned() {
+                let mut value = mul_values(square_base.clone(), square_base, &self.heap)?;
+                if hi != lo {
+                    value = mul_values(value, base.clone(), &self.heap)?;
+                }
+                value
+            } else {
+                pow_values(base.clone(), Value::Int(exponent))?
+            };
+            computed.insert(exponent, result);
+        }
+
+        if need_hi {
+            for exponent in extra {
+                computed.remove(&exponent);
+            }
+        }
+
+        let mut entries = computed.into_iter().collect::<Vec<_>>();
+        entries.sort_by_key(|(key, _)| *key);
+        let dict_entries = entries
+            .into_iter()
+            .map(|(key, value)| (Value::Int(key), value))
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc_dict(dict_entries))
     }
 
     pub(super) fn builtin_pylong_dec_str_to_int_inner(

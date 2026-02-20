@@ -1256,95 +1256,37 @@ pub unsafe extern "C" fn PyObject_IsInstance(object: *mut c_void, class: *mut c_
         unsafe { PyErr_BadInternalCall() };
         return -1;
     }
-
-    const MIN_VALID_PTR: usize = 0x1_0000_0000;
-    const TYPE_ALIGN: usize = std::mem::align_of::<CpythonTypeObject>();
-    let type_ptr_for_object = |ptr: *mut c_void| -> Option<*mut c_void> {
-        if ptr.is_null() || (ptr as usize) < MIN_VALID_PTR {
-            return None;
-        }
-        // SAFETY: guarded best-effort object-header read.
-        let type_ptr = unsafe {
-            ptr.cast::<CpythonObjectHead>()
-                .as_ref()
-                .map(|head| head.ob_type.cast::<c_void>())
-        }?;
-        if type_ptr.is_null()
-            || (type_ptr as usize) < MIN_VALID_PTR
-            || (type_ptr as usize) % TYPE_ALIGN != 0
-        {
-            return None;
-        }
-        Some(type_ptr)
-    };
-
-    let Some(class_type) = type_ptr_for_object(class) else {
-        cpython_set_error("PyObject_IsInstance received invalid class pointer");
-        return -1;
-    };
-    let tuple_type = std::ptr::addr_of_mut!(PyTuple_Type).cast::<c_void>();
-    let pytype_type = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
-
-    if class_type == tuple_type {
-        let tuple_len = unsafe { PyTuple_Size(class) };
-        if tuple_len < 0 {
+    with_active_cpython_context_mut(|context| {
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("PyObject_IsInstance received unknown object pointer");
+            return -1;
+        };
+        let Some(class_value) = context.cpython_value_from_ptr_or_proxy(class) else {
+            context.set_error("PyObject_IsInstance received unknown class pointer");
+            return -1;
+        };
+        if context.vm.is_null() {
+            context.set_error("PyObject_IsInstance missing VM context");
             return -1;
         }
-        for idx in 0..tuple_len {
-            let item = unsafe { PyTuple_GetItem(class, idx) };
-            if item.is_null() {
-                return -1;
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.builtin_isinstance(vec![object_value, class_value], HashMap::new()) {
+            Ok(Value::Bool(flag)) => i32::from(flag),
+            Ok(_) => {
+                context.set_error("PyObject_IsInstance returned non-bool result");
+                -1
             }
-            let result = unsafe { PyObject_IsInstance(object, item) };
-            if result < 0 {
-                return -1;
-            }
-            if result > 0 {
-                return 1;
+            Err(err) => {
+                context.set_error(err.message);
+                -1
             }
         }
-        return 0;
-    }
-
-    if class_type == pytype_type {
-        let Some(object_type) = type_ptr_for_object(object) else {
-            return 0;
-        };
-        let is_match = object_type == class || unsafe { PyType_IsSubtype(object_type, class) != 0 };
-        return i32::from(is_match);
-    }
-
-    let instancecheck_name = b"__instancecheck__\0";
-    let checker =
-        unsafe { PyObject_GetAttrString(class, instancecheck_name.as_ptr().cast::<i8>()) };
-    if checker.is_null() {
-        if unsafe { PyErr_ExceptionMatches(PyExc_AttributeError) } != 0 {
-            unsafe { PyErr_Clear() };
-        }
-        let is_type_like = unsafe { PyType_IsSubtype(class_type, pytype_type) != 0 };
-        if is_type_like {
-            let Some(object_type) = type_ptr_for_object(object) else {
-                return 0;
-            };
-            let is_match =
-                object_type == class || unsafe { PyType_IsSubtype(object_type, class) != 0 };
-            return i32::from(is_match);
-        }
-        cpython_set_typed_error(
-            unsafe { PyExc_TypeError },
-            "isinstance() arg 2 must be a type or tuple of types",
-        );
-        return -1;
-    }
-
-    let call_result = unsafe { PyObject_CallOneArg(checker, object) };
-    unsafe { Py_DecRef(checker) };
-    if call_result.is_null() {
-        return -1;
-    }
-    let truth = unsafe { PyObject_IsTrue(call_result) };
-    unsafe { Py_DecRef(call_result) };
-    truth
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
 }
 
 #[unsafe(no_mangle)]

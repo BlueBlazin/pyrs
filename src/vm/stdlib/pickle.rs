@@ -2828,10 +2828,7 @@ impl Vm {
                         self.heap.alloc_tuple(args),
                     );
                 }
-                (
-                    Value::Builtin(BuiltinFunction::Dict),
-                    self.heap.alloc_tuple(vec![value.clone()]),
-                )
+                (Value::Builtin(BuiltinFunction::Dict), self.heap.alloc_tuple(Vec::new()))
             }
             Value::Bool(_)
             | Value::Int(_)
@@ -2840,7 +2837,6 @@ impl Vm {
             | Value::Complex { .. }
             | Value::Str(_)
             | Value::Bytes(_)
-            | Value::List(_)
             | Value::Tuple(_) => {
                 let constructor =
                     self.class_of_value(value)
@@ -2854,12 +2850,15 @@ impl Vm {
                             Value::Complex { .. } => Value::Builtin(BuiltinFunction::Complex),
                             Value::Str(_) => Value::Builtin(BuiltinFunction::Str),
                             Value::Bytes(_) => Value::Builtin(BuiltinFunction::Bytes),
-                            Value::List(_) => Value::Builtin(BuiltinFunction::List),
                             Value::Tuple(_) => Value::Builtin(BuiltinFunction::Tuple),
                             _ => Value::Builtin(BuiltinFunction::ObjectNew),
                         });
                 (constructor, self.heap.alloc_tuple(vec![value.clone()]))
             }
+            Value::List(_) => (
+                Value::Builtin(BuiltinFunction::List),
+                self.heap.alloc_tuple(Vec::new()),
+            ),
             Value::Set(set_obj) => {
                 let constructor = self
                     .class_of_value(value)
@@ -3010,20 +3009,23 @@ impl Vm {
                 || self.instance_backing_dict(instance).is_some()
                 || self.instance_backing_set(instance).is_some()
                 || self.instance_backing_frozenset(instance).is_some();
-            if !has_builtin_backing
-                && let Ok(reduce_ex) = self.pickle_copyreg_callable("_reduce_ex")
-            {
-                return match self.call_internal(
-                    reduce_ex,
-                    vec![value.clone(), Value::Int(protocol)],
-                    HashMap::new(),
-                )? {
-                    InternalCallOutcome::Value(result) => Ok(result),
-                    InternalCallOutcome::CallerExceptionHandled => {
-                        Err(self
-                            .runtime_error_from_active_exception("object.__reduce_ex__() failed"))
-                    }
-                };
+            if has_builtin_backing {
+                // Builtin-backed subclasses in pyrs use marker-backed type objects; keep
+                // constructor/state emission on the native legacy path instead of copyreg's
+                // strict global-identity checks.
+            } else {
+            if let Ok(reduce_ex) = self.pickle_copyreg_callable("_reduce_ex") {
+            return match self.call_internal(
+                reduce_ex,
+                vec![value.clone(), Value::Int(protocol)],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(result) => Ok(result),
+                InternalCallOutcome::CallerExceptionHandled => {
+                    Err(self.runtime_error_from_active_exception("object.__reduce_ex__() failed"))
+                }
+            };
+            }
             }
         }
 
@@ -3072,37 +3074,65 @@ impl Vm {
         };
         reduced_parts.push(state);
 
-        if let Value::Instance(instance) = &value {
-            let list_iter = if let Some(list_backing) = self.instance_backing_list(instance) {
-                Some(self.call_builtin(
+        {
+            let list_iter = match &value {
+                Value::List(list_obj) => Some(self.call_builtin(
                     BuiltinFunction::Iter,
-                    vec![Value::List(list_backing)],
+                    vec![Value::List(list_obj.clone())],
                     HashMap::new(),
-                )?)
-            } else {
-                None
+                )?),
+                Value::Instance(instance) => {
+                    if let Some(list_backing) = self.instance_backing_list(instance) {
+                        Some(self.call_builtin(
+                            BuiltinFunction::Iter,
+                            vec![Value::List(list_backing)],
+                            HashMap::new(),
+                        )?)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
             };
-            let dict_iter = if let Some(dict_backing) = self.instance_backing_dict(instance) {
-                let items_method = self.load_attr_dict_method(dict_backing, "items")?;
-                let items_value =
-                    match self.call_internal(items_method, Vec::new(), HashMap::new())? {
-                        InternalCallOutcome::Value(value) => value,
-                        InternalCallOutcome::CallerExceptionHandled => {
-                            return Err(RuntimeError::new("dict.items() failed"));
-                        }
-                    };
-                Some(self.call_builtin(BuiltinFunction::Iter, vec![items_value], HashMap::new())?)
-            } else {
-                None
+            let dict_iter = match &value {
+                Value::Dict(dict_obj) => {
+                    let items_method = self.load_attr_dict_method(dict_obj.clone(), "items")?;
+                    let items_value =
+                        match self.call_internal(items_method, Vec::new(), HashMap::new())? {
+                            InternalCallOutcome::Value(value) => value,
+                            InternalCallOutcome::CallerExceptionHandled => {
+                                return Err(RuntimeError::new("dict.items() failed"));
+                            }
+                        };
+                    Some(
+                        self.call_builtin(BuiltinFunction::Iter, vec![items_value], HashMap::new())?,
+                    )
+                }
+                Value::Instance(instance) => {
+                    if let Some(dict_backing) = self.instance_backing_dict(instance) {
+                        let items_method = self.load_attr_dict_method(dict_backing, "items")?;
+                        let items_value =
+                            match self.call_internal(items_method, Vec::new(), HashMap::new())? {
+                                InternalCallOutcome::Value(value) => value,
+                                InternalCallOutcome::CallerExceptionHandled => {
+                                    return Err(RuntimeError::new("dict.items() failed"));
+                                }
+                            };
+                        Some(
+                            self.call_builtin(
+                                BuiltinFunction::Iter,
+                                vec![items_value],
+                                HashMap::new(),
+                            )?,
+                        )
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
             };
-            if let Some(iter_value) = list_iter {
-                reduced_parts.push(iter_value);
-            } else if dict_iter.is_some() {
-                reduced_parts.push(Value::None);
-            }
-            if let Some(iter_value) = dict_iter {
-                reduced_parts.push(iter_value);
-            }
+            reduced_parts.push(list_iter.unwrap_or(Value::None));
+            reduced_parts.push(dict_iter.unwrap_or(Value::None));
         }
 
         Ok(self.heap.alloc_tuple(reduced_parts))
@@ -3169,6 +3199,27 @@ mod tests {
             Value::Class(class) => class,
             other => panic!("expected class allocation, got {other:?}"),
         };
+        if let Some(Value::Class(object_class)) = vm.builtins.get("object").cloned() {
+            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                class_data.bases = vec![object_class.clone()];
+                class_data.mro = vec![class.clone(), object_class.clone()];
+                class_data.attrs.insert(
+                    "__bases__".to_string(),
+                    vm.heap.alloc_tuple(vec![Value::Class(object_class.clone())]),
+                );
+                class_data.attrs.insert(
+                    "__mro__".to_string(),
+                    vm.heap.alloc_tuple(vec![Value::Class(class.clone()), Value::Class(object_class)]),
+                );
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("__main__".to_string()));
+                class_data
+                    .attrs
+                    .insert("__flags__".to_string(), Value::Int(1 << 9));
+                class_data.metaclass = vm.default_type_metaclass();
+            }
+        }
         let mut instance = InstanceObject::new(class);
         for (name, value) in attrs {
             instance.attrs.insert((*name).to_string(), value.clone());
@@ -3220,10 +3271,12 @@ mod tests {
             .builtin_object_reduce_ex(vec![Value::Int(7), Value::Int(4)], HashMap::new())
             .expect("object.__reduce_ex__ should succeed");
         let parts = tuple_values(&reduced);
-        assert_eq!(parts.len(), 3);
+        assert_eq!(parts.len(), 5);
         let constructor_args = tuple_values(&parts[1]);
         assert_eq!(constructor_args, vec![Value::Int(7)]);
         assert_eq!(parts[2], Value::None);
+        assert_eq!(parts[3], Value::None);
+        assert_eq!(parts[4], Value::None);
     }
 
     #[test]
@@ -3250,6 +3303,12 @@ mod tests {
         let mut vm = Vm::new();
         if vm.import_module_object("copyreg").is_err() {
             eprintln!("skipping legacy protocol reduce_ex unit test (copyreg unavailable)");
+            return;
+        }
+        if vm.pickle_copyreg_callable("_reduce_ex").is_err() {
+            eprintln!(
+                "skipping legacy protocol reduce_ex unit test (copyreg._reduce_ex unavailable)"
+            );
             return;
         }
         let instance = alloc_instance_with_attrs(&mut vm, "NeedsArgs", &[("a", Value::Int(1))]);
@@ -3292,10 +3351,12 @@ mod tests {
             .builtin_object_reduce_ex(vec![instance, Value::Int(2)], HashMap::new())
             .expect("object.__reduce_ex__ should succeed");
         let parts = tuple_values(&reduced);
-        assert_eq!(parts.len(), 3);
+        assert_eq!(parts.len(), 5);
         assert!(!matches!(parts[0], Value::Class(_)));
         let constructor_args = tuple_values(&parts[1]);
         assert_eq!(constructor_args, vec![class_obj]);
+        assert_eq!(parts[3], Value::None);
+        assert_eq!(parts[4], Value::None);
     }
 
     #[test]

@@ -2220,7 +2220,9 @@ pub unsafe extern "C" fn PyType_GetSlot(ty: *mut c_void, slot: c_int) -> *mut c_
         {
             *raw as *mut c_void
         } else {
-            std::ptr::null_mut()
+            // Mirror CPython: inherited/default slots are discoverable even when
+            // they were not explicitly provided in the original PyType_Spec.
+            cpython_type_slot_from_type_object(type_ptr, slot)
         }
     } else if slot == PY_TYPE_SLOT_TP_TOKEN {
         std::ptr::null_mut()

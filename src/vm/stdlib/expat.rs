@@ -79,9 +79,13 @@ impl Vm {
 
     fn pyexpat_syntax_error(text: &str, byte_index: usize, message: &str) -> ExpatSyntaxError {
         let (lineno, offset) = Self::pyexpat_error_position(text, byte_index);
+        let code = match message {
+            "unclosed element" => 3,
+            _ => 1,
+        };
         ExpatSyntaxError {
             message: message.to_string(),
-            code: 1,
+            code,
             lineno,
             offset,
         }

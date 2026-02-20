@@ -28,8 +28,6 @@ _testinternalcapi.set_eval_frame_default
 sys.__breakpointhook__
 sys.__unraisablehook__
 sys._clear_type_descriptors
-sys._jit.is_available
-sys._jit.is_enabled
 sys.audit
 sys.breakpointhook
 sys.monitoring.clear_tool_id

@@ -6852,7 +6852,8 @@ impl Vm {
             bases.clone()
         };
 
-        let resolved_metaclass = self.resolve_class_metaclass(&bases, metaclass.as_ref())?;
+        let resolved_metaclass =
+            self.resolve_class_metaclass(&default_bases, metaclass.as_ref())?;
         let explicit_metaclass = metaclass.clone();
         let effective_metaclass =
             metaclass.or_else(|| resolved_metaclass.clone().map(Value::Class));
@@ -7016,6 +7017,10 @@ impl Vm {
                 _ => None,
             };
             winner = self.merge_metaclass_candidates(winner, base_meta)?;
+        }
+
+        if winner.is_none() {
+            winner = self.default_type_metaclass();
         }
 
         Ok(winner)

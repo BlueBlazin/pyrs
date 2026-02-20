@@ -26,6 +26,21 @@ fn cpython_lib_path() -> Option<PathBuf> {
     None
 }
 
+fn run_with_large_stack<F>(name: &str, f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    let join = std::thread::Builder::new()
+        .name(name.to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(f)
+        .expect("failed to spawn large-stack test thread");
+    match join.join() {
+        Ok(()) => {}
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 #[test]
 fn gc_collect_reclaims_unreachable_cycles_created_in_loop() {
     let code = compile_source(
@@ -82,33 +97,35 @@ fn repeated_execute_plus_gc_keeps_heap_growth_bounded() {
 
 #[test]
 fn repeated_stdlib_import_exec_plus_gc_stays_bounded_after_warmup() {
-    let Some(lib) = cpython_lib_path() else {
-        eprintln!("skipping stdlib gc regression (CPython Lib not available)");
-        return;
-    };
-    let code = compile_source(
-        r#"import importlib
+    run_with_large_stack("gc-regression-stdlib-import-loop", move || {
+        let Some(lib) = cpython_lib_path() else {
+            eprintln!("skipping stdlib gc regression (CPython Lib not available)");
+            return;
+        };
+        let code = compile_source(
+            r#"import importlib
 mods = ("argparse", "json", "csv", "pickle", "re")
 for _ in range(12):
     for name in mods:
         mod = importlib.import_module(name)
         _ = mod.__name__
 "#,
-    );
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib);
+        );
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib);
 
-    vm.execute(&code).expect("warmup execute should succeed");
-    vm.gc_collect();
-    let after_warmup = vm.heap_object_count();
-
-    for _ in 0..6 {
-        vm.execute(&code).expect("repeat execute should succeed");
+        vm.execute(&code).expect("warmup execute should succeed");
         vm.gc_collect();
-    }
-    let after_repeats = vm.heap_object_count();
-    assert!(
-        after_repeats <= after_warmup + 256,
-        "heap grew unexpectedly after stdlib warmup (warmup={after_warmup}, after={after_repeats})"
-    );
+        let after_warmup = vm.heap_object_count();
+
+        for _ in 0..6 {
+            vm.execute(&code).expect("repeat execute should succeed");
+            vm.gc_collect();
+        }
+        let after_repeats = vm.heap_object_count();
+        assert!(
+            after_repeats <= after_warmup + 256,
+            "heap grew unexpectedly after stdlib warmup (warmup={after_warmup}, after={after_repeats})"
+        );
+    });
 }

@@ -112,7 +112,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     object, is_owned, is_known_compat, is_type_object
                 );
             }
-            if is_known_compat && is_owned && !is_type_object {
+            if is_known_compat && is_owned {
                 return None;
             }
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
@@ -587,8 +587,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             }
             let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
             let is_owned = context.owns_cpython_allocation_ptr(object);
-            let is_type_object = super::cpython_is_type_object_ptr(object);
-            if is_known_compat && is_owned && !is_type_object {
+            if is_known_compat && is_owned {
                 return None;
             }
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.

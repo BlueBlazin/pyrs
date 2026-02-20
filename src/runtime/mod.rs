@@ -2293,6 +2293,7 @@ pub enum BuiltinFunction {
     ANext,
     Type,
     TypeInit,
+    TypeMro,
     ClassMethod,
     StaticMethod,
     Property,
@@ -2402,6 +2403,8 @@ pub enum BuiltinFunction {
     DecimalGetContext,
     DecimalSetContext,
     DecimalLocalContext,
+    DecimalContextEnter,
+    DecimalContextExit,
     WeakRefRef,
     WeakRefProxy,
     WeakRefFinalize,
@@ -2523,6 +2526,9 @@ pub enum BuiltinFunction {
     OsPathRealPath,
     OsPathRelPath,
     OsPathCommonPrefix,
+    PathlibPathInit,
+    PathlibPathJoinPath,
+    PathlibPathStr,
     OsWaitPid,
     PosixSubprocessForkExec,
     SubprocessPopenInit,
@@ -3017,10 +3023,12 @@ pub enum BuiltinFunction {
     DateTimeFromTimestamp,
     DateTimeAstimezone,
     DateInit,
+    DateTimeDeltaInit,
     DateTimeTimezoneInit,
     DateToOrdinal,
     DateWeekday,
     DateIsoWeekday,
+    DateIsoFormat,
     DateStrFTime,
     TimeInit,
     AsyncioRun,
@@ -4382,6 +4390,24 @@ impl BuiltinFunction {
                 }
                 Ok(Value::None)
             }
+            BuiltinFunction::TypeMro => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("mro() expects one argument"));
+                }
+                let Value::Class(class) = &args[0] else {
+                    return Err(RuntimeError::new("mro() expected class receiver"));
+                };
+                let mro = match &*class.kind() {
+                    Object::Class(class_data) => class_data
+                        .mro
+                        .iter()
+                        .cloned()
+                        .map(Value::Class)
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                Ok(heap.alloc_list(mro))
+            }
             BuiltinFunction::ClassMethod => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("classmethod() expects one argument"));
@@ -5591,6 +5617,8 @@ impl BuiltinFunction {
             | BuiltinFunction::DecimalGetContext
             | BuiltinFunction::DecimalSetContext
             | BuiltinFunction::DecimalLocalContext
+            | BuiltinFunction::DecimalContextEnter
+            | BuiltinFunction::DecimalContextExit
             | BuiltinFunction::MathSqrt
             | BuiltinFunction::MathCopySign
             | BuiltinFunction::MathFloor
@@ -5697,6 +5725,9 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathRealPath
             | BuiltinFunction::OsPathRelPath
             | BuiltinFunction::OsPathCommonPrefix
+            | BuiltinFunction::PathlibPathInit
+            | BuiltinFunction::PathlibPathJoinPath
+            | BuiltinFunction::PathlibPathStr
             | BuiltinFunction::OsWaitPid
             | BuiltinFunction::PosixSubprocessForkExec
             | BuiltinFunction::SubprocessPopenInit
@@ -5898,10 +5929,12 @@ impl BuiltinFunction {
             | BuiltinFunction::DateTimeFromTimestamp
             | BuiltinFunction::DateTimeAstimezone
             | BuiltinFunction::DateInit
+            | BuiltinFunction::DateTimeDeltaInit
             | BuiltinFunction::DateTimeTimezoneInit
             | BuiltinFunction::DateToOrdinal
             | BuiltinFunction::DateWeekday
             | BuiltinFunction::DateIsoWeekday
+            | BuiltinFunction::DateIsoFormat
             | BuiltinFunction::DateStrFTime
             | BuiltinFunction::TimeInit
             | BuiltinFunction::AsyncioRun
@@ -7250,7 +7283,17 @@ pub fn format_value(value: &Value) -> String {
         },
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance) => match &*instance.class.kind() {
-                Object::Class(class) => format!("<{} instance>", class.name),
+                Object::Class(class) => {
+                    let module = class
+                        .attrs
+                        .get("__module__")
+                        .and_then(|value| match value {
+                            Value::Str(name) => Some(name.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("__main__");
+                    format!("<{module}.{} object at 0x{:x}>", class.name, obj.id())
+                }
                 _ => "<instance ?>".to_string(),
             },
             _ => "<instance ?>".to_string(),

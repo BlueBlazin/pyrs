@@ -153,6 +153,40 @@ fn pyrs_binary_path() -> Option<PathBuf> {
     None
 }
 
+fn run_numpy_probe_subprocess(source: &str) {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(site_packages) = numpy_site_packages_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .env("PYTHONPATH", &site_packages)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("spawn pyrs numpy probe");
+    if !output.status.success() {
+        panic!(
+            "numpy probe failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(
+        last_line, "True",
+        "expected probe to print True, got stdout:\n{}",
+        stdout
+    );
+}
+
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "{prefix}_{}",
@@ -14017,65 +14051,32 @@ except ModuleNotFoundError:
 
 #[test]
 fn numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder() {
-    let Some(lib) = cpython_lib_path() else {
-        return;
-    };
-    let Some(site_packages) = numpy_site_packages_path() else {
-        return;
-    };
-    run_with_large_stack("vm-numpy-float-repr", move || {
-        let source = r#"import numpy as np
+    let source = r#"import numpy as np
 x = np.arange(0, 10, 0.5)
 text = repr(x)
 ok = ("array([" in text and "<ndarray instance>" not in text and "0.5" in text and "e+00" not in text)
+print(ok)
 "#;
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib);
-        vm.add_module_path(site_packages);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_numpy_probe_subprocess(source);
 }
 
 #[test]
 fn numpy_bool_truthiness_and_float_ordering_match_cpython() {
-    let Some(lib) = cpython_lib_path() else {
-        return;
-    };
-    let Some(site_packages) = numpy_site_packages_path() else {
-        return;
-    };
-    run_with_large_stack("vm-numpy-bool-truthy-ordering", move || {
-        let source = r#"import numpy as np
+    let source = r#"import numpy as np
 ok = (
     bool(np.False_) is False
     and bool(np.True_) is True
     and (np.float64(0.5) < 0.0001) is False
     and (np.float64(0.5) > 0.0001) is True
 )
+print(ok)
 "#;
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib);
-        vm.add_module_path(site_packages);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_numpy_probe_subprocess(source);
 }
 
 #[test]
 fn numpy_proxy_scalar_richcmp_dunders_cover_lt_le_gt_ge_across_types() {
-    let Some(lib) = cpython_lib_path() else {
-        return;
-    };
-    let Some(site_packages) = numpy_site_packages_path() else {
-        return;
-    };
-    run_with_large_stack("vm-numpy-proxy-richcmp-dunders", move || {
-        let source = r#"import numpy as np
+    let source = r#"import numpy as np
 
 cases = [
     (np.float32(0.5), 0.0001, (False, False, True, True)),
@@ -14098,27 +14099,14 @@ for left, right, expected in cases:
         bool(left.__ge__(right)),
     )
     ok = ok and direct == expected and dunder == expected
+print(ok)
 "#;
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib);
-        vm.add_module_path(site_packages);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_numpy_probe_subprocess(source);
 }
 
 #[test]
 fn numpy_proxy_scalar_unary_and_getitem_dunders_are_slot_backed() {
-    let Some(lib) = cpython_lib_path() else {
-        return;
-    };
-    let Some(site_packages) = numpy_site_packages_path() else {
-        return;
-    };
-    run_with_large_stack("vm-numpy-proxy-unary-getitem-dunders", move || {
-        let source = r#"import numpy as np
+    let source = r#"import numpy as np
 
 x = np.float64(1.5)
 ok = (
@@ -14136,27 +14124,14 @@ ok = (
     and np.int64(7).__index__() == 7
     and np.uint32(9).__index__() == 9
 )
+print(ok)
 "#;
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib);
-        vm.add_module_path(site_packages);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_numpy_probe_subprocess(source);
 }
 
 #[test]
 fn numpy_proxy_ndarray_len_iter_setitem_dunders_are_slot_backed() {
-    let Some(lib) = cpython_lib_path() else {
-        return;
-    };
-    let Some(site_packages) = numpy_site_packages_path() else {
-        return;
-    };
-    run_with_large_stack("vm-numpy-proxy-ndarray-dunders", move || {
-        let source = r#"import numpy as np
+    let source = r#"import numpy as np
 
 a = np.arange(5)
 iter_obj = a.__iter__()
@@ -14170,15 +14145,9 @@ ok = (
     and ret is None
     and int(a[2]) == 42
 )
+print(ok)
 "#;
-        let module = parser::parse_module(source).expect("parse should succeed");
-        let code = compiler::compile_module(&module).expect("compile should succeed");
-        let mut vm = Vm::new();
-        vm.add_module_path(lib);
-        vm.add_module_path(site_packages);
-        vm.execute(&code).expect("execution should succeed");
-        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
-    });
+    run_numpy_probe_subprocess(source);
 }
 
 #[test]

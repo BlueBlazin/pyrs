@@ -3475,6 +3475,29 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_type_mro(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("mro() does not accept keyword arguments"));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new("mro() takes no arguments"));
+        }
+        let class = match &args[0] {
+            Value::Class(class) => class.clone(),
+            _ => return Err(RuntimeError::new("mro() expected class receiver")),
+        };
+        let entries = self
+            .class_mro_entries(&class)
+            .into_iter()
+            .map(Value::Class)
+            .collect::<Vec<_>>();
+        Ok(self.heap.alloc_list(entries))
+    }
+
     pub(super) fn builtin_type_annotations_get(
         &mut self,
         args: Vec<Value>,
@@ -6675,6 +6698,9 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_bound_method(&left, &right) {
             return Ok(Value::Bool(!result));
         }
+        if let Some(result) = self.compare_eq_via_int_backing(&left, &right) {
+            return Ok(Value::Bool(!result));
+        }
         if let Some(result) = self.compare_eq_via_float_backing(&left, &right) {
             return Ok(Value::Bool(!result));
         }
@@ -6877,7 +6903,10 @@ impl Vm {
             .iter()
             .any(|(a, b)| (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id))
         {
-            return Ok(Some(true));
+            return Err(RuntimeError::with_exception(
+                "RecursionError",
+                Some("maximum recursion depth exceeded in comparison".to_string()),
+            ));
         }
         self.list_eq_in_progress.push((left_id, right_id));
         let result = (|| -> Result<Option<bool>, RuntimeError> {
@@ -6931,7 +6960,10 @@ impl Vm {
             .iter()
             .any(|(a, b)| (*a == left_id && *b == right_id) || (*a == right_id && *b == left_id))
         {
-            return Ok(Some(true));
+            return Err(RuntimeError::with_exception(
+                "RecursionError",
+                Some("maximum recursion depth exceeded in comparison".to_string()),
+            ));
         }
         self.list_eq_in_progress.push((left_id, right_id));
         let result = (|| -> Result<Option<bool>, RuntimeError> {
@@ -7403,7 +7435,13 @@ impl Vm {
                 _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },
             Value::Builtin(expected_builtin) => match candidate {
-                Value::Builtin(candidate_builtin) => Ok(candidate_builtin == expected_builtin),
+                Value::Builtin(candidate_builtin) => Ok(
+                    candidate_builtin == expected_builtin
+                        || matches!(
+                            (candidate_builtin, expected_builtin),
+                            (BuiltinFunction::Bool, BuiltinFunction::Int)
+                        ),
+                ),
                 Value::Str(name) => {
                     if matches!(expected_builtin, BuiltinFunction::Type)
                         && is_runtime_type_name_marker(name)
@@ -7413,14 +7451,26 @@ impl Vm {
                         Err(RuntimeError::new("issubclass() arg 1 must be a class"))
                     }
                 }
-                Value::Class(class) => {
-                    if !matches!(expected_builtin, BuiltinFunction::Type) {
-                        return Ok(false);
+                Value::Class(class) => Ok(match expected_builtin {
+                    BuiltinFunction::Type => self.class_has_builtin_type_base(class),
+                    BuiltinFunction::Bool => {
+                        self.class_mro_entries(class).iter().any(|entry| {
+                            matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "bool")
+                        })
                     }
-                    Ok(self.class_mro_entries(class).iter().any(|entry| {
-                        matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "type")
-                    }))
-                }
+                    BuiltinFunction::Int => self.class_has_builtin_int_base(class),
+                    BuiltinFunction::Float => self.class_has_builtin_float_base(class),
+                    BuiltinFunction::Complex => self.class_has_builtin_complex_base(class),
+                    BuiltinFunction::Str => self.class_has_builtin_str_base(class),
+                    BuiltinFunction::List => self.class_has_builtin_list_base(class),
+                    BuiltinFunction::Tuple => self.class_has_builtin_tuple_base(class),
+                    BuiltinFunction::Dict => self.class_has_builtin_dict_base(class),
+                    BuiltinFunction::Set => self.class_has_builtin_set_base(class),
+                    BuiltinFunction::FrozenSet => self.class_has_builtin_frozenset_base(class),
+                    BuiltinFunction::Bytes => self.class_has_builtin_bytes_base(class),
+                    BuiltinFunction::ByteArray => self.class_has_builtin_bytearray_base(class),
+                    _ => false,
+                }),
                 Value::ExceptionType(_) => Ok(false),
                 _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
             },
@@ -7457,22 +7507,158 @@ impl Vm {
             BuiltinFunction::Bool => matches!(value, Value::Bool(_)),
             BuiltinFunction::Int => {
                 matches!(value, Value::Int(_) | Value::BigInt(_) | Value::Bool(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_int(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_int_base(&instance_data.class)
+                                )
+                    )
             }
-            BuiltinFunction::Float => matches!(value, Value::Float(_)),
-            BuiltinFunction::Str => matches!(value, Value::Str(_)),
-            BuiltinFunction::List => matches!(value, Value::List(_)),
-            BuiltinFunction::Tuple => matches!(value, Value::Tuple(_)),
-            BuiltinFunction::Dict => matches!(value, Value::Dict(_)),
+            BuiltinFunction::Float => {
+                matches!(value, Value::Float(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_float(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_float_base(&instance_data.class)
+                                )
+                    )
+            }
+            BuiltinFunction::Str => {
+                matches!(value, Value::Str(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_str(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_str_base(&instance_data.class)
+                                )
+                    )
+            }
+            BuiltinFunction::List => {
+                matches!(value, Value::List(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_list(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_list_base(&instance_data.class)
+                                )
+                    )
+            }
+            BuiltinFunction::Tuple => {
+                matches!(value, Value::Tuple(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_tuple(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_tuple_base(&instance_data.class)
+                                )
+                    )
+            }
+            BuiltinFunction::Dict => {
+                matches!(value, Value::Dict(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_dict(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_dict_base(&instance_data.class)
+                                )
+                    )
+            }
             BuiltinFunction::CollectionsDefaultDict => matches!(
                 value,
                 Value::Dict(obj) if self.defaultdict_factories.contains_key(&obj.id())
             ),
-            BuiltinFunction::Set => matches!(value, Value::Set(_)),
-            BuiltinFunction::FrozenSet => matches!(value, Value::FrozenSet(_)),
-            BuiltinFunction::Bytes => matches!(value, Value::Bytes(_)),
-            BuiltinFunction::ByteArray => matches!(value, Value::ByteArray(_)),
+            BuiltinFunction::Set => {
+                matches!(value, Value::Set(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_set(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_set_base(&instance_data.class)
+                                )
+                    )
+            }
+            BuiltinFunction::FrozenSet => {
+                matches!(value, Value::FrozenSet(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_frozenset(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_frozenset_base(&instance_data.class)
+                                )
+                    )
+            }
+            BuiltinFunction::Bytes => {
+                matches!(value, Value::Bytes(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if matches!(
+                                &*instance.kind(),
+                                Object::Instance(instance_data)
+                                    if self.class_has_builtin_bytes_base(&instance_data.class)
+                                        && matches!(
+                                            instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR),
+                                            Some(Value::Bytes(_))
+                                        )
+                            )
+                    )
+            }
+            BuiltinFunction::ByteArray => {
+                matches!(value, Value::ByteArray(_))
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if matches!(
+                                &*instance.kind(),
+                                Object::Instance(instance_data)
+                                    if self.class_has_builtin_bytearray_base(&instance_data.class)
+                                        && matches!(
+                                            instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR),
+                                            Some(Value::ByteArray(_))
+                                        )
+                            )
+                    )
+            }
             BuiltinFunction::MemoryView => matches!(value, Value::MemoryView(_)),
-            BuiltinFunction::Complex => matches!(value, Value::Complex { .. }),
+            BuiltinFunction::Complex => {
+                matches!(value, Value::Complex { .. })
+                    || matches!(
+                        value,
+                        Value::Instance(instance)
+                            if self.instance_backing_complex(instance).is_some()
+                                || matches!(
+                                    &*instance.kind(),
+                                    Object::Instance(instance_data)
+                                        if self.class_has_builtin_complex_base(&instance_data.class)
+                                )
+                    )
+            }
             BuiltinFunction::Slice => matches!(value, Value::Slice { .. }),
             BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
             BuiltinFunction::TypesMethodType => {

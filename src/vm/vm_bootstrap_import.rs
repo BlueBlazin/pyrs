@@ -314,6 +314,18 @@ impl Vm {
         let decimal_context_class = self
             .heap
             .alloc_class(ClassObject::new("Context".to_string(), Vec::new()));
+        if let Value::Class(class) = &decimal_context_class
+            && let Object::Class(class_data) = &mut *class.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::DecimalContextEnter),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::DecimalContextExit),
+            );
+        }
         let decimal_default_context = match &decimal_context_class {
             Value::Class(class) => self.heap.alloc_instance(InstanceObject::new(class.clone())),
             _ => Value::None,
@@ -806,14 +818,35 @@ impl Vm {
             &[],
             vec![("build_time_vars", self.heap.alloc_dict(build_time_vars))],
         );
+        let pathlib_path_class = match self
+            .heap
+            .alloc_class(ClassObject::new("Path".to_string(), Vec::new()))
+        {
+            Value::Class(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *pathlib_path_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::PathlibPathInit),
+            );
+            class_data.attrs.insert(
+                "joinpath".to_string(),
+                Value::Builtin(BuiltinFunction::PathlibPathJoinPath),
+            );
+            class_data.attrs.insert(
+                "__str__".to_string(),
+                Value::Builtin(BuiltinFunction::PathlibPathStr),
+            );
+            class_data.attrs.insert(
+                "__fspath__".to_string(),
+                Value::Builtin(BuiltinFunction::PathlibPathStr),
+            );
+        }
         self.install_builtin_module(
             "pathlib",
-            &[
-                ("Path", BuiltinFunction::OsPathJoin),
-                ("joinpath", BuiltinFunction::OsPathJoin),
-                ("exists", BuiltinFunction::OsPathExists),
-            ],
-            Vec::new(),
+            &[("joinpath", BuiltinFunction::OsPathJoin), ("exists", BuiltinFunction::OsPathExists)],
+            vec![("Path", Value::Class(pathlib_path_class))],
         );
         self.install_builtin_module(
             "os.path",
@@ -5420,6 +5453,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateStrFTime),
             );
             class_data.attrs.insert(
+                "isoformat".to_string(),
+                Value::Builtin(BuiltinFunction::DateIsoFormat),
+            );
+            class_data.attrs.insert(
                 "toordinal".to_string(),
                 Value::Builtin(BuiltinFunction::DateToOrdinal),
             );
@@ -5453,6 +5490,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateStrFTime),
             );
             class_data.attrs.insert(
+                "isoformat".to_string(),
+                Value::Builtin(BuiltinFunction::DateIsoFormat),
+            );
+            class_data.attrs.insert(
                 "toordinal".to_string(),
                 Value::Builtin(BuiltinFunction::DateToOrdinal),
             );
@@ -5472,6 +5513,12 @@ impl Vm {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
+        if let Object::Class(class_data) = &mut *timedelta_class.kind_mut() {
+            class_data.attrs.insert(
+                "__init__".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeDeltaInit),
+            );
+        }
         let time_class = match self
             .heap
             .alloc_class(ClassObject::new("time".to_string(), Vec::new()))

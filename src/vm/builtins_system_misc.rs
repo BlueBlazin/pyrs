@@ -2,11 +2,10 @@ use super::{
     BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
-    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, civil_from_days,
-    current_utc_iso, day_of_year, days_from_civil, format_strftime, format_uuid_hex,
-    format_uuid_hyphenated, is_truthy, parse_uuid_like_string, split_unix_timestamp,
-    uuid_hash_mix_bytes, uuid_node_from_hostname, uuid_random_bytes,
-    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
+    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year,
+    days_from_civil, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
+    parse_uuid_like_string, split_unix_timestamp, uuid_hash_mix_bytes, uuid_node_from_hostname,
+    uuid_random_bytes, uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
 };
 
 impl Vm {
@@ -301,29 +300,70 @@ impl Vm {
 
     pub(super) fn builtin_datetime_now(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || !args.is_empty() {
+        if !kwargs.is_empty() || args.len() > 1 {
             return Err(RuntimeError::new("now() expects no arguments"));
         }
-        Ok(Value::Str(current_utc_iso()))
+        let class = if !args.is_empty() {
+            self.receiver_from_value(&args.remove(0))?
+        } else {
+            self.datetime_default_class()?
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RuntimeError::new("system time before epoch"))?;
+        let parts = split_unix_timestamp(now.as_secs() as i64);
+        self.datetime_instance_from_parts(
+            class,
+            parts.year as i64,
+            parts.month,
+            parts.day,
+            parts.hour,
+            parts.minute,
+            parts.second,
+            now.subsec_micros() as i64,
+            None,
+        )
     }
 
     pub(super) fn builtin_datetime_today(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || !args.is_empty() {
+        if !kwargs.is_empty() || args.len() > 1 {
             return Err(RuntimeError::new("today() expects no arguments"));
         }
+        let class = if !args.is_empty() {
+            self.receiver_from_value(&args.remove(0))?
+        } else {
+            self.date_default_class()?
+        };
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| RuntimeError::new("system time before epoch"))?;
-        let days = (now.as_secs() / 86_400) as i64;
-        let (year, month, day) = civil_from_days(days);
-        Ok(Value::Str(format!("{year:04}-{month:02}-{day:02}")))
+        let parts = split_unix_timestamp(now.as_secs() as i64);
+        let is_datetime_class = matches!(
+            &*class.kind(),
+            Object::Class(class_data) if class_data.name == "datetime"
+        );
+        if is_datetime_class {
+            self.datetime_instance_from_parts(
+                class,
+                parts.year as i64,
+                parts.month,
+                parts.day,
+                parts.hour,
+                parts.minute,
+                parts.second,
+                now.subsec_micros() as i64,
+                None,
+            )
+        } else {
+            self.date_instance_from_parts(class, parts.year as i64, parts.month, parts.day)
+        }
     }
 
     fn datetime_timezone_offset_seconds(&self, tzinfo: &Value) -> Result<i64, RuntimeError> {
@@ -433,6 +473,45 @@ impl Vm {
             return Err(RuntimeError::new("datetime.datetime is unavailable"));
         };
         Ok(class.clone())
+    }
+
+    fn date_default_class(&self) -> Result<ObjRef, RuntimeError> {
+        let module = self
+            .modules
+            .get("datetime")
+            .ok_or_else(|| RuntimeError::new("datetime module not initialized"))?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return Err(RuntimeError::new("datetime module not initialized"));
+        };
+        let Some(Value::Class(class)) = module_data.globals.get("date") else {
+            return Err(RuntimeError::new("datetime.date is unavailable"));
+        };
+        Ok(class.clone())
+    }
+
+    fn date_instance_from_parts(
+        &mut self,
+        class: ObjRef,
+        year: i64,
+        month: u32,
+        day: u32,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.alloc_instance_for_class(&class);
+        {
+            let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+                return Err(RuntimeError::new("date construction failed"));
+            };
+            instance_data
+                .attrs
+                .insert("year".to_string(), Value::Int(year));
+            instance_data
+                .attrs
+                .insert("month".to_string(), Value::Int(month as i64));
+            instance_data
+                .attrs
+                .insert("day".to_string(), Value::Int(day as i64));
+        }
+        Ok(Value::Instance(instance))
     }
 
     pub(super) fn builtin_datetime_fromtimestamp(
@@ -922,6 +1001,92 @@ impl Vm {
         Ok(Value::Int((days + 3).rem_euclid(7) + 1))
     }
 
+    pub(super) fn builtin_date_isoformat(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("isoformat() missing instance"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "date.isoformat")?;
+        let mut sep = "T".to_string();
+        if let Some(value) = kwargs.remove("sep") {
+            sep = match value {
+                Value::Str(text) => text,
+                _ => return Err(RuntimeError::new("isoformat() sep must be str")),
+            };
+        }
+        let _timespec = kwargs.remove("timespec");
+        if !kwargs.is_empty() || args.len() > 1 {
+            return Err(RuntimeError::new("isoformat() got invalid arguments"));
+        }
+        if let Some(value) = args.pop() {
+            sep = match value {
+                Value::Str(text) => text,
+                _ => return Err(RuntimeError::new("isoformat() sep must be str")),
+            };
+        }
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return Err(RuntimeError::new(
+                "isoformat() expects date/datetime instance receiver",
+            ));
+        };
+        let year = instance_data
+            .attrs
+            .get("year")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .ok_or_else(|| RuntimeError::new("isoformat() missing year"))?;
+        let month = instance_data
+            .attrs
+            .get("month")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .ok_or_else(|| RuntimeError::new("isoformat() missing month"))?;
+        let day = instance_data
+            .attrs
+            .get("day")
+            .cloned()
+            .map(value_to_int)
+            .transpose()?
+            .ok_or_else(|| RuntimeError::new("isoformat() missing day"))?;
+        let mut out = format!("{year:04}-{month:02}-{day:02}");
+        if let Some(hour_value) = instance_data.attrs.get("hour").cloned() {
+            let hour = value_to_int(hour_value)?;
+            let minute = instance_data
+                .attrs
+                .get("minute")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .unwrap_or(0);
+            let second = instance_data
+                .attrs
+                .get("second")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .unwrap_or(0);
+            let microsecond = instance_data
+                .attrs
+                .get("microsecond")
+                .cloned()
+                .map(value_to_int)
+                .transpose()?
+                .unwrap_or(0);
+            out.push_str(&format!(
+                "{sep}{hour:02}:{minute:02}:{second:02}"
+            ));
+            if microsecond != 0 {
+                out.push_str(&format!(".{microsecond:06}"));
+            }
+        }
+        Ok(Value::Str(out))
+    }
+
     pub(super) fn builtin_date_strftime(
         &mut self,
         mut args: Vec<Value>,
@@ -1058,6 +1223,100 @@ impl Vm {
         instance_data.attrs.insert(
             "name".to_string(),
             name.unwrap_or(Value::Str("UTC".to_string())),
+        );
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_datetime_delta_init(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new("timedelta.__init__() missing instance"));
+        }
+        let receiver = self.receiver_from_value(&args.remove(0))?;
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "timedelta.__init__() takes at most 3 positional arguments",
+            ));
+        }
+
+        let mut days = if let Some(value) = args.first() {
+            value_to_int(value.clone())?
+        } else {
+            0
+        };
+        let mut seconds = if let Some(value) = args.get(1) {
+            value_to_int(value.clone())?
+        } else {
+            0
+        };
+        let mut microseconds = if let Some(value) = args.get(2) {
+            value_to_int(value.clone())?
+        } else {
+            0
+        };
+
+        let mut weeks = 0_i64;
+        let mut hours = 0_i64;
+        let mut minutes = 0_i64;
+        let mut milliseconds = 0_i64;
+
+        if let Some(value) = kwargs.remove("days") {
+            days = value_to_int(value)?;
+        }
+        if let Some(value) = kwargs.remove("seconds") {
+            seconds = value_to_int(value)?;
+        }
+        if let Some(value) = kwargs.remove("microseconds") {
+            microseconds = value_to_int(value)?;
+        }
+        if let Some(value) = kwargs.remove("weeks") {
+            weeks = value_to_int(value)?;
+        }
+        if let Some(value) = kwargs.remove("hours") {
+            hours = value_to_int(value)?;
+        }
+        if let Some(value) = kwargs.remove("minutes") {
+            minutes = value_to_int(value)?;
+        }
+        if let Some(value) = kwargs.remove("milliseconds") {
+            milliseconds = value_to_int(value)?;
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "timedelta.__init__() got an unexpected keyword argument",
+            ));
+        }
+
+        let day_us: i128 = 86_400_i128 * 1_000_000_i128;
+        let mut total_microseconds = microseconds as i128;
+        total_microseconds += milliseconds as i128 * 1_000_i128;
+        total_microseconds += seconds as i128 * 1_000_000_i128;
+        total_microseconds += minutes as i128 * 60_i128 * 1_000_000_i128;
+        total_microseconds += hours as i128 * 3_600_i128 * 1_000_000_i128;
+        total_microseconds += (days as i128 + weeks as i128 * 7_i128) * day_us;
+
+        let normalized_days = total_microseconds.div_euclid(day_us);
+        let rem = total_microseconds.rem_euclid(day_us);
+        let normalized_seconds = rem / 1_000_000_i128;
+        let normalized_microseconds = rem % 1_000_000_i128;
+
+        let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
+            return Err(RuntimeError::new(
+                "timedelta.__init__() expects instance receiver",
+            ));
+        };
+        instance_data
+            .attrs
+            .insert("days".to_string(), Value::Int(normalized_days as i64));
+        instance_data
+            .attrs
+            .insert("seconds".to_string(), Value::Int(normalized_seconds as i64));
+        instance_data.attrs.insert(
+            "microseconds".to_string(),
+            Value::Int(normalized_microseconds as i64),
         );
         Ok(Value::None)
     }

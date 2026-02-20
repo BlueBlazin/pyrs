@@ -3208,7 +3208,26 @@ impl Vm {
                             }
                         }
                     }
-                    let init = class_attr_lookup(&class, "__init__");
+                    let mut init = class_attr_lookup(&class, "__init__");
+                    if matches!(init, Some(Value::Builtin(BuiltinFunction::ObjectInit)))
+                        && !used_custom_new
+                        && (self.class_has_builtin_list_base(&class)
+                            || self.class_has_builtin_tuple_base(&class)
+                            || self.class_has_builtin_str_base(&class)
+                            || self.class_has_builtin_bytes_base(&class)
+                            || self.class_has_builtin_bytearray_base(&class)
+                            || self.class_has_builtin_int_base(&class)
+                            || self.class_has_builtin_float_base(&class)
+                            || self.class_has_builtin_complex_base(&class)
+                            || self.class_has_builtin_dict_base(&class)
+                            || self.class_has_builtin_set_base(&class)
+                            || self.class_has_builtin_frozenset_base(&class)
+                            || self.class_has_builtin_property_base(&class))
+                    {
+                        // For builtin-backed subclasses we need the constructor fallback path
+                        // below to hydrate backing storage from user-provided args/kwargs.
+                        init = None;
+                    }
                     if let Some(init_callable) = init {
                         if trace_class_call {
                             eprintln!(
@@ -3859,6 +3878,11 @@ impl Vm {
                 .map(Value::Class)
                 .collect::<Vec<_>>();
             self.heap.alloc_tuple(mro_values)
+        } else if attr_name == "mro" {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::TypeMro,
+                class.clone(),
+            )));
         } else if attr_name == "__module__" {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {

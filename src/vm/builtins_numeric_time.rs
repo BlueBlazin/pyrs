@@ -594,6 +594,79 @@ impl Vm {
         Ok(context)
     }
 
+    pub(super) fn builtin_decimal_context_enter(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "Context.__enter__() expects no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Context.__enter__")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new("Context.__enter__() expects no arguments"));
+        }
+        let module = self
+            .modules
+            .get("decimal")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("decimal module unavailable"))?;
+        let Object::Module(module_data) = &mut *module.kind_mut() else {
+            return Err(RuntimeError::new("invalid decimal module"));
+        };
+        let previous = module_data
+            .globals
+            .get("_context")
+            .cloned()
+            .unwrap_or(Value::None);
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("__pyrs_prev_context".to_string(), previous);
+        }
+        module_data
+            .globals
+            .insert("_context".to_string(), Value::Instance(instance.clone()));
+        Ok(Value::Instance(instance))
+    }
+
+    pub(super) fn builtin_decimal_context_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "Context.__exit__() expects no keyword arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "Context.__exit__")?;
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "Context.__exit__() expects at most 3 arguments",
+            ));
+        }
+        let module = self
+            .modules
+            .get("decimal")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("decimal module unavailable"))?;
+        let previous = match &mut *instance.kind_mut() {
+            Object::Instance(instance_data) => instance_data
+                .attrs
+                .remove("__pyrs_prev_context")
+                .unwrap_or(Value::None),
+            _ => Value::None,
+        };
+        let Object::Module(module_data) = &mut *module.kind_mut() else {
+            return Err(RuntimeError::new("invalid decimal module"));
+        };
+        module_data.globals.insert("_context".to_string(), previous);
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_math_sqrt(
         &mut self,
         args: Vec<Value>,
