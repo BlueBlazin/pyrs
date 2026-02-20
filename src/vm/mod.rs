@@ -1067,6 +1067,36 @@ impl Vm {
         self.capi_object_registry.pin_external_once(ptr)
     }
 
+    pub(super) fn capi_pin_owned_ptr(&mut self, ptr: usize) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        self.capi_object_registry
+            .register_ptr(ptr, CapiPtrProvenance::OwnedCompat, None);
+        let _ = self.capi_object_registry.pin_owned_once(ptr);
+        let inserted = self.extension_pinned_cpython_allocation_set.insert(ptr);
+        if inserted {
+            self.extension_pinned_cpython_allocations
+                .push(ptr as *mut c_void);
+        }
+        inserted
+    }
+
+    pub(super) fn capi_owned_ptr_is_pinned(&self, ptr: usize) -> bool {
+        self.extension_pinned_cpython_allocation_set.contains(&ptr)
+            || self.capi_object_registry.is_pinned(ptr)
+    }
+
+    pub(super) fn capi_unpin_owned_ptr(&mut self, ptr: usize) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        let was_pinned = self.capi_owned_ptr_is_pinned(ptr);
+        self.extension_pinned_cpython_allocation_set.remove(&ptr);
+        self.capi_object_registry.unpin_owned(ptr);
+        was_pinned
+    }
+
     pub(super) fn capi_registry_drain_external_pins(&mut self) -> Vec<(usize, usize)> {
         self.capi_object_registry.drain_external_pins()
     }

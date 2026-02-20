@@ -44,10 +44,7 @@ pub unsafe extern "C" fn PyMem_RawFree(ptr: *mut c_void) {
         if !context.vm.is_null() {
             // SAFETY: VM pointer is valid for the active context lifetime.
             let vm = unsafe { &mut *context.vm };
-            if vm
-                .extension_pinned_cpython_allocation_set
-                .remove(&(ptr as usize))
-            {
+            if vm.capi_unpin_owned_ptr(ptr as usize) {
                 context.capi_registry_mark_pending_free_ptr(ptr);
                 vm.extension_pinned_capsule_names.remove(&(ptr as usize));
                 vm.capi_registry_mark_freed(ptr as usize);

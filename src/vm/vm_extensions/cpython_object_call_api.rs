@@ -525,9 +525,7 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
         } else {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             unsafe {
-                (&*context.vm)
-                    .extension_pinned_cpython_allocation_set
-                    .contains(&(object as usize))
+                (&*context.vm).capi_owned_ptr_is_pinned(object as usize)
             }
         };
         if !owned_object
@@ -1269,9 +1267,7 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                         } else {
                             // SAFETY: VM pointer is valid for active C-API context lifetime.
                             unsafe {
-                                (&*context.vm)
-                                    .extension_pinned_cpython_allocation_set
-                                    .contains(&(ptr as usize))
+                                (&*context.vm).capi_owned_ptr_is_pinned(ptr as usize)
                             }
                         };
                         let known_handle = context.cpython_handle_from_ptr(ptr).is_some();
@@ -1311,9 +1307,7 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                         } else {
                             // SAFETY: VM pointer is valid for active C-API context lifetime.
                             unsafe {
-                                (&*context.vm)
-                                    .extension_pinned_cpython_allocation_set
-                                    .contains(&(ptr as usize))
+                                (&*context.vm).capi_owned_ptr_is_pinned(ptr as usize)
                             }
                         };
                         let known_handle = context.cpython_handle_from_ptr(ptr).is_some();

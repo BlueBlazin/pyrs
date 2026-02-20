@@ -8028,7 +8028,7 @@ impl ModuleCapiContext {
                 {
                     vm.extension_cpython_ptr_by_object_id.remove(&object_id);
                 }
-                vm.extension_pinned_cpython_allocation_set.remove(&ptr_addr);
+                vm.capi_unpin_owned_ptr(ptr_addr);
                 vm.extension_pinned_capsule_names.remove(&ptr_addr);
                 vm.capi_registry_mark_freed(ptr_addr);
             }
@@ -8684,10 +8684,7 @@ impl ModuleCapiContext {
         self.capi_registry_register_owned_ptr(ptr, None);
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
-        if vm
-            .extension_pinned_cpython_allocation_set
-            .insert(ptr as usize)
-        {
+        if vm.capi_pin_owned_ptr(ptr as usize) {
             vm.capi_registry_mark_alive(ptr as usize);
             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                 eprintln!(
@@ -8695,7 +8692,6 @@ impl ModuleCapiContext {
                     ptr
                 );
             }
-            vm.extension_pinned_cpython_allocations.push(ptr);
         }
     }
 
@@ -8715,10 +8711,7 @@ impl ModuleCapiContext {
         };
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
-        if vm
-            .extension_pinned_cpython_allocation_set
-            .insert(ptr as usize)
-        {
+        if vm.capi_pin_owned_ptr(ptr as usize) {
             vm.capi_registry_mark_alive(ptr as usize);
             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                 eprintln!(
@@ -8726,7 +8719,6 @@ impl ModuleCapiContext {
                     ptr
                 );
             }
-            vm.extension_pinned_cpython_allocations.push(ptr);
         }
         if let Some(name) = slot.name.as_ref() {
             let cloned_name = name.clone();
