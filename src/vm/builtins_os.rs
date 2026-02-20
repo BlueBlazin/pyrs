@@ -442,7 +442,7 @@ impl Vm {
 
     pub(super) fn cloned_open_file_for_fd(&self, fd: i64) -> Result<fs::File, RuntimeError> {
         self.find_open_file(fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?
             .try_clone()
             .map_err(|err| RuntimeError::new(format!("fd clone failed: {err}")))
     }
@@ -466,7 +466,7 @@ impl Vm {
                 _ => unreachable!(),
             });
         }
-        Err(RuntimeError::new("bad file descriptor"))
+        Err(RuntimeError::bad_file_descriptor())
     }
 
     #[cfg(unix)]
@@ -607,7 +607,7 @@ impl Vm {
                 return Ok(Value::None);
             }
         }
-        Err(RuntimeError::new("bad file descriptor"))
+        Err(RuntimeError::bad_file_descriptor())
     }
 
     pub(super) fn builtin_os_read(
@@ -631,7 +631,7 @@ impl Vm {
         } else {
             let file = self
                 .find_open_file_mut(fd)
-                .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+                .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
             file.read(&mut buffer)
                 .map_err(|err| RuntimeError::new(format!("read failed: {err}")))?
         };
@@ -661,7 +661,7 @@ impl Vm {
         } else {
             let file = self
                 .find_open_file_mut(fd)
-                .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+                .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
             file.read(&mut buffer)
                 .map_err(|err| RuntimeError::new(format!("readinto failed: {err}")))?
         };
@@ -714,7 +714,7 @@ impl Vm {
         };
         let file = self
             .find_open_file_mut(fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         let offset = file
             .seek(seek_from)
             .map_err(|_| RuntimeError::os_error("[Errno 22] Invalid argument"))?;
@@ -736,7 +736,7 @@ impl Vm {
         }
         let file = self
             .find_open_file_mut(fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         file.set_len(length as u64)
             .map_err(|err| RuntimeError::new(format!("OSError: {err}")))?;
         Ok(Value::None)
@@ -787,7 +787,7 @@ impl Vm {
                 .write_all(&payload)
                 .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
         } else {
-            return Err(RuntimeError::new("bad file descriptor"));
+            return Err(RuntimeError::bad_file_descriptor());
         }
         Ok(Value::Int(payload.len() as i64))
     }
@@ -824,7 +824,7 @@ impl Vm {
         let inheritable = is_truthy(&args[1]);
         let resolved = self
             .resolve_open_file_fd(fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         self.fd_inheritable.insert(resolved, inheritable);
         Ok(Value::None)
     }
@@ -843,7 +843,7 @@ impl Vm {
         }
         let resolved = self
             .resolve_open_file_fd(fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         Ok(Value::Bool(
             self.fd_inheritable.get(&resolved).copied().unwrap_or(true),
         ))

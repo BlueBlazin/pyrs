@@ -911,7 +911,7 @@ impl Vm {
                         self.ensure_sync_iterator_target(&instance_value)?;
                         let iterator = self
                             .to_iterator_value(instance_value)
-                            .map_err(|_| RuntimeError::new("expected bytes-like payload"))?;
+                            .map_err(|_| RuntimeError::type_error("expected bytes-like payload"))?;
                         let mut out = Vec::new();
                         loop {
                             match self.next_from_iterator_value(&iterator)? {

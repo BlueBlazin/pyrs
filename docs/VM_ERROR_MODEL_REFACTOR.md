@@ -50,6 +50,13 @@ Status: in progress (phase 1 + initial phase 2 landed).
    - builtin constructor unsupported-type contracts,
    - membership/index protocol contract failures,
    - bytes/bytearray range validation.
+21. Codec error-handler semantics now use typed `LookupError` with CPython-style messaging:
+   - unknown handlers now raise `LookupError("unknown error handler name '<name>'")`
+   - conversion landed across codec normalize/encode/decode paths in `/Users/$USER/pyrs/src/vm/mod.rs`.
+22. Bad file-descriptor paths now raise typed `OSError` with structured attrs:
+   - added `RuntimeError::os_error_with_errno(...)` + `RuntimeError::bad_file_descriptor()`
+   - migrated fd lookup/mutation paths in `/Users/$USER/pyrs/src/vm/builtins_os.rs` and `/Users/$USER/pyrs/src/vm/builtins_io.rs`.
+23. Remaining `RuntimeError::new(\"...\")` inventory was reduced again; the highest-frequency leftovers are now dominated by narrower domain-specific payload/format/VM-internal diagnostics instead of core protocol/type contracts.
 
 ## Why This Exists
 

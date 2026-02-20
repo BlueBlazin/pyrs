@@ -5518,11 +5518,11 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
     match value {
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(values) => Ok(values.clone()),
-            _ => Err(RuntimeError::new("expected bytes-like payload")),
+            _ => Err(RuntimeError::type_error("expected bytes-like payload")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
             Object::ByteArray(values) => Ok(values.clone()),
-            _ => Err(RuntimeError::new("expected bytes-like payload")),
+            _ => Err(RuntimeError::type_error("expected bytes-like payload")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
@@ -5530,44 +5530,44 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                     memoryview_layout_1d(view, values.len())
                 {
                     memoryview_collect_bytes(values, origin, logical_len, stride, itemsize)
-                        .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
+                        .ok_or_else(|| RuntimeError::type_error("expected bytes-like payload"))
                 } else {
                     memoryview_collect_bytes_for_view(view, values)
-                        .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))
+                        .ok_or_else(|| RuntimeError::type_error("expected bytes-like payload"))
                 }
             })
-            .unwrap_or_else(|| Err(RuntimeError::new("expected bytes-like payload"))),
-            _ => Err(RuntimeError::new("expected bytes-like payload")),
+            .unwrap_or_else(|| Err(RuntimeError::type_error("expected bytes-like payload"))),
+            _ => Err(RuntimeError::type_error("expected bytes-like payload")),
         },
         Value::Module(obj) => match &*obj.kind() {
             Object::Module(module_data) if module_data.name == "__array__" => {
                 match module_data.globals.get("values") {
                     Some(values) => value_to_bytes_payload(values.clone()),
-                    None => Err(RuntimeError::new("expected bytes-like payload")),
+                    None => Err(RuntimeError::type_error("expected bytes-like payload")),
                 }
             }
-            _ => Err(RuntimeError::new("expected bytes-like payload")),
+            _ => Err(RuntimeError::type_error("expected bytes-like payload")),
         },
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
                 match instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
                     Some(Value::Bytes(storage)) => match &*storage.kind() {
                         Object::Bytes(values) => Ok(values.clone()),
-                        _ => Err(RuntimeError::new("expected bytes-like payload")),
+                        _ => Err(RuntimeError::type_error("expected bytes-like payload")),
                     },
                     Some(Value::ByteArray(storage)) => match &*storage.kind() {
                         Object::ByteArray(values) => Ok(values.clone()),
-                        _ => Err(RuntimeError::new("expected bytes-like payload")),
+                        _ => Err(RuntimeError::type_error("expected bytes-like payload")),
                     },
-                    _ => Err(RuntimeError::new("expected bytes-like payload")),
+                    _ => Err(RuntimeError::type_error("expected bytes-like payload")),
                 }
             }
-            _ => Err(RuntimeError::new("expected bytes-like payload")),
+            _ => Err(RuntimeError::type_error("expected bytes-like payload")),
         },
         Value::Iterator(obj) => {
             let mut obj_kind = obj.kind_mut();
             let Object::Iterator(iterator) = &mut *obj_kind else {
-                return Err(RuntimeError::new("expected bytes-like payload"));
+                return Err(RuntimeError::type_error("expected bytes-like payload"));
             };
             let values = match &mut iterator.kind {
                 IteratorKind::List(list_obj) => match &*list_obj.kind() {
@@ -5577,7 +5577,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         iterator.index = items.len();
                         out
                     }
-                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
                 IteratorKind::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                     Object::Tuple(items) => {
@@ -5586,7 +5586,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         iterator.index = items.len();
                         out
                     }
-                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
                 IteratorKind::Bytes(bytes_obj) => match &*bytes_obj.kind() {
                     Object::Bytes(items) => {
@@ -5598,7 +5598,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         iterator.index = items.len();
                         out
                     }
-                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
                 IteratorKind::ByteArray(bytearray_obj) => match &*bytearray_obj.kind() {
                     Object::ByteArray(items) => {
@@ -5610,7 +5610,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         iterator.index = items.len();
                         out
                     }
-                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
                 IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |items| {
@@ -5625,8 +5625,8 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         iterator.index = view_len;
                         out
                     })
-                    .ok_or_else(|| RuntimeError::new("expected bytes-like payload"))?,
-                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    .ok_or_else(|| RuntimeError::type_error("expected bytes-like payload"))?,
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
                 IteratorKind::Map { values, .. } => {
                     let start = iterator.index.min(values.len());
@@ -5693,7 +5693,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         iterator.index = items.len();
                         out
                     }
-                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
                 IteratorKind::Set(set_obj) => match &*set_obj.kind() {
                     Object::Set(items) | Object::FrozenSet(items) => {
@@ -5703,7 +5703,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                         iterator.index = start.saturating_add(out.len());
                         out
                     }
-                    _ => return Err(RuntimeError::new("expected bytes-like payload")),
+                    _ => return Err(RuntimeError::type_error("expected bytes-like payload")),
                 },
                 IteratorKind::Str(text) => {
                     let chars = text.chars().collect::<Vec<_>>();
@@ -5716,15 +5716,15 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                     out
                 }
                 IteratorKind::SequenceGetItem { .. } => {
-                    return Err(RuntimeError::new("expected bytes-like payload"));
+                    return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
                 IteratorKind::CpythonSequence { .. } => {
-                    return Err(RuntimeError::new("expected bytes-like payload"));
+                    return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
                 | IteratorKind::Cycle { .. } => {
-                    return Err(RuntimeError::new("expected bytes-like payload"));
+                    return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
             };
             let mut out = Vec::with_capacity(values.len());
@@ -5750,7 +5750,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 }
                 Ok(out)
             }
-            _ => Err(RuntimeError::new("expected bytes-like payload")),
+            _ => Err(RuntimeError::type_error("expected bytes-like payload")),
         },
         other => Err(RuntimeError::new(format!(
             "unsupported payload type: {}",
@@ -6984,8 +6984,12 @@ fn normalize_codec_errors(value: Value) -> Result<String, RuntimeError> {
         "strict" | "ignore" | "replace" | "surrogateescape" => Ok(mode),
         "surrogatepass" => Ok("strict".to_string()),
         "backslashreplace" | "namereplace" | "xmlcharrefreplace" => Ok("replace".to_string()),
-        _ => Err(RuntimeError::new("unsupported error handler")),
+        _ => Err(unknown_codec_error_handler(&mode)),
     }
+}
+
+fn unknown_codec_error_handler(handler: &str) -> RuntimeError {
+    RuntimeError::lookup_error(format!("unknown error handler name '{handler}'"))
 }
 
 fn push_escape_decode_error(
@@ -7000,7 +7004,7 @@ fn push_escape_decode_error(
             out.push(b'?');
             Ok(())
         }
-        _ => Err(RuntimeError::new("unsupported error handler")),
+        _ => Err(unknown_codec_error_handler(errors)),
     }
 }
 
@@ -7155,7 +7159,7 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
                     }
                     "ignore" => {}
                     "replace" | "surrogateescape" => out.push(b'?'),
-                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                    _ => return Err(unknown_codec_error_handler(errors)),
                 }
             }
             Ok(out)
@@ -7174,7 +7178,7 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
                     }
                     "ignore" => {}
                     "replace" | "surrogateescape" => out.push(b'?'),
-                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                    _ => return Err(unknown_codec_error_handler(errors)),
                 }
             }
             Ok(out)
@@ -7229,7 +7233,7 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
                     "strict" => return Err(RuntimeError::new("ascii codec can't decode byte")),
                     "ignore" => {}
                     "replace" | "surrogateescape" => out.push('\u{FFFD}'),
-                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                    _ => return Err(unknown_codec_error_handler(errors)),
                 }
             }
             Ok(out)
@@ -7310,7 +7314,7 @@ fn decode_unicode_escape(bytes: &[u8], errors: &str) -> Result<String, RuntimeEr
                     out.push('\u{FFFD}');
                     Ok(())
                 }
-                _ => Err(RuntimeError::new("unsupported error handler")),
+                _ => Err(unknown_codec_error_handler(errors)),
             }
         };
         match esc {
@@ -7486,7 +7490,7 @@ fn decode_utf16_bytes(
             "strict" => return Err(RuntimeError::new("utf-16 codec can't decode bytes")),
             "ignore" => {}
             "replace" | "surrogateescape" => units.push(0xFFFD),
-            _ => return Err(RuntimeError::new("unsupported error handler")),
+            _ => return Err(unknown_codec_error_handler(errors)),
         }
     }
 
@@ -7498,7 +7502,7 @@ fn decode_utf16_bytes(
                 "strict" => return Err(RuntimeError::new("utf-16 codec can't decode bytes")),
                 "ignore" => {}
                 "replace" | "surrogateescape" => out.push('\u{FFFD}'),
-                _ => return Err(RuntimeError::new("unsupported error handler")),
+                _ => return Err(unknown_codec_error_handler(errors)),
             },
         }
     }
@@ -7525,7 +7529,7 @@ fn decode_utf32_bytes(
                 "strict" => return Err(RuntimeError::new("utf-32 codec can't decode bytes")),
                 "ignore" => {}
                 "replace" | "surrogateescape" => out.push('\u{FFFD}'),
-                _ => return Err(RuntimeError::new("unsupported error handler")),
+                _ => return Err(unknown_codec_error_handler(errors)),
             },
         }
         pos += 4;
@@ -7535,7 +7539,7 @@ fn decode_utf32_bytes(
             "strict" => return Err(RuntimeError::new("utf-32 codec can't decode bytes")),
             "ignore" => {}
             "replace" | "surrogateescape" => out.push('\u{FFFD}'),
-            _ => return Err(RuntimeError::new("unsupported error handler")),
+            _ => return Err(unknown_codec_error_handler(errors)),
         }
     }
     Ok(out)
@@ -7581,7 +7585,7 @@ fn decode_utf8_bytes(bytes: &[u8], errors: &str) -> Result<String, RuntimeError>
                             break;
                         }
                     }
-                    _ => return Err(RuntimeError::new("unsupported error handler")),
+                    _ => return Err(unknown_codec_error_handler(errors)),
                 }
             }
         }

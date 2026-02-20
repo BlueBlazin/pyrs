@@ -4511,7 +4511,7 @@ impl Vm {
                 let file = self
                     .open_files
                     .get_mut(&fd)
-                    .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+                    .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
                 file.write_all(&payload)
                     .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
                 Ok(())
@@ -4593,7 +4593,7 @@ impl Vm {
         let file = self
             .open_files
             .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         let mut out = Vec::new();
         match size {
             Some(limit) => {
@@ -4858,7 +4858,7 @@ impl Vm {
         let file = self
             .open_files
             .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         let mut out = Vec::new();
         while limit.map(|max| out.len() < max).unwrap_or(true) {
             let mut byte = [0u8; 1];
@@ -5025,7 +5025,7 @@ impl Vm {
             let file = self
                 .open_files
                 .get_mut(&fd)
-                .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+                .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
             file.write_all(&payload)
                 .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
         } else {
@@ -5128,7 +5128,7 @@ impl Vm {
         let file = self
             .open_files
             .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         let target_size = if args.is_empty() {
             file.stream_position()
                 .map_err(|err| RuntimeError::new(format!("OSError: {err}")))? as i64
@@ -5196,7 +5196,7 @@ impl Vm {
         let file = self
             .open_files
             .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         let position = match whence {
             0 => {
                 if offset < 0 {
@@ -5240,7 +5240,7 @@ impl Vm {
         let file = self
             .open_files
             .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         let position = file
             .stream_position()
             .map_err(|err| RuntimeError::new(format!("OSError: {err}")))?;
@@ -5375,7 +5375,7 @@ impl Vm {
                 let file = self
                     .open_files
                     .get_mut(&fd)
-                    .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+                    .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
                 file.flush()
                     .map_err(|err| RuntimeError::new(format!("flush failed: {err}")))?;
             }
@@ -5589,7 +5589,7 @@ impl Vm {
         let file = self
             .open_files
             .get_mut(&fd)
-            .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
+            .ok_or_else(|| RuntimeError::bad_file_descriptor())?;
         Ok(Value::Bool(file.stream_position().is_ok()))
     }
 

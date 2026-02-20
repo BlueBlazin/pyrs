@@ -7918,6 +7918,50 @@ except Exception as exc:
 }
 
 #[test]
+fn codec_unknown_error_handler_raises_lookup_error() {
+    let source = r#"decode_ok = False
+encode_ok = False
+try:
+    b'\xff'.decode('utf-8', 'bogus')
+except Exception as exc:
+    decode_ok = (type(exc).__name__ == "LookupError") and ("unknown error handler name" in str(exc))
+try:
+    'é'.encode('ascii', 'bogus')
+except Exception as exc:
+    encode_ok = (type(exc).__name__ == "LookupError") and ("unknown error handler name" in str(exc))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("decode_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("encode_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_bad_fd_errors_expose_errno_and_strerror_attrs() {
+    let source = r#"import os
+caught = False
+errno_ok = False
+strerror_ok = False
+args_ok = False
+try:
+    os.close(999999)
+except OSError as exc:
+    caught = True
+    errno_ok = (exc.errno == 9)
+    strerror_ok = isinstance(exc.strerror, str)
+    args_ok = isinstance(exc.args, tuple) and len(exc.args) >= 2 and (exc.args[0] == 9)
+ok = caught and errno_ok and strerror_ok and args_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

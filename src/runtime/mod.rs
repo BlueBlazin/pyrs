@@ -7772,8 +7772,27 @@ impl RuntimeError {
         Self::with_exception("OSError", Some(message.into()))
     }
 
+    pub fn os_error_with_errno(errno: i64, strerror: impl Into<String>) -> Self {
+        let strerror = strerror.into();
+        let exception = ExceptionObject::new("OSError", Some(strerror.clone()));
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            attrs.insert("errno".to_string(), Value::Int(errno));
+            attrs.insert("strerror".to_string(), Value::Str(strerror));
+        }
+        Self::from_exception(exception)
+    }
+
+    pub fn bad_file_descriptor() -> Self {
+        Self::os_error_with_errno(9, "bad file descriptor")
+    }
+
     pub fn import_error(message: impl Into<String>) -> Self {
         Self::with_exception("ImportError", Some(message.into()))
+    }
+
+    pub fn lookup_error(message: impl Into<String>) -> Self {
+        Self::with_exception("LookupError", Some(message.into()))
     }
 
     pub fn module_not_found_error(message: impl Into<String>) -> Self {

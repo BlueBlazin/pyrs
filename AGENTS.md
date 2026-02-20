@@ -77,6 +77,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - new regression tests landed for these protocol error contracts (`yield from` non-iterable, non-awaitable `await`, and non-iterator `__await__` return paths) in `tests/vm.rs`.
   - additional high-frequency message-only error producers were migrated to typed constructors across core runtime/ops/dispatch paths (`TypeError`/`IndexError`/`ValueError`/`OverflowError`/`StopIteration`), reducing classifier dependence in hot VM flows.
   - added focused typed-exception regressions for constructor contract failures, membership/index contract errors, and bytes/bytearray range validation.
+  - codec unknown-error-handler paths now raise typed `LookupError` with CPython-style message (`unknown error handler name '<name>'`) across normalize/encode/decode flows.
+  - bad-fd paths now use typed `OSError` with structured `errno`/`strerror` attrs via `RuntimeError::os_error_with_errno(...)` and `RuntimeError::bad_file_descriptor()`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.
