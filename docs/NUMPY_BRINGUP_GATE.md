@@ -114,8 +114,8 @@ If a probed local module is not installed, its dependent cases are recorded as `
     - migrate to VM-global CAPI object registry + explicit borrowed/new/stolen ownership,
     - do not close scientific-stack milestones until lifetime-model closure criteria are green.
   - latest hardening in this lane:
-    - NumPy UAF stress probes added (`numpy_axis_sum_survives_gc_and_repr_stress`,
-      `numpy_reimport_and_axis_sum_stays_stable` in `tests/vm.rs`),
+    - NumPy UAF stress probes added (`numpy_axis_sum_and_repr_stress_stays_stable`,
+      `numpy_repeated_array_ops_and_reprs_stay_stable` in `tests/vm.rs`),
     - ASan CI lane added (`sanitizer-stability` job in `.github/workflows/parity-gate.yml`).
 - 2026-02-19 import-state checkpoint:
   - fixed source-module failure cleanup so failed imports no longer leave partial modules in `sys.modules` (tracked via internal module-initializing marker + unwind cleanup).

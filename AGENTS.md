@@ -73,8 +73,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - registry is now wired into core compat allocation and teardown paths (`src/vm/vm_extensions.rs`, `src/vm/mod.rs`), including external-pin accounting and pending/free state transitions.
   - high-traffic proxy/callable call-result conversions now use owned-reference mapping; call/attr/vectorcall argument conversions use borrowed-reference mapping.
   - new NumPy lifetime stress regressions landed in `tests/vm.rs`:
-    - `numpy_axis_sum_survives_gc_and_repr_stress`
-    - `numpy_reimport_and_axis_sum_stays_stable`
+    - `numpy_axis_sum_and_repr_stress_stays_stable`
+    - `numpy_repeated_array_ops_and_reprs_stay_stable`
+  - removed VM-side legacy external-pin/freed-allocation sets and moved that state handling into the VM-global CAPI registry.
   - CI now includes a nightly ASan lifetime lane (`sanitizer-stability` job in `.github/workflows/parity-gate.yml`).
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:

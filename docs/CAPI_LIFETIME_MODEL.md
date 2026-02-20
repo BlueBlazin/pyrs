@@ -18,11 +18,14 @@ Status: `IN_PROGRESS` (execution lock, Phase 1/2 in progress).
   - call/attr/vectorcall argument conversion paths use borrowed-reference wrappers.
 - Regression hardening:
   - added NumPy lifetime stress probes in `tests/vm.rs`:
-    - `numpy_axis_sum_survives_gc_and_repr_stress`
-    - `numpy_reimport_and_axis_sum_stays_stable`
+    - `numpy_axis_sum_and_repr_stress_stays_stable`
+    - `numpy_repeated_array_ops_and_reprs_stay_stable`
 - CI hardening:
   - added `sanitizer-stability` job in `.github/workflows/parity-gate.yml`
     (nightly ASan lane with NumPy lifetime + extension vectorcall smoke probes).
+- Legacy-lifetime cleanup progress:
+  - removed VM-side legacy external-pin/freed allocation sets from `Vm`,
+    and moved those state transitions to the VM-global CAPI registry.
 
 ## Problem Statement
 
