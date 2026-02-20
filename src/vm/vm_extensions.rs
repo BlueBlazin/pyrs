@@ -1583,6 +1583,7 @@ fn cpython_slot_init_method_def() -> *mut CpythonMethodDef {
 }
 
 unsafe fn cpython_slot_richcompare_dunder_call(
+    self_obj: *mut c_void,
     args: *mut c_void,
     op: i32,
     opname: &str,
@@ -1598,16 +1599,23 @@ unsafe fn cpython_slot_richcompare_dunder_call(
     if argc < 0 {
         return std::ptr::null_mut();
     }
-    if argc != 2 {
+    let (left, right) = if argc == 2 {
+        // SAFETY: arg tuple size validated above.
+        let left = unsafe { PyTuple_GetItem(args, 0) };
+        // SAFETY: arg tuple size validated above.
+        let right = unsafe { PyTuple_GetItem(args, 1) };
+        (left, right)
+    } else if argc == 1 && !self_obj.is_null() {
+        // SAFETY: arg tuple size validated above.
+        let right = unsafe { PyTuple_GetItem(args, 0) };
+        (self_obj, right)
+    } else {
+        let expected = if self_obj.is_null() { 2 } else { 1 };
         cpython_set_error(format!(
-            "TypeError: descriptor '{opname}' expected 2 arguments, got {argc}"
+            "TypeError: descriptor '{opname}' expected {expected} arguments, got {argc}"
         ));
         return std::ptr::null_mut();
-    }
-    // SAFETY: arg tuple size validated above.
-    let left = unsafe { PyTuple_GetItem(args, 0) };
-    // SAFETY: arg tuple size validated above.
-    let right = unsafe { PyTuple_GetItem(args, 1) };
+    };
     if left.is_null() || right.is_null() {
         return std::ptr::null_mut();
     }
@@ -1621,45 +1629,45 @@ unsafe fn cpython_slot_richcompare_dunder_call(
 }
 
 unsafe extern "C" fn cpython_slot_dunder_lt(
-    _self_obj: *mut c_void,
+    self_obj: *mut c_void,
     args: *mut c_void,
 ) -> *mut c_void {
-    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_LT, "__lt__") }
+    unsafe { cpython_slot_richcompare_dunder_call(self_obj, args, CPY_RICHCMP_LT, "__lt__") }
 }
 
 unsafe extern "C" fn cpython_slot_dunder_le(
-    _self_obj: *mut c_void,
+    self_obj: *mut c_void,
     args: *mut c_void,
 ) -> *mut c_void {
-    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_LE, "__le__") }
+    unsafe { cpython_slot_richcompare_dunder_call(self_obj, args, CPY_RICHCMP_LE, "__le__") }
 }
 
 unsafe extern "C" fn cpython_slot_dunder_eq(
-    _self_obj: *mut c_void,
+    self_obj: *mut c_void,
     args: *mut c_void,
 ) -> *mut c_void {
-    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_EQ, "__eq__") }
+    unsafe { cpython_slot_richcompare_dunder_call(self_obj, args, CPY_RICHCMP_EQ, "__eq__") }
 }
 
 unsafe extern "C" fn cpython_slot_dunder_ne(
-    _self_obj: *mut c_void,
+    self_obj: *mut c_void,
     args: *mut c_void,
 ) -> *mut c_void {
-    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_NE, "__ne__") }
+    unsafe { cpython_slot_richcompare_dunder_call(self_obj, args, CPY_RICHCMP_NE, "__ne__") }
 }
 
 unsafe extern "C" fn cpython_slot_dunder_gt(
-    _self_obj: *mut c_void,
+    self_obj: *mut c_void,
     args: *mut c_void,
 ) -> *mut c_void {
-    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_GT, "__gt__") }
+    unsafe { cpython_slot_richcompare_dunder_call(self_obj, args, CPY_RICHCMP_GT, "__gt__") }
 }
 
 unsafe extern "C" fn cpython_slot_dunder_ge(
-    _self_obj: *mut c_void,
+    self_obj: *mut c_void,
     args: *mut c_void,
 ) -> *mut c_void {
-    unsafe { cpython_slot_richcompare_dunder_call(args, CPY_RICHCMP_GE, "__ge__") }
+    unsafe { cpython_slot_richcompare_dunder_call(self_obj, args, CPY_RICHCMP_GE, "__ge__") }
 }
 
 unsafe extern "C" fn cpython_slot_dunder_init(
@@ -6008,6 +6016,25 @@ impl ModuleCapiContext {
                         }
                         // SAFETY: member table entries are contiguous.
                         member = unsafe { member.add(1) };
+                    }
+                }
+                if let Some(method_def) = cpython_slot_richcompare_method_def(attr_name)
+                    && unsafe { !(*current).tp_richcompare.is_null() }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        current.cast::<c_void>(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch=tp_richcompare_bound_slot_wrapper object={:p} current={:p} value_ptr={:p}",
+                                attr_name, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
                     }
                 }
             }

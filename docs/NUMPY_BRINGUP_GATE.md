@@ -160,6 +160,9 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - `scipy_import`: `FAIL` (`AttributeError: module 'ctypes' has no attribute 'CFUNCTYPE'`)
   - `pandas_import` / `pandas_series_sum`: `FAIL` (`numpy.random.mtrand` `Py_mod_exec` fails with `index 4 is out of bounds for axis 0 with size 4`)
   - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (missing symbol `PyInstanceMethod_Type`)
+- Proxy special-method audit (`scripts/audit_proxy_dunders.py`, `perf/proxy_dunder_audit_latest.json`):
+  - latest debug-mode audit reduced exposure gaps from `54` to `30` after binding instance rich-compare wrappers (`__lt__`, `__le__`, `__gt__`, `__ge__`) to `tp_richcompare` slot wrappers.
+  - remaining top missing proxy attributes are concentrated in scalar conversion/truthiness and item protocol surfaces (`__bool__`, `__int__`, `__float__`, `__getitem__`, plus `__index__` for integer-like scalars).
 - Next P0 focus after NumPy baseline pass:
   - close `ctypes.CFUNCTYPE` surface for SciPy import.
   - fix `numpy.random.mtrand` `generate_state` bounds/shape semantics to unblock pandas import/smoke.

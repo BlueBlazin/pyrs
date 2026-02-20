@@ -13435,6 +13435,49 @@ ok = (
 }
 
 #[test]
+fn numpy_proxy_scalar_richcmp_dunders_cover_lt_le_gt_ge_across_types() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let Some(site_packages) = numpy_site_packages_path() else {
+        return;
+    };
+    run_with_large_stack("vm-numpy-proxy-richcmp-dunders", move || {
+        let source = r#"import numpy as np
+
+cases = [
+    (np.float32(0.5), 0.0001, (False, False, True, True)),
+    (np.float64(0.5), 0.0001, (False, False, True, True)),
+    (np.int64(3), 5, (True, True, False, False)),
+    (np.uint32(3), 5, (True, True, False, False)),
+]
+
+ok = True
+for left, right, expected in cases:
+    ok = ok and hasattr(left, "__lt__")
+    ok = ok and hasattr(left, "__le__")
+    ok = ok and hasattr(left, "__gt__")
+    ok = ok and hasattr(left, "__ge__")
+    direct = (left < right, left <= right, left > right, left >= right)
+    dunder = (
+        bool(left.__lt__(right)),
+        bool(left.__le__(right)),
+        bool(left.__gt__(right)),
+        bool(left.__ge__(right)),
+    )
+    ok = ok and direct == expected and dunder == expected
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.add_module_path(site_packages);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn io_text_encoding_handles_none_and_strings() {
     let Some(lib) = cpython_lib_path() else {
         return;
