@@ -1451,18 +1451,18 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("namedtuple._make() expects iterable"));
+            return Err(RuntimeError::type_error("namedtuple._make() expects iterable"));
         }
         let class = match &args[0] {
             Value::Class(class) => class.clone(),
             _ => {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "namedtuple._make() requires class receiver",
                 ));
             }
         };
         let Some(fields) = self.class_namedtuple_fields(&class) else {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "namedtuple._make() requires namedtuple class",
             ));
         };
@@ -4764,7 +4764,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 2 {
-            return Err(RuntimeError::new("dict() expects at most one argument"));
+            return Err(RuntimeError::type_error("dict() expects at most one argument"));
         }
 
         if args.len() == 2 {
@@ -4783,7 +4783,7 @@ impl Vm {
                         )));
                     }
                 }
-                _ => return Err(RuntimeError::new("dict() expects at most one argument")),
+                _ => return Err(RuntimeError::type_error("dict() expects at most one argument")),
             }
         }
 

@@ -3727,22 +3727,22 @@ impl BuiltinFunction {
                     return Ok(Value::Str(String::new()));
                 }
                 if args.len() != 1 {
-                    return Err(RuntimeError::new("str() expects at most one argument"));
+                    return Err(RuntimeError::type_error("str() expects at most one argument"));
                 }
                 Ok(Value::Str(format_value(&args[0])))
             }
             BuiltinFunction::Ord => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::new("ord() expects one argument"));
+                    return Err(RuntimeError::type_error("ord() expects one argument"));
                 }
                 match &args[0] {
                     Value::Str(value) => {
                         let mut chars = value.chars();
                         let ch = chars
                             .next()
-                            .ok_or_else(|| RuntimeError::new("ord() expected a character"))?;
+                            .ok_or_else(|| RuntimeError::type_error("ord() expected a character"))?;
                         if chars.next().is_some() {
-                            return Err(RuntimeError::new("ord() expected a character"));
+                            return Err(RuntimeError::type_error("ord() expected a character"));
                         }
                         Ok(Value::Int(ch as i64))
                     }
@@ -3750,19 +3750,17 @@ impl BuiltinFunction {
                         Object::Bytes(values) if values.len() == 1 => {
                             Ok(Value::Int(values[0] as i64))
                         }
-                        Object::Bytes(_) => Err(RuntimeError::new("ord() expected a character")),
-                        _ => Err(RuntimeError::new("ord() unsupported type")),
+                        Object::Bytes(_) => Err(RuntimeError::type_error("ord() expected a character")),
+                        _ => Err(RuntimeError::type_error("ord() unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) if values.len() == 1 => {
                             Ok(Value::Int(values[0] as i64))
                         }
-                        Object::ByteArray(_) => {
-                            Err(RuntimeError::new("ord() expected a character"))
-                        }
-                        _ => Err(RuntimeError::new("ord() unsupported type")),
+                        Object::ByteArray(_) => Err(RuntimeError::type_error("ord() expected a character")),
+                        _ => Err(RuntimeError::type_error("ord() unsupported type")),
                     },
-                    _ => Err(RuntimeError::new("ord() expected string of length 1")),
+                    _ => Err(RuntimeError::type_error("ord() expected string of length 1")),
                 }
             }
             BuiltinFunction::Chr => {
@@ -4033,7 +4031,7 @@ impl BuiltinFunction {
             }
             BuiltinFunction::Dict | BuiltinFunction::CollectionsOrderedDict => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::new("dict() expects at most one argument"));
+                    return Err(RuntimeError::type_error("dict() expects at most one argument"));
                 }
                 if args.is_empty() {
                     return Ok(heap.alloc_dict(Vec::new()));
@@ -4041,7 +4039,7 @@ impl BuiltinFunction {
                 match &args[0] {
                     Value::Dict(obj) => match &*obj.kind() {
                         Object::Dict(entries) => Ok(heap.alloc_dict(entries.to_vec())),
-                        _ => Err(RuntimeError::new("dict() unsupported type")),
+                        _ => Err(RuntimeError::type_error("dict() unsupported type")),
                     },
                     other => {
                         let mut entries = Vec::new();
@@ -4053,7 +4051,7 @@ impl BuiltinFunction {
                                         entries.push((parts[0].clone(), parts[1].clone()));
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new(
+                                        return Err(RuntimeError::value_error(
                                             "dict() sequence elements must be length 2",
                                         ));
                                     }
@@ -4064,13 +4062,13 @@ impl BuiltinFunction {
                                         entries.push((parts[0].clone(), parts[1].clone()));
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new(
+                                        return Err(RuntimeError::value_error(
                                             "dict() sequence elements must be length 2",
                                         ));
                                     }
                                 },
                                 _ => {
-                                    return Err(RuntimeError::new(
+                                    return Err(RuntimeError::type_error(
                                         "dict() argument must be a mapping or iterable of pairs",
                                     ));
                                 }
@@ -4995,17 +4993,17 @@ impl BuiltinFunction {
                     }
                     _ => None,
                 }
-                .ok_or_else(|| RuntimeError::new("namedtuple._make() requires namedtuple class"))?;
+                .ok_or_else(|| RuntimeError::type_error("namedtuple._make() requires namedtuple class"))?;
                 let values = match &args[1] {
                     Value::List(obj) => match &*obj.kind() {
                         Object::List(values) => values.clone(),
-                        _ => return Err(RuntimeError::new("namedtuple._make() expects iterable")),
+                        _ => return Err(RuntimeError::type_error("namedtuple._make() expects iterable")),
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => values.clone(),
-                        _ => return Err(RuntimeError::new("namedtuple._make() expects iterable")),
+                        _ => return Err(RuntimeError::type_error("namedtuple._make() expects iterable")),
                     },
-                    _ => return Err(RuntimeError::new("namedtuple._make() expects iterable")),
+                    _ => return Err(RuntimeError::type_error("namedtuple._make() expects iterable")),
                 };
                 if values.len() != fields.len() {
                     return Err(RuntimeError::new(format!(
@@ -5970,7 +5968,7 @@ impl BuiltinFunction {
 
 fn builtin_all_any(args: Vec<Value>, expect_all: bool) -> Result<Value, RuntimeError> {
     if args.len() != 1 {
-        return Err(RuntimeError::new("all/any expects one argument"));
+        return Err(RuntimeError::type_error("all/any expects one argument"));
     }
     match &args[0] {
         Value::List(obj) => match &*obj.kind() {
@@ -5990,7 +5988,7 @@ fn builtin_all_any(args: Vec<Value>, expect_all: bool) -> Result<Value, RuntimeE
                 }
                 Ok(Value::Bool(result))
             }
-            _ => Err(RuntimeError::new("all/any expects list or tuple")),
+            _ => Err(RuntimeError::type_error("all/any expects list or tuple")),
         },
         Value::Tuple(obj) => match &*obj.kind() {
             Object::Tuple(values) => {
@@ -6009,9 +6007,9 @@ fn builtin_all_any(args: Vec<Value>, expect_all: bool) -> Result<Value, RuntimeE
                 }
                 Ok(Value::Bool(result))
             }
-            _ => Err(RuntimeError::new("all/any expects list or tuple")),
+            _ => Err(RuntimeError::type_error("all/any expects list or tuple")),
         },
-        _ => Err(RuntimeError::new("all/any expects list or tuple")),
+        _ => Err(RuntimeError::type_error("all/any expects list or tuple")),
     }
 }
 
@@ -6793,13 +6791,13 @@ fn divmod_values(left: Value, right: Value) -> Result<(Value, Value), RuntimeErr
     if let (Some(left), Some(right)) = (int_like_bigint(&left), int_like_bigint(&right)) {
         let (quotient, remainder) = left
             .div_mod_floor(&right)
-            .ok_or_else(|| RuntimeError::new("divmod() division by zero"))?;
+            .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;
         return Ok((bigint_to_value(quotient), bigint_to_value(remainder)));
     }
     match (numeric_value(&left), numeric_value(&right)) {
         (Some(NumericValue::Int(left)), Some(NumericValue::Int(right))) => {
             if right == 0 {
-                return Err(RuntimeError::new("divmod() division by zero"));
+                return Err(RuntimeError::zero_division_error("division by zero"));
             }
             let div = left.div_euclid(right);
             let rem = left.rem_euclid(right);
@@ -6815,7 +6813,7 @@ fn divmod_values(left: Value, right: Value) -> Result<(Value, Value), RuntimeErr
                 NumericValue::Float(value) => value,
             };
             if right == 0.0 {
-                return Err(RuntimeError::new("divmod() division by zero"));
+                return Err(RuntimeError::zero_division_error("division by zero"));
             }
             let div = (left / right).floor();
             let mut rem = left - div * right;

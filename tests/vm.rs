@@ -8245,6 +8245,44 @@ ok = seed_kw_ok and random_args_ok and getrandbits_ok and shuffle_ok
 }
 
 #[test]
+fn core_contract_errors_are_typed_for_ord_dict_all_divmod_and_namedtuple_make() {
+    let source = r#"from collections import namedtuple
+Point = namedtuple("Point", "x y")
+ord_ok = False
+dict_ok = False
+all_ok = False
+divmod_ok = False
+make_ok = False
+try:
+    ord("ab")
+except Exception as exc:
+    ord_ok = (type(exc).__name__ == "TypeError")
+try:
+    dict(1, 2)
+except Exception as exc:
+    dict_ok = (type(exc).__name__ == "TypeError")
+try:
+    all(1)
+except Exception as exc:
+    all_ok = (type(exc).__name__ == "TypeError")
+try:
+    divmod(1, 0)
+except Exception as exc:
+    divmod_ok = (type(exc).__name__ == "ZeroDivisionError")
+try:
+    Point._make(1)
+except Exception as exc:
+    make_ok = (type(exc).__name__ == "TypeError")
+ok = ord_ok and dict_ok and all_ok and divmod_ok and make_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

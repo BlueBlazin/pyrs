@@ -121,6 +121,14 @@ Status: in progress (phase 1 + initial phase 2 landed).
 43. Added additional regressions in `/Users/$USER/pyrs/tests/vm.rs`:
    - `random_empty_population_contracts_are_typed`
    - `random_argument_contracts_are_typed`
+44. Additional core builtin contract conversions now emit typed exceptions:
+   - `ord(...)` arity/type/length contract paths -> typed `TypeError`.
+   - `dict(...)` arity/shape contract paths -> typed `TypeError`/`ValueError` (sequence-element-length domain).
+   - `all(...)` / `any(...)` arity/type contracts -> typed `TypeError`.
+45. `divmod(...)` division-by-zero paths now raise typed `ZeroDivisionError` via `RuntimeError::zero_division_error(...)` across integer/bigint/float branches.
+46. `namedtuple._make(...)` receiver/class/iterable contract failures now raise typed `TypeError` in both core VM and builtin dispatch paths.
+47. Added regression in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `core_contract_errors_are_typed_for_ord_dict_all_divmod_and_namedtuple_make`.
 
 ## Why This Exists
 

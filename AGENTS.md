@@ -114,6 +114,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `seed/random/randint/getrandbits/choice/choices/shuffle` signature/argument/domain errors now emit typed exceptions (TypeError/ValueError/IndexError) instead of message-only runtime errors.
     - random keyword-argument contract failures now include offending keyword names in TypeError text.
     - regressions landed: `random_empty_population_contracts_are_typed`, `random_argument_contracts_are_typed`.
+  - typed core-contract cleanup (2026-02-20, latest):
+    - `ord`, `dict`, `all/any`, `namedtuple._make`, and `divmod` contract/domain failures now emit typed exceptions (`TypeError`/`ValueError`/`ZeroDivisionError`) instead of untyped message-only runtime errors.
+    - regression landed: `core_contract_errors_are_typed_for_ord_dict_all_divmod_and_namedtuple_make`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.
