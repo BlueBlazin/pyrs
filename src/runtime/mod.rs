@@ -2354,6 +2354,7 @@ pub enum BuiltinFunction {
     SysStdinWrite,
     SysStdinFlush,
     SysStreamIsATty,
+    SysconfigGetDataName,
     PlatformLibcVer,
     PlatformWin32IsIot,
     Import,
@@ -5553,6 +5554,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysStdinWrite
             | BuiltinFunction::SysStdinFlush
             | BuiltinFunction::SysStreamIsATty
+            | BuiltinFunction::SysconfigGetDataName
             | BuiltinFunction::PlatformLibcVer
             | BuiltinFunction::PlatformWin32IsIot
             | BuiltinFunction::ImportlibInvalidateCaches

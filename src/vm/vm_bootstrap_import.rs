@@ -6214,6 +6214,153 @@ impl Vm {
         self.refresh_sys_modules_dict();
     }
 
+    fn install_abc_fallback_module(&mut self) -> Result<(), RuntimeError> {
+        if self.modules.contains_key("abc") {
+            return Ok(());
+        }
+        let type_class = self
+            .builtins
+            .get("type")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("type class is unavailable"))
+            .and_then(|value| self.class_from_base_value(value))?;
+        let object_class = self
+            .builtins
+            .get("object")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("object class is unavailable"))
+            .and_then(|value| self.class_from_base_value(value))?;
+
+        let mut abc_meta_attrs = HashMap::new();
+        abc_meta_attrs.insert("__module__".to_string(), Value::Str("abc".to_string()));
+        abc_meta_attrs.insert(
+            "register".to_string(),
+            Value::Builtin(BuiltinFunction::AbcRegister),
+        );
+        abc_meta_attrs.insert(
+            "__instancecheck__".to_string(),
+            Value::Builtin(BuiltinFunction::AbcInstanceCheck),
+        );
+        abc_meta_attrs.insert(
+            "__subclasscheck__".to_string(),
+            Value::Builtin(BuiltinFunction::AbcSubclassCheck),
+        );
+
+        let abc_meta = match self.build_default_class_value(
+            "ABCMeta".to_string(),
+            abc_meta_attrs,
+            vec![type_class],
+            self.default_type_metaclass(),
+        )? {
+            Value::Class(class) => class,
+            _ => return Err(RuntimeError::new("failed to create abc.ABCMeta")),
+        };
+
+        let mut abc_attrs = HashMap::new();
+        abc_attrs.insert("__module__".to_string(), Value::Str("abc".to_string()));
+        let abc_value = self.build_default_class_value(
+            "ABC".to_string(),
+            abc_attrs,
+            vec![object_class],
+            Some(abc_meta.clone()),
+        )?;
+
+        self.install_builtin_module(
+            "abc",
+            &[
+                ("get_cache_token", BuiltinFunction::AbcGetCacheToken),
+                ("abstractmethod", BuiltinFunction::AbcAbstractMethod),
+                ("update_abstractmethods", BuiltinFunction::AbcUpdateAbstractMethods),
+            ],
+            vec![
+                ("ABCMeta", Value::Class(abc_meta)),
+                ("ABC", abc_value),
+                (
+                    "abstractclassmethod",
+                    Value::Builtin(BuiltinFunction::AbcAbstractMethod),
+                ),
+                (
+                    "abstractstaticmethod",
+                    Value::Builtin(BuiltinFunction::AbcAbstractMethod),
+                ),
+                (
+                    "abstractproperty",
+                    Value::Builtin(BuiltinFunction::AbcAbstractMethod),
+                ),
+            ],
+        );
+        Ok(())
+    }
+
+    fn install_sysconfig_fallback_module(&mut self) {
+        if self.modules.contains_key("sysconfig") {
+            return;
+        }
+        self.install_builtin_module(
+            "sysconfig",
+            &[("_get_sysconfigdata_name", BuiltinFunction::SysconfigGetDataName)],
+            Vec::new(),
+        );
+    }
+
+    fn install_socket_fallback_module(&mut self) -> Result<(), RuntimeError> {
+        if self.modules.contains_key("socket") {
+            return Ok(());
+        }
+        let object_class = self
+            .builtins
+            .get("object")
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("object class is unavailable"))
+            .and_then(|value| self.class_from_base_value(value))?;
+        let default_timeout = self.heap.alloc_instance(InstanceObject::new(object_class));
+
+        let mut constants = vec![("_GLOBAL_DEFAULT_TIMEOUT", default_timeout)];
+        if let Some(socket_module) = self.modules.get("_socket").cloned()
+            && let Object::Module(module_data) = &*socket_module.kind()
+        {
+            for name in [
+                "socket",
+                "error",
+                "timeout",
+                "gaierror",
+                "AF_INET",
+                "AF_INET6",
+                "SOCK_STREAM",
+                "SOCK_DGRAM",
+                "SOCK_RAW",
+            ] {
+                if let Some(value) = module_data.globals.get(name).cloned() {
+                    constants.push((name, value));
+                }
+            }
+        }
+        self.install_builtin_module(
+            "socket",
+            &[("fromfd", BuiltinFunction::SocketFromFd)],
+            constants,
+        );
+        Ok(())
+    }
+
+    fn install_builtin_import_fallback(&mut self, name: &str) -> Result<bool, RuntimeError> {
+        match name {
+            "abc" => {
+                self.install_abc_fallback_module()?;
+                Ok(true)
+            }
+            "sysconfig" => {
+                self.install_sysconfig_fallback_module();
+                Ok(true)
+            }
+            "socket" => {
+                self.install_socket_fallback_module()?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     pub(super) fn load_module(&mut self, name: &str) -> Result<ObjRef, RuntimeError> {
         if std::env::var_os("PYRS_TRACE_MODULE_LOAD").is_some() {
             eprintln!("[module-load] {name}");
@@ -6242,9 +6389,19 @@ impl Vm {
             }
         }
 
-        let source_info = self.find_module_source(name).ok_or_else(|| {
-            RuntimeError::module_not_found_error(format!("module '{name}' not found"))
-        })?;
+        let source_info = match self.find_module_source(name) {
+            Some(info) => info,
+            None => {
+                if self.install_builtin_import_fallback(name)?
+                    && let Some(module) = self.modules.get(name).cloned()
+                {
+                    return Ok(module);
+                }
+                return Err(RuntimeError::module_not_found_error(format!(
+                    "module '{name}' not found"
+                )));
+            }
+        };
         let loader_name = if source_info.is_namespace {
             NAMESPACE_LOADER
         } else if source_info.is_extension {

@@ -2186,6 +2186,32 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_sysconfig_get_data_name(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "_get_sysconfigdata_name() expects no arguments",
+            ));
+        }
+        let mut names = self
+            .modules
+            .keys()
+            .filter(|name| name.starts_with("_sysconfigdata__"))
+            .cloned()
+            .collect::<Vec<_>>();
+        names.sort();
+        let preferred = names
+            .iter()
+            .find(|name| name.ends_with('_'))
+            .cloned()
+            .or_else(|| names.first().cloned())
+            .unwrap_or_else(|| "_sysconfigdata__pyrs".to_string());
+        Ok(Value::Str(preferred))
+    }
+
     pub(super) fn socket_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("_socket").cloned() else {
             return Err(RuntimeError::module_not_found_error(

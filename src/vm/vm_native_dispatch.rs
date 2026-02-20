@@ -6452,6 +6452,9 @@ impl Vm {
             BuiltinFunction::SysStdinWrite => self.builtin_sys_stdin_write(args, kwargs),
             BuiltinFunction::SysStdinFlush => self.builtin_sys_stream_flush(args, kwargs),
             BuiltinFunction::SysStreamIsATty => self.builtin_sys_stream_isatty(args, kwargs),
+            BuiltinFunction::SysconfigGetDataName => {
+                self.builtin_sysconfig_get_data_name(args, kwargs)
+            }
             BuiltinFunction::Int => self.builtin_int(args, kwargs),
             BuiltinFunction::Bool => self.builtin_bool(args, kwargs),
             BuiltinFunction::Float => self.builtin_float(args, kwargs),
