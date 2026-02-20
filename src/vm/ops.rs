@@ -3,7 +3,8 @@ use std::cmp::Ordering;
 use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
-    LIST_BACKING_STORAGE_ATTR, NumericValue, STR_BACKING_STORAGE_ATTR, mod_float,
+    DICT_BACKING_STORAGE_ATTR, LIST_BACKING_STORAGE_ATTR, NumericValue, STR_BACKING_STORAGE_ATTR,
+    mod_float,
     numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod, value_to_int,
 };
 use crate::runtime::{
@@ -1475,6 +1476,15 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
                 }
                 _ => Err(RuntimeError::type_error("unsupported operand type for in")),
             },
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
+        },
+        Value::Instance(obj) => match &*obj.kind() {
+            Object::Instance(instance_data) => {
+                match instance_data.attrs.get(DICT_BACKING_STORAGE_ATTR) {
+                    Some(Value::Dict(storage)) => dict_contains_key_checked(storage, left),
+                    _ => Err(RuntimeError::type_error("unsupported operand type for in")),
+                }
+            }
             _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         _ => Err(RuntimeError::type_error("unsupported operand type for in")),

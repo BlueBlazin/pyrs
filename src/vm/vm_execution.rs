@@ -1486,8 +1486,13 @@ impl Vm {
                         Value::Dict(dict) => self.load_attr_dict_method(dict, &attr_name)?,
                         Value::Cell(cell) => self.load_attr_cell(cell, &attr_name)?,
                         Value::None => match attr_name.as_str() {
-                            "__doc__" => Value::None,
-                            "__new__" => Value::Builtin(BuiltinFunction::ObjectNew),
+                            "__doc__" => Value::Str("None".to_string()),
+                            "__new__" => {
+                                let none_type = self
+                                    .types_module_class("NoneType")
+                                    .unwrap_or_else(|| self.fallback_none_type_class());
+                                self.alloc_builtin_bound_method(BuiltinFunction::ObjectNew, none_type)
+                            }
                             _ => {
                                 return Err(RuntimeError::attribute_error(format!(
                                     "NoneType has no attribute '{}'",

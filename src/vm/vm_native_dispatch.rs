@@ -7539,6 +7539,11 @@ impl Vm {
             BuiltinFunction::ThreadStartNewThread => {
                 self.builtin_thread_start_new_thread(args, kwargs)
             }
+            BuiltinFunction::ThreadLockEnter => self.builtin_thread_lock_enter(args, kwargs),
+            BuiltinFunction::ThreadLockExit => self.builtin_thread_lock_exit(args, kwargs),
+            BuiltinFunction::ThreadLockAcquire => self.builtin_thread_lock_acquire(args, kwargs),
+            BuiltinFunction::ThreadLockRelease => self.builtin_thread_lock_release(args, kwargs),
+            BuiltinFunction::ThreadLockLocked => self.builtin_thread_lock_locked(args, kwargs),
             BuiltinFunction::ThreadingCurrentThread => {
                 self.builtin_threading_current_thread(args, kwargs)
             }

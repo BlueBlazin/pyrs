@@ -1242,6 +1242,17 @@ impl Vm {
         Ok(())
     }
 
+    fn thread_lock_set_state(lock_value: &Value, locked: bool) {
+        let Value::Instance(lock_instance) = lock_value else {
+            return;
+        };
+        if let Object::Instance(lock_data) = &mut *lock_instance.kind_mut() {
+            lock_data
+                .attrs
+                .insert("_locked".to_string(), Value::Bool(locked));
+        }
+    }
+
     pub(super) fn builtin_threading_get_ident(
         &mut self,
         args: Vec<Value>,
@@ -1315,6 +1326,94 @@ impl Vm {
                 Err(RuntimeError::new("start_new_thread() callable raised"))
             }
         }
+    }
+
+    pub(super) fn builtin_thread_lock_enter(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.builtin_thread_lock_acquire(args, kwargs)
+    }
+
+    pub(super) fn builtin_thread_lock_exit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 4 {
+            return Err(RuntimeError::new(
+                "_thread.lock.__exit__() expects optional exception triple",
+            ));
+        }
+        self.builtin_thread_lock_release(vec![args.remove(0)], HashMap::new())?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_thread_lock_acquire(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if kwargs.keys().any(|key| key != "blocking" && key != "timeout")
+            || args.is_empty()
+            || args.len() > 3
+        {
+            return Err(RuntimeError::new(
+                "_thread.lock.acquire() got unexpected arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "_thread.lock.acquire")?;
+        let blocking = kwargs
+            .remove("blocking")
+            .or_else(|| args.first().cloned())
+            .map(|value| is_truthy(&value))
+            .unwrap_or(true);
+        if let Some(timeout) = kwargs.remove("timeout").or_else(|| args.get(1).cloned()) {
+            let timeout = value_to_f64(timeout)?;
+            if timeout.is_sign_negative() {
+                return Err(RuntimeError::value_error("timeout must be non-negative"));
+            }
+        }
+        let currently_locked = matches!(
+            Self::instance_attr_get(&instance, "_locked"),
+            Some(Value::Bool(true))
+        );
+        if currently_locked && !blocking {
+            return Ok(Value::Bool(false));
+        }
+        Self::instance_attr_set(&instance, "_locked", Value::Bool(true))?;
+        Ok(Value::Bool(true))
+    }
+
+    pub(super) fn builtin_thread_lock_release(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "_thread.lock.release() expects no arguments",
+            ));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "_thread.lock.release")?;
+        Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_thread_lock_locked(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_thread.lock.locked() expects no arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "_thread.lock.locked")?;
+        Ok(Value::Bool(matches!(
+            Self::instance_attr_get(&instance, "_locked"),
+            Some(Value::Bool(true))
+        )))
     }
 
     pub(super) fn builtin_threading_current_thread(
@@ -1640,7 +1739,10 @@ impl Vm {
             ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Condition.__init__")?;
-        let lock_value = args.pop().unwrap_or(Value::None);
+        let lock_value = match args.pop() {
+            Some(value) if !matches!(value, Value::None) => value,
+            _ => self.call_builtin(BuiltinFunction::ThreadRLock, Vec::new(), HashMap::new())?,
+        };
         Self::instance_attr_set(&instance, "_lock", lock_value)?;
         Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
         Ok(Value::None)
@@ -1667,6 +1769,9 @@ impl Vm {
             if timeout.is_sign_negative() {
                 return Err(RuntimeError::value_error("timeout must be non-negative"));
             }
+        }
+        if let Some(lock_value) = Self::instance_attr_get(&instance, "_lock") {
+            Self::thread_lock_set_state(&lock_value, true);
         }
         Self::instance_attr_set(&instance, "_locked", Value::Bool(true))?;
         Ok(Value::Bool(true))
@@ -1725,6 +1830,9 @@ impl Vm {
             ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Condition.release")?;
+        if let Some(lock_value) = Self::instance_attr_get(&instance, "_lock") {
+            Self::thread_lock_set_state(&lock_value, false);
+        }
         Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
         Ok(Value::None)
     }
@@ -1740,8 +1848,11 @@ impl Vm {
             ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "Condition.__exit__")?;
+        if let Some(lock_value) = Self::instance_attr_get(&instance, "_lock") {
+            Self::thread_lock_set_state(&lock_value, false);
+        }
         Self::instance_attr_set(&instance, "_locked", Value::Bool(false))?;
-        Ok(Value::Bool(false))
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_thread_condition_wait(
@@ -2007,7 +2118,13 @@ impl Vm {
         let previous = self
             .signal_handlers
             .insert(signum, handler)
-            .unwrap_or(Value::Int(SIGNAL_DEFAULT));
+            .unwrap_or_else(|| {
+                if signum == SIGNAL_SIGINT {
+                    Value::Builtin(BuiltinFunction::NoOp)
+                } else {
+                    Value::Int(SIGNAL_DEFAULT)
+                }
+            });
         Ok(previous)
     }
 
@@ -2020,11 +2137,13 @@ impl Vm {
             return Err(RuntimeError::new("getsignal() expects one signum argument"));
         }
         let signum = value_to_int(args.remove(0))?;
-        Ok(self
-            .signal_handlers
-            .get(&signum)
-            .cloned()
-            .unwrap_or(Value::Int(SIGNAL_DEFAULT)))
+        Ok(self.signal_handlers.get(&signum).cloned().unwrap_or_else(|| {
+            if signum == SIGNAL_SIGINT {
+                Value::Builtin(BuiltinFunction::NoOp)
+            } else {
+                Value::Int(SIGNAL_DEFAULT)
+            }
+        }))
     }
 
     pub(super) fn builtin_signal_raise_signal(

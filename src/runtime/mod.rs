@@ -2317,6 +2317,7 @@ pub enum BuiltinFunction {
     ThreadLockExit,
     ThreadLockAcquire,
     ThreadLockRelease,
+    ThreadLockLocked,
     GetAttr,
     SetAttr,
     DelAttr,
@@ -4516,13 +4517,119 @@ impl BuiltinFunction {
                         "release".to_string(),
                         Value::Builtin(BuiltinFunction::ThreadLockRelease),
                     );
+                    class_data.attrs.insert(
+                        "locked".to_string(),
+                        Value::Builtin(BuiltinFunction::ThreadLockLocked),
+                    );
                 }
-                Ok(heap.alloc_instance(InstanceObject::new(class)))
+                let instance = match heap.alloc_instance(InstanceObject::new(class)) {
+                    Value::Instance(instance) => instance,
+                    _ => unreachable!(),
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("_locked".to_string(), Value::Bool(false));
+                }
+                Ok(Value::Instance(instance))
             }
-            BuiltinFunction::ThreadLockEnter => Ok(Value::Bool(true)),
-            BuiltinFunction::ThreadLockExit => Ok(Value::None),
-            BuiltinFunction::ThreadLockAcquire => Ok(Value::Bool(true)),
-            BuiltinFunction::ThreadLockRelease => Ok(Value::None),
+            BuiltinFunction::ThreadLockEnter => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("__enter__() expects no arguments"));
+                }
+                let instance = match &args[0] {
+                    Value::Instance(instance) => instance.clone(),
+                    _ => return Err(RuntimeError::new("lock receiver must be instance")),
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("_locked".to_string(), Value::Bool(true));
+                }
+                Ok(Value::Bool(true))
+            }
+            BuiltinFunction::ThreadLockExit => {
+                if args.is_empty() || args.len() > 4 {
+                    return Err(RuntimeError::new("__exit__() expects optional exception triple"));
+                }
+                let instance = match &args[0] {
+                    Value::Instance(instance) => instance.clone(),
+                    _ => return Err(RuntimeError::new("lock receiver must be instance")),
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("_locked".to_string(), Value::Bool(false));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ThreadLockAcquire => {
+                if args.is_empty() || args.len() > 3 {
+                    return Err(RuntimeError::new(
+                        "acquire() expects optional blocking and timeout",
+                    ));
+                }
+                let instance = match &args[0] {
+                    Value::Instance(instance) => instance.clone(),
+                    _ => return Err(RuntimeError::new("lock receiver must be instance")),
+                };
+                let blocking = args.get(1).map(is_truthy_value).unwrap_or(true);
+                let timeout = args
+                    .get(2)
+                    .map(|value| value_to_float(value.clone()))
+                    .transpose()?;
+                if timeout.is_some_and(|value| value.is_sign_negative()) {
+                    return Err(RuntimeError::value_error("timeout must be non-negative"));
+                }
+                let currently_locked = match &*instance.kind() {
+                    Object::Instance(instance_data) => matches!(
+                        instance_data.attrs.get("_locked"),
+                        Some(Value::Bool(true))
+                    ),
+                    _ => false,
+                };
+                if currently_locked && !blocking {
+                    return Ok(Value::Bool(false));
+                }
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("_locked".to_string(), Value::Bool(true));
+                }
+                Ok(Value::Bool(true))
+            }
+            BuiltinFunction::ThreadLockRelease => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("release() expects no arguments"));
+                }
+                let instance = match &args[0] {
+                    Value::Instance(instance) => instance.clone(),
+                    _ => return Err(RuntimeError::new("lock receiver must be instance")),
+                };
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("_locked".to_string(), Value::Bool(false));
+                }
+                Ok(Value::None)
+            }
+            BuiltinFunction::ThreadLockLocked => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::new("locked() expects no arguments"));
+                }
+                let instance = match &args[0] {
+                    Value::Instance(instance) => instance.clone(),
+                    _ => return Err(RuntimeError::new("lock receiver must be instance")),
+                };
+                let locked = match &*instance.kind() {
+                    Object::Instance(instance_data) => matches!(
+                        instance_data.attrs.get("_locked"),
+                        Some(Value::Bool(true))
+                    ),
+                    _ => false,
+                };
+                Ok(Value::Bool(locked))
+            }
             BuiltinFunction::FunctoolsLruCache => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(

@@ -1720,7 +1720,7 @@ impl Vm {
 
     pub(super) fn build_frame_proxy_value(&self, frame_index: usize) -> Value {
         let frame = &self.frames[frame_index];
-        let locals_dict = if frame.is_module {
+        let locals_value = if frame.is_module {
             if let Object::Module(module_data) = &*frame.module.kind() {
                 let mut entries = Vec::with_capacity(module_data.globals.len());
                 for (name, value) in module_data.globals.iter() {
@@ -1748,7 +1748,24 @@ impl Vm {
             for name in names {
                 entries.push((Value::Str(name), Value::None));
             }
-            self.heap.alloc_dict(entries)
+            let locals_dict = self.heap.alloc_dict(entries);
+            let proxy_class = match self
+                .heap
+                .alloc_class(ClassObject::new("FrameLocalsProxy".to_string(), Vec::new()))
+            {
+                Value::Class(class) => class,
+                _ => unreachable!(),
+            };
+            let proxy_instance = match self.heap.alloc_instance(InstanceObject::new(proxy_class)) {
+                Value::Instance(instance) => instance,
+                _ => unreachable!(),
+            };
+            if let Object::Instance(instance_data) = &mut *proxy_instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert(DICT_BACKING_STORAGE_ATTR.to_string(), locals_dict);
+            }
+            Value::Instance(proxy_instance)
         };
 
         let globals_dict = if let Object::Module(module_data) = &*frame.function_globals.kind() {
@@ -1778,7 +1795,7 @@ impl Vm {
         if let Object::Module(module_data) = &mut *frame_obj.kind_mut() {
             module_data
                 .globals
-                .insert("f_locals".to_string(), locals_dict);
+                .insert("f_locals".to_string(), locals_value);
             module_data
                 .globals
                 .insert("f_globals".to_string(), globals_dict);
@@ -3217,7 +3234,7 @@ impl Vm {
         }
     }
 
-    fn fallback_none_type_class(&mut self) -> ObjRef {
+    pub(super) fn fallback_none_type_class(&mut self) -> ObjRef {
         if let Some(module) = self.modules.get("builtins").cloned()
             && let Object::Module(module_data) = &*module.kind()
             && let Some(Value::Class(class)) = module_data.globals.get("__pyrs_none_type_class__")
@@ -8047,6 +8064,12 @@ impl Vm {
             },
             Value::None => match name.as_str() {
                 "__doc__" => Ok(Value::Str("None".to_string())),
+                "__new__" => {
+                    let none_type = self
+                        .types_module_class("NoneType")
+                        .unwrap_or_else(|| self.fallback_none_type_class());
+                    Ok(self.alloc_builtin_bound_method(BuiltinFunction::ObjectNew, none_type))
+                }
                 _ => Err(RuntimeError::attribute_error(format!(
                     "NoneType has no attribute '{}'",
                     name

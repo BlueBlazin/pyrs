@@ -3002,11 +3002,11 @@ impl Vm {
             if let Object::Module(jit_data) = &mut *jit_module.kind_mut() {
                 jit_data.globals.insert(
                     "is_enabled".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::Bool),
                 );
                 jit_data.globals.insert(
                     "is_available".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::Bool),
                 );
             }
             module_data

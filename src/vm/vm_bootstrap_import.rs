@@ -3851,6 +3851,11 @@ impl Vm {
             ],
         );
         self.install_builtin_module(
+            "_weakrefset",
+            &[],
+            vec![("WeakSet", Value::Builtin(BuiltinFunction::Set))],
+        );
+        self.install_builtin_module(
             "array",
             &[("array", BuiltinFunction::ArrayArray)],
             vec![("typecodes", Value::Str("bBuhHiIlLqQfdw".to_string()))],
