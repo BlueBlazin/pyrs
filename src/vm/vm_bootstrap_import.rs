@@ -7097,6 +7097,36 @@ impl Vm {
         }
     }
 
+    pub(super) fn loader_spec_value(&mut self, loader_name: Option<&str>) -> Value {
+        let Some(loader_name) = loader_name else {
+            return Value::None;
+        };
+        let class_name = loader_name
+            .rsplit_once('.')
+            .map(|(_, name)| name)
+            .unwrap_or(loader_name);
+        let class = match self
+            .heap
+            .alloc_class(ClassObject::new(class_name.to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str(class_name.to_string()));
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str(class_name.to_string()));
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("importlib.machinery".to_string()),
+            );
+        }
+        self.heap.alloc_instance(InstanceObject::new(class))
+    }
+
     pub(super) fn build_module_spec_value(
         &mut self,
         name: &str,
@@ -7110,9 +7140,7 @@ impl Vm {
             .rsplit_once('.')
             .map(|(parent, _)| parent.to_string())
             .unwrap_or_default();
-        let loader_value = loader_name
-            .map(|loader| Value::Str(loader.to_string()))
-            .unwrap_or(Value::None);
+        let loader_value = self.loader_spec_value(loader_name);
         let origin_value = origin
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
@@ -7126,44 +7154,55 @@ impl Vm {
             Value::None
         };
 
-        let spec = match self
-            .heap
-            .alloc_module(ModuleObject::new("__module_spec__".to_string()))
-        {
-            Value::Module(obj) => obj,
+        let spec_class = self
+            .modules
+            .get("_frozen_importlib")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("ModuleSpec").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                let class_value = self
+                    .heap
+                    .alloc_class(ClassObject::new("ModuleSpec".to_string(), Vec::new()));
+                match class_value {
+                    Value::Class(class) => class,
+                    _ => unreachable!(),
+                }
+            });
+        let spec = match self.heap.alloc_instance(InstanceObject::new(spec_class)) {
+            Value::Instance(obj) => obj,
             _ => unreachable!(),
         };
-        if let Object::Module(module_data) = &mut *spec.kind_mut() {
-            module_data
-                .globals
+        if let Object::Instance(instance_data) = &mut *spec.kind_mut() {
+            instance_data
+                .attrs
                 .insert("name".to_string(), Value::Str(name.to_string()));
-            module_data
-                .globals
-                .insert("origin".to_string(), origin_value);
-            module_data
-                .globals
-                .insert("loader".to_string(), loader_value);
-            module_data
-                .globals
+            instance_data.attrs.insert("origin".to_string(), origin_value);
+            instance_data.attrs.insert("loader".to_string(), loader_value);
+            instance_data
+                .attrs
                 .insert("parent".to_string(), Value::Str(parent));
-            module_data.globals.insert(
+            instance_data.attrs.insert(
                 "submodule_search_locations".to_string(),
                 submodule_locations,
             );
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("is_package".to_string(), Value::Bool(is_package));
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("is_namespace".to_string(), Value::Bool(is_namespace));
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("has_location".to_string(), Value::Bool(origin.is_some()));
-            module_data
-                .globals
-                .insert("cached".to_string(), Value::None);
+            instance_data.attrs.insert("cached".to_string(), Value::None);
         }
-        Value::Module(spec)
+        Value::Instance(spec)
     }
 
     pub(super) fn set_module_spec_field(&self, spec: &Value, field: &str, value: Value) {
@@ -7175,6 +7214,11 @@ impl Vm {
             }
             Value::Dict(spec_obj) => {
                 dict_set_value(spec_obj, Value::Str(field.to_string()), value);
+            }
+            Value::Instance(spec_obj) => {
+                if let Object::Instance(instance_data) = &mut *spec_obj.kind_mut() {
+                    instance_data.attrs.insert(field.to_string(), value);
+                }
             }
             _ => {}
         }

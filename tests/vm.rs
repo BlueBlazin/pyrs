@@ -6875,10 +6875,10 @@ fn sets_module_import_metadata_fields() {
 import pkg.sub\n\
 pkg_name = pkg.__name__\n\
 pkg_package = pkg.__package__\n\
-pkg_spec_name = pkg.__spec__['name']\n\
+pkg_spec_name = pkg.__spec__.name\n\
 pkg_path_len = len(pkg.__path__)\n\
 sub_package = pkg.sub.__package__\n\
-sub_spec_parent = pkg.sub.__spec__['parent']\n";
+sub_spec_parent = pkg.sub.__spec__.parent\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -7620,8 +7620,8 @@ fn executes_namespace_package_import() {
 import ns.mod\n\
 x = ns.mod.value\n\
 path_len = len(ns.__path__)\n\
-is_pkg = ns.__spec__['is_package']\n\
-is_namespace = ns.__spec__['is_namespace']\n";
+is_pkg = ns.__spec__.is_package\n\
+is_namespace = ns.__spec__.is_namespace\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -721,17 +721,8 @@ impl Vm {
                 "invalidate_caches() expects no arguments",
             ));
         }
-        let Some(sys_module) = self.modules.get("sys").cloned() else {
-            return Ok(Value::None);
-        };
-        let Object::Module(module_data) = &mut *sys_module.kind_mut() else {
-            return Ok(Value::None);
-        };
-        if let Some(Value::Dict(cache)) = module_data.globals.get("path_importer_cache").cloned()
-            && let Object::Dict(entries) = &mut *cache.kind_mut()
-        {
-            entries.clear();
-        }
+        // CPython keeps `sys.path_importer_cache` entries and forwards invalidation
+        // to active finders instead of clearing the cache dict wholesale.
         Ok(Value::None)
     }
 
@@ -755,7 +746,7 @@ impl Vm {
         };
         let loader = kwargs
             .remove("loader")
-            .unwrap_or(Value::Str(SOURCE_FILE_LOADER.to_string()));
+            .unwrap_or_else(|| self.loader_spec_value(Some(SOURCE_FILE_LOADER)));
         let search_locations = kwargs.remove("submodule_search_locations");
         kwargs.remove("target");
         if !kwargs.is_empty() {
@@ -811,6 +802,10 @@ impl Vm {
                 },
                 Value::Dict(obj) => match &*obj.kind() {
                     Object::Dict(entries) => entries.find(&Value::Str(field.to_string())).cloned(),
+                    _ => None,
+                },
+                Value::Instance(obj) => match &*obj.kind() {
+                    Object::Instance(instance_data) => instance_data.attrs.get(field).cloned(),
                     _ => None,
                 },
                 _ => None,

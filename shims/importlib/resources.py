@@ -38,15 +38,25 @@ class _ResourcePath:
         return open(self._path, mode)
 
 
+def _spec_get(spec, field):
+    value = getattr(spec, field, None)
+    if value is not None:
+        return value
+    try:
+        return spec[field]
+    except Exception:
+        return None
+
+
 def files(package):
     package_name = _package_name(package)
     spec = importlib.util.find_spec(package_name)
     if spec is None:
         raise ModuleNotFoundError(package_name)
-    locations = spec['submodule_search_locations']
+    locations = _spec_get(spec, 'submodule_search_locations')
     if locations is not None and len(locations) > 0:
         return _ResourcePath(locations[0])
-    origin = spec['origin']
+    origin = _spec_get(spec, 'origin')
     if origin is None:
         raise FileNotFoundError(package_name)
     return _ResourcePath(os.path.dirname(origin))
