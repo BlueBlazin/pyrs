@@ -209,6 +209,25 @@ impl CapiObjectRegistry {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn pin_owned_once(&mut self, ptr: usize) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(&ptr) else {
+            return false;
+        };
+        if entry.provenance != CapiPtrProvenance::OwnedCompat {
+            return false;
+        }
+        if entry.external_pins > 0 {
+            return false;
+        }
+        entry.external_pins = 1;
+        entry.lifecycle = CapiPtrLifecycleState::Alive;
+        true
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn unpin_external(&mut self, ptr: usize) {
         if ptr == 0 {
             return;
@@ -222,6 +241,29 @@ impl CapiObjectRegistry {
         if entry.external_pins > 0 {
             entry.external_pins -= 1;
         }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn unpin_owned(&mut self, ptr: usize) {
+        if ptr == 0 {
+            return;
+        }
+        let Some(entry) = self.entries.get_mut(&ptr) else {
+            return;
+        };
+        if entry.provenance != CapiPtrProvenance::OwnedCompat {
+            return;
+        }
+        if entry.external_pins > 0 {
+            entry.external_pins -= 1;
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn is_pinned(&self, ptr: usize) -> bool {
+        self.entries
+            .get(&ptr)
+            .is_some_and(|entry| entry.external_pins > 0)
     }
 
     pub(crate) fn mark_pending_free(&mut self, ptr: usize) {
@@ -409,6 +451,15 @@ mod tests {
         assert!(registry.should_free_now(0x77));
         registry.unpin_external(0x77);
         assert!(registry.should_free_now(0x77));
+    }
+
+    #[test]
+    fn owned_pin_apis_ignore_non_owned_entries() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x88, CapiPtrProvenance::ExternalRef, None);
+        assert!(!registry.pin_owned_once(0x88));
+        registry.unpin_owned(0x88);
+        assert!(!registry.is_pinned(0x88));
     }
 
     #[test]
