@@ -5,7 +5,7 @@ use super::{
     Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio, SystemTime,
     TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, UnixStream, Value, Vm, Write, bytes_like_from_value,
     collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
-    dict_get_value, dict_remove_value, dict_set_value, encode_text_bytes, format_value, fs,
+    dict_get_value, encode_text_bytes, format_value, fs,
     is_pyrs_executable, is_truthy, normalize_codec_encoding, normalize_codec_errors,
     parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
     seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64, value_from_bigint,
@@ -269,31 +269,7 @@ impl Vm {
                 return Ok(value);
             }
         }
-        match std::env::var(&key) {
-            Ok(value) => Ok(Value::Str(value)),
-            Err(_) => Ok(default),
-        }
-    }
-
-    fn os_update_environ_dict(&mut self, key: &str, value: Option<String>) {
-        let key_value = Value::Str(key.to_string());
-        for module_name in ["os", "posix"] {
-            let Some(module_obj) = self.modules.get(module_name) else {
-                continue;
-            };
-            let module_kind = module_obj.kind();
-            let Object::Module(module_data) = &*module_kind else {
-                continue;
-            };
-            let Some(Value::Dict(environ_obj)) = module_data.globals.get("environ") else {
-                continue;
-            };
-            if let Some(value) = &value {
-                dict_set_value(environ_obj, key_value.clone(), Value::Str(value.clone()));
-            } else {
-                let _ = dict_remove_value(environ_obj, &key_value);
-            }
-        }
+        Ok(default)
     }
 
     pub(super) fn builtin_os_putenv(
@@ -316,7 +292,6 @@ impl Vm {
         unsafe {
             std::env::set_var(&key, &value);
         }
-        self.os_update_environ_dict(&key, Some(value));
         Ok(Value::None)
     }
 
@@ -336,7 +311,6 @@ impl Vm {
         unsafe {
             std::env::remove_var(&key);
         }
-        self.os_update_environ_dict(&key, None);
         Ok(Value::None)
     }
 
