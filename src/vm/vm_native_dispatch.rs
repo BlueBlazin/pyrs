@@ -7305,6 +7305,7 @@ impl Vm {
             }
             BuiltinFunction::TypesModuleType => self.builtin_types_moduletype(args, kwargs),
             BuiltinFunction::TypesMethodType => self.builtin_types_methodtype(args, kwargs),
+            BuiltinFunction::TypesCoroutine => self.builtin_types_coroutine(args, kwargs),
             BuiltinFunction::TypesNewClass => self.builtin_types_new_class(args, kwargs),
             BuiltinFunction::EnumConvert => self.builtin_enum_convert(args, kwargs),
             BuiltinFunction::TypeAnnotationsGet => self.builtin_type_annotations_get(args, kwargs),

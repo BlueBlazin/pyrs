@@ -3187,7 +3187,7 @@ impl Vm {
                 ("MappingProxyType", BuiltinFunction::TypesMappingProxy),
                 ("MethodType", BuiltinFunction::TypesMethodType),
                 ("new_class", BuiltinFunction::TypesNewClass),
-                ("coroutine", BuiltinFunction::TypingIdFunc),
+                ("coroutine", BuiltinFunction::TypesCoroutine),
             ],
             vec![
                 (

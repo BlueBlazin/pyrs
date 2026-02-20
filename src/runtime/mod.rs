@@ -2873,6 +2873,7 @@ pub enum BuiltinFunction {
     TypesMappingProxy,
     TypesMethodType,
     TypesNewClass,
+    TypesCoroutine,
     EnumConvert,
     TypeAnnotationsGet,
     TestInternalCapiGetRecursionDepth,
@@ -5854,6 +5855,7 @@ impl BuiltinFunction {
             | BuiltinFunction::TypesModuleType
             | BuiltinFunction::TypesMethodType
             | BuiltinFunction::TypesNewClass
+            | BuiltinFunction::TypesCoroutine
             | BuiltinFunction::EnumConvert
             | BuiltinFunction::TypeAnnotationsGet
             | BuiltinFunction::TestInternalCapiGetRecursionDepth
@@ -7715,6 +7717,7 @@ fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
         BuiltinFunction::Super => Some("super"),
         BuiltinFunction::TypesModuleType => Some("module"),
         BuiltinFunction::TypesMethodType => Some("method"),
+        BuiltinFunction::TypesCoroutine => Some("coroutine"),
         _ => None,
     }
 }
@@ -7781,6 +7784,7 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::Super => "super".to_string(),
         BuiltinFunction::TypesModuleType => "ModuleType".to_string(),
         BuiltinFunction::TypesMethodType => "MethodType".to_string(),
+        BuiltinFunction::TypesCoroutine => "coroutine".to_string(),
         BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),
         _ => format!("{builtin:?}").to_ascii_lowercase(),
     }

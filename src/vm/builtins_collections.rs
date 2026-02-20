@@ -3282,6 +3282,38 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_types_coroutine(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("coroutine() expects one argument"));
+        }
+        let function = match args.remove(0) {
+            Value::Function(function) => function,
+            _ => return Err(RuntimeError::new("coroutine() expects a Python function")),
+        };
+        let mut wrapped = match &*function.kind() {
+            Object::Function(function_data) => function_data.clone(),
+            _ => unreachable!(),
+        };
+        let metadata_dict = match wrapped.dict.clone() {
+            Some(existing) => existing,
+            None => match self.heap.alloc_dict(Vec::new()) {
+                Value::Dict(dict) => dict,
+                _ => unreachable!(),
+            },
+        };
+        dict_set_value_checked(
+            &metadata_dict,
+            Value::Str("__wrapped__".to_string()),
+            Value::Function(function.clone()),
+        )?;
+        wrapped.dict = Some(metadata_dict);
+        Ok(self.heap.alloc_function(wrapped))
+    }
+
     pub(super) fn builtin_types_new_class(
         &mut self,
         mut args: Vec<Value>,
