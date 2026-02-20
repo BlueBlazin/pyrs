@@ -1423,7 +1423,7 @@ impl Vm {
                             if attr_name == "__doc__" {
                                 Value::None
                             } else {
-                                return Err(RuntimeError::new(format!(
+                                return Err(RuntimeError::attribute_error(format!(
                                     "float has no attribute '{}'",
                                     attr_name
                                 )));
@@ -1450,7 +1450,7 @@ impl Vm {
                             "real" => Value::Float(real),
                             "imag" => Value::Float(imag),
                             _ => {
-                                return Err(RuntimeError::new(format!(
+                                return Err(RuntimeError::attribute_error(format!(
                                     "complex has no attribute '{}'",
                                     attr_name
                                 )));
@@ -1460,7 +1460,7 @@ impl Vm {
                         Value::Bytes(obj) => {
                             let is_bytes = matches!(&*obj.kind(), Object::Bytes(_));
                             if !is_bytes {
-                                return Err(RuntimeError::new(format!(
+                                return Err(RuntimeError::attribute_error(format!(
                                     "{} has no attribute '{}'",
                                     self.value_type_name_for_error(&Value::Bytes(obj)),
                                     attr_name
@@ -1471,7 +1471,7 @@ impl Vm {
                         Value::ByteArray(obj) => {
                             let is_bytearray = matches!(&*obj.kind(), Object::ByteArray(_));
                             if !is_bytearray {
-                                return Err(RuntimeError::new(format!(
+                                return Err(RuntimeError::attribute_error(format!(
                                     "{} has no attribute '{}'",
                                     self.value_type_name_for_error(&Value::ByteArray(obj)),
                                     attr_name
@@ -1491,7 +1491,7 @@ impl Vm {
                             "__doc__" => Value::None,
                             "__new__" => Value::Builtin(BuiltinFunction::ObjectNew),
                             _ => {
-                                return Err(RuntimeError::new(format!(
+                                return Err(RuntimeError::attribute_error(format!(
                                     "NoneType has no attribute '{}'",
                                     attr_name
                                 )));
@@ -1515,7 +1515,7 @@ impl Vm {
                                         "throw" => NativeMethodKind::GeneratorThrow,
                                         "close" => NativeMethodKind::GeneratorClose,
                                         _ => {
-                                            return Err(RuntimeError::new(format!(
+                                            return Err(RuntimeError::attribute_error(format!(
                                                 "async_generator has no attribute '{}'",
                                                 attr_name
                                             )));
@@ -1529,7 +1529,7 @@ impl Vm {
                                         "throw" => NativeMethodKind::GeneratorThrow,
                                         "close" => NativeMethodKind::GeneratorClose,
                                         _ => {
-                                            return Err(RuntimeError::new(format!(
+                                            return Err(RuntimeError::attribute_error(format!(
                                                 "coroutine has no attribute '{}'",
                                                 attr_name
                                             )));
@@ -1543,14 +1543,14 @@ impl Vm {
                                     "throw" => NativeMethodKind::GeneratorThrow,
                                     "close" => NativeMethodKind::GeneratorClose,
                                     _ => {
-                                        return Err(RuntimeError::new(format!(
+                                        return Err(RuntimeError::attribute_error(format!(
                                             "generator has no attribute '{}'",
                                             attr_name
                                         )));
                                     }
                                 },
                                 _ => {
-                                    return Err(RuntimeError::new(format!(
+                                    return Err(RuntimeError::attribute_error(format!(
                                         "{} has no attribute '{}'",
                                         self.value_type_name_for_error(&Value::Generator(
                                             generator.clone()
@@ -1640,7 +1640,7 @@ impl Vm {
                                 {
                                     value
                                 } else {
-                                    return Err(RuntimeError::new(format!(
+                                    return Err(RuntimeError::attribute_error(format!(
                                         "exception has no attribute '{}'",
                                         attr_name
                                     )));
@@ -1651,7 +1651,7 @@ impl Vm {
                             self.load_attr_exception_type(&name, &attr_name)?
                         }
                         other => {
-                            return Err(RuntimeError::new(format!(
+                            return Err(RuntimeError::attribute_error(format!(
                                 "{} has no attribute '{}'",
                                 self.value_type_name_for_error(&other),
                                 attr_name

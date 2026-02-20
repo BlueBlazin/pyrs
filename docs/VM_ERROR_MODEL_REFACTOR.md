@@ -24,6 +24,8 @@ Status: in progress (phase 1 + initial phase 2 landed).
 10. Replaced prefixed `RuntimeError::new(\"XError: ...\")` callsites with typed constructors across VM/stdlib surfaces (136 callsites), reducing fallback classifier pressure.
 11. `runtime_error_to_exception_object(...)` and `runtime_error_matches_exception(...)` now prefer extracted/typed exception names before invoking legacy classifier heuristics.
 12. `RuntimeError::new(...)` exception extraction now has a fast reject path for non-exception freeform messages to keep the compatibility lane cheap.
+13. `runtime_error_matches_exception(...)` no longer falls back to `classify_runtime_error(...)`; matches now depend on typed payloads, extracted exception names, or traceback-tail exception lines.
+14. Core attribute lookup surfaces were migrated to emit typed `AttributeError` (`RuntimeError::attribute_error(...)`) instead of untyped text in major VM paths (`vm_builtin_metadata`, `vm_execution`, `builtins_core`).
 
 ## Why This Exists
 

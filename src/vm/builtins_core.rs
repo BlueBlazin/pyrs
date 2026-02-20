@@ -7954,7 +7954,7 @@ impl Vm {
             },
             Value::None => match name.as_str() {
                 "__doc__" => Ok(Value::Str("None".to_string())),
-                _ => Err(RuntimeError::new(format!(
+                _ => Err(RuntimeError::attribute_error(format!(
                     "NoneType has no attribute '{}'",
                     name
                 ))),
@@ -7965,14 +7965,14 @@ impl Vm {
             Value::Bytes(bytes) => {
                 let is_bytes = matches!(&*bytes.kind(), Object::Bytes(_));
                 if !is_bytes {
-                    return Err(RuntimeError::new("attribute access unsupported type"));
+                    return Err(RuntimeError::attribute_error("attribute access unsupported type"));
                 }
                 self.load_attr_bytes_method(Value::Bytes(bytes), &name)
             }
             Value::ByteArray(bytearray) => {
                 let is_bytearray = matches!(&*bytearray.kind(), Object::ByteArray(_));
                 if !is_bytearray {
-                    return Err(RuntimeError::new("attribute access unsupported type"));
+                    return Err(RuntimeError::attribute_error("attribute access unsupported type"));
                 }
                 self.load_attr_bytes_method(Value::ByteArray(bytearray), &name)
             }
@@ -8025,7 +8025,7 @@ impl Vm {
                         },
                         "generator",
                     ),
-                    _ => return Err(RuntimeError::new("attribute access unsupported type")),
+                    _ => return Err(RuntimeError::attribute_error("attribute access unsupported type")),
                 };
                 if let Some(kind) = kind {
                     let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
@@ -8128,10 +8128,10 @@ impl Vm {
                     Ok(self.heap.alloc_tuple(members))
                 }
                 _ => exception.attrs.borrow().get(&name).cloned().ok_or_else(|| {
-                    RuntimeError::new(format!("exception has no attribute '{}'", name))
+                    RuntimeError::attribute_error(format!("exception has no attribute '{}'", name))
                 }),
             },
-            _ => Err(RuntimeError::new("attribute access unsupported type")),
+            _ => Err(RuntimeError::attribute_error("attribute access unsupported type")),
         };
 
         match looked_up {

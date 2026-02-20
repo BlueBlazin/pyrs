@@ -9680,10 +9680,6 @@ fn runtime_error_matches_exception(err: &RuntimeError, expected: &str) -> bool {
     {
         return true;
     }
-    let classified = classify_runtime_error(&err.message);
-    if classified == expected || exception_type_is_subclass(classified, expected) {
-        return true;
-    }
     let Some(last_non_empty_line) = err
         .message
         .lines()
