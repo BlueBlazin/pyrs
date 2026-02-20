@@ -1491,7 +1491,10 @@ impl Vm {
                                 let none_type = self
                                     .types_module_class("NoneType")
                                     .unwrap_or_else(|| self.fallback_none_type_class());
-                                self.alloc_builtin_bound_method(BuiltinFunction::ObjectNew, none_type)
+                                self.alloc_builtin_bound_method(
+                                    BuiltinFunction::ObjectNew,
+                                    none_type,
+                                )
                             }
                             _ => {
                                 return Err(RuntimeError::attribute_error(format!(

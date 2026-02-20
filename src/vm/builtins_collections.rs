@@ -2640,7 +2640,11 @@ impl Vm {
             })
             .ok_or_else(|| RuntimeError::new("inspect.Signature unavailable"))?;
         let signature_empty = match &*signature_class.kind() {
-            Object::Class(class_data) => class_data.attrs.get("empty").cloned().unwrap_or(Value::None),
+            Object::Class(class_data) => class_data
+                .attrs
+                .get("empty")
+                .cloned()
+                .unwrap_or(Value::None),
             _ => Value::None,
         };
         let parameter_class = self
@@ -2656,7 +2660,11 @@ impl Vm {
             })
             .ok_or_else(|| RuntimeError::new("inspect.Parameter unavailable"))?;
         let parameter_empty = match &*parameter_class.kind() {
-            Object::Class(class_data) => class_data.attrs.get("empty").cloned().unwrap_or(Value::None),
+            Object::Class(class_data) => class_data
+                .attrs
+                .get("empty")
+                .cloned()
+                .unwrap_or(Value::None),
             _ => Value::None,
         };
 
@@ -2692,14 +2700,13 @@ impl Vm {
                     }
                     _ => Value::None,
                 };
-                let parameter_instance =
-                    match self
-                        .heap
-                        .alloc_instance(InstanceObject::new(parameter_class.clone()))
-                    {
-                        Value::Instance(obj) => obj,
-                        _ => unreachable!(),
-                    };
+                let parameter_instance = match self
+                    .heap
+                    .alloc_instance(InstanceObject::new(parameter_class.clone()))
+                {
+                    Value::Instance(obj) => obj,
+                    _ => unreachable!(),
+                };
                 if let Object::Instance(instance_data) = &mut *parameter_instance.kind_mut() {
                     instance_data
                         .attrs
@@ -2712,7 +2719,10 @@ impl Vm {
                         .attrs
                         .insert("annotation".to_string(), parameter_empty.clone());
                 }
-                (rendered, (Value::Str(name), Value::Instance(parameter_instance)))
+                (
+                    rendered,
+                    (Value::Str(name), Value::Instance(parameter_instance)),
+                )
             };
 
         match callable {

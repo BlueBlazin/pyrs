@@ -606,7 +606,9 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "Context.__enter__")?;
         if !args.is_empty() {
-            return Err(RuntimeError::new("Context.__enter__() expects no arguments"));
+            return Err(RuntimeError::new(
+                "Context.__enter__() expects no arguments",
+            ));
         }
         let module = self
             .modules

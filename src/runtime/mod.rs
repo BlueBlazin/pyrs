@@ -4578,7 +4578,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::ThreadLockExit => {
                 if args.is_empty() || args.len() > 4 {
-                    return Err(RuntimeError::new("__exit__() expects optional exception triple"));
+                    return Err(RuntimeError::new(
+                        "__exit__() expects optional exception triple",
+                    ));
                 }
                 let instance = match &args[0] {
                     Value::Instance(instance) => instance.clone(),
@@ -4610,10 +4612,9 @@ impl BuiltinFunction {
                     return Err(RuntimeError::value_error("timeout must be non-negative"));
                 }
                 let currently_locked = match &*instance.kind() {
-                    Object::Instance(instance_data) => matches!(
-                        instance_data.attrs.get("_locked"),
-                        Some(Value::Bool(true))
-                    ),
+                    Object::Instance(instance_data) => {
+                        matches!(instance_data.attrs.get("_locked"), Some(Value::Bool(true)))
+                    }
                     _ => false,
                 };
                 if currently_locked && !blocking {
@@ -4650,10 +4651,9 @@ impl BuiltinFunction {
                     _ => return Err(RuntimeError::new("lock receiver must be instance")),
                 };
                 let locked = match &*instance.kind() {
-                    Object::Instance(instance_data) => matches!(
-                        instance_data.attrs.get("_locked"),
-                        Some(Value::Bool(true))
-                    ),
+                    Object::Instance(instance_data) => {
+                        matches!(instance_data.attrs.get("_locked"), Some(Value::Bool(true)))
+                    }
                     _ => false,
                 };
                 Ok(Value::Bool(locked))

@@ -2,10 +2,10 @@ use super::{
     BuiltinFunction, HashMap, InstanceObject, InternalCallOutcome, IpAddr, IteratorKind,
     IteratorObject, ObjRef, Object, Read, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
     SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
-    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year,
-    days_from_civil, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
-    parse_uuid_like_string, split_unix_timestamp, uuid_hash_mix_bytes, uuid_node_from_hostname,
-    uuid_random_bytes, uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
+    apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
+    format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy, parse_uuid_like_string,
+    split_unix_timestamp, uuid_hash_mix_bytes, uuid_node_from_hostname, uuid_random_bytes,
+    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
 };
 
 impl Vm {
@@ -1077,9 +1077,7 @@ impl Vm {
                 .map(value_to_int)
                 .transpose()?
                 .unwrap_or(0);
-            out.push_str(&format!(
-                "{sep}{hour:02}:{minute:02}:{second:02}"
-            ));
+            out.push_str(&format!("{sep}{hour:02}:{minute:02}:{second:02}"));
             if microsecond != 0 {
                 out.push_str(&format!(".{microsecond:06}"));
             }
@@ -1614,7 +1612,9 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if kwargs.keys().any(|key| key != "blocking" && key != "timeout")
+        if kwargs
+            .keys()
+            .any(|key| key != "blocking" && key != "timeout")
             || args.is_empty()
             || args.len() > 3
         {
@@ -1666,7 +1666,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("_thread.lock.locked() expects no arguments"));
+            return Err(RuntimeError::new(
+                "_thread.lock.locked() expects no arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "_thread.lock.locked")?;
         Ok(Value::Bool(matches!(
@@ -2396,13 +2398,17 @@ impl Vm {
             return Err(RuntimeError::new("getsignal() expects one signum argument"));
         }
         let signum = value_to_int(args.remove(0))?;
-        Ok(self.signal_handlers.get(&signum).cloned().unwrap_or_else(|| {
-            if signum == SIGNAL_SIGINT {
-                Value::Builtin(BuiltinFunction::NoOp)
-            } else {
-                Value::Int(SIGNAL_DEFAULT)
-            }
-        }))
+        Ok(self
+            .signal_handlers
+            .get(&signum)
+            .cloned()
+            .unwrap_or_else(|| {
+                if signum == SIGNAL_SIGINT {
+                    Value::Builtin(BuiltinFunction::NoOp)
+                } else {
+                    Value::Int(SIGNAL_DEFAULT)
+                }
+            }))
     }
 
     pub(super) fn builtin_signal_raise_signal(

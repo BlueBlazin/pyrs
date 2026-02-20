@@ -1821,7 +1821,9 @@ impl Vm {
             }
             NativeMethodKind::BytesCount => {
                 if !kwargs.is_empty() {
-                    return Err(RuntimeError::type_error("count() takes no keyword arguments"));
+                    return Err(RuntimeError::type_error(
+                        "count() takes no keyword arguments",
+                    ));
                 }
                 if args.is_empty() || args.len() > 3 {
                     return Err(RuntimeError::new(
@@ -3480,7 +3482,9 @@ impl Vm {
             }
             NativeMethodKind::StrCount => {
                 if !kwargs.is_empty() {
-                    return Err(RuntimeError::type_error("count() takes no keyword arguments"));
+                    return Err(RuntimeError::type_error(
+                        "count() takes no keyword arguments",
+                    ));
                 }
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => {
@@ -6604,9 +6608,7 @@ impl Vm {
             BuiltinFunction::DecimalContextEnter => {
                 self.builtin_decimal_context_enter(args, kwargs)
             }
-            BuiltinFunction::DecimalContextExit => {
-                self.builtin_decimal_context_exit(args, kwargs)
-            }
+            BuiltinFunction::DecimalContextExit => self.builtin_decimal_context_exit(args, kwargs),
             BuiltinFunction::MathSqrt => self.builtin_math_sqrt(args, kwargs),
             BuiltinFunction::MathCopySign => self.builtin_math_copysign(args, kwargs),
             BuiltinFunction::MathFloor => self.builtin_math_floor(args, kwargs),

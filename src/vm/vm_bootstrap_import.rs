@@ -845,7 +845,10 @@ impl Vm {
         }
         self.install_builtin_module(
             "pathlib",
-            &[("joinpath", BuiltinFunction::OsPathJoin), ("exists", BuiltinFunction::OsPathExists)],
+            &[
+                ("joinpath", BuiltinFunction::OsPathJoin),
+                ("exists", BuiltinFunction::OsPathExists),
+            ],
             vec![("Path", Value::Class(pathlib_path_class))],
         );
         self.install_builtin_module(
@@ -6320,7 +6323,10 @@ impl Vm {
             &[
                 ("get_cache_token", BuiltinFunction::AbcGetCacheToken),
                 ("abstractmethod", BuiltinFunction::AbcAbstractMethod),
-                ("update_abstractmethods", BuiltinFunction::AbcUpdateAbstractMethods),
+                (
+                    "update_abstractmethods",
+                    BuiltinFunction::AbcUpdateAbstractMethods,
+                ),
             ],
             vec![
                 ("ABCMeta", Value::Class(abc_meta)),
@@ -6348,7 +6354,10 @@ impl Vm {
         }
         self.install_builtin_module(
             "sysconfig",
-            &[("_get_sysconfigdata_name", BuiltinFunction::SysconfigGetDataName)],
+            &[(
+                "_get_sysconfigdata_name",
+                BuiltinFunction::SysconfigGetDataName,
+            )],
             Vec::new(),
         );
     }
@@ -7166,9 +7175,10 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__name__".to_string(), Value::Str(class_name.to_string()));
-            class_data
-                .attrs
-                .insert("__qualname__".to_string(), Value::Str(class_name.to_string()));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str(class_name.to_string()),
+            );
             class_data.attrs.insert(
                 "__module__".to_string(),
                 Value::Str("importlib.machinery".to_string()),
@@ -7232,8 +7242,12 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("name".to_string(), Value::Str(name.to_string()));
-            instance_data.attrs.insert("origin".to_string(), origin_value);
-            instance_data.attrs.insert("loader".to_string(), loader_value);
+            instance_data
+                .attrs
+                .insert("origin".to_string(), origin_value);
+            instance_data
+                .attrs
+                .insert("loader".to_string(), loader_value);
             instance_data
                 .attrs
                 .insert("parent".to_string(), Value::Str(parent));
@@ -7250,7 +7264,9 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("has_location".to_string(), Value::Bool(origin.is_some()));
-            instance_data.attrs.insert("cached".to_string(), Value::None);
+            instance_data
+                .attrs
+                .insert("cached".to_string(), Value::None);
         }
         Value::Instance(spec)
     }

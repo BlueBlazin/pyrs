@@ -936,9 +936,10 @@ pub unsafe extern "C" fn PyErr_NewException(
         if let Value::Class(class_obj) = &mut class_value
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
-            class_data
-                .attrs
-                .insert("__module__".to_string(), Value::Str(module_name.to_string()));
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str(module_name.to_string()),
+            );
         }
         Ok(context.alloc_cpython_ptr_for_value(class_value))
     })

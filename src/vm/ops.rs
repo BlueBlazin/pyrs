@@ -4,8 +4,8 @@ use super::class_name_for_instance;
 use super::containers::{dedup_hashable_values, dict_contains_key_checked, ensure_hashable};
 use super::{
     DICT_BACKING_STORAGE_ATTR, LIST_BACKING_STORAGE_ATTR, NumericValue, STR_BACKING_STORAGE_ATTR,
-    mod_float,
-    numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod, value_to_int,
+    mod_float, numeric_as_complex, numeric_as_f64, numeric_pair, python_floor_div, python_mod,
+    value_to_int,
 };
 use crate::runtime::{
     BigInt, BuiltinFunction, Heap, Object, RuntimeError, Value, format_repr, format_value,

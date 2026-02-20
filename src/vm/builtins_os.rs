@@ -1,17 +1,14 @@
 use super::{
-    AsRawFd, AtexitHandler, BuiltinFunction, ClassObject, Command, Duration,
-    ExceptionObject, ExitStatusExt, FormatterFieldKey, FromRawFd, HashMap, InstanceObject,
-    InternalCallOutcome, IntoRawFd, IsTerminal, ModuleObject, NativeMethodKind, ObjRef, Object,
-    Path, PathBuf, Read, RuntimeError, Seek, SeekFrom, Stdio, SystemTime,
-    TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH, UnixStream, Value, Vm, Write, bytes_like_from_value,
-    collect_env_entries, collect_process_argv, decode_escape_bytes, decode_text_bytes,
-    dict_get_value, encode_text_bytes, format_value, fs,
-    is_pyrs_executable, is_truthy, normalize_codec_encoding, normalize_codec_errors,
-    mul_values,
+    AsRawFd, AtexitHandler, BuiltinFunction, ClassObject, Command, Duration, ExceptionObject,
+    ExitStatusExt, FormatterFieldKey, FromRawFd, HashMap, InstanceObject, InternalCallOutcome,
+    IntoRawFd, IsTerminal, ModuleObject, NativeMethodKind, ObjRef, Object, Path, PathBuf, Read,
+    RuntimeError, Seek, SeekFrom, Stdio, SystemTime, TUPLE_BACKING_STORAGE_ATTR, UNIX_EPOCH,
+    UnixStream, Value, Vm, Write, bytes_like_from_value, collect_env_entries, collect_process_argv,
+    decode_escape_bytes, decode_text_bytes, dict_get_value, encode_text_bytes, format_value, fs,
+    is_pyrs_executable, is_truthy, mul_values, normalize_codec_encoding, normalize_codec_errors,
     parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
-    pow_values,
-    seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64, value_from_bigint,
-    value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
+    pow_values, seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64,
+    value_from_bigint, value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
 };
 
 const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
@@ -3069,14 +3066,20 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::type_error("Path() takes no keyword arguments"));
+            return Err(RuntimeError::type_error(
+                "Path() takes no keyword arguments",
+            ));
         }
         if args.is_empty() {
             return Err(RuntimeError::type_error("Path() missing self"));
         }
         let receiver = match &args[0] {
             Value::Instance(instance) => instance.clone(),
-            _ => return Err(RuntimeError::type_error("Path() requires instance receiver")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "Path() requires instance receiver",
+                ));
+            }
         };
 
         let path_value = if args.len() == 1 {
@@ -3087,7 +3090,9 @@ impl Vm {
 
         let mut receiver_ref = receiver.kind_mut();
         let Object::Instance(instance_data) = &mut *receiver_ref else {
-            return Err(RuntimeError::type_error("Path() requires instance receiver"));
+            return Err(RuntimeError::type_error(
+                "Path() requires instance receiver",
+            ));
         };
         instance_data
             .attrs
@@ -3101,19 +3106,27 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::type_error("joinpath() takes no keyword arguments"));
+            return Err(RuntimeError::type_error(
+                "joinpath() takes no keyword arguments",
+            ));
         }
         if args.is_empty() {
             return Err(RuntimeError::type_error("joinpath() missing self"));
         }
         let receiver = match &args[0] {
             Value::Instance(instance) => instance.clone(),
-            _ => return Err(RuntimeError::type_error("joinpath() requires instance receiver")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "joinpath() requires instance receiver",
+                ));
+            }
         };
         let class = {
             let receiver_ref = receiver.kind();
             let Object::Instance(instance_data) = &*receiver_ref else {
-                return Err(RuntimeError::type_error("joinpath() requires instance receiver"));
+                return Err(RuntimeError::type_error(
+                    "joinpath() requires instance receiver",
+                ));
             };
             instance_data.class.clone()
         };
@@ -3136,22 +3149,32 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::type_error("__str__() takes no keyword arguments"));
+            return Err(RuntimeError::type_error(
+                "__str__() takes no keyword arguments",
+            ));
         }
         if args.len() != 1 {
             return Err(RuntimeError::type_error("__str__() takes no arguments"));
         }
         let receiver = match &args[0] {
             Value::Instance(instance) => instance.clone(),
-            _ => return Err(RuntimeError::type_error("__str__ requires instance receiver")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "__str__ requires instance receiver",
+                ));
+            }
         };
         match self.pathlib_path_value_from_receiver(&receiver)? {
             Value::Str(path) => Ok(Value::Str(path)),
             Value::Bytes(bytes_obj) => match &*bytes_obj.kind() {
                 Object::Bytes(data) => Ok(Value::Str(String::from_utf8_lossy(data).into_owned())),
-                _ => Err(RuntimeError::type_error("__fspath__() must return str or bytes")),
+                _ => Err(RuntimeError::type_error(
+                    "__fspath__() must return str or bytes",
+                )),
             },
-            _ => Err(RuntimeError::type_error("__fspath__() must return str or bytes")),
+            _ => Err(RuntimeError::type_error(
+                "__fspath__() must return str or bytes",
+            )),
         }
     }
 

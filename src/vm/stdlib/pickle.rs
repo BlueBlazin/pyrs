@@ -2828,7 +2828,10 @@ impl Vm {
                         self.heap.alloc_tuple(args),
                     );
                 }
-                (Value::Builtin(BuiltinFunction::Dict), self.heap.alloc_tuple(Vec::new()))
+                (
+                    Value::Builtin(BuiltinFunction::Dict),
+                    self.heap.alloc_tuple(Vec::new()),
+                )
             }
             Value::Bool(_)
             | Value::Int(_)
@@ -3014,18 +3017,17 @@ impl Vm {
                 // constructor/state emission on the native legacy path instead of copyreg's
                 // strict global-identity checks.
             } else {
-            if let Ok(reduce_ex) = self.pickle_copyreg_callable("_reduce_ex") {
-            return match self.call_internal(
-                reduce_ex,
-                vec![value.clone(), Value::Int(protocol)],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(result) => Ok(result),
-                InternalCallOutcome::CallerExceptionHandled => {
-                    Err(self.runtime_error_from_active_exception("object.__reduce_ex__() failed"))
+                if let Ok(reduce_ex) = self.pickle_copyreg_callable("_reduce_ex") {
+                    return match self.call_internal(
+                        reduce_ex,
+                        vec![value.clone(), Value::Int(protocol)],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(result) => Ok(result),
+                        InternalCallOutcome::CallerExceptionHandled => Err(self
+                            .runtime_error_from_active_exception("object.__reduce_ex__() failed")),
+                    };
                 }
-            };
-            }
             }
         }
 
@@ -3104,9 +3106,11 @@ impl Vm {
                                 return Err(RuntimeError::new("dict.items() failed"));
                             }
                         };
-                    Some(
-                        self.call_builtin(BuiltinFunction::Iter, vec![items_value], HashMap::new())?,
-                    )
+                    Some(self.call_builtin(
+                        BuiltinFunction::Iter,
+                        vec![items_value],
+                        HashMap::new(),
+                    )?)
                 }
                 Value::Instance(instance) => {
                     if let Some(dict_backing) = self.instance_backing_dict(instance) {
@@ -3118,13 +3122,11 @@ impl Vm {
                                     return Err(RuntimeError::new("dict.items() failed"));
                                 }
                             };
-                        Some(
-                            self.call_builtin(
-                                BuiltinFunction::Iter,
-                                vec![items_value],
-                                HashMap::new(),
-                            )?,
-                        )
+                        Some(self.call_builtin(
+                            BuiltinFunction::Iter,
+                            vec![items_value],
+                            HashMap::new(),
+                        )?)
                     } else {
                         None
                     }
@@ -3205,11 +3207,15 @@ mod tests {
                 class_data.mro = vec![class.clone(), object_class.clone()];
                 class_data.attrs.insert(
                     "__bases__".to_string(),
-                    vm.heap.alloc_tuple(vec![Value::Class(object_class.clone())]),
+                    vm.heap
+                        .alloc_tuple(vec![Value::Class(object_class.clone())]),
                 );
                 class_data.attrs.insert(
                     "__mro__".to_string(),
-                    vm.heap.alloc_tuple(vec![Value::Class(class.clone()), Value::Class(object_class)]),
+                    vm.heap.alloc_tuple(vec![
+                        Value::Class(class.clone()),
+                        Value::Class(object_class),
+                    ]),
                 );
                 class_data
                     .attrs
