@@ -154,6 +154,9 @@ impl Vm {
             },
             Value::Iterator(_) | Value::Generator(_) | Value::Slice { .. } => Ok(true),
             other => {
+                if let Some(result) = self.cpython_proxy_truthy(other) {
+                    return result;
+                }
                 if let Some(bool_method) = self.lookup_bound_special_method(other, "__bool__")? {
                     let bool_value =
                         match self.call_internal(bool_method, Vec::new(), HashMap::new())? {
@@ -5849,26 +5852,41 @@ impl Vm {
         let Some(_) = Self::cpython_proxy_raw_ptr_from_value(value) else {
             return Ok(None);
         };
-        match self.builtin_int(vec![value.clone()], HashMap::new()) {
-            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => {
-                return Ok(Some(normalized));
-            }
-            Ok(_) | Err(_) => {}
+        let type_name = self.value_type_name_for_error(value).to_ascii_lowercase();
+        let prefer_float =
+            type_name.contains("float") || type_name.contains("double") || type_name == "half";
+        let try_float = |vm: &mut Vm| match vm.builtin_float(vec![value.clone()], HashMap::new()) {
+            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => Some(normalized),
+            Ok(_) | Err(_) => None,
+        };
+        let try_int = |vm: &mut Vm| match vm.builtin_int(vec![value.clone()], HashMap::new()) {
+            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => Some(normalized),
+            Ok(_) | Err(_) => None,
+        };
+
+        let primary = if prefer_float {
+            try_float(self)
+        } else {
+            try_int(self)
+        };
+        if let Some(normalized) = primary {
+            return Ok(Some(normalized));
         }
-        match self.builtin_float(vec![value.clone()], HashMap::new()) {
-            Ok(normalized) if Self::is_runtime_numeric_for_compare(&normalized) => {
-                Ok(Some(normalized))
-            }
-            Ok(_) | Err(_) => {
-                if self.value_type_name_for_error(value) == "bool"
-                    && let Ok(normalized) = self.builtin_bool(vec![value.clone()], HashMap::new())
-                    && Self::is_runtime_numeric_for_compare(&normalized)
-                {
-                    return Ok(Some(normalized));
-                }
-                Ok(None)
-            }
+        let secondary = if prefer_float {
+            try_int(self)
+        } else {
+            try_float(self)
+        };
+        if let Some(normalized) = secondary {
+            return Ok(Some(normalized));
         }
+        if type_name == "bool"
+            && let Ok(normalized) = self.builtin_bool(vec![value.clone()], HashMap::new())
+            && Self::is_runtime_numeric_for_compare(&normalized)
+        {
+            return Ok(Some(normalized));
+        }
+        Ok(None)
     }
 
     fn compare_order_via_proxy_numeric_bridge(
@@ -5904,6 +5922,18 @@ impl Vm {
         method: &str,
         argument: Value,
     ) -> Result<Option<bool>, RuntimeError> {
+        let Some(result) = self.call_compare_method_value(receiver, method, argument)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.truthy_from_value(&result)?))
+    }
+
+    pub(super) fn call_compare_method_value(
+        &mut self,
+        receiver: Value,
+        method: &str,
+        argument: Value,
+    ) -> Result<Option<Value>, RuntimeError> {
         let callable = if method.starts_with("__") && method.ends_with("__") {
             match self.lookup_bound_special_method(&receiver, method)? {
                 Some(callable) => callable,
@@ -5945,7 +5975,7 @@ impl Vm {
         if self.is_not_implemented_singleton(&result) {
             return Ok(None);
         }
-        Ok(Some(self.truthy_from_value(&result)?))
+        Ok(Some(result))
     }
 
     pub(super) fn compare_lt_runtime(
@@ -6486,6 +6516,16 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        const PY_EQ: i32 = 2;
+        let left_proxy_class =
+            matches!(left, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
+        let right_proxy_class =
+            matches!(right, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
+        if !left_proxy_class && !right_proxy_class
+            && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_EQ)
+        {
+            return result;
+        }
         if let Some(result) = self.compare_eq_via_bound_method(&left, &right) {
             return Ok(Value::Bool(result));
         }
@@ -6515,15 +6555,15 @@ impl Vm {
         }
         if matches!(left, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
-                self.call_compare_method_bool(left.clone(), "__eq__", right.clone())?
+                self.call_compare_method_value(left.clone(), "__eq__", right.clone())?
         {
-            return Ok(Value::Bool(result));
+            return Ok(result);
         }
         if matches!(right, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
-                self.call_compare_method_bool(right.clone(), "__eq__", left.clone())?
+                self.call_compare_method_value(right.clone(), "__eq__", left.clone())?
         {
-            return Ok(Value::Bool(result));
+            return Ok(result);
         }
         Ok(Value::Bool(left == right))
     }
@@ -6533,6 +6573,16 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        const PY_NE: i32 = 3;
+        let left_proxy_class =
+            matches!(left, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
+        let right_proxy_class =
+            matches!(right, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
+        if !left_proxy_class && !right_proxy_class
+            && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_NE)
+        {
+            return result;
+        }
         if let Some(result) = self.compare_eq_via_bound_method(&left, &right) {
             return Ok(Value::Bool(!result));
         }
@@ -6559,21 +6609,18 @@ impl Vm {
         }
         if matches!(left, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
-                self.call_compare_method_bool(left.clone(), "__ne__", right.clone())?
+                self.call_compare_method_value(left.clone(), "__ne__", right.clone())?
         {
-            return Ok(Value::Bool(result));
+            return Ok(result);
         }
         if matches!(right, Value::Instance(_) | Value::Class(_))
             && let Some(result) =
-                self.call_compare_method_bool(right.clone(), "__ne__", left.clone())?
+                self.call_compare_method_value(right.clone(), "__ne__", left.clone())?
         {
-            return Ok(Value::Bool(result));
+            return Ok(result);
         }
-        let eq = match self.compare_eq_runtime(left, right)? {
-            Value::Bool(value) => value,
-            _ => false,
-        };
-        Ok(Value::Bool(!eq))
+        let eq = self.compare_eq_runtime(left, right)?;
+        Ok(Value::Bool(!self.truthy_from_value(&eq)?))
     }
 
     pub(super) fn compare_eq_via_bound_method(&self, left: &Value, right: &Value) -> Option<bool> {

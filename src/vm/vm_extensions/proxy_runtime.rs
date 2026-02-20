@@ -8,9 +8,11 @@ use super::{
     PyErr_GivenExceptionMatches, PyExc_IndexError, PyExc_TypeError, PyNumber_Add, PyNumber_Float,
     PyNumber_Invert, PyNumber_Long, PyNumber_MatrixMultiply, PyNumber_Multiply, PyNumber_Negative,
     PyNumber_Positive, PyNumber_Subtract, PyNumber_TrueDivide, PyObject_CallObject,
-    PyObject_GetAttrString, PyObject_GetItem, PyObject_RichCompareBool, PyObject_SetItem,
-    PyObject_Size, RuntimeError, Value, Vm, c_name_to_string, cpython_is_type_object_ptr,
-    cpython_valid_type_ptr, cpython_value_debug_tag, is_cpython_proxy_class,
+    PyObject_GetAttrString, PyObject_GetItem, PyObject_IsTrue, PyObject_RichCompare,
+    PyObject_RichCompareBool, PyObject_SetItem, PyObject_Size, RuntimeError, Value, Vm,
+    c_name_to_string,
+    cpython_is_type_object_ptr, cpython_valid_type_ptr, cpython_value_debug_tag,
+    is_cpython_proxy_class,
 };
 
 impl Vm {
@@ -1019,6 +1021,73 @@ impl Vm {
                 .last_error
                 .clone()
                 .unwrap_or_else(|| "proxy comparison failed".to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(Ok(result != 0))
+    }
+
+    pub(in crate::vm) fn cpython_proxy_richcmp_value(
+        &mut self,
+        left: &Value,
+        right: &Value,
+        op: i32,
+    ) -> Option<Result<Value, RuntimeError>> {
+        if Self::cpython_proxy_raw_ptr_from_value(left).is_none()
+            && Self::cpython_proxy_raw_ptr_from_value(right).is_none()
+        {
+            return None;
+        }
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
+        let left_ptr = call_ctx.alloc_cpython_ptr_for_value(left.clone());
+        let right_ptr = call_ctx.alloc_cpython_ptr_for_value(right.clone());
+        if left_ptr.is_null() || right_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy comparison failed to materialize operands",
+            )));
+        }
+        // SAFETY: pointers were materialized in the active C-API context above.
+        let result_ptr = unsafe { PyObject_RichCompare(left_ptr, right_ptr, op) };
+        if result_ptr.is_null() {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "proxy comparison failed".to_string());
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        Some(
+            call_ctx
+                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .ok_or_else(|| {
+                    RuntimeError::new("proxy comparison returned unknown object pointer")
+                }),
+        )
+    }
+
+    pub(in crate::vm) fn cpython_proxy_truthy(
+        &mut self,
+        value: &Value,
+    ) -> Option<Result<bool, RuntimeError>> {
+        if Self::cpython_proxy_raw_ptr_from_value(value).is_none() {
+            return None;
+        }
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
+        let value_ptr = call_ctx.alloc_cpython_ptr_for_value(value.clone());
+        if value_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy truthiness failed to materialize operand",
+            )));
+        }
+        // SAFETY: pointer was materialized in the active C-API context above.
+        let result = unsafe { PyObject_IsTrue(value_ptr) };
+        if result < 0 {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "proxy truthiness failed".to_string());
             return Some(Err(RuntimeError::new(detail)));
         }
         Some(Ok(result != 0))

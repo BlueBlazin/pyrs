@@ -26,7 +26,13 @@ pub unsafe extern "C" fn PyObject_IsTrue(object: *mut c_void) -> i32 {
             context.set_error("PyObject_IsTrue missing VM context");
             return -1;
         }
-        if let Some(value) = context.cpython_value_from_ptr(object) {
+        let mapped = context.cpython_value_from_ptr(object);
+        let mapped_is_proxy = mapped.as_ref().is_some_and(|value| {
+            ModuleCapiContext::cpython_proxy_raw_ptr_from_value(value).is_some()
+        });
+        if let Some(value) = mapped
+            && !mapped_is_proxy
+        {
             return if is_truthy(&value) { 1 } else { 0 };
         }
         if !object.is_null()

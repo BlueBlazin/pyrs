@@ -13395,7 +13395,34 @@ fn numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder() {
         let source = r#"import numpy as np
 x = np.arange(0, 10, 0.5)
 text = repr(x)
-ok = ("array([" in text and "<ndarray instance>" not in text and "e+00" in text)
+ok = ("array([" in text and "<ndarray instance>" not in text and "0.5" in text and "e+00" not in text)
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.add_module_path(site_packages);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn numpy_bool_truthiness_and_float_ordering_match_cpython() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let Some(site_packages) = numpy_site_packages_path() else {
+        return;
+    };
+    run_with_large_stack("vm-numpy-bool-truthy-ordering", move || {
+        let source = r#"import numpy as np
+ok = (
+    bool(np.False_) is False
+    and bool(np.True_) is True
+    and (np.float64(0.5) < 0.0001) is False
+    and (np.float64(0.5) > 0.0001) is True
+)
 "#;
         let module = parser::parse_module(source).expect("parse should succeed");
         let code = compiler::compile_module(&module).expect("compile should succeed");

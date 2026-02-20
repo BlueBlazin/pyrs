@@ -356,21 +356,33 @@ pub unsafe extern "C" fn PyUnicode_AsUTF8AndSize(
     object: *mut c_void,
     out_len: *mut isize,
 ) -> *const c_char {
-    if out_len.is_null() {
-        cpython_set_error("PyUnicode_AsUTF8AndSize requires non-null size output");
-        return std::ptr::null();
-    }
-    let ptr = unsafe { PyUnicode_AsUTF8(object) };
-    if ptr.is_null() {
-        return std::ptr::null();
-    }
-    match cpython_value_from_ptr(object) {
-        Ok(Value::Str(text)) => {
+    match with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(object) else {
+            context.set_error("PyUnicode_AsUTF8AndSize received unknown object pointer");
+            return std::ptr::null();
+        };
+        let Value::Str(text) = value else {
+            context.set_error("PyUnicode_AsUTF8AndSize expected str object");
+            return std::ptr::null();
+        };
+        let ptr = match cpython_stable_utf8_ptr(&text) {
+            Ok(ptr) => ptr,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null();
+            }
+        };
+        if !out_len.is_null() {
             // SAFETY: caller provided writable out pointer.
             unsafe { *out_len = text.len() as isize };
-            ptr
         }
-        _ => std::ptr::null(),
+        ptr
+    }) {
+        Ok(ptr) => ptr,
+        Err(err) => {
+            cpython_set_error(err);
+            std::ptr::null()
+        }
     }
 }
 
