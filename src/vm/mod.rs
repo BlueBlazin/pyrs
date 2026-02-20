@@ -4488,9 +4488,9 @@ fn value_to_path(value: &Value) -> Result<String, RuntimeError> {
         Value::Str(path) => Ok(path.clone()),
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(bytes) => Ok(String::from_utf8_lossy(bytes).into_owned()),
-            _ => Err(RuntimeError::new("path must be string or bytes")),
+            _ => Err(RuntimeError::type_error("path must be string or bytes")),
         },
-        _ => Err(RuntimeError::new("path must be string or bytes")),
+        _ => Err(RuntimeError::type_error("path must be string or bytes")),
     }
 }
 
@@ -5764,13 +5764,13 @@ fn re_pattern_from_value(value: &Value) -> Result<RePatternValue, RuntimeError> 
         Value::Str(text) => Ok(RePatternValue::Str(text.clone())),
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(values) => Ok(RePatternValue::Bytes(values.clone())),
-            _ => Err(RuntimeError::new("pattern must be string or bytes")),
+            _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
             Object::ByteArray(values) => Ok(RePatternValue::Bytes(values.clone())),
-            _ => Err(RuntimeError::new("pattern must be string or bytes")),
+            _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
         },
-        _ => Err(RuntimeError::new("pattern must be string or bytes")),
+        _ => Err(RuntimeError::type_error("pattern must be string or bytes")),
     }
 }
 
@@ -5796,7 +5796,7 @@ fn re_pattern_from_argument(value: &Value) -> Result<RePatternValue, RuntimeErro
             if let Ok(pattern) = re_pattern_from_compiled_module(module) {
                 Ok(pattern)
             } else {
-                Err(RuntimeError::new("pattern must be string or bytes"))
+                Err(RuntimeError::type_error("pattern must be string or bytes"))
             }
         }
         other => re_pattern_from_value(other),

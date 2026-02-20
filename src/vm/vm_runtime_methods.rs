@@ -1682,10 +1682,10 @@ impl Vm {
                     }
                 };
                 let Value::Tuple(entries_tuple) = entries else {
-                    return Err(RuntimeError::new("__mro_entries__ must return a tuple"));
+                    return Err(RuntimeError::type_error("__mro_entries__ must return a tuple"));
                 };
                 let Object::Tuple(items) = &*entries_tuple.kind() else {
-                    return Err(RuntimeError::new("__mro_entries__ must return a tuple"));
+                    return Err(RuntimeError::type_error("__mro_entries__ must return a tuple"));
                 };
                 resolved_bases.extend(items.iter().cloned());
             } else {

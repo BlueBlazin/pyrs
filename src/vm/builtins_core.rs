@@ -3334,7 +3334,7 @@ impl Vm {
             };
             let class_name = match &args[name_index] {
                 Value::Str(name) => name.clone(),
-                _ => return Err(RuntimeError::new("type() first argument must be string")),
+                _ => return Err(RuntimeError::type_error("type() first argument must be string")),
             };
             let base_values = match &args[name_index + 1] {
                 Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
@@ -3373,7 +3373,7 @@ impl Vm {
                 .filter(|value| !matches!(value, Value::None));
             let class_name = match &args[0] {
                 Value::Str(name) => name.clone(),
-                _ => return Err(RuntimeError::new("type() first argument must be string")),
+                _ => return Err(RuntimeError::type_error("type() first argument must be string")),
             };
             let base_values = match &args[1] {
                 Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
@@ -7509,7 +7509,7 @@ impl Vm {
         let iterable = args.remove(0);
         let values = self
             .collect_iterable_values(iterable)
-            .map_err(|_| RuntimeError::new("enumerate() expects iterable"))?;
+            .map_err(|_| RuntimeError::type_error("enumerate() expects iterable"))?;
         let mut out = Vec::with_capacity(values.len());
         for (offset, value) in values.into_iter().enumerate() {
             out.push(

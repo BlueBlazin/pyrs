@@ -84,6 +84,13 @@ Status: in progress (phase 1 + initial phase 2 landed).
    - VM-internal diagnostics (`name index out of range`, `constant index out of range`, stack underflow),
    - specialized memoryview format/tolist long-tail (`memoryview.tolist() unsupported format`, `memoryview: unsupported format`),
    - narrower domain contract messages (`setstate() expects one argument`, `path/pattern/name must be ...`).
+32. Additional contract conversions landed this slice:
+   - `type() first argument must be string`, `enumerate() expects iterable`,
+     `path/pattern/name must be str/bytes`, `setstate()` arity, `tuple.count/index` receiver/arity,
+     and `__mro_entries__ must return a tuple` now emit typed `TypeError`.
+33. Added conformance regressions in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `regex_pattern_type_contract_errors_are_typed`
+   - `mro_entries_non_tuple_contract_error_is_typed`
 
 ## Why This Exists
 

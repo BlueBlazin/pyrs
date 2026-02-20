@@ -93,6 +93,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `float_invalid_literal_error_is_typed_value_error`
     - `csv_unknown_dialect_error_is_typed_error`
   - remaining message-only hotspots are now concentrated in VM-internal diagnostics and specialized memoryview-format long-tail buckets (tracked for subsequent conversion slices).
+  - follow-up contract conversions now typed `TypeError` for:
+    - `type()` first-argument contract,
+    - enumerate iterable contract,
+    - path/pattern/name str-bytes contracts,
+    - `setstate()` arity,
+    - `tuple.count/index` receiver+arity contracts,
+    - `__mro_entries__` non-tuple return contract.
+  - new regressions landed: `regex_pattern_type_contract_errors_are_typed` and `mro_entries_non_tuple_contract_error_is_typed`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

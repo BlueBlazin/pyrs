@@ -2686,9 +2686,9 @@ impl Vm {
             Value::Str(text) => text.into_bytes(),
             Value::Bytes(obj) => match &*obj.kind() {
                 Object::Bytes(bytes) => bytes.clone(),
-                _ => return Err(RuntimeError::new("name must be str or bytes")),
+                _ => return Err(RuntimeError::type_error("name must be str or bytes")),
             },
-            _ => return Err(RuntimeError::new("name must be str or bytes")),
+            _ => return Err(RuntimeError::type_error("name must be str or bytes")),
         };
         let mut bytes = uuid_hash_mix_bytes(3, namespace, &name);
         apply_uuid_version(&mut bytes, 3);
@@ -2723,9 +2723,9 @@ impl Vm {
             Value::Str(text) => text.into_bytes(),
             Value::Bytes(obj) => match &*obj.kind() {
                 Object::Bytes(bytes) => bytes.clone(),
-                _ => return Err(RuntimeError::new("name must be str or bytes")),
+                _ => return Err(RuntimeError::type_error("name must be str or bytes")),
             },
-            _ => return Err(RuntimeError::new("name must be str or bytes")),
+            _ => return Err(RuntimeError::type_error("name must be str or bytes")),
         };
         let mut bytes = uuid_hash_mix_bytes(5, namespace, &name);
         apply_uuid_version(&mut bytes, 5);

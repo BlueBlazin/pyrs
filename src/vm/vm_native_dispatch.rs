@@ -1034,12 +1034,12 @@ impl Vm {
             }
             NativeMethodKind::TupleCount => {
                 if args.is_empty() {
-                    return Err(RuntimeError::new("tuple.count() expects one argument"));
+                    return Err(RuntimeError::type_error("tuple.count() expects one argument"));
                 }
                 match &*receiver.kind() {
                     Object::Tuple(values) => {
                         if args.len() != 1 {
-                            return Err(RuntimeError::new("tuple.count() expects one argument"));
+                            return Err(RuntimeError::type_error("tuple.count() expects one argument"));
                         }
                         let target = args.remove(0);
                         let count = values.iter().filter(|value| **value == target).count() as i64;
@@ -1060,7 +1060,7 @@ impl Vm {
                                 Value::Tuple(tuple) => tuple,
                                 Value::Instance(instance) => {
                                     self.instance_backing_tuple(&instance).ok_or_else(|| {
-                                        RuntimeError::new("tuple.count() receiver must be tuple")
+                                        RuntimeError::type_error("tuple.count() receiver must be tuple")
                                     })?
                                 }
                                 _ => {
@@ -1071,17 +1071,17 @@ impl Vm {
                             }
                         };
                         if args.len() != 1 {
-                            return Err(RuntimeError::new("tuple.count() expects one argument"));
+                            return Err(RuntimeError::type_error("tuple.count() expects one argument"));
                         }
                         let target = args.remove(0);
                         let tuple_kind = tuple_obj.kind();
                         let Object::Tuple(values) = &*tuple_kind else {
-                            return Err(RuntimeError::new("tuple.count() receiver must be tuple"));
+                            return Err(RuntimeError::type_error("tuple.count() receiver must be tuple"));
                         };
                         let count = values.iter().filter(|value| **value == target).count() as i64;
                         Ok(NativeCallResult::Value(Value::Int(count)))
                     }
-                    _ => Err(RuntimeError::new("tuple.count() receiver must be tuple")),
+                    _ => Err(RuntimeError::type_error("tuple.count() receiver must be tuple")),
                 }
             }
             cmp_kind @ (NativeMethodKind::TupleEq | NativeMethodKind::TupleNe) => {
@@ -1222,7 +1222,7 @@ impl Vm {
                                 Value::Tuple(tuple) => tuple,
                                 Value::Instance(instance) => {
                                     self.instance_backing_tuple(&instance).ok_or_else(|| {
-                                        RuntimeError::new("tuple.index() receiver must be tuple")
+                                        RuntimeError::type_error("tuple.index() receiver must be tuple")
                                     })?
                                 }
                                 _ => {
@@ -1235,7 +1235,7 @@ impl Vm {
                         let mut remaining_args = args;
                         let tuple_kind = tuple_obj.kind();
                         let Object::Tuple(values) = &*tuple_kind else {
-                            return Err(RuntimeError::new("tuple.index() receiver must be tuple"));
+                            return Err(RuntimeError::type_error("tuple.index() receiver must be tuple"));
                         };
                         if let Some(index) = find_index(values, &mut remaining_args)? {
                             Ok(NativeCallResult::Value(Value::Int(index)))
@@ -1243,7 +1243,7 @@ impl Vm {
                             Err(RuntimeError::value_error("tuple.index(x): x not in tuple"))
                         }
                     }
-                    _ => Err(RuntimeError::new("tuple.index() receiver must be tuple")),
+                    _ => Err(RuntimeError::type_error("tuple.index() receiver must be tuple")),
                 }
             }
             NativeMethodKind::ListIndex => {
@@ -2474,7 +2474,7 @@ impl Vm {
                 } else if args.len() == 1 {
                     Some(args.remove(0))
                 } else {
-                    return Err(RuntimeError::new("setstate() expects one argument"));
+                    return Err(RuntimeError::type_error("setstate() expects one argument"));
                 };
                 if let Some(value) = kwargs.remove("state") {
                     if state_arg.is_some() {
@@ -2490,7 +2490,7 @@ impl Vm {
                     ));
                 }
                 let state = state_arg
-                    .ok_or_else(|| RuntimeError::new("setstate() expects one argument"))?;
+                    .ok_or_else(|| RuntimeError::type_error("setstate() expects one argument"))?;
                 let _ = value_to_int(state)?;
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -2630,7 +2630,7 @@ impl Vm {
                 } else if args.len() == 1 {
                     Some(args.remove(0))
                 } else {
-                    return Err(RuntimeError::new("setstate() expects one argument"));
+                    return Err(RuntimeError::type_error("setstate() expects one argument"));
                 };
                 if let Some(value) = kwargs.remove("state") {
                     if state_arg.is_some() {
@@ -2646,7 +2646,7 @@ impl Vm {
                     ));
                 }
                 let state = state_arg
-                    .ok_or_else(|| RuntimeError::new("setstate() expects one argument"))?;
+                    .ok_or_else(|| RuntimeError::type_error("setstate() expects one argument"))?;
                 let tuple_values = match state {
                     Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                         Object::Tuple(values) => values.clone(),

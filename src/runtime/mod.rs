@@ -4274,7 +4274,7 @@ impl BuiltinFunction {
                 }
                 let name = match &args[0] {
                     Value::Str(name) => name.clone(),
-                    _ => return Err(RuntimeError::new("type() first argument must be string")),
+                    _ => return Err(RuntimeError::type_error("type() first argument must be string")),
                 };
                 let bases = match &args[1] {
                     Value::Tuple(obj) => match &*obj.kind() {
@@ -5081,7 +5081,7 @@ impl BuiltinFunction {
                                 entries.push(heap.alloc_tuple(vec![Value::Int(index), value]));
                             }
                         }
-                        _ => return Err(RuntimeError::new("enumerate() expects iterable")),
+                        _ => return Err(RuntimeError::type_error("enumerate() expects iterable")),
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => {
@@ -5090,7 +5090,7 @@ impl BuiltinFunction {
                                 entries.push(heap.alloc_tuple(vec![Value::Int(index), value]));
                             }
                         }
-                        _ => return Err(RuntimeError::new("enumerate() expects iterable")),
+                        _ => return Err(RuntimeError::type_error("enumerate() expects iterable")),
                     },
                     Value::Str(value) => {
                         for (idx, ch) in value.chars().enumerate() {
@@ -5103,7 +5103,7 @@ impl BuiltinFunction {
                             );
                         }
                     }
-                    _ => return Err(RuntimeError::new("enumerate() expects iterable")),
+                    _ => return Err(RuntimeError::type_error("enumerate() expects iterable")),
                 }
                 Ok(heap.alloc_list(entries))
             }

@@ -8089,6 +8089,41 @@ except Exception as exc:
 }
 
 #[test]
+fn regex_pattern_type_contract_errors_are_typed() {
+    let source = r#"import re
+ok = False
+try:
+    re.match(1, "a")
+except Exception as exc:
+    ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn mro_entries_non_tuple_contract_error_is_typed() {
+    let source = r#"ok = False
+class Base:
+    def __mro_entries__(self, bases):
+        return [object]
+try:
+    class C(Base()):
+        pass
+except Exception as exc:
+    ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

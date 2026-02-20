@@ -3017,9 +3017,9 @@ impl Vm {
                 Object::Bytes(bytes) => {
                     validate_path(String::from_utf8_lossy(bytes).into_owned(), true)
                 }
-                _ => Err(RuntimeError::new("path must be string or bytes")),
+                _ => Err(RuntimeError::type_error("path must be string or bytes")),
             },
-            _ => Err(RuntimeError::new("path must be string or bytes")),
+            _ => Err(RuntimeError::type_error("path must be string or bytes")),
         }
     }
 
