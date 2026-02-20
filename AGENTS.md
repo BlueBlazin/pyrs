@@ -77,6 +77,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `numpy_repeated_array_ops_and_reprs_stay_stable`
   - removed VM-side legacy external-pin/freed-allocation sets and moved that state handling into the VM-global CAPI registry.
   - CI now includes a nightly ASan lifetime lane (`sanitizer-stability` job in `.github/workflows/parity-gate.yml`).
+- C-API lifetime-model checkpoint (2026-02-21, latest):
+  - fixed deterministic post-NumPy teardown aborts (`SIGABRT` / pointer-not-allocated) rooted in stale owned-pointer state across realloc/free paths.
+  - list-buffer `realloc` now migrates owned-pointer + registry pin state when the buffer address changes.
+  - context-drop free paths now remove compat/list-buffer/aux pointers from owned-pointer sets before free to prevent stale ownership reuse on recycled addresses.
+  - stress regressions are stable again:
+    - `numpy_repeated_axis_sum_remains_stable_across_calls` passes repeatedly,
+    - `numpy_axis_sum_and_repr_stress_stays_stable` passes.
+  - remaining adjacent blocker: ndarray `repr` parity regression (`numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder`) is still open and should be treated as a separate P0 semantic closure item.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,

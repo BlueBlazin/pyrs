@@ -2,7 +2,18 @@
 
 Status: `IN_PROGRESS` (execution lock, Phase 1/2 in progress).
 
-## Latest Checkpoint (2026-02-20)
+## Latest Checkpoint (2026-02-21)
+
+- teardown-safety closure (latest):
+  - fixed deterministic `SIGABRT` in VM teardown (pointer-not-allocated in `Vm::drop`) after NumPy workloads.
+  - root-cause fixed:
+    - list-buffer `realloc` paths now migrate owned-pointer/pin/registry state when buffer addresses change,
+    - context-drop free paths now remove compat/list-buffer/aux pointers from `cpython_owned_ptrs` before free, preventing stale-ownership reuse.
+  - stress evidence:
+    - repeated subprocess probes of `np.array(...).reshape(...).sum(axis=0)` now exit cleanly in debug and release builds,
+    - `tests/vm.rs::numpy_repeated_axis_sum_remains_stable_across_calls` now passes repeatedly.
+  - still-open parity item in this area:
+    - NumPy ndarray `repr` path remains a separate blocker (`numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder`).
 
 - VM-global registry substrate is now wired (`src/vm/capi_registry.rs`) with:
   - pointer provenance (`OwnedCompat`, `ExternalRef`, `StaticSingleton`),

@@ -79,15 +79,17 @@ impl Vm {
                 let Object::Instance(instance_data) = &*instance_obj.kind() else {
                     return None;
                 };
-                let Object::Class(class_data) = &*instance_data.class.kind() else {
-                    return None;
-                };
-                if !is_cpython_proxy_class(class_data) {
-                    return None;
-                }
                 match instance_data.attrs.get(CPY_PROXY_PTR_ATTR) {
                     Some(Value::Int(raw)) if *raw >= 0 => Some(*raw as usize as *mut c_void),
-                    _ => None,
+                    _ => {
+                        let Object::Class(class_data) = &*instance_data.class.kind() else {
+                            return None;
+                        };
+                        if !is_cpython_proxy_class(class_data) {
+                            return None;
+                        }
+                        None
+                    }
                 }
             }
             _ => None,

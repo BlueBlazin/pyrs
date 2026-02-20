@@ -3428,6 +3428,9 @@ impl Drop for ModuleCapiContext {
                     );
                 }
             }
+            self.cpython_owned_ptrs.remove(&(raw as usize));
+            self.cpython_known_type_ptrs.remove(&(raw as usize));
+            self.cpython_descriptors.remove(&(raw as usize));
             // SAFETY: pointers were allocated via C allocator in this context.
             unsafe {
                 free(raw.cast());
@@ -3502,6 +3505,7 @@ impl Drop for ModuleCapiContext {
                     );
                 }
             }
+            self.cpython_owned_ptrs.remove(&(buffer as usize));
             // SAFETY: list item buffers were allocated through C allocator in this context.
             unsafe {
                 free(buffer.cast());
@@ -3568,6 +3572,7 @@ impl Drop for ModuleCapiContext {
                     );
                 }
             }
+            self.cpython_owned_ptrs.remove(&(raw as usize));
             // SAFETY: auxiliary raw buffers were allocated via C allocator in this context.
             unsafe {
                 free(raw);
@@ -8382,6 +8387,13 @@ impl ModuleCapiContext {
                         .len()
                         .saturating_mul(std::mem::size_of::<*mut c_void>());
                     let previous_ptr = buffer_ptr;
+                    let previous_was_pinned = if previous_ptr.is_null() || self.vm.is_null() {
+                        false
+                    } else {
+                        // SAFETY: VM pointer is valid for active C-API context lifetime.
+                        let vm = &mut *self.vm;
+                        vm.capi_owned_ptr_is_pinned(previous_ptr as usize)
+                    };
                     let grown = if buffer_ptr.is_null() {
                         // SAFETY: allocate list item storage.
                         malloc(bytes).cast::<*mut c_void>()
@@ -8395,11 +8407,30 @@ impl ModuleCapiContext {
                     }
                     buffer_ptr = grown;
                     capacity = items.len();
-                    if !previous_ptr.is_null() {
+                    if !previous_ptr.is_null() && previous_ptr != buffer_ptr {
                         self.cpython_owned_ptrs.remove(&(previous_ptr as usize));
+                        self.capi_registry_mark_freed_ptr(previous_ptr.cast());
+                        if !self.vm.is_null() {
+                            // SAFETY: VM pointer is valid for active C-API context lifetime.
+                            let vm = &mut *self.vm;
+                            if previous_was_pinned {
+                                vm.capi_unpin_owned_ptr(previous_ptr as usize);
+                            }
+                            vm.extension_pinned_capsule_names
+                                .remove(&(previous_ptr as usize));
+                            vm.capi_registry_mark_freed(previous_ptr as usize);
+                        }
                     }
                     if !buffer_ptr.is_null() {
                         self.cpython_owned_ptrs.insert(buffer_ptr as usize);
+                        self.capi_registry_register_owned_ptr(buffer_ptr.cast(), None);
+                        if previous_ptr != buffer_ptr && previous_was_pinned && !self.vm.is_null() {
+                            // SAFETY: VM pointer is valid for active C-API context lifetime.
+                            let vm = &mut *self.vm;
+                            if vm.capi_pin_owned_ptr(buffer_ptr as usize) {
+                                vm.capi_registry_mark_alive(buffer_ptr as usize);
+                            }
+                        }
                     }
                     self.cpython_list_buffers
                         .insert(handle, (buffer_ptr, capacity));

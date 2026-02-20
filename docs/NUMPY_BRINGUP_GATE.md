@@ -103,6 +103,16 @@ If a probed local module is not installed, its dependent cases are recorded as `
 
 ## Current Expected State
 
+- 2026-02-21 lifetime-model hardening checkpoint (P0):
+  - fixed deterministic post-NumPy teardown aborts (`SIGABRT` / pointer-not-allocated in `Vm::drop`) by closing stale-owned-pointer paths:
+    - list-buffer `realloc` now migrates registry/pin state when buffer addresses move,
+    - context-drop free paths now remove compat/list-buffer/aux pointers from owned-pointer sets before free.
+  - stress evidence:
+    - `cargo test -q --test vm numpy_repeated_axis_sum_remains_stable_across_calls -- --exact` passes repeatedly.
+    - `cargo test -q --test vm numpy_axis_sum_and_repr_stress_stays_stable -- --exact` passes.
+  - remaining NumPy direct-mode blocker in this slice:
+    - `repr(np.arange(...))` still falls back to object-placeholder formatting (`<numpy.ndarray object at ...>`),
+      and `tests/vm.rs::numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder` remains failing.
 - 2026-02-20 lifetime-model checkpoint (P0):
   - scientific-stack direct mode now has an explicit lifetime-safety lock tracked in
     `docs/CAPI_LIFETIME_MODEL.md`.
@@ -166,7 +176,7 @@ If a probed local module is not installed, its dependent cases are recorded as `
     - prior `PyObject_GetBuffer` unknown-pointer path is closed:
       internal handle recovery now backfills via proxy-value mapping, and
       `PyBuffer_Release` no longer treats foreign `Py_buffer.internal` pointers as pyrs-owned allocations.
-  - `np.arange(0, 10, 0.5)` no longer falls back to proxy-instance placeholders for `repr/str`; NumPy's `arrayprint` path now executes directly.
+  - `np.arange(0, 10, 0.5)` `repr/str` parity is currently regressed in this tree (placeholder formatting still appears); keep this as an active P0 parity item until `arrayprint` path output matches CPython.
   - root-cause fix: `PyObject_SetAttrString` now accepts foreign extension value pointers through proxy conversion (`cpython_value_from_ptr_or_proxy`) instead of rejecting them as unknown pointers during `_multiarray_umath._populate_finfo_constants`.
   - metatype-backed type objects (for example `numpy.dtype`) now resolve class attributes through type-object semantics (not metatype-only lookup), which unblocked `dtype.alignment` and `dtype.__ge__` bring-up blockers.
   - proxy class `str`/`repr` now use class-safe rendering (`<class 'module.name'>`) and no longer route through ndarray-only rendering logic.
