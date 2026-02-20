@@ -20,6 +20,7 @@ Status: in progress (phase 1 + initial phase 2 landed).
 6. Major call sites that previously compared `classify_runtime_error(&err.message)` are now using typed matching helpers.
 7. `runtime_error_from_active_exception(...)` now preserves the original `ExceptionObject` in `RuntimeError.exception` while retaining traceback text for compatibility.
 8. Explicit `raise ... from ...` now preserves `__context__` (in addition to `__cause__` + `__suppress_context__`) in VM raise plumbing.
+9. VM execution error handling no longer builds exceptions from string parsing directly; it now uses centralized `runtime_error_to_exception_object(...)`.
 
 ## Why This Exists
 
