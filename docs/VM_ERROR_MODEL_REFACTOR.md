@@ -1,6 +1,21 @@
 # VM Error Model Refactor Plan (Remove String-Based Classification)
 
-Status: in progress (phase 1 + initial phase 2 landed).
+Status: phase-2 control-flow refactor complete; compatibility lane still active in `RuntimeError::new(...)`.
+
+## Current Architecture (2026-02-20)
+
+1. VM runtime control flow no longer classifies errors from freeform strings:
+   - `runtime_error_matches_exception(...)` uses typed exception payload/subclass checks only.
+   - `runtime_error_to_exception_object(...)` no longer re-parses text to guess exception types.
+2. Compatibility classification moved to the construction boundary:
+   - `RuntimeError::new(...)` attaches typed `ExceptionObject` where message payloads still come from legacy text-only producers.
+   - This keeps `except` semantics stable while legacy callsites are migrated to typed constructors.
+3. Structured attrs are attached at construction-time for key families:
+   - import errors (`msg`, `name`, `path`)
+   - OS errors (`errno`, `strerror`)
+4. Remaining refactor closure work is now migration debt:
+   - reduce remaining message-only `RuntimeError::new(...)` producers,
+   - eventually remove the compatibility classifier from `RuntimeError::new(...)`.
 
 ## Landed So Far
 
@@ -148,7 +163,7 @@ Status: in progress (phase 1 + initial phase 2 landed).
 53. Added IO typed-conformance regression in `/Users/$USER/pyrs/tests/vm.rs`:
    - `_io_incremental_newline_decoder_contract_errors_are_typed`.
 
-## Why This Exists
+## Historical Problem Statement (Pre-Refactor)
 
 Today, VM control flow still depends on parsing error text:
 

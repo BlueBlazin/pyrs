@@ -276,7 +276,9 @@ impl Vm {
                     .get(caller_depth.saturating_sub(1))
                     .and_then(|frame| frame.active_exception.as_ref())
             {
-                return Err(RuntimeError::new(self.import_active_exception_summary(active)));
+                return Err(RuntimeError::new(
+                    self.import_active_exception_summary(active),
+                ));
             }
             return Err(err);
         }
@@ -300,7 +302,9 @@ impl Vm {
                     );
                 }
                 if let Some(active) = caller_active_exception_after.as_ref() {
-                    return Err(RuntimeError::new(self.import_active_exception_summary(active)));
+                    return Err(RuntimeError::new(
+                        self.import_active_exception_summary(active),
+                    ));
                 }
                 return Err(RuntimeError::runtime_error("import raised exception"));
             }

@@ -22,6 +22,15 @@ const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
 const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
 
 impl Vm {
+    fn os_error_from_io(context: &str, err: std::io::Error) -> RuntimeError {
+        let message = format!("{context}: {err}");
+        if let Some(errno) = err.raw_os_error() {
+            RuntimeError::os_error_with_errno(errno as i64, message)
+        } else {
+            RuntimeError::os_error(message)
+        }
+    }
+
     pub(super) fn builtin_os_uname(
         &mut self,
         args: Vec<Value>,
@@ -573,7 +582,7 @@ impl Vm {
 
         let file = options
             .open(path)
-            .map_err(|err| RuntimeError::new(format!("open failed: {err}")))?;
+            .map_err(|err| Self::os_error_from_io("open failed", err))?;
         let fd = self.alloc_open_fd(file);
         Ok(Value::Int(fd))
     }
@@ -890,32 +899,31 @@ impl Vm {
             Value::Int(fd) => {
                 if let Some(file) = self.open_files.get(fd) {
                     file.metadata()
-                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                        .map_err(|err| Self::os_error_from_io("fstat failed", err))?
                 } else {
                     let fd_path = format!("/proc/self/fd/{fd}");
                     let fallback_fd_path = format!("/dev/fd/{fd}");
                     fs::metadata(&fd_path)
                         .or_else(|_| fs::metadata(&fallback_fd_path))
-                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                        .map_err(|err| Self::os_error_from_io("fstat failed", err))?
                 }
             }
             Value::Bool(flag) => {
                 let fd = if *flag { 1 } else { 0 };
                 if let Some(file) = self.open_files.get(&fd) {
                     file.metadata()
-                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                        .map_err(|err| Self::os_error_from_io("fstat failed", err))?
                 } else {
                     let fd_path = format!("/proc/self/fd/{fd}");
                     let fallback_fd_path = format!("/dev/fd/{fd}");
                     fs::metadata(&fd_path)
                         .or_else(|_| fs::metadata(&fallback_fd_path))
-                        .map_err(|err| RuntimeError::new(format!("fstat failed: {err}")))?
+                        .map_err(|err| Self::os_error_from_io("fstat failed", err))?
                 }
             }
             _ => {
                 let path = self.path_arg_to_string(args[0].clone())?;
-                fs::metadata(path)
-                    .map_err(|err| RuntimeError::new(format!("stat failed: {err}")))?
+                fs::metadata(path).map_err(|err| Self::os_error_from_io("stat failed", err))?
             }
         };
         self.build_stat_result(metadata, false)
@@ -931,7 +939,7 @@ impl Vm {
         }
         let path = self.path_arg_to_string(args[0].clone())?;
         let metadata = fs::symlink_metadata(path)
-            .map_err(|err| RuntimeError::new(format!("lstat failed: {err}")))?;
+            .map_err(|err| Self::os_error_from_io("lstat failed", err))?;
         self.build_stat_result(metadata, true)
     }
 
@@ -961,13 +969,13 @@ impl Vm {
                 "mkdir() got an unexpected keyword argument",
             ));
         }
-        fs::create_dir(&path).map_err(|err| RuntimeError::new(format!("mkdir failed: {err}")))?;
+        fs::create_dir(&path).map_err(|err| Self::os_error_from_io("mkdir failed", err))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let permissions = fs::Permissions::from_mode((mode & 0o777) as u32);
             fs::set_permissions(&path, permissions)
-                .map_err(|err| RuntimeError::new(format!("mkdir failed: {err}")))?;
+                .map_err(|err| Self::os_error_from_io("mkdir failed", err))?;
         }
         Ok(Value::None)
     }
@@ -1600,8 +1608,8 @@ impl Vm {
             return Ok(Value::Bool(false));
         }
 
-        let metadata = fs::metadata(&path_buf)
-            .map_err(|err| RuntimeError::new(format!("access failed: {err}")))?;
+        let metadata =
+            fs::metadata(&path_buf).map_err(|err| Self::os_error_from_io("access failed", err))?;
         let mut allowed = true;
         if mode & 2 != 0 {
             allowed &= !metadata.permissions().readonly();
@@ -1715,7 +1723,7 @@ impl Vm {
             return Err(RuntimeError::new("remove() expects one argument"));
         }
         let path = self.path_arg_to_string(args[0].clone())?;
-        fs::remove_file(&path).map_err(|err| RuntimeError::new(format!("remove failed: {err}")))?;
+        fs::remove_file(&path).map_err(|err| Self::os_error_from_io("remove failed", err))?;
         Ok(Value::None)
     }
 
@@ -1979,7 +1987,9 @@ impl Vm {
 
     fn subprocess_pipe_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("subprocess").cloned() else {
-            return Err(RuntimeError::module_not_found_error("module 'subprocess' not found"));
+            return Err(RuntimeError::module_not_found_error(
+                "module 'subprocess' not found",
+            ));
         };
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module 'subprocess' is invalid"));

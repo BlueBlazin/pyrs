@@ -253,7 +253,9 @@ impl Vm {
                 }
                 match self.resume_generator(&receiver, None, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::stop_iteration("StopIteration")),
+                    GeneratorResumeOutcome::Complete(_) => {
+                        Err(RuntimeError::stop_iteration("StopIteration"))
+                    }
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
                     }
@@ -266,7 +268,9 @@ impl Vm {
                 let sent = args.into_iter().next();
                 match self.resume_generator(&receiver, sent, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::stop_iteration("StopIteration")),
+                    GeneratorResumeOutcome::Complete(_) => {
+                        Err(RuntimeError::stop_iteration("StopIteration"))
+                    }
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
                     }
@@ -296,7 +300,9 @@ impl Vm {
                     GeneratorResumeKind::Throw,
                 )? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::stop_iteration("StopIteration")),
+                    GeneratorResumeOutcome::Complete(_) => {
+                        Err(RuntimeError::stop_iteration("StopIteration"))
+                    }
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
                     }
@@ -320,9 +326,9 @@ impl Vm {
                     Some(close_exc),
                     GeneratorResumeKind::Close,
                 ) {
-                    Ok(GeneratorResumeOutcome::Yield(_)) => {
-                        Err(RuntimeError::runtime_error("generator ignored GeneratorExit"))
-                    }
+                    Ok(GeneratorResumeOutcome::Yield(_)) => Err(RuntimeError::runtime_error(
+                        "generator ignored GeneratorExit",
+                    )),
                     Ok(GeneratorResumeOutcome::Complete(_)) => {
                         self.set_generator_closed(&receiver, true)?;
                         Ok(NativeCallResult::Value(Value::None))
@@ -1034,54 +1040,65 @@ impl Vm {
             }
             NativeMethodKind::TupleCount => {
                 if args.is_empty() {
-                    return Err(RuntimeError::type_error("tuple.count() expects one argument"));
+                    return Err(RuntimeError::type_error(
+                        "tuple.count() expects one argument",
+                    ));
                 }
                 match &*receiver.kind() {
                     Object::Tuple(values) => {
                         if args.len() != 1 {
-                            return Err(RuntimeError::type_error("tuple.count() expects one argument"));
+                            return Err(RuntimeError::type_error(
+                                "tuple.count() expects one argument",
+                            ));
                         }
                         let target = args.remove(0);
                         let count = values.iter().filter(|value| **value == target).count() as i64;
                         Ok(NativeCallResult::Value(Value::Int(count)))
                     }
                     Object::Module(module_data) => {
-                        let tuple_obj = if let Some(Value::Tuple(tuple)) =
-                            module_data.globals.get("value")
-                        {
-                            tuple.clone()
-                        } else {
-                            if args.len() < 2 {
-                                return Err(RuntimeError::new(
-                                    "tuple.count() expects one argument",
-                                ));
-                            }
-                            match args.remove(0) {
-                                Value::Tuple(tuple) => tuple,
-                                Value::Instance(instance) => {
-                                    self.instance_backing_tuple(&instance).ok_or_else(|| {
-                                        RuntimeError::type_error("tuple.count() receiver must be tuple")
-                                    })?
-                                }
-                                _ => {
+                        let tuple_obj =
+                            if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
+                                tuple.clone()
+                            } else {
+                                if args.len() < 2 {
                                     return Err(RuntimeError::new(
-                                        "tuple.count() receiver must be tuple",
+                                        "tuple.count() expects one argument",
                                     ));
                                 }
-                            }
-                        };
+                                match args.remove(0) {
+                                    Value::Tuple(tuple) => tuple,
+                                    Value::Instance(instance) => {
+                                        self.instance_backing_tuple(&instance).ok_or_else(|| {
+                                            RuntimeError::type_error(
+                                                "tuple.count() receiver must be tuple",
+                                            )
+                                        })?
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "tuple.count() receiver must be tuple",
+                                        ));
+                                    }
+                                }
+                            };
                         if args.len() != 1 {
-                            return Err(RuntimeError::type_error("tuple.count() expects one argument"));
+                            return Err(RuntimeError::type_error(
+                                "tuple.count() expects one argument",
+                            ));
                         }
                         let target = args.remove(0);
                         let tuple_kind = tuple_obj.kind();
                         let Object::Tuple(values) = &*tuple_kind else {
-                            return Err(RuntimeError::type_error("tuple.count() receiver must be tuple"));
+                            return Err(RuntimeError::type_error(
+                                "tuple.count() receiver must be tuple",
+                            ));
                         };
                         let count = values.iter().filter(|value| **value == target).count() as i64;
                         Ok(NativeCallResult::Value(Value::Int(count)))
                     }
-                    _ => Err(RuntimeError::type_error("tuple.count() receiver must be tuple")),
+                    _ => Err(RuntimeError::type_error(
+                        "tuple.count() receiver must be tuple",
+                    )),
                 }
             }
             cmp_kind @ (NativeMethodKind::TupleEq | NativeMethodKind::TupleNe) => {
@@ -1208,34 +1225,37 @@ impl Vm {
                         }
                     }
                     Object::Module(module_data) => {
-                        let tuple_obj = if let Some(Value::Tuple(tuple)) =
-                            module_data.globals.get("value")
-                        {
-                            tuple.clone()
-                        } else {
-                            if args.is_empty() {
-                                return Err(RuntimeError::new(
-                                    "tuple.index() expects one argument",
-                                ));
-                            }
-                            match args.remove(0) {
-                                Value::Tuple(tuple) => tuple,
-                                Value::Instance(instance) => {
-                                    self.instance_backing_tuple(&instance).ok_or_else(|| {
-                                        RuntimeError::type_error("tuple.index() receiver must be tuple")
-                                    })?
-                                }
-                                _ => {
+                        let tuple_obj =
+                            if let Some(Value::Tuple(tuple)) = module_data.globals.get("value") {
+                                tuple.clone()
+                            } else {
+                                if args.is_empty() {
                                     return Err(RuntimeError::new(
-                                        "tuple.index() receiver must be tuple",
+                                        "tuple.index() expects one argument",
                                     ));
                                 }
-                            }
-                        };
+                                match args.remove(0) {
+                                    Value::Tuple(tuple) => tuple,
+                                    Value::Instance(instance) => {
+                                        self.instance_backing_tuple(&instance).ok_or_else(|| {
+                                            RuntimeError::type_error(
+                                                "tuple.index() receiver must be tuple",
+                                            )
+                                        })?
+                                    }
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "tuple.index() receiver must be tuple",
+                                        ));
+                                    }
+                                }
+                            };
                         let mut remaining_args = args;
                         let tuple_kind = tuple_obj.kind();
                         let Object::Tuple(values) = &*tuple_kind else {
-                            return Err(RuntimeError::type_error("tuple.index() receiver must be tuple"));
+                            return Err(RuntimeError::type_error(
+                                "tuple.index() receiver must be tuple",
+                            ));
                         };
                         if let Some(index) = find_index(values, &mut remaining_args)? {
                             Ok(NativeCallResult::Value(Value::Int(index)))
@@ -1243,7 +1263,9 @@ impl Vm {
                             Err(RuntimeError::value_error("tuple.index(x): x not in tuple"))
                         }
                     }
-                    _ => Err(RuntimeError::type_error("tuple.index() receiver must be tuple")),
+                    _ => Err(RuntimeError::type_error(
+                        "tuple.index() receiver must be tuple",
+                    )),
                 }
             }
             NativeMethodKind::ListIndex => {
@@ -2868,7 +2890,9 @@ impl Vm {
                 let format = match format_arg {
                     Some(Value::Str(value)) => value,
                     Some(_) => {
-                        return Err(RuntimeError::type_error("memoryview.cast() format must be str"));
+                        return Err(RuntimeError::type_error(
+                            "memoryview.cast() format must be str",
+                        ));
                     }
                     None => {
                         return Err(RuntimeError::type_error(
@@ -2944,21 +2968,24 @@ impl Vm {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("tolist() expects no arguments"));
                 }
-                let (source, start, length, itemsize, format, shape, strides) =
-                    match &*receiver.kind() {
-                        Object::MemoryView(view_data) => (
-                            view_data.source.clone(),
-                            view_data.start,
-                            view_data.length,
-                            view_data.itemsize.max(1),
-                            view_data.format.clone(),
-                            view_data.shape.clone(),
-                            view_data.strides.clone(),
-                        ),
-                        _ => return Err(RuntimeError::type_error("memoryview receiver is invalid")),
-                    };
-                let cast_format = memoryview_format_for_view(itemsize, format.as_deref())
-                    .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
+                let (source, start, length, itemsize, format, shape, strides) = match &*receiver
+                    .kind()
+                {
+                    Object::MemoryView(view_data) => (
+                        view_data.source.clone(),
+                        view_data.start,
+                        view_data.length,
+                        view_data.itemsize.max(1),
+                        view_data.format.clone(),
+                        view_data.shape.clone(),
+                        view_data.strides.clone(),
+                    ),
+                    _ => return Err(RuntimeError::type_error("memoryview receiver is invalid")),
+                };
+                let cast_format =
+                    memoryview_format_for_view(itemsize, format.as_deref()).map_err(|_| {
+                        RuntimeError::not_implemented_error("memoryview: unsupported format")
+                    })?;
                 with_bytes_like_source(&source, |values| {
                     let (shape, strides) = memoryview_shape_and_strides_from_parts(
                         start,
@@ -2968,7 +2995,9 @@ impl Vm {
                         itemsize,
                         values.len(),
                     )
-                    .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
+                    .ok_or_else(|| {
+                        RuntimeError::not_implemented_error("memoryview: unsupported format")
+                    })?;
                     memoryview_decode_tolist(
                         values,
                         start,
@@ -2979,7 +3008,11 @@ impl Vm {
                         &self.heap,
                     )
                 })
-                .unwrap_or_else(|| Err(RuntimeError::not_implemented_error("memoryview: unsupported format")))
+                .unwrap_or_else(|| {
+                    Err(RuntimeError::not_implemented_error(
+                        "memoryview: unsupported format",
+                    ))
+                })
                 .map(NativeCallResult::Value)
             }
             NativeMethodKind::MemoryViewRelease => {
@@ -3480,7 +3513,9 @@ impl Vm {
                                         RuntimeError::type_error("str receiver is invalid")
                                     })?
                                 }
-                                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                                _ => {
+                                    return Err(RuntimeError::type_error("str receiver is invalid"));
+                                }
                             }
                         }
                     }
@@ -3573,7 +3608,9 @@ impl Vm {
                             }
                             match args.remove(0) {
                                 Value::Str(value) => value,
-                                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                                _ => {
+                                    return Err(RuntimeError::type_error("str receiver is invalid"));
+                                }
                             }
                         }
                     }
@@ -3668,11 +3705,7 @@ impl Vm {
                             .or_else(|| dict_get_value(dict_obj, &Value::Str(ch.to_string()))),
                         _ => match self.getitem_value(table.clone(), Value::Int(code)) {
                             Ok(value) => Some(value),
-                            Err(err)
-                                if runtime_error_matches_exception(&err, "KeyError") =>
-                            {
-                                None
-                            }
+                            Err(err) if runtime_error_matches_exception(&err, "KeyError") => None,
                             Err(err) => return Err(err),
                         },
                     };
@@ -5045,7 +5078,9 @@ impl Vm {
                 if is_coroutine {
                     Ok(Value::Generator(generator))
                 } else if is_async_generator {
-                    Err(RuntimeError::type_error("async generator object is not awaitable"))
+                    Err(RuntimeError::type_error(
+                        "async generator object is not awaitable",
+                    ))
                 } else {
                     Err(RuntimeError::type_error("object is not awaitable"))
                 }
@@ -5068,7 +5103,9 @@ impl Vm {
                             Ok(Value::Generator(generator))
                         }
                         Value::Iterator(iterator) => Ok(Value::Iterator(iterator)),
-                        _ => Err(RuntimeError::type_error("__await__() returned non-iterator")),
+                        _ => Err(RuntimeError::type_error(
+                            "__await__() returned non-iterator",
+                        )),
                     },
                     InternalCallOutcome::CallerExceptionHandled => {
                         Err(RuntimeError::new("__await__() failed"))
@@ -5581,9 +5618,9 @@ impl Vm {
             }
             Value::Instance(instance) => {
                 let receiver = Value::Instance(instance.clone());
-                let is_cpython_proxy_iterator =
-                    Vm::cpython_proxy_raw_ptr_from_value(&receiver).is_some()
-                        && Vm::cpython_proxy_has_iternext(&receiver).unwrap_or(false);
+                let is_cpython_proxy_iterator = Vm::cpython_proxy_raw_ptr_from_value(&receiver)
+                    .is_some()
+                    && Vm::cpython_proxy_has_iternext(&receiver).unwrap_or(false);
                 let method = self
                     .lookup_bound_special_method(&receiver, "__next__")?
                     .ok_or_else(|| RuntimeError::type_error("yield from expects iterable"))?;
@@ -5700,9 +5737,9 @@ impl Vm {
                         && exception_is_named(&exc, "GeneratorExit")
                     {
                         match outcome {
-                            GeneratorResumeOutcome::Yield(_) => {
-                                Err(RuntimeError::runtime_error("generator ignored GeneratorExit"))
-                            }
+                            GeneratorResumeOutcome::Yield(_) => Err(RuntimeError::runtime_error(
+                                "generator ignored GeneratorExit",
+                            )),
                             GeneratorResumeOutcome::Complete(_) => {
                                 self.raise_exception(exc)?;
                                 Ok(GeneratorResumeOutcome::PropagatedException)

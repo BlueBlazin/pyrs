@@ -138,9 +138,8 @@ impl Vm {
             Value::Str(_) => Err(RuntimeError::new(
                 "TypeError: Strings must be encoded before hashing",
             )),
-            other => bytes_like_from_value(other).map_err(|_| {
-                RuntimeError::type_error("object supporting the buffer API required")
-            }),
+            other => bytes_like_from_value(other)
+                .map_err(|_| RuntimeError::type_error("object supporting the buffer API required")),
         }
     }
 

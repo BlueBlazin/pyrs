@@ -5,10 +5,10 @@ use crate::runtime::{BuiltinFunction, IteratorKind, IteratorObject, Object, Valu
 use crate::vm::{add_values, is_truthy, mul_values};
 
 use super::{
-    CpythonMappingMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, Py_DecRef, Py_XDecRef,
-    Py_XIncRef, PyCallable_Check, PyDict_Items, PyDict_Keys, PyDict_Values, PyErr_BadInternalCall,
-    PyErr_Clear, PyExc_TypeError, PyLong_FromSsize_t, PyObject_CallNoArgs, PyObject_DelItem,
-    PyObject_GetAttrString, PyObject_GetItem, PyObject_HasAttrString,
+    CpythonMappingMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, Py_DecRef,
+    Py_XDecRef, Py_XIncRef, PyCallable_Check, PyDict_Items, PyDict_Keys, PyDict_Values,
+    PyErr_BadInternalCall, PyErr_Clear, PyExc_TypeError, PyLong_FromSsize_t, PyObject_CallNoArgs,
+    PyObject_DelItem, PyObject_GetAttrString, PyObject_GetItem, PyObject_HasAttrString,
     PyObject_HasAttrStringWithError, PyObject_SetItem, PyObject_Size, PySlice_New,
     PyUnicode_FromString, c_name_to_string, cpython_active_exception_is,
     cpython_binary_numeric_op_with_heap, cpython_call_builtin, cpython_clear_active_exception,

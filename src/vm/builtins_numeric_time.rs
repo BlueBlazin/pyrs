@@ -144,8 +144,9 @@ impl Vm {
                 }
             }
         }
-        let mut start_value = start
-            .ok_or_else(|| RuntimeError::type_error("randrange() missing required argument 'start'"))?;
+        let mut start_value = start.ok_or_else(|| {
+            RuntimeError::type_error("randrange() missing required argument 'start'")
+        })?;
         let stop_value = if let Some(stop_value) = stop {
             stop_value
         } else {
@@ -169,7 +170,8 @@ impl Vm {
         let result = (start as i128)
             .checked_add((step as i128) * (offset as i128))
             .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
-        let result = i64::try_from(result).map_err(|_| RuntimeError::overflow_error("integer overflow"))?;
+        let result =
+            i64::try_from(result).map_err(|_| RuntimeError::overflow_error("integer overflow"))?;
         Ok(Value::Int(result))
     }
 
@@ -416,14 +418,18 @@ impl Vm {
 
         let k = value_to_int(k_value)?;
         if k < 0 {
-            return Err(RuntimeError::value_error("k must be a non-negative integer"));
+            return Err(RuntimeError::value_error(
+                "k must be a non-negative integer",
+            ));
         }
         let k = k as usize;
         if population.is_empty() {
             if k == 0 {
                 return Ok(self.heap.alloc_list(Vec::new()));
             }
-            return Err(RuntimeError::index_error("Cannot choose from an empty sequence"));
+            return Err(RuntimeError::index_error(
+                "Cannot choose from an empty sequence",
+            ));
         }
 
         let mut out = Vec::with_capacity(k);

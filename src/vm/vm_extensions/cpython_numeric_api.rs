@@ -14,9 +14,8 @@ use super::{
     CPY_PROXY_PTR_ATTR, CpythonNumberMethods, CpythonObjectHead, CpythonTypeObject,
     ModuleCapiContext, PyErr_Occurred, PyExc_TypeError, PyFloat_AsDouble, PyLong_AsSsize_t,
     c_name_to_string, cpython_call_builtin, cpython_new_ptr_for_value, cpython_set_error,
-    cpython_set_typed_error,
-    cpython_try_binary_number_slot, cpython_value_debug_tag, cpython_value_from_ptr,
-    is_cpython_proxy_class, value_to_int, with_active_cpython_context_mut,
+    cpython_set_typed_error, cpython_try_binary_number_slot, cpython_value_debug_tag,
+    cpython_value_from_ptr, is_cpython_proxy_class, value_to_int, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]

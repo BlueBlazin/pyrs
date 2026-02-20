@@ -1778,7 +1778,10 @@ impl Vm {
         } else {
             self.heap.alloc_tuple(Vec::new())
         };
-        exception.attrs.borrow_mut().insert("args".to_string(), args);
+        exception
+            .attrs
+            .borrow_mut()
+            .insert("args".to_string(), args);
     }
 
     fn runtime_error_to_exception_object(&mut self, err: RuntimeError) -> ExceptionObject {
@@ -1787,84 +1790,12 @@ impl Vm {
             self.ensure_exception_default_attrs(&exception);
             return exception;
         }
-        let exception_type = extract_runtime_error_exception_name(&err.message).unwrap_or_else(|| {
-            let classified = classify_runtime_error(&err.message);
-            if classified == "RuntimeError" {
-                "RuntimeError".to_string()
-            } else {
-                classified.to_string()
-            }
-        });
-        let mut exception_message = Some(err.message.clone());
-        if let Some(from_traceback) =
-            extract_runtime_error_final_message(&err.message, &exception_type)
-        {
-            exception_message = from_traceback;
-        } else if let Some(from_prefixed) =
-            extract_prefixed_exception_message(&err.message, &exception_type)
-        {
-            exception_message = from_prefixed;
-        }
-        let (exception_message, sqlite_metadata) =
-            strip_sqlite_exception_metadata(exception_message);
-        let is_import_error = is_import_error_family(exception_type.as_str());
-        let import_error_msg = exception_message
-            .as_ref()
-            .map(|text| Value::Str(text.clone()))
-            .unwrap_or(Value::None);
-        let exception = ExceptionObject::new(exception_type, exception_message);
-        let mut os_errno = None;
-        let mut os_strerror = None;
-        if is_os_error_family(exception.name.as_str()) {
-            os_errno =
-                extract_os_error_errno(&err.message).or_else(|| infer_os_error_errno(&err.message));
-            os_strerror = extract_os_error_strerror(&err.message);
-            if let Some(errno) = os_errno {
-                exception
-                    .attrs
-                    .borrow_mut()
-                    .insert("errno".to_string(), Value::Int(errno));
-            }
-            if let Some(strerror) = os_strerror.clone() {
-                exception
-                    .attrs
-                    .borrow_mut()
-                    .insert("strerror".to_string(), Value::Str(strerror));
-            }
-        }
-        let args = if is_os_error_family(exception.name.as_str()) {
-            if let Some(errno) = os_errno {
-                let mut values = vec![Value::Int(errno)];
-                if let Some(strerror) = os_strerror {
-                    values.push(Value::Str(strerror));
-                }
-                self.heap.alloc_tuple(values)
-            } else if let Some(message) = &exception.message {
-                self.heap.alloc_tuple(vec![Value::Str(message.clone())])
-            } else {
-                self.heap.alloc_tuple(Vec::new())
-            }
-        } else if let Some(message) = &exception.message {
-            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+        let message = if err.message.is_empty() {
+            None
         } else {
-            self.heap.alloc_tuple(Vec::new())
+            Some(err.message)
         };
-        {
-            let mut attrs = exception.attrs.borrow_mut();
-            attrs.insert("args".to_string(), args);
-            if is_import_error {
-                attrs.insert("msg".to_string(), import_error_msg);
-                attrs.insert("name".to_string(), Value::None);
-                attrs.insert("path".to_string(), Value::None);
-                if let Some(name) = extract_import_error_name(&err.message) {
-                    attrs.insert("name".to_string(), Value::Str(name));
-                }
-            }
-            if let Some((code, name)) = sqlite_metadata {
-                attrs.insert("sqlite_errorcode".to_string(), Value::Int(code));
-                attrs.insert("sqlite_errorname".to_string(), Value::Str(name));
-            }
-        }
+        let exception = ExceptionObject::new("RuntimeError", message);
         self.ensure_exception_default_attrs(&exception);
         exception
     }
@@ -4063,7 +3994,9 @@ fn bigint_to_fixed_bytes(
 fn parse_decimal_bigint_literal(text: &str) -> Result<BigInt, RuntimeError> {
     let cleaned = text.trim_end();
     if cleaned.is_empty() {
-        return Err(RuntimeError::value_error("invalid literal for int() with base 10"));
+        return Err(RuntimeError::value_error(
+            "invalid literal for int() with base 10",
+        ));
     }
     let (negative, digits) = if let Some(rest) = cleaned.strip_prefix('+') {
         (false, rest)
@@ -5365,7 +5298,9 @@ fn memoryview_decode_tolist_recursive(
     heap: &Heap,
 ) -> Result<Value, RuntimeError> {
     if shape.is_empty() || shape.len() != strides.len() {
-        return Err(RuntimeError::not_implemented_error("memoryview: unsupported format"));
+        return Err(RuntimeError::not_implemented_error(
+            "memoryview: unsupported format",
+        ));
     }
     let dim = usize::try_from(shape[0])
         .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
@@ -5375,45 +5310,52 @@ fn memoryview_decode_tolist_recursive(
         let itemsize_isize = isize::try_from(itemsize)
             .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
         for index in 0..dim {
-            let delta = stride
-                .checked_mul(index as isize)
-                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
-            let offset = base
-                .checked_add(delta)
-                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
+            let delta = stride.checked_mul(index as isize).ok_or_else(|| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
+            let offset = base.checked_add(delta).ok_or_else(|| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
             if offset < 0 {
-                return Err(RuntimeError::not_implemented_error("memoryview: unsupported format"));
+                return Err(RuntimeError::not_implemented_error(
+                    "memoryview: unsupported format",
+                ));
             }
-            let end = offset
-                .checked_add(itemsize_isize)
-                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
-            let source_len = isize::try_from(source.len())
-                .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
+            let end = offset.checked_add(itemsize_isize).ok_or_else(|| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
+            let source_len = isize::try_from(source.len()).map_err(|_| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
             if end > source_len {
-                return Err(RuntimeError::not_implemented_error("memoryview: unsupported format"));
+                return Err(RuntimeError::not_implemented_error(
+                    "memoryview: unsupported format",
+                ));
             }
-            let offset_usize = usize::try_from(offset)
-                .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
-            let end_usize = offset_usize
-                .checked_add(itemsize)
-                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
-            let chunk = source
-                .get(offset_usize..end_usize)
-                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
-            let value = memoryview_decode_element(chunk, format, itemsize, heap)
-                .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
+            let offset_usize = usize::try_from(offset).map_err(|_| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
+            let end_usize = offset_usize.checked_add(itemsize).ok_or_else(|| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
+            let chunk = source.get(offset_usize..end_usize).ok_or_else(|| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
+            let value = memoryview_decode_element(chunk, format, itemsize, heap).map_err(|_| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
             values.push(value);
         }
         Ok(heap.alloc_list(values))
     } else {
         let mut rows = Vec::with_capacity(dim);
         for index in 0..dim {
-            let delta = stride
-                .checked_mul(index as isize)
-                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
-            let row_base = base
-                .checked_add(delta)
-                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
+            let delta = stride.checked_mul(index as isize).ok_or_else(|| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
+            let row_base = base.checked_add(delta).ok_or_else(|| {
+                RuntimeError::not_implemented_error("memoryview: unsupported format")
+            })?;
             let row = memoryview_decode_tolist_recursive(
                 source,
                 row_base,
@@ -8405,7 +8347,9 @@ fn call_builtin_with_kwargs(
                 _ => return Err(RuntimeError::type_error("range() expects 1-3 arguments")),
             }
 
-            let stop = stop.ok_or_else(|| RuntimeError::type_error("range expected at least 1 argument, got 0"))?;
+            let stop = stop.ok_or_else(|| {
+                RuntimeError::type_error("range expected at least 1 argument, got 0")
+            })?;
             let start = start.unwrap_or(Value::Int(0));
             let step = step.unwrap_or(Value::Int(1));
 
@@ -9070,9 +9014,7 @@ fn class_name_for_instance(instance: &ObjRef) -> Option<String> {
 }
 
 fn is_missing_attribute_error(err: &RuntimeError) -> bool {
-    err.message.contains("has no attribute")
-        || err.message.contains("AttributeError:")
-        || err.message == "attribute access unsupported type"
+    runtime_error_matches_exception(err, "AttributeError")
 }
 
 fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
@@ -9095,104 +9037,6 @@ fn exception_type_is_subclass(candidate: &str, expected: &str) -> bool {
         }
     }
     false
-}
-
-#[inline]
-fn runtime_error_line_matches_exception(line: &str, exception: &str) -> bool {
-    if line == exception {
-        return true;
-    }
-    match line.strip_prefix(exception) {
-        Some(rest) => rest.starts_with(':'),
-        None => false,
-    }
-}
-
-fn extract_runtime_error_exception_name(message: &str) -> Option<String> {
-    let candidate_line = if message.starts_with("Traceback (most recent call last):") {
-        message
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .map(str::trim)
-            .unwrap_or("")
-    } else {
-        message.trim()
-    };
-    let candidate = candidate_line
-        .split_once(':')
-        .map(|(name, _)| name.trim())
-        .unwrap_or(candidate_line);
-    let mut chars = candidate.chars();
-    let first = chars.next()?;
-    if !(first.is_ascii_uppercase() || first == '_') {
-        return None;
-    }
-    if !candidate
-        .chars()
-        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-    {
-        return None;
-    }
-    Some(candidate.to_string())
-}
-
-fn extract_runtime_error_final_message(message: &str, exception: &str) -> Option<Option<String>> {
-    if !message.starts_with("Traceback (most recent call last):") {
-        return None;
-    }
-    let line = message
-        .lines()
-        .rev()
-        .find(|entry| !entry.trim().is_empty())
-        .map(str::trim)?;
-    if !runtime_error_line_matches_exception(line, exception) {
-        return None;
-    }
-    let message = line
-        .split_once(':')
-        .map(|(_, rest)| rest.trim_start().to_string())
-        .filter(|rest| !rest.is_empty());
-    Some(message)
-}
-
-fn extract_prefixed_exception_message(message: &str, exception: &str) -> Option<Option<String>> {
-    let line = message.trim();
-    if !runtime_error_line_matches_exception(line, exception) {
-        return None;
-    }
-    let message = line
-        .split_once(':')
-        .map(|(_, rest)| rest.trim_start().to_string())
-        .filter(|rest| !rest.is_empty());
-    Some(message)
-}
-
-fn strip_sqlite_exception_metadata(
-    message: Option<String>,
-) -> (Option<String>, Option<(i64, String)>) {
-    let Some(message) = message else {
-        return (None, None);
-    };
-    let Some((body, meta_line)) = message.rsplit_once('\n') else {
-        return (Some(message), None);
-    };
-    let Some(rest) = meta_line.strip_prefix("__pyrs_sqlite_meta__:") else {
-        return (Some(message), None);
-    };
-    let mut parts = rest.splitn(2, ':');
-    let (Some(code_text), Some(name)) = (parts.next(), parts.next()) else {
-        return (Some(message), None);
-    };
-    let Ok(code) = code_text.parse::<i64>() else {
-        return (Some(message), None);
-    };
-    let cleaned = if body.is_empty() {
-        None
-    } else {
-        Some(body.to_string())
-    };
-    (cleaned, Some((code, name.to_string())))
 }
 
 #[inline]
@@ -9223,467 +9067,6 @@ fn is_import_error_family(name: &str) -> bool {
     matches!(name, "ImportError" | "ModuleNotFoundError")
 }
 
-fn extract_os_error_errno(message: &str) -> Option<i64> {
-    let marker = "os error ";
-    if let Some(idx) = message.rfind(marker) {
-        let tail = &message[idx + marker.len()..];
-        let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            return digits.parse::<i64>().ok();
-        }
-    }
-    let marker = "[Errno ";
-    if let Some(idx) = message.find(marker) {
-        let tail = &message[idx + marker.len()..];
-        let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            return digits.parse::<i64>().ok();
-        }
-    }
-    None
-}
-
-fn infer_os_error_errno(message: &str) -> Option<i64> {
-    let normalized = message.to_ascii_lowercase();
-    if normalized.contains("bad file descriptor") {
-        return Some(9);
-    }
-    if normalized.contains("no such file or directory") {
-        return Some(2);
-    }
-    if normalized.contains("permission denied") {
-        return Some(13);
-    }
-    if normalized.contains("file exists") {
-        return Some(17);
-    }
-    if normalized.contains("not a directory") {
-        return Some(20);
-    }
-    if normalized.contains("is a directory") {
-        return Some(21);
-    }
-    if normalized.contains("invalid argument") {
-        return Some(22);
-    }
-    None
-}
-
-fn extract_os_error_strerror(message: &str) -> Option<String> {
-    let mut line = message
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .unwrap_or(message)
-        .trim()
-        .to_string();
-    if let Some((_, tail)) = line.split_once(": ") {
-        line = tail.to_string();
-    }
-    if let Some(rest) = line.strip_prefix("[Errno ")
-        && let Some((_, tail)) = rest.split_once("] ")
-    {
-        line = tail.to_string();
-    }
-    if let Some(idx) = line.rfind(" (os error ")
-        && line[idx..].ends_with(')')
-    {
-        line = line[..idx].to_string();
-    }
-    let line = line.trim();
-    if line.is_empty() {
-        return None;
-    }
-    Some(line.to_string())
-}
-
-fn extract_import_error_name(message: &str) -> Option<String> {
-    let trimmed = message.trim();
-    if let Some(start) = trimmed.find("No module named '") {
-        let rest = &trimmed[start + "No module named '".len()..];
-        if let Some(end) = rest.find('\'') {
-            return Some(rest[..end].to_string());
-        }
-    }
-    if let Some(start) = trimmed.find("module '") {
-        let rest = &trimmed[start + "module '".len()..];
-        if let Some(end) = rest.find('\'') {
-            return Some(rest[..end].to_string());
-        }
-    }
-    if let Some(start) = trimmed.find("cannot import name '") {
-        let rest = &trimmed[start + "cannot import name '".len()..];
-        if let Some(end) = rest.find('\'') {
-            return Some(rest[..end].to_string());
-        }
-    }
-    None
-}
-
-#[inline]
-fn should_refine_os_error(message: &str) -> bool {
-    message.contains("open failed:")
-        || message.contains("open() failed:")
-        || message.contains("mkdir failed:")
-        || message.contains("ftruncate failed:")
-        || message.contains("chmod failed:")
-        || message.contains("access failed:")
-        || message.contains("remove failed:")
-        || message.contains("rmdir failed:")
-        || message.contains("stat failed:")
-        || message.contains("lstat failed:")
-        || message.contains("scandir failed:")
-}
-
-fn classify_runtime_error(message: &str) -> &'static str {
-    const DIRECT_PREFIX_EXCEPTIONS: [&str; 24] = [
-        "TypeError",
-        "ValueError",
-        "RuntimeError",
-        "PythonFinalizationError",
-        "AttributeError",
-        "IndexError",
-        "KeyError",
-        "NameError",
-        "ImportError",
-        "ModuleNotFoundError",
-        "OSError",
-        "Error",
-        "AssertionError",
-        "ZeroDivisionError",
-        "StopIteration",
-        "StopAsyncIteration",
-        "SystemExit",
-        "KeyboardInterrupt",
-        "LookupError",
-        "CalledProcessError",
-        "PickleError",
-        "PicklingError",
-        "UnpicklingError",
-        "BufferError",
-    ];
-    let trimmed = message.trim();
-    if message.starts_with("Traceback (most recent call last):")
-        && let Some(last_non_empty_line) = message
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .map(str::trim)
-    {
-        for exception in DIRECT_PREFIX_EXCEPTIONS {
-            if runtime_error_line_matches_exception(last_non_empty_line, exception) {
-                if exception == "OSError" && should_refine_os_error(last_non_empty_line) {
-                    continue;
-                }
-                return exception;
-            }
-        }
-    }
-    for exception in DIRECT_PREFIX_EXCEPTIONS {
-        if runtime_error_line_matches_exception(message, exception) {
-            if exception == "OSError" && should_refine_os_error(message) {
-                continue;
-            }
-            return exception;
-        }
-    }
-
-    if runtime_error_line_matches_exception(trimmed, "StopIteration") {
-        return "StopIteration";
-    }
-    if runtime_error_line_matches_exception(trimmed, "StopAsyncIteration") {
-        return "StopAsyncIteration";
-    }
-    if runtime_error_line_matches_exception(trimmed, "CalledProcessError") {
-        return "CalledProcessError";
-    }
-    if message.contains("unknown dialect")
-        || message.contains("new-line character seen in unquoted field")
-        || message.contains("field larger than field limit")
-        || message.contains("need to escape")
-        || message.contains("unexpected end of data")
-        || message.contains("',' expected after '\"'")
-        || message.contains("single empty field record must be quoted")
-        || message.contains(
-            "empty field must be quoted if delimiter is space and skipinitialspace is true",
-        )
-        || message.starts_with("iterable expected, not ")
-        || message.contains("iterator should return strings, not ")
-    {
-        return "Error";
-    }
-    if message.contains("csv dialect attributes are read-only") {
-        return "AttributeError";
-    }
-    if message.contains("cannot be a newline")
-        || message.contains("cannot be the same")
-        || message.contains("cannot be a space when skipinitialspace is true")
-        || message.contains("lineterminator cannot contain delimiter, quotechar, or escapechar")
-        || message.contains("lineterminator must not be empty")
-        || message.contains("bad delimiter value")
-        || message.contains("bad quotechar value")
-        || message.contains("bad escapechar value")
-        || message.contains("bad delimiter or quotechar value")
-        || message.contains("bad delimiter or escapechar value")
-        || message.contains("bad escapechar or quotechar value")
-        || message.contains("bad delimiter or lineterminator value")
-        || message.contains("bad quotechar or lineterminator value")
-        || message.contains("bad escapechar or lineterminator value")
-        || message.contains("not enough values to unpack")
-        || message.contains("too many values to unpack")
-    {
-        return "ValueError";
-    }
-    if message.contains("must be a unicode character")
-        || message.contains("must be a string")
-        || message.contains("must be bool")
-        || message.contains("missing required argument")
-        || message.contains("required positional argument")
-        || message.contains("received unexpected arguments")
-        || message.contains("unexpected keyword argument")
-        || message.contains("expected iterable")
-        || message.contains("must have a write method")
-        || message.contains("name must be str")
-        || message.contains("quotechar must be set if quoting enabled")
-        || message.contains("bad \"quoting\" value")
-        || message.contains("argument count mismatch")
-        || message.contains("decoding str is not supported")
-        || message.contains("cannot pickle 'Dialect' instances")
-        || message.contains("write() argument must be str")
-        || message.contains("attempted to call non-function")
-        || message.contains("is not a type object")
-    {
-        return "TypeError";
-    }
-    if runtime_error_line_matches_exception(trimmed, "KeyboardInterrupt") {
-        return "KeyboardInterrupt";
-    }
-    if runtime_error_line_matches_exception(trimmed, "UnsupportedOperation") {
-        return "UnsupportedOperation";
-    }
-    if runtime_error_line_matches_exception(trimmed, "SystemExit") {
-        return "SystemExit";
-    }
-    if message.contains("index out of range")
-        || message.contains("pop index out of range")
-        || message.contains("pop from empty list")
-        || message.contains("out of bounds for axis")
-    {
-        return "IndexError";
-    }
-    if message.contains("key not found") || message.contains("pop from an empty set") {
-        return "KeyError";
-    }
-    if message.contains("division by zero") || message.contains("modulo by zero") {
-        return "ZeroDivisionError";
-    }
-    if message.contains("can't decode bytes")
-        || message.contains("codec can't decode byte")
-        || message.contains("codec can't decode bytes")
-    {
-        return "UnicodeDecodeError";
-    }
-    if message.contains("unknown encoding") {
-        return "LookupError";
-    }
-    if message.contains("Pickler.__init__() was not called by Pickler.__init__") {
-        return "PicklingError";
-    }
-    if message.contains("Unpickler.__init__() was not called by Unpickler.__init__") {
-        return "UnpicklingError";
-    }
-    if message.contains("can't encode character")
-        || message.contains("can't encode")
-        || message.contains("ordinal not in range")
-    {
-        return "UnicodeEncodeError";
-    }
-    if message.starts_with("name '") && message.ends_with("is not defined") {
-        return "NameError";
-    }
-    if message.contains("has no attribute") || message == "attribute access unsupported type" {
-        return "AttributeError";
-    }
-    if message.contains("__init__() should return None") {
-        return "TypeError";
-    }
-    if message.starts_with("module '") && message.ends_with("' not found") {
-        return "ModuleNotFoundError";
-    }
-    if message.starts_with("No module named '") {
-        return "ModuleNotFoundError";
-    }
-    if message.starts_with("cannot import name '") && message.contains("' from '") {
-        return "ImportError";
-    }
-    if message.contains("attempted relative import with no known parent package") {
-        return "ImportError";
-    }
-    if message.contains("metaclass conflict") {
-        return "TypeError";
-    }
-    if message.starts_with("cannot create '") && message.ends_with("' instances") {
-        return "TypeError";
-    }
-    if message.contains("object is not iterable")
-        || message.contains("argument is not iterable")
-        || message.contains("__iter__() returned non-iterator")
-    {
-        return "TypeError";
-    }
-    if message.contains("math domain error")
-        || message.contains("tolerances must be non-negative")
-        || message.contains("inputs are not the same length")
-        || message.contains("not in list")
-        || message.contains("not in tuple")
-        || message.contains("substring not found")
-        || message.contains("Cell is empty")
-        || message.contains("invalid literal for int")
-        || message.contains("int() invalid literal")
-        || message.contains("could not convert string to float")
-        || message.contains("complex() invalid literal")
-        || message.contains("list modified during sort")
-        || message.starts_with("invalid mode:")
-        || message.contains("must have exactly one of create/read/write/append mode")
-        || message.contains("can't have text and binary mode at once")
-        || message.contains("can't have unbuffered text I/O")
-        || message.contains("invalid buffering size")
-        || message.contains("binary mode doesn't take an encoding argument")
-        || message.contains("binary mode doesn't take an errors argument")
-        || message.contains("binary mode doesn't take a newline argument")
-        || message.contains("I/O operation on closed file")
-        || message.contains("Cannot use closefd=False with file name")
-        || message.starts_with("opener returned ")
-    {
-        return "ValueError";
-    }
-    if message.contains("open failed:") {
-        if message.contains("File exists") || message.contains("os error 17") {
-            return "FileExistsError";
-        }
-        if message.contains("No such file or directory") || message.contains("os error 2") {
-            return "FileNotFoundError";
-        }
-        if message.contains("Permission denied") || message.contains("os error 13") {
-            return "PermissionError";
-        }
-        if message.contains("Is a directory") || message.contains("os error 21") {
-            return "IsADirectoryError";
-        }
-        if message.contains("Not a directory") || message.contains("os error 20") {
-            return "NotADirectoryError";
-        }
-    }
-    if message.contains("open() failed:") {
-        if message.contains("File exists") || message.contains("os error 17") {
-            return "FileExistsError";
-        }
-        if message.contains("No such file or directory") || message.contains("os error 2") {
-            return "FileNotFoundError";
-        }
-        if message.contains("Permission denied") || message.contains("os error 13") {
-            return "PermissionError";
-        }
-        if message.contains("Is a directory") || message.contains("os error 21") {
-            return "IsADirectoryError";
-        }
-        if message.contains("Not a directory") || message.contains("os error 20") {
-            return "NotADirectoryError";
-        }
-    }
-    if message.contains("mkdir failed:") {
-        if message.contains("File exists") || message.contains("os error 17") {
-            return "FileExistsError";
-        }
-        if message.contains("No such file or directory") || message.contains("os error 2") {
-            return "FileNotFoundError";
-        }
-        if message.contains("Permission denied") || message.contains("os error 13") {
-            return "PermissionError";
-        }
-        if message.contains("Not a directory") || message.contains("os error 20") {
-            return "NotADirectoryError";
-        }
-    }
-    if message.contains("access failed:") {
-        if message.contains("No such file or directory") || message.contains("os error 2") {
-            return "FileNotFoundError";
-        }
-        if message.contains("Permission denied") || message.contains("os error 13") {
-            return "PermissionError";
-        }
-    }
-    if message.contains("chmod failed:") {
-        if message.contains("No such file or directory") || message.contains("os error 2") {
-            return "FileNotFoundError";
-        }
-        if message.contains("Permission denied") || message.contains("os error 13") {
-            return "PermissionError";
-        }
-        if message.contains("Not a directory") || message.contains("os error 20") {
-            return "NotADirectoryError";
-        }
-    }
-    if message.contains("rmdir failed:") {
-        if message.contains("No such file or directory") || message.contains("os error 2") {
-            return "FileNotFoundError";
-        }
-        if message.contains("Permission denied") || message.contains("os error 13") {
-            return "PermissionError";
-        }
-        if message.contains("Not a directory") || message.contains("os error 20") {
-            return "NotADirectoryError";
-        }
-    }
-    if message.contains("remove failed:") {
-        if message.contains("No such file or directory") || message.contains("os error 2") {
-            return "FileNotFoundError";
-        }
-        if message.contains("Is a directory") || message.contains("os error 21") {
-            return "IsADirectoryError";
-        }
-        if message.contains("Not a directory") || message.contains("os error 20") {
-            return "NotADirectoryError";
-        }
-        if message.contains("Permission denied")
-            || message.contains("os error 13")
-            || message.contains("Operation not permitted")
-            || message.contains("os error 1")
-        {
-            return "PermissionError";
-        }
-    }
-    if message.contains("bad file descriptor")
-        || message.contains("open failed:")
-        || message.contains("open() failed:")
-        || message.contains("mkdir failed:")
-        || message.contains("chmod failed:")
-        || message.contains("access failed:")
-        || message.contains("remove failed:")
-        || message.contains("ftruncate failed:")
-        || message.contains("close failed:")
-        || message.contains("stat failed:")
-        || message.contains("lstat failed:")
-        || message.contains("rmdir failed:")
-        || message.contains("utime failed:")
-        || message.contains("scandir failed:")
-    {
-        return "OSError";
-    }
-    if message.contains("__len__() should return >= 0") {
-        return "ValueError";
-    }
-    if message.contains("__bool__ should return bool")
-        || message.contains("object cannot be interpreted as an integer")
-    {
-        return "TypeError";
-    }
-    if message.contains("unsupported operand type") || message.contains("expects") {
-        return "TypeError";
-    }
-    "RuntimeError"
-}
-
 fn is_runtime_type_name_marker(name: &str) -> bool {
     matches!(
         name,
@@ -9704,26 +9087,8 @@ fn is_runtime_type_name_marker(name: &str) -> bool {
 }
 
 fn runtime_error_matches_exception(err: &RuntimeError, expected: &str) -> bool {
-    if let Some(exception_name) = err.exception_name()
-        && (exception_name == expected || exception_type_is_subclass(exception_name, expected))
-    {
-        return true;
-    }
-    if let Some(exception_name) = extract_runtime_error_exception_name(&err.message)
-        && (exception_name == expected || exception_type_is_subclass(&exception_name, expected))
-    {
-        return true;
-    }
-    let Some(last_non_empty_line) = err
-        .message
-        .lines()
-        .rev()
-        .find(|line| !line.trim().is_empty())
-        .map(str::trim)
-    else {
-        return false;
-    };
-    last_non_empty_line == expected || last_non_empty_line.starts_with(&format!("{expected}:"))
+    err.exception_name()
+        .is_some_and(|exception_name| exception_type_is_subclass(exception_name, expected))
 }
 
 fn slice_indices(

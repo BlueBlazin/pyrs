@@ -1529,7 +1529,11 @@ impl Vm {
                         ("callable_iterator", None, None, None, false, true)
                     }
                 },
-                _ => return Err(RuntimeError::attribute_error("attribute access unsupported type")),
+                _ => {
+                    return Err(RuntimeError::attribute_error(
+                        "attribute access unsupported type",
+                    ));
+                }
             };
         match attr_name {
             "__iter__" => {
@@ -1720,7 +1724,11 @@ impl Vm {
         let (type_name, is_frozenset) = match &*set.kind() {
             Object::Set(_) => ("set", false),
             Object::FrozenSet(_) => ("frozenset", true),
-            _ => return Err(RuntimeError::attribute_error("attribute access unsupported type")),
+            _ => {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            }
         };
         match attr_name {
             "__reduce__" => {
@@ -1731,7 +1739,9 @@ impl Vm {
                 Object::FrozenSet(_) => {
                     Ok(self.alloc_reduce_ex_bound_method(Value::FrozenSet(set.clone())))
                 }
-                _ => Err(RuntimeError::attribute_error("attribute access unsupported type")),
+                _ => Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                )),
             },
             "__contains__" => {
                 Ok(self.alloc_native_bound_method(NativeMethodKind::SetContains, set))
@@ -1893,7 +1903,9 @@ impl Vm {
     ) -> Result<ObjRef, RuntimeError> {
         let mut func_ref = func.kind_mut();
         let Object::Function(func_data) = &mut *func_ref else {
-            return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+            return Err(RuntimeError::attribute_error(
+                "attribute access unsupported type",
+            ));
         };
         if let Some(obj) = &func_data.annotations {
             return Ok(obj.clone());
@@ -1910,7 +1922,9 @@ impl Vm {
     pub(super) fn ensure_function_dict(&mut self, func: &ObjRef) -> Result<ObjRef, RuntimeError> {
         let mut func_ref = func.kind_mut();
         let Object::Function(func_data) = &mut *func_ref else {
-            return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+            return Err(RuntimeError::attribute_error(
+                "attribute access unsupported type",
+            ));
         };
         if let Some(obj) = &func_data.dict {
             return Ok(obj.clone());
@@ -1946,7 +1960,9 @@ impl Vm {
         let function_dict = {
             let func_ref = func.kind();
             let Object::Function(func_data) = &*func_ref else {
-                return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
             };
             func_data.dict.clone()
         };
@@ -1963,7 +1979,9 @@ impl Vm {
                 let name = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     func_data.code.name.clone()
                 };
@@ -1973,7 +1991,9 @@ impl Vm {
                 let qualname = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     let base_name = func_data.code.name.clone();
                     if let Some(owner_class) = &func_data.owner_class {
@@ -2000,7 +2020,9 @@ impl Vm {
                 let module_name = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     self.function_module_name(&func_data.module)
                 };
@@ -2010,7 +2032,9 @@ impl Vm {
                 let code = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     func_data.code.clone()
                 };
@@ -2020,7 +2044,9 @@ impl Vm {
                 let module = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     func_data.module.clone()
                 };
@@ -2059,7 +2085,9 @@ impl Vm {
                 let defaults = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     func_data.defaults.clone()
                 };
@@ -2073,7 +2101,9 @@ impl Vm {
                 let entries = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     if func_data.kwonly_defaults.is_empty() {
                         return Ok(Value::None);
@@ -2090,7 +2120,9 @@ impl Vm {
                 let closure = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
                     };
                     func_data.closure.clone()
                 };
@@ -2116,7 +2148,9 @@ impl Vm {
         let (function, receiver) = {
             let method_ref = method.kind();
             let Object::BoundMethod(method_data) = &*method_ref else {
-                return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
@@ -2219,8 +2253,9 @@ impl Vm {
                         _ => unreachable!(),
                     };
                 }
-                let function_value = as_value(&function_kind, &function)
-                    .ok_or_else(|| RuntimeError::attribute_error("attribute access unsupported type"))?;
+                let function_value = as_value(&function_kind, &function).ok_or_else(|| {
+                    RuntimeError::attribute_error("attribute access unsupported type")
+                })?;
                 self.builtin_getattr(
                     vec![function_value, Value::Str(attr_name.to_string())],
                     HashMap::new(),
@@ -2242,7 +2277,9 @@ impl Vm {
         let function = {
             let method_ref = method.kind();
             let Object::BoundMethod(method_data) = &*method_ref else {
-                return Err(RuntimeError::type_error("attribute assignment unsupported type"));
+                return Err(RuntimeError::type_error(
+                    "attribute assignment unsupported type",
+                ));
             };
             method_data.function.clone()
         };
@@ -2267,7 +2304,9 @@ impl Vm {
                     .insert(attr_name.to_string(), value);
                 Ok(())
             }
-            _ => Err(RuntimeError::type_error("attribute assignment unsupported type")),
+            _ => Err(RuntimeError::type_error(
+                "attribute assignment unsupported type",
+            )),
         }
     }
 
@@ -2410,7 +2449,9 @@ impl Vm {
                 };
                 let mut func_ref = func.kind_mut();
                 let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::type_error("attribute assignment unsupported type"));
+                    return Err(RuntimeError::type_error(
+                        "attribute assignment unsupported type",
+                    ));
                 };
                 func_data.annotations = Some(annotations);
                 Ok(())
@@ -2422,7 +2463,9 @@ impl Vm {
                 };
                 let mut func_ref = func.kind_mut();
                 let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::type_error("attribute assignment unsupported type"));
+                    return Err(RuntimeError::type_error(
+                        "attribute assignment unsupported type",
+                    ));
                 };
                 func_data.dict = Some(dict);
                 Ok(())
@@ -2519,7 +2562,9 @@ impl Vm {
             "__annotations__" => {
                 let mut func_ref = func.kind_mut();
                 let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::type_error("attribute deletion unsupported type"));
+                    return Err(RuntimeError::type_error(
+                        "attribute deletion unsupported type",
+                    ));
                 };
                 if func_data.annotations.take().is_none() {
                     return Err(RuntimeError::new(format!(
@@ -2536,7 +2581,9 @@ impl Vm {
                 let dict = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::type_error("attribute deletion unsupported type"));
+                        return Err(RuntimeError::type_error(
+                            "attribute deletion unsupported type",
+                        ));
                     };
                     func_data.dict.clone()
                 };
@@ -3769,7 +3816,9 @@ impl Vm {
         } else if attr_name == "__base__" {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {
-                return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
             };
             class_data
                 .bases
@@ -3787,7 +3836,9 @@ impl Vm {
         } else if attr_name == "__module__" {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {
-                return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
             };
             class_data
                 .attrs
@@ -3797,7 +3848,9 @@ impl Vm {
         } else if attr_name == "__dict__" {
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {
-                return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
             };
             let mut entries = class_data
                 .attrs
@@ -4408,7 +4461,11 @@ impl Vm {
     ) -> Result<AttrAccessOutcome, RuntimeError> {
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => return Err(RuntimeError::attribute_error("attribute access unsupported type")),
+            _ => {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            }
         };
 
         // CPython routes the default object-attribute path through a native slot
@@ -4489,7 +4546,11 @@ impl Vm {
     ) -> Result<AttrAccessOutcome, RuntimeError> {
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => return Err(RuntimeError::attribute_error("attribute access unsupported type")),
+            _ => {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            }
         };
         let is_cpython_proxy_instance = matches!(
             &*class_ref.kind(),
@@ -4537,7 +4598,9 @@ impl Vm {
                     .insert(INSTANCE_DICT_STORAGE_ATTR.to_string(), dict_value.clone());
                 return Ok(AttrAccessOutcome::Value(dict_value));
             }
-            return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+            return Err(RuntimeError::attribute_error(
+                "attribute access unsupported type",
+            ));
         }
 
         if let Some(attr) = self.load_attr_property_instance(instance, attr_name)? {
@@ -4811,7 +4874,11 @@ impl Vm {
                 data.object.clone(),
                 data.object_type.clone(),
             ),
-            _ => return Err(RuntimeError::attribute_error("attribute access unsupported type")),
+            _ => {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            }
         };
 
         let receiver_value = self.receiver_value(&receiver)?;
@@ -4969,7 +5036,9 @@ impl Vm {
                     )
                 }
                 _ => {
-                    return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                    return Err(RuntimeError::attribute_error(
+                        "attribute access unsupported type",
+                    ));
                 }
             };
         if let Some(attr) = attr {
@@ -5164,7 +5233,11 @@ impl Vm {
     ) -> Result<AttrMutationOutcome, RuntimeError> {
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => return Err(RuntimeError::type_error("attribute assignment unsupported type")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "attribute assignment unsupported type",
+                ));
+            }
         };
         let mro_class_names = class_attr_walk(&class_ref)
             .into_iter()
@@ -5276,7 +5349,11 @@ impl Vm {
     ) -> Result<AttrMutationOutcome, RuntimeError> {
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => return Err(RuntimeError::type_error("attribute deletion unsupported type")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "attribute deletion unsupported type",
+                ));
+            }
         };
         if attr_name == "_CHUNK_SIZE"
             && matches!(

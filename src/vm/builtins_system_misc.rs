@@ -2069,7 +2069,9 @@ impl Vm {
 
     pub(super) fn socket_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("_socket").cloned() else {
-            return Err(RuntimeError::module_not_found_error("module '_socket' not found"));
+            return Err(RuntimeError::module_not_found_error(
+                "module '_socket' not found",
+            ));
         };
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module '_socket' is invalid"));
@@ -2461,7 +2463,9 @@ impl Vm {
 
     pub(super) fn uuid_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("uuid").cloned() else {
-            return Err(RuntimeError::module_not_found_error("module 'uuid' not found"));
+            return Err(RuntimeError::module_not_found_error(
+                "module 'uuid' not found",
+            ));
         };
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module 'uuid' is invalid"));
@@ -2852,7 +2856,9 @@ impl Vm {
             return Err(RuntimeError::new("get_theme() received invalid arguments"));
         }
         let Some(module) = self.modules.get("_colorize").cloned() else {
-            return Err(RuntimeError::module_not_found_error("module '_colorize' not found"));
+            return Err(RuntimeError::module_not_found_error(
+                "module '_colorize' not found",
+            ));
         };
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module '_colorize' is invalid"));
@@ -2877,7 +2883,9 @@ impl Vm {
             return Err(RuntimeError::new("get_colors() received invalid arguments"));
         }
         let Some(module) = self.modules.get("_colorize").cloned() else {
-            return Err(RuntimeError::module_not_found_error("module '_colorize' not found"));
+            return Err(RuntimeError::module_not_found_error(
+                "module '_colorize' not found",
+            ));
         };
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module '_colorize' is invalid"));
@@ -2912,7 +2920,9 @@ impl Vm {
             ));
         }
         let Some(module) = self.modules.get("_colorize").cloned() else {
-            return Err(RuntimeError::module_not_found_error("module '_colorize' not found"));
+            return Err(RuntimeError::module_not_found_error(
+                "module '_colorize' not found",
+            ));
         };
         let Object::Module(module_data) = &mut *module.kind_mut() else {
             return Err(RuntimeError::new("module '_colorize' is invalid"));

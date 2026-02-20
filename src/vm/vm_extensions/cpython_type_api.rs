@@ -5,33 +5,31 @@ use std::mem::align_of;
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    _PyObject_New, _PyObject_NewVar, CpythonAsyncMethods, CpythonBufferProcs,
-    CpythonHeapTypeInfo, CpythonMappingMethods, CpythonMethodDef, CpythonNumberMethods,
-    CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, CpythonTypeSpec,
-    InternalCallOutcome, ModuleCapiContext,
-    PY_TYPE_SLOT_AM_AITER, PY_TYPE_SLOT_AM_ANEXT, PY_TYPE_SLOT_AM_AWAIT, PY_TYPE_SLOT_AM_SEND,
-    PY_TYPE_SLOT_BF_GETBUFFER, PY_TYPE_SLOT_BF_RELEASEBUFFER, PY_TYPE_SLOT_MP_ASS_SUBSCRIPT,
+    _PyObject_New, _PyObject_NewVar, CpythonAsyncMethods, CpythonBufferProcs, CpythonHeapTypeInfo,
+    CpythonMappingMethods, CpythonMethodDef, CpythonNumberMethods, CpythonObjectHead,
+    CpythonSequenceMethods, CpythonTypeObject, CpythonTypeSpec, InternalCallOutcome,
+    ModuleCapiContext, PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS,
+    PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS,
+    PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY, PY_TPFLAGS_TUPLE_SUBCLASS,
+    PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS, PY_TYPE_SLOT_AM_AITER,
+    PY_TYPE_SLOT_AM_ANEXT, PY_TYPE_SLOT_AM_AWAIT, PY_TYPE_SLOT_AM_SEND, PY_TYPE_SLOT_BF_GETBUFFER,
+    PY_TYPE_SLOT_BF_RELEASEBUFFER, PY_TYPE_SLOT_MAX, PY_TYPE_SLOT_MP_ASS_SUBSCRIPT,
     PY_TYPE_SLOT_MP_LENGTH, PY_TYPE_SLOT_MP_SUBSCRIPT, PY_TYPE_SLOT_NB_ABSOLUTE,
     PY_TYPE_SLOT_NB_ADD, PY_TYPE_SLOT_NB_AND, PY_TYPE_SLOT_NB_BOOL, PY_TYPE_SLOT_NB_DIVMOD,
     PY_TYPE_SLOT_NB_FLOAT, PY_TYPE_SLOT_NB_FLOOR_DIVIDE, PY_TYPE_SLOT_NB_INDEX,
-    PY_TYPE_SLOT_NB_INPLACE_ADD, PY_TYPE_SLOT_NB_INPLACE_AND,
-    PY_TYPE_SLOT_NB_INPLACE_FLOOR_DIVIDE, PY_TYPE_SLOT_NB_INPLACE_LSHIFT,
-    PY_TYPE_SLOT_NB_INPLACE_MATRIX_MULTIPLY, PY_TYPE_SLOT_NB_INPLACE_MULTIPLY,
-    PY_TYPE_SLOT_NB_INPLACE_OR, PY_TYPE_SLOT_NB_INPLACE_POWER,
+    PY_TYPE_SLOT_NB_INPLACE_ADD, PY_TYPE_SLOT_NB_INPLACE_AND, PY_TYPE_SLOT_NB_INPLACE_FLOOR_DIVIDE,
+    PY_TYPE_SLOT_NB_INPLACE_LSHIFT, PY_TYPE_SLOT_NB_INPLACE_MATRIX_MULTIPLY,
+    PY_TYPE_SLOT_NB_INPLACE_MULTIPLY, PY_TYPE_SLOT_NB_INPLACE_OR, PY_TYPE_SLOT_NB_INPLACE_POWER,
     PY_TYPE_SLOT_NB_INPLACE_REMAINDER, PY_TYPE_SLOT_NB_INPLACE_RSHIFT,
     PY_TYPE_SLOT_NB_INPLACE_SUBTRACT, PY_TYPE_SLOT_NB_INPLACE_TRUE_DIVIDE,
     PY_TYPE_SLOT_NB_INPLACE_XOR, PY_TYPE_SLOT_NB_INT, PY_TYPE_SLOT_NB_INVERT,
     PY_TYPE_SLOT_NB_LSHIFT, PY_TYPE_SLOT_NB_MATRIX_MULTIPLY, PY_TYPE_SLOT_NB_MULTIPLY,
-    PY_TYPE_SLOT_NB_NEGATIVE, PY_TYPE_SLOT_NB_OR, PY_TYPE_SLOT_NB_POSITIVE,
-    PY_TYPE_SLOT_NB_POWER, PY_TYPE_SLOT_NB_REMAINDER, PY_TYPE_SLOT_NB_RSHIFT,
-    PY_TYPE_SLOT_NB_SUBTRACT, PY_TYPE_SLOT_NB_TRUE_DIVIDE, PY_TYPE_SLOT_NB_XOR,
-    PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE,
-    PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
-    PY_TPFLAGS_TUPLE_SUBCLASS, PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS,
-    PY_TYPE_SLOT_MAX, PY_TYPE_SLOT_SQ_ASS_ITEM, PY_TYPE_SLOT_SQ_CONCAT, PY_TYPE_SLOT_SQ_CONTAINS,
-    PY_TYPE_SLOT_SQ_INPLACE_CONCAT, PY_TYPE_SLOT_SQ_INPLACE_REPEAT, PY_TYPE_SLOT_SQ_ITEM,
-    PY_TYPE_SLOT_SQ_LENGTH, PY_TYPE_SLOT_SQ_REPEAT, PY_TYPE_SLOT_TP_ALLOC,
-    PY_TYPE_SLOT_TP_BASE, PY_TYPE_SLOT_TP_BASES,
+    PY_TYPE_SLOT_NB_NEGATIVE, PY_TYPE_SLOT_NB_OR, PY_TYPE_SLOT_NB_POSITIVE, PY_TYPE_SLOT_NB_POWER,
+    PY_TYPE_SLOT_NB_REMAINDER, PY_TYPE_SLOT_NB_RSHIFT, PY_TYPE_SLOT_NB_SUBTRACT,
+    PY_TYPE_SLOT_NB_TRUE_DIVIDE, PY_TYPE_SLOT_NB_XOR, PY_TYPE_SLOT_SQ_ASS_ITEM,
+    PY_TYPE_SLOT_SQ_CONCAT, PY_TYPE_SLOT_SQ_CONTAINS, PY_TYPE_SLOT_SQ_INPLACE_CONCAT,
+    PY_TYPE_SLOT_SQ_INPLACE_REPEAT, PY_TYPE_SLOT_SQ_ITEM, PY_TYPE_SLOT_SQ_LENGTH,
+    PY_TYPE_SLOT_SQ_REPEAT, PY_TYPE_SLOT_TP_ALLOC, PY_TYPE_SLOT_TP_BASE, PY_TYPE_SLOT_TP_BASES,
     PY_TYPE_SLOT_TP_CALL, PY_TYPE_SLOT_TP_CLEAR, PY_TYPE_SLOT_TP_DEALLOC, PY_TYPE_SLOT_TP_DEL,
     PY_TYPE_SLOT_TP_DESCR_GET, PY_TYPE_SLOT_TP_DESCR_SET, PY_TYPE_SLOT_TP_DOC,
     PY_TYPE_SLOT_TP_FINALIZE, PY_TYPE_SLOT_TP_FREE, PY_TYPE_SLOT_TP_GETATTR,
@@ -42,12 +40,13 @@ use super::{
     PY_TYPE_SLOT_TP_STR, PY_TYPE_SLOT_TP_TOKEN, PY_TYPE_SLOT_TP_TRAVERSE,
     PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type, PyBool_Type,
     PyByteArray_Type, PyBytes_Type, PyComplex_Type, PyDescr_NewClassMethod, PyDescr_NewMethod,
-    PyDict_DelItemString, PyDict_New, PyDict_SetItemString, PyDict_Type, PyErr_BadInternalCall, PyExc_AttributeError,
-    PyExc_MemoryError, PyExc_SystemError, PyExc_TypeError, PyFloat_Type, PyFrozenSet_Type, PyList_Type, PyLong_Type,
-    PyMemoryView_Type, PyModule_GetState, PyObject_Free, PyProperty_Type, PyRange_Type, PySet_Type, PySlice_Type,
-    PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyTuple_Type, PyType_Type,
-    PyUnicode_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
-    cpython_heap_type_registry, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
+    PyDict_DelItemString, PyDict_New, PyDict_SetItemString, PyDict_Type, PyErr_BadInternalCall,
+    PyExc_AttributeError, PyExc_MemoryError, PyExc_SystemError, PyExc_TypeError, PyFloat_Type,
+    PyFrozenSet_Type, PyList_Type, PyLong_Type, PyMemoryView_Type, PyModule_GetState,
+    PyObject_Free, PyProperty_Type, PyRange_Type, PySet_Type, PySlice_Type, PyTuple_GetItem,
+    PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyTuple_Type, PyType_Type, PyUnicode_Type,
+    c_name_to_string, cpython_builtin_type_ptr_for_class_name, cpython_heap_type_registry,
+    cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_set_error, cpython_set_typed_error,
     cpython_value_debug_tag, cpython_value_from_ptr, free, with_active_cpython_context_mut,
 };
@@ -90,7 +89,10 @@ unsafe extern "C" fn cpython_type_mp_subscript_slot(
         match vm.getitem_value(object_value, key_value) {
             Ok(value) => {
                 if trace_type_subscript {
-                    eprintln!("[type-subscript] result={}", cpython_value_debug_tag(&value));
+                    eprintln!(
+                        "[type-subscript] result={}",
+                        cpython_value_debug_tag(&value)
+                    );
                 }
                 context.alloc_cpython_ptr_for_value(value)
             }
@@ -371,7 +373,11 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
             let module_name = cpython_heap_type_registry()
                 .lock()
                 .ok()
-                .and_then(|registry| registry.get(&(type_ptr as usize)).map(|info| info.module_name.clone()))
+                .and_then(|registry| {
+                    registry
+                        .get(&(type_ptr as usize))
+                        .map(|info| info.module_name.clone())
+                })
                 .unwrap_or_else(|| cpython_type_module_name_from_tp_name(type_ptr));
             return cpython_new_ptr_for_value(Value::Str(module_name));
         }
@@ -525,13 +531,14 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
                 .unwrap_or_else(|| "None".to_string());
             let metaclass_name = mapped_value.as_ref().and_then(|value| match value {
                 Value::Class(class_obj) => match &*class_obj.kind() {
-                    Object::Class(class_data) => class_data
-                        .metaclass
-                        .as_ref()
-                        .and_then(|metaclass| match &*metaclass.kind() {
-                            Object::Class(meta_data) => Some(meta_data.name.clone()),
-                            _ => None,
-                        }),
+                    Object::Class(class_data) => {
+                        class_data.metaclass.as_ref().and_then(|metaclass| {
+                            match &*metaclass.kind() {
+                                Object::Class(meta_data) => Some(meta_data.name.clone()),
+                                _ => None,
+                            }
+                        })
+                    }
                     _ => None,
                 },
                 _ => None,
@@ -662,8 +669,7 @@ pub(super) unsafe extern "C" fn cpython_type_tp_setattro(
             );
         }
         None
-    })
-    {
+    }) {
         return status;
     }
     cpython_set_typed_error(
@@ -2008,8 +2014,7 @@ fn cpython_type_from_spec_impl(
                 slot_pfunc,
                 &mut token,
                 &mut slot_scratch,
-            )
-            {
+            ) {
                 cpython_set_typed_error(unsafe { PyExc_SystemError }, err);
                 return std::ptr::null_mut();
             }
@@ -2483,19 +2488,13 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
     const TYPE_ALIGN: usize = std::mem::align_of::<CpythonTypeObject>();
     if (subtype as usize) < MIN_VALID_PTR || (ty as usize) < MIN_VALID_PTR {
         if trace {
-            eprintln!(
-                "[type-subtype] below-min subtype={:p} ty={:p}",
-                subtype, ty
-            );
+            eprintln!("[type-subtype] below-min subtype={:p} ty={:p}", subtype, ty);
         }
         return 0;
     }
     if (subtype as usize) % TYPE_ALIGN != 0 || (ty as usize) % TYPE_ALIGN != 0 {
         if trace {
-            eprintln!(
-                "[type-subtype] unaligned subtype={:p} ty={:p}",
-                subtype, ty
-            );
+            eprintln!("[type-subtype] unaligned subtype={:p} ty={:p}", subtype, ty);
         }
         return 0;
     }

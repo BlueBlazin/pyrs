@@ -437,7 +437,9 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
         }
         if idx < format.len() && format[idx] == b'*' {
             if arg_idx >= positional_args.len() {
-                return Err(RuntimeError::type_error("not enough arguments for format string"));
+                return Err(RuntimeError::type_error(
+                    "not enough arguments for format string",
+                ));
             }
             let _ = value_to_int(positional_args[arg_idx].clone())?;
             arg_idx += 1;
@@ -451,7 +453,9 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
             idx += 1;
             if idx < format.len() && format[idx] == b'*' {
                 if arg_idx >= positional_args.len() {
-                    return Err(RuntimeError::type_error("not enough arguments for format string"));
+                    return Err(RuntimeError::type_error(
+                        "not enough arguments for format string",
+                    ));
                 }
                 let _ = value_to_int(positional_args[arg_idx].clone())?;
                 arg_idx += 1;
@@ -468,7 +472,9 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
         let conv = format[idx];
         idx += 1;
         if arg_idx >= positional_args.len() {
-            return Err(RuntimeError::type_error("not enough arguments for format string"));
+            return Err(RuntimeError::type_error(
+                "not enough arguments for format string",
+            ));
         }
         let value = positional_args[arg_idx].clone();
         arg_idx += 1;
@@ -575,7 +581,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                 return Err(RuntimeError::new("format requires a mapping"));
             }
             if arg_idx >= positional_args.len() {
-                return Err(RuntimeError::type_error("not enough arguments for format string"));
+                return Err(RuntimeError::type_error(
+                    "not enough arguments for format string",
+                ));
             }
             let width_value = value_to_int(positional_args[arg_idx].clone())?;
             arg_idx += 1;
@@ -610,7 +618,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                     return Err(RuntimeError::new("format requires a mapping"));
                 }
                 if arg_idx >= positional_args.len() {
-                    return Err(RuntimeError::type_error("not enough arguments for format string"));
+                    return Err(RuntimeError::type_error(
+                        "not enough arguments for format string",
+                    ));
                 }
                 let precision_value = value_to_int(positional_args[arg_idx].clone())?;
                 arg_idx += 1;
@@ -658,7 +668,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                 .ok_or_else(|| RuntimeError::new("format key not found"))?
         } else {
             if arg_idx >= positional_args.len() {
-                return Err(RuntimeError::type_error("not enough arguments for format string"));
+                return Err(RuntimeError::type_error(
+                    "not enough arguments for format string",
+                ));
             }
             let value = positional_args[arg_idx].clone();
             arg_idx += 1;
@@ -757,8 +769,8 @@ fn format_percent_value(
             })
         }
         'd' | 'i' | 'u' => {
-            let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
+            let integer = int_like_to_bigint(&value)
+                .ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             let mut text = integer.to_string();
             if !text.starts_with('-') {
                 if force_sign {
@@ -798,23 +810,23 @@ fn format_percent_value(
             Ok(text)
         }
         'x' => {
-            let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
+            let integer = int_like_to_bigint(&value)
+                .ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             integer
                 .to_str_radix(16)
                 .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))
         }
         'X' => {
-            let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
+            let integer = int_like_to_bigint(&value)
+                .ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             let value = integer
                 .to_str_radix(16)
                 .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))?;
             Ok(value.to_ascii_uppercase())
         }
         'o' => {
-            let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
+            let integer = int_like_to_bigint(&value)
+                .ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             integer
                 .to_str_radix(8)
                 .ok_or_else(|| RuntimeError::new("unsupported operand type for octal formatting"))
@@ -1292,13 +1304,19 @@ pub(super) fn compare_order(left: Value, right: Value) -> Result<Ordering, Runti
         (Value::Str(a), Value::Str(b)) => Ok(a.cmp(&b)),
         (Value::Tuple(left), Value::Tuple(right)) => match (&*left.kind(), &*right.kind()) {
             (Object::Tuple(left), Object::Tuple(right)) => compare_sequence_order(left, right),
-            _ => Err(RuntimeError::type_error("unsupported operand type for comparison")),
+            _ => Err(RuntimeError::type_error(
+                "unsupported operand type for comparison",
+            )),
         },
         (Value::List(left), Value::List(right)) => match (&*left.kind(), &*right.kind()) {
             (Object::List(left), Object::List(right)) => compare_sequence_order(left, right),
-            _ => Err(RuntimeError::type_error("unsupported operand type for comparison")),
+            _ => Err(RuntimeError::type_error(
+                "unsupported operand type for comparison",
+            )),
         },
-        _ => Err(RuntimeError::type_error("unsupported operand type for comparison")),
+        _ => Err(RuntimeError::type_error(
+            "unsupported operand type for comparison",
+        )),
     }
 }
 

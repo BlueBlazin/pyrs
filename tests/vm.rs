@@ -1016,8 +1016,7 @@ fn exposes_sys_jit_probe_flags() {
 
 #[test]
 fn imports_sysconfigdata_module_for_platform() {
-    let source =
-        "import sysconfig\nname = sysconfig._get_sysconfigdata_name()\nm = __import__(name)\nok = hasattr(m, 'build_time_vars')\n";
+    let source = "import sysconfig\nname = sysconfig._get_sysconfigdata_name()\nm = __import__(name)\nok = hasattr(m, 'build_time_vars')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
@@ -9703,8 +9702,7 @@ fn exposes_sys_getframe_locals() {
 
 #[test]
 fn executes_class_register_fallback() {
-    let source =
-        "import abc\nclass C(metaclass=abc.ABCMeta):\n    pass\nresult = C.register(int)\nok = result == int\n";
+    let source = "import abc\nclass C(metaclass=abc.ABCMeta):\n    pass\nresult = C.register(int)\nok = result == int\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

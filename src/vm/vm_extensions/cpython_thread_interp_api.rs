@@ -5,20 +5,19 @@ use crate::runtime::{ModuleObject, Value};
 
 use super::{
     _Py_EllipsisObject, _Py_FalseStruct, _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct,
-    CPY_FRAME_MODULE_NAME,
-    CPYTHON_CONSTANT_EMPTY_BYTES_PTR, CPYTHON_CONSTANT_EMPTY_STR_PTR,
+    CPY_FRAME_MODULE_NAME, CPYTHON_CONSTANT_EMPTY_BYTES_PTR, CPYTHON_CONSTANT_EMPTY_STR_PTR,
     CPYTHON_CONSTANT_EMPTY_TUPLE_PTR, CPYTHON_CONSTANT_ONE_PTR, CPYTHON_CONSTANT_ZERO_PTR,
     CPYTHON_IS_INITIALIZED, CPYTHON_THREAD_STATE_COMPAT_SIZE, CURRENT_THREAD_STATE_PTR,
     CpythonFrameCompatObject, CpythonModuleDef, CpythonObjectHead, CpythonThreadStateCompat,
-    CpythonVarObjectHead, Object, Py_IncRef, PyFrame_Type,
-    PyBytes_FromStringAndSize, PyErr_BadInternalCall, PyExc_SystemError, PyLong_FromLong,
-    PyTuple_New, PyUnicode_FromStringAndSize, calloc, cpython_bind_module_def,
-    cpython_current_thread_state_ptr, cpython_get_or_init_constant_ptr,
-    cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
-    cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
-    cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr, cpython_set_error,
-    cpython_set_typed_error, cpython_thread_state_allocations, free, malloc,
-    vm_current_thread_ident, with_active_cpython_context_mut,
+    CpythonVarObjectHead, Object, Py_IncRef, PyBytes_FromStringAndSize, PyErr_BadInternalCall,
+    PyExc_SystemError, PyFrame_Type, PyLong_FromLong, PyTuple_New, PyUnicode_FromStringAndSize,
+    calloc, cpython_bind_module_def, cpython_current_thread_state_ptr,
+    cpython_get_or_init_constant_ptr, cpython_init_thread_state_compat,
+    cpython_interpreter_state_allocations, cpython_is_known_interpreter_state_ptr,
+    cpython_is_known_thread_state_ptr, cpython_main_interpreter_state_ptr,
+    cpython_main_thread_state_ptr, cpython_set_error, cpython_set_typed_error,
+    cpython_thread_state_allocations, free, malloc, vm_current_thread_ident,
+    with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -256,7 +255,9 @@ pub unsafe extern "C" fn PyFrame_New(
         context.cpython_allocations.push(raw.cast());
         context.cpython_owned_ptrs.insert(frame_ptr as usize);
         context.cpython_ptr_by_handle.insert(handle, frame_ptr);
-        context.cpython_objects_by_ptr.insert(frame_ptr as usize, handle);
+        context
+            .cpython_objects_by_ptr
+            .insert(frame_ptr as usize, handle);
         frame_ptr
     })
     .unwrap_or_else(|err| {
@@ -287,7 +288,8 @@ pub unsafe extern "C" fn PyFrame_GetCode(frame: *mut c_void) -> *mut c_void {
         if context.owns_cpython_allocation_ptr(frame) {
             // SAFETY: direct header/type inspection for owned compatibility allocations.
             let is_frame = unsafe {
-                (*frame.cast::<CpythonObjectHead>()).ob_type == std::ptr::addr_of_mut!(PyFrame_Type).cast()
+                (*frame.cast::<CpythonObjectHead>()).ob_type
+                    == std::ptr::addr_of_mut!(PyFrame_Type).cast()
             };
             if is_frame {
                 // SAFETY: frame pointer is validated as owned frame-compatible allocation.
@@ -340,7 +342,8 @@ pub unsafe extern "C" fn PyFrame_GetBack(frame: *mut c_void) -> *mut c_void {
         if context.owns_cpython_allocation_ptr(frame) {
             // SAFETY: direct header/type inspection for owned compatibility allocations.
             let is_frame = unsafe {
-                (*frame.cast::<CpythonObjectHead>()).ob_type == std::ptr::addr_of_mut!(PyFrame_Type).cast()
+                (*frame.cast::<CpythonObjectHead>()).ob_type
+                    == std::ptr::addr_of_mut!(PyFrame_Type).cast()
             };
             if is_frame {
                 // SAFETY: frame pointer is validated as owned frame-compatible allocation.

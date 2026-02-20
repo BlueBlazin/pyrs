@@ -113,7 +113,8 @@ fn cpython_iter_next_for_capi(vm: &mut Vm, iter: &Value) -> Result<Option<Value>
                 if trace_iter_next {
                     eprintln!(
                         "[cpy-iternext] propagated error {}",
-                        vm.runtime_error_from_active_exception("iteration failed").message
+                        vm.runtime_error_from_active_exception("iteration failed")
+                            .message
                     );
                 }
                 Err(vm.runtime_error_from_active_exception("iteration failed"))

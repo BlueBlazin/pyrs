@@ -220,10 +220,14 @@ impl Vm {
                         Value::None => Ok(None),
                         Value::Tuple(tuple_obj) => {
                             let Object::Tuple(items) = &*tuple_obj.kind() else {
-                                return Err(RuntimeError::type_error("re match receiver is invalid"));
+                                return Err(RuntimeError::type_error(
+                                    "re match receiver is invalid",
+                                ));
                             };
                             if items.len() != 2 {
-                                return Err(RuntimeError::type_error("re match receiver is invalid"));
+                                return Err(RuntimeError::type_error(
+                                    "re match receiver is invalid",
+                                ));
                             }
                             let start = value_to_int(items[0].clone())?;
                             let end = value_to_int(items[1].clone())?;
@@ -1360,8 +1364,8 @@ fn parse_sre_char_arg(
             "{fn_name}() expects one integer argument"
         )));
     }
-    let value =
-        value_to_int(args[0].clone()).map_err(|_| RuntimeError::type_error("an integer is required"))?;
+    let value = value_to_int(args[0].clone())
+        .map_err(|_| RuntimeError::type_error("an integer is required"))?;
     if !(0..=0x10ffff).contains(&value) {
         return Err(RuntimeError::new("character code out of range"));
     }

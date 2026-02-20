@@ -63,6 +63,20 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- VM error-model closure checkpoint (2026-02-20, latest):
+  - removed VM-control-flow string classification in `src/vm/mod.rs`:
+    - `runtime_error_matches_exception(...)` is typed/subclass-only,
+    - `runtime_error_to_exception_object(...)` no longer re-classifies freeform text.
+  - compatibility classification is now centralized at error-construction time in `RuntimeError::new(...)` (`src/runtime/mod.rs`), including:
+    - traceback/prefix exception extraction,
+    - legacy message-to-type inference for compatibility,
+    - import (`msg`/`name`/`path`) and OS (`errno`/`strerror`) default attrs.
+  - sqlite `kind: message` payloads now become typed exceptions again through constructor-time extraction without VM-level string matching.
+  - `_io` module now publishes private CPython alias classes (`_IOBase`, `_RawIOBase`, `_BufferedIOBase`, `_TextIOBase`) during IO hierarchy wiring.
+  - coverage checkpoints in this slice:
+    - `cargo test -q --test vm typed` passes,
+    - key regressions revalidated (`builtin_function_names_are_stable_and_pickle_roundtrips_functions`, `from_import_missing_name_raises_importerror`, `sqlite3_connection_call_on_closed_db_raises_programming_error`),
+    - full `--test vm` fail count reduced to `54` in this tree vs baseline `120` on detached `HEAD` snapshot (used as regression baseline during refactor).
 - VM error-model refactor checkpoint (2026-02-20):
   - `RuntimeError` now carries optional typed exception payload (`exception: Option<Box<ExceptionObject>>`).
   - `RuntimeError::new(...)` now auto-extracts exception type/message from prefixed and traceback-tail messages.

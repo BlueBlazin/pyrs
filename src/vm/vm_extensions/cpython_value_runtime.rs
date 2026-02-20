@@ -3,13 +3,13 @@ use std::ffi::c_void;
 use crate::runtime::{BuiltinFunction, IteratorKind, Object, Value};
 
 use super::{
-    ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArrayIter_Type, PyByteArray_Type,
-    PyBytesIter_Type, PyBytes_Type, PyCallIter_Type, PyComplex_Type, PyDictIterKey_Type,
-    PyDict_Type, PyDictProxy_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type, PyGen_Type,
-    PyListIter_Type, PyList_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type, PyMethod_Type,
-    PyModule_Type, PyNone_Type, PyRangeIter_Type, PyRange_Type, PySeqIter_Type, PySetIter_Type,
-    PySet_Type, PySlice_Type, PySuper_Type, PyTupleIter_Type, PyTuple_Type, PyType_Type,
-    PyUnicodeIter_Type, PyUnicode_Type,
+    ObjRef, PyBaseObject_Type, PyBool_Type, PyByteArray_Type, PyByteArrayIter_Type, PyBytes_Type,
+    PyBytesIter_Type, PyCallIter_Type, PyComplex_Type, PyDict_Type, PyDictIterKey_Type,
+    PyDictProxy_Type, PyFloat_Type, PyFrozenSet_Type, PyFunction_Type, PyGen_Type, PyList_Type,
+    PyListIter_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type,
+    PyNone_Type, PyRange_Type, PyRangeIter_Type, PySeqIter_Type, PySet_Type, PySetIter_Type,
+    PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type,
+    PyUnicodeIter_Type,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {

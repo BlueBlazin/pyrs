@@ -3400,7 +3400,9 @@ impl BuiltinFunction {
                                     memoryview_bounds(view.start, view.length, values.len());
                                 Ok(Value::Int((end.saturating_sub(start) / itemsize) as i64))
                             })
-                            .unwrap_or_else(|| Err(RuntimeError::type_error("len() unsupported type")))
+                            .unwrap_or_else(|| {
+                                Err(RuntimeError::type_error("len() unsupported type"))
+                            })
                         }
                         _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
@@ -3637,8 +3639,9 @@ impl BuiltinFunction {
                             ));
                         }
                         let truncated = value.trunc();
-                        let bigint = BigInt::from_f64_integral(truncated)
-                            .ok_or_else(|| RuntimeError::value_error("invalid literal for int()"))?;
+                        let bigint = BigInt::from_f64_integral(truncated).ok_or_else(|| {
+                            RuntimeError::value_error("invalid literal for int()")
+                        })?;
                         Ok(match bigint.to_i64() {
                             Some(value) => Value::Int(value),
                             None => Value::BigInt(Box::new(bigint)),
@@ -3647,8 +3650,9 @@ impl BuiltinFunction {
                     Value::Str(value) => parse_with_base(value, explicit_base),
                     Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                         Object::Bytes(bytes) | Object::ByteArray(bytes) => {
-                            let text = std::str::from_utf8(bytes)
-                                .map_err(|_| RuntimeError::value_error("invalid literal for int()"))?;
+                            let text = std::str::from_utf8(bytes).map_err(|_| {
+                                RuntimeError::value_error("invalid literal for int()")
+                            })?;
                             parse_with_base(text, explicit_base)
                         }
                         _ => Err(RuntimeError::type_error("int() unsupported type")),
@@ -3697,24 +3701,24 @@ impl BuiltinFunction {
                     }
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) => {
-                            let text = std::str::from_utf8(values)
-                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
-                            let parsed = text
-                                .trim()
-                                .parse::<f64>()
-                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
+                            let text = std::str::from_utf8(values).map_err(|_| {
+                                RuntimeError::value_error("float() invalid literal")
+                            })?;
+                            let parsed = text.trim().parse::<f64>().map_err(|_| {
+                                RuntimeError::value_error("float() invalid literal")
+                            })?;
                             Ok(Value::Float(parsed))
                         }
                         _ => Err(RuntimeError::type_error("float() unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) => {
-                            let text = std::str::from_utf8(values)
-                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
-                            let parsed = text
-                                .trim()
-                                .parse::<f64>()
-                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
+                            let text = std::str::from_utf8(values).map_err(|_| {
+                                RuntimeError::value_error("float() invalid literal")
+                            })?;
+                            let parsed = text.trim().parse::<f64>().map_err(|_| {
+                                RuntimeError::value_error("float() invalid literal")
+                            })?;
                             Ok(Value::Float(parsed))
                         }
                         _ => Err(RuntimeError::type_error("float() unsupported type")),
@@ -3727,7 +3731,9 @@ impl BuiltinFunction {
                     return Ok(Value::Str(String::new()));
                 }
                 if args.len() != 1 {
-                    return Err(RuntimeError::type_error("str() expects at most one argument"));
+                    return Err(RuntimeError::type_error(
+                        "str() expects at most one argument",
+                    ));
                 }
                 Ok(Value::Str(format_value(&args[0])))
             }
@@ -3738,9 +3744,9 @@ impl BuiltinFunction {
                 match &args[0] {
                     Value::Str(value) => {
                         let mut chars = value.chars();
-                        let ch = chars
-                            .next()
-                            .ok_or_else(|| RuntimeError::type_error("ord() expected a character"))?;
+                        let ch = chars.next().ok_or_else(|| {
+                            RuntimeError::type_error("ord() expected a character")
+                        })?;
                         if chars.next().is_some() {
                             return Err(RuntimeError::type_error("ord() expected a character"));
                         }
@@ -3750,17 +3756,23 @@ impl BuiltinFunction {
                         Object::Bytes(values) if values.len() == 1 => {
                             Ok(Value::Int(values[0] as i64))
                         }
-                        Object::Bytes(_) => Err(RuntimeError::type_error("ord() expected a character")),
+                        Object::Bytes(_) => {
+                            Err(RuntimeError::type_error("ord() expected a character"))
+                        }
                         _ => Err(RuntimeError::type_error("ord() unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) if values.len() == 1 => {
                             Ok(Value::Int(values[0] as i64))
                         }
-                        Object::ByteArray(_) => Err(RuntimeError::type_error("ord() expected a character")),
+                        Object::ByteArray(_) => {
+                            Err(RuntimeError::type_error("ord() expected a character"))
+                        }
                         _ => Err(RuntimeError::type_error("ord() unsupported type")),
                     },
-                    _ => Err(RuntimeError::type_error("ord() expected string of length 1")),
+                    _ => Err(RuntimeError::type_error(
+                        "ord() expected string of length 1",
+                    )),
                 }
             }
             BuiltinFunction::Chr => {
@@ -3939,7 +3951,9 @@ impl BuiltinFunction {
                                         .collect(),
                                 ))
                             })
-                            .unwrap_or_else(|| Err(RuntimeError::type_error("list() unsupported type")))
+                            .unwrap_or_else(|| {
+                                Err(RuntimeError::type_error("list() unsupported type"))
+                            })
                         }
                         _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
@@ -3972,9 +3986,17 @@ impl BuiltinFunction {
                         Value::Class(_) | Value::Builtin(BuiltinFunction::Tuple) => {
                             Some(args[1].clone())
                         }
-                        _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
+                        _ => {
+                            return Err(RuntimeError::type_error(
+                                "tuple() expects at most one argument",
+                            ));
+                        }
                     },
-                    _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "tuple() expects at most one argument",
+                        ));
+                    }
                 };
                 if source.is_none() {
                     return Ok(heap.alloc_tuple(Vec::new()));
@@ -4022,7 +4044,9 @@ impl BuiltinFunction {
                                         .collect(),
                                 ))
                             })
-                            .unwrap_or_else(|| Err(RuntimeError::type_error("tuple() unsupported type")))
+                            .unwrap_or_else(|| {
+                                Err(RuntimeError::type_error("tuple() unsupported type"))
+                            })
                         }
                         _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
@@ -4031,7 +4055,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::Dict | BuiltinFunction::CollectionsOrderedDict => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::type_error("dict() expects at most one argument"));
+                    return Err(RuntimeError::type_error(
+                        "dict() expects at most one argument",
+                    ));
                 }
                 if args.is_empty() {
                     return Ok(heap.alloc_dict(Vec::new()));
@@ -4099,7 +4125,9 @@ impl BuiltinFunction {
             }
             BuiltinFunction::Set => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::type_error("set() expects at most one argument"));
+                    return Err(RuntimeError::type_error(
+                        "set() expects at most one argument",
+                    ));
                 }
                 let values = if let Some(source) = args.into_iter().next() {
                     iterable_values(source)?
@@ -4155,14 +4183,16 @@ impl BuiltinFunction {
             }
             BuiltinFunction::MemoryView => {
                 if args.len() != 1 {
-                    return Err(RuntimeError::new("memoryview() expects one argument"));
+                    return Err(RuntimeError::type_error(
+                        "memoryview() expects one argument",
+                    ));
                 }
                 let source = match &args[0] {
                     Value::Bytes(obj) | Value::ByteArray(obj) => obj.clone(),
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => view.source.clone(),
                         _ => {
-                            return Err(RuntimeError::new(
+                            return Err(RuntimeError::type_error(
                                 "memoryview() expects bytes-like object",
                             ));
                         }
@@ -4180,8 +4210,8 @@ impl BuiltinFunction {
                                     Some(Value::Bool(true))
                                 )
                             {
-                                return Err(RuntimeError::new(
-                                    "ValueError: operation forbidden on released PickleBuffer object",
+                                return Err(RuntimeError::value_error(
+                                    "operation forbidden on released PickleBuffer object",
                                 ));
                             }
                             if is_picklebuffer {
@@ -4199,19 +4229,19 @@ impl BuiltinFunction {
                                                 view_data.source.clone()
                                             }
                                             _ => {
-                                                return Err(RuntimeError::new(
+                                                return Err(RuntimeError::type_error(
                                                     "memoryview() expects bytes-like object",
                                                 ));
                                             }
                                         },
                                         _ => {
-                                            return Err(RuntimeError::new(
+                                            return Err(RuntimeError::type_error(
                                                 "memoryview() expects bytes-like object",
                                             ));
                                         }
                                     }
                                 } else {
-                                    return Err(RuntimeError::new(
+                                    return Err(RuntimeError::type_error(
                                         "memoryview() expects bytes-like object",
                                     ));
                                 }
@@ -4221,7 +4251,7 @@ impl BuiltinFunction {
                                         obj.clone()
                                     }
                                     _ => {
-                                        return Err(RuntimeError::new(
+                                        return Err(RuntimeError::type_error(
                                             "memoryview() expects bytes-like object",
                                         ));
                                     }
@@ -4229,7 +4259,7 @@ impl BuiltinFunction {
                             }
                         }
                         _ => {
-                            return Err(RuntimeError::new(
+                            return Err(RuntimeError::type_error(
                                 "memoryview() expects bytes-like object",
                             ));
                         }
@@ -4239,12 +4269,16 @@ impl BuiltinFunction {
                             obj.clone()
                         }
                         _ => {
-                            return Err(RuntimeError::new(
+                            return Err(RuntimeError::type_error(
                                 "memoryview() expects bytes-like object",
                             ));
                         }
                     },
-                    _ => return Err(RuntimeError::type_error("memoryview() expects bytes-like object")),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "memoryview() expects bytes-like object",
+                        ));
+                    }
                 };
                 Ok(heap.alloc_memoryview(source))
             }
@@ -4272,7 +4306,11 @@ impl BuiltinFunction {
                 }
                 let name = match &args[0] {
                     Value::Str(name) => name.clone(),
-                    _ => return Err(RuntimeError::type_error("type() first argument must be string")),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "type() first argument must be string",
+                        ));
+                    }
                 };
                 let bases = match &args[1] {
                     Value::Tuple(obj) => match &*obj.kind() {
@@ -4293,7 +4331,9 @@ impl BuiltinFunction {
                                 _ => Err(RuntimeError::new("type() bases must be classes")),
                             })
                             .collect::<Result<Vec<_>, _>>()?,
-                        _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
+                        _ => {
+                            return Err(RuntimeError::type_error("type() bases must be tuple/list"));
+                        }
                     },
                     _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
                 };
@@ -4993,17 +5033,31 @@ impl BuiltinFunction {
                     }
                     _ => None,
                 }
-                .ok_or_else(|| RuntimeError::type_error("namedtuple._make() requires namedtuple class"))?;
+                .ok_or_else(|| {
+                    RuntimeError::type_error("namedtuple._make() requires namedtuple class")
+                })?;
                 let values = match &args[1] {
                     Value::List(obj) => match &*obj.kind() {
                         Object::List(values) => values.clone(),
-                        _ => return Err(RuntimeError::type_error("namedtuple._make() expects iterable")),
+                        _ => {
+                            return Err(RuntimeError::type_error(
+                                "namedtuple._make() expects iterable",
+                            ));
+                        }
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => values.clone(),
-                        _ => return Err(RuntimeError::type_error("namedtuple._make() expects iterable")),
+                        _ => {
+                            return Err(RuntimeError::type_error(
+                                "namedtuple._make() expects iterable",
+                            ));
+                        }
                     },
-                    _ => return Err(RuntimeError::type_error("namedtuple._make() expects iterable")),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "namedtuple._make() expects iterable",
+                        ));
+                    }
                 };
                 if values.len() != fields.len() {
                     return Err(RuntimeError::new(format!(
@@ -6431,8 +6485,12 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     iterator.index = iterator.index.saturating_add(out.len());
                     Ok(out)
                 }
-                IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::type_error("expected iterable")),
-                IteratorKind::CpythonSequence { .. } => Err(RuntimeError::type_error("expected iterable")),
+                IteratorKind::SequenceGetItem { .. } => {
+                    Err(RuntimeError::type_error("expected iterable"))
+                }
+                IteratorKind::CpythonSequence { .. } => {
+                    Err(RuntimeError::type_error("expected iterable"))
+                }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
                 | IteratorKind::Cycle { .. } => Err(RuntimeError::type_error("expected iterable")),
@@ -7735,7 +7793,9 @@ impl RuntimeError {
     }
 
     pub fn exception_name(&self) -> Option<&str> {
-        self.exception.as_ref().map(|exception| exception.name.as_str())
+        self.exception
+            .as_ref()
+            .map(|exception| exception.name.as_str())
     }
 
     pub fn type_error(message: impl Into<String>) -> Self {
@@ -7823,55 +7883,613 @@ impl RuntimeError {
 }
 
 fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject> {
-    const TRACEBACK_PREFIX: &str = "Traceback (most recent call last):";
-    let candidate_line = if message.starts_with(TRACEBACK_PREFIX) {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let extracted_exception = extract_runtime_error_exception_name(trimmed);
+    let exception_type =
+        extracted_exception.unwrap_or_else(|| classify_runtime_error_message(trimmed).to_string());
+    if exception_type == "RuntimeError"
+        && extract_runtime_error_final_message(trimmed, "RuntimeError").is_none()
+        && extract_prefixed_exception_message(trimmed, "RuntimeError").is_none()
+    {
+        return None;
+    }
+
+    let exception_message = extract_runtime_error_final_message(trimmed, &exception_type)
+        .or_else(|| extract_prefixed_exception_message(trimmed, &exception_type))
+        .unwrap_or_else(|| {
+            if trimmed == exception_type {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        });
+
+    let exception = ExceptionObject::new(exception_type.clone(), exception_message.clone());
+    if is_import_error_family(exception_type.as_str()) {
+        let mut attrs = exception.attrs.borrow_mut();
+        let msg = exception_message.unwrap_or_else(|| trimmed.to_string());
+        attrs.insert("msg".to_string(), Value::Str(msg));
+        let module_name = extract_import_error_name(trimmed)
+            .map(Value::Str)
+            .unwrap_or(Value::None);
+        attrs.insert("name".to_string(), module_name);
+        attrs.insert("path".to_string(), Value::None);
+    }
+    if is_os_error_family(exception_type.as_str()) {
+        let mut attrs = exception.attrs.borrow_mut();
+        if let Some(errno) =
+            extract_os_error_errno(trimmed).or_else(|| infer_os_error_errno(trimmed))
+        {
+            attrs.insert("errno".to_string(), Value::Int(errno));
+        }
+        if let Some(strerror) = extract_os_error_strerror(trimmed) {
+            attrs.insert("strerror".to_string(), Value::Str(strerror));
+        }
+    }
+    Some(exception)
+}
+
+#[inline]
+fn runtime_error_line_matches_exception(line: &str, exception: &str) -> bool {
+    if line == exception {
+        return true;
+    }
+    match line.strip_prefix(exception) {
+        Some(rest) => rest.starts_with(':'),
+        None => false,
+    }
+}
+
+fn extract_runtime_error_exception_name(message: &str) -> Option<String> {
+    let candidate_line = if message.starts_with("Traceback (most recent call last):") {
         message
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
-            .map(str::trim)?
+            .map(str::trim)
+            .unwrap_or("")
     } else {
-        let trimmed = message.trim();
-        let mut chars = trimmed.chars();
-        let first = chars.next()?;
-        if !(first.is_ascii_uppercase() || first == '_') {
-            return None;
-        }
-        // Fast-path reject for non-exception freeform messages.
-        if !trimmed.contains(':')
-            && !trimmed
-                .chars()
-                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-        {
-            return None;
-        }
-        trimmed
+        message.trim()
     };
-    let (name, details) = if let Some((name, details)) = candidate_line.split_once(':') {
-        (name.trim(), Some(details.trim_start()))
-    } else {
-        (candidate_line, None)
-    };
-    if !is_runtime_error_exception_name(name) {
+    let candidate = candidate_line
+        .split_once(':')
+        .map(|(name, _)| name.trim())
+        .unwrap_or(candidate_line);
+    let mut chars = candidate.chars();
+    let first = chars.next()?;
+    if !(first.is_ascii_uppercase() || first == '_') {
         return None;
     }
-    let message = details
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_string);
-    Some(ExceptionObject::new(name.to_string(), message))
+    if !candidate
+        .chars()
+        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    Some(candidate.to_string())
 }
 
-fn is_runtime_error_exception_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first.is_ascii_uppercase() || first == '_') {
-        return false;
+fn extract_runtime_error_final_message(message: &str, exception: &str) -> Option<Option<String>> {
+    if !message.starts_with("Traceback (most recent call last):") {
+        return None;
     }
-    name.chars()
-        .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    let line = message
+        .lines()
+        .rev()
+        .find(|entry| !entry.trim().is_empty())
+        .map(str::trim)?;
+    if !runtime_error_line_matches_exception(line, exception) {
+        return None;
+    }
+    let message = line
+        .split_once(':')
+        .map(|(_, rest)| rest.trim_start().to_string())
+        .filter(|rest| !rest.is_empty());
+    Some(message)
+}
+
+fn extract_prefixed_exception_message(message: &str, exception: &str) -> Option<Option<String>> {
+    let line = message.trim();
+    if !runtime_error_line_matches_exception(line, exception) {
+        return None;
+    }
+    let message = line
+        .split_once(':')
+        .map(|(_, rest)| rest.trim_start().to_string())
+        .filter(|rest| !rest.is_empty());
+    Some(message)
+}
+
+#[inline]
+fn is_os_error_family(name: &str) -> bool {
+    matches!(
+        name,
+        "OSError"
+            | "BlockingIOError"
+            | "ChildProcessError"
+            | "ConnectionError"
+            | "BrokenPipeError"
+            | "ConnectionAbortedError"
+            | "ConnectionRefusedError"
+            | "ConnectionResetError"
+            | "FileNotFoundError"
+            | "FileExistsError"
+            | "InterruptedError"
+            | "ProcessLookupError"
+            | "TimeoutError"
+            | "PermissionError"
+            | "NotADirectoryError"
+            | "IsADirectoryError"
+    )
+}
+
+#[inline]
+fn is_import_error_family(name: &str) -> bool {
+    matches!(name, "ImportError" | "ModuleNotFoundError")
+}
+
+fn extract_os_error_errno(message: &str) -> Option<i64> {
+    let marker = "os error ";
+    if let Some(idx) = message.rfind(marker) {
+        let tail = &message[idx + marker.len()..];
+        let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return digits.parse::<i64>().ok();
+        }
+    }
+    let marker = "[Errno ";
+    if let Some(idx) = message.find(marker) {
+        let tail = &message[idx + marker.len()..];
+        let digits: String = tail.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+        if !digits.is_empty() {
+            return digits.parse::<i64>().ok();
+        }
+    }
+    None
+}
+
+fn infer_os_error_errno(message: &str) -> Option<i64> {
+    let normalized = message.to_ascii_lowercase();
+    if normalized.contains("bad file descriptor") {
+        return Some(9);
+    }
+    if normalized.contains("no such file or directory") {
+        return Some(2);
+    }
+    if normalized.contains("permission denied") {
+        return Some(13);
+    }
+    if normalized.contains("file exists") {
+        return Some(17);
+    }
+    if normalized.contains("not a directory") {
+        return Some(20);
+    }
+    if normalized.contains("is a directory") {
+        return Some(21);
+    }
+    if normalized.contains("invalid argument") {
+        return Some(22);
+    }
+    None
+}
+
+fn extract_os_error_strerror(message: &str) -> Option<String> {
+    let mut line = message
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or(message)
+        .trim()
+        .to_string();
+    if let Some((_, tail)) = line.split_once(": ") {
+        line = tail.to_string();
+    }
+    if let Some(rest) = line.strip_prefix("[Errno ")
+        && let Some((_, tail)) = rest.split_once("] ")
+    {
+        line = tail.to_string();
+    }
+    if let Some(idx) = line.rfind(" (os error ")
+        && line[idx..].ends_with(')')
+    {
+        line = line[..idx].to_string();
+    }
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    Some(line.to_string())
+}
+
+fn extract_import_error_name(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    if let Some(start) = trimmed.find("No module named '") {
+        let rest = &trimmed[start + "No module named '".len()..];
+        if let Some(end) = rest.find('\'') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    if let Some(start) = trimmed.find("module '") {
+        let rest = &trimmed[start + "module '".len()..];
+        if let Some(end) = rest.find('\'') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    if let Some(start) = trimmed.find("cannot import name '") {
+        let rest = &trimmed[start + "cannot import name '".len()..];
+        if let Some(end) = rest.find('\'') {
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
+}
+
+#[inline]
+fn should_refine_os_error(message: &str) -> bool {
+    message.contains("open failed:")
+        || message.contains("open() failed:")
+        || message.contains("mkdir failed:")
+        || message.contains("ftruncate failed:")
+        || message.contains("chmod failed:")
+        || message.contains("access failed:")
+        || message.contains("remove failed:")
+        || message.contains("rmdir failed:")
+        || message.contains("stat failed:")
+        || message.contains("lstat failed:")
+        || message.contains("scandir failed:")
+}
+
+fn classify_runtime_error_message(message: &str) -> &'static str {
+    const DIRECT_PREFIX_EXCEPTIONS: [&str; 24] = [
+        "TypeError",
+        "ValueError",
+        "RuntimeError",
+        "PythonFinalizationError",
+        "AttributeError",
+        "IndexError",
+        "KeyError",
+        "NameError",
+        "ImportError",
+        "ModuleNotFoundError",
+        "OSError",
+        "Error",
+        "AssertionError",
+        "ZeroDivisionError",
+        "StopIteration",
+        "StopAsyncIteration",
+        "SystemExit",
+        "KeyboardInterrupt",
+        "LookupError",
+        "CalledProcessError",
+        "PickleError",
+        "PicklingError",
+        "UnpicklingError",
+        "BufferError",
+    ];
+    let trimmed = message.trim();
+    if message.starts_with("Traceback (most recent call last):")
+        && let Some(last_non_empty_line) = message
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim)
+    {
+        for exception in DIRECT_PREFIX_EXCEPTIONS {
+            if runtime_error_line_matches_exception(last_non_empty_line, exception) {
+                if exception == "OSError" && should_refine_os_error(last_non_empty_line) {
+                    continue;
+                }
+                return exception;
+            }
+        }
+    }
+    for exception in DIRECT_PREFIX_EXCEPTIONS {
+        if runtime_error_line_matches_exception(message, exception) {
+            if exception == "OSError" && should_refine_os_error(message) {
+                continue;
+            }
+            return exception;
+        }
+    }
+
+    if runtime_error_line_matches_exception(trimmed, "StopIteration") {
+        return "StopIteration";
+    }
+    if runtime_error_line_matches_exception(trimmed, "StopAsyncIteration") {
+        return "StopAsyncIteration";
+    }
+    if runtime_error_line_matches_exception(trimmed, "CalledProcessError") {
+        return "CalledProcessError";
+    }
+    if message.contains("unknown dialect")
+        || message.contains("new-line character seen in unquoted field")
+        || message.contains("field larger than field limit")
+        || message.contains("need to escape")
+        || message.contains("unexpected end of data")
+        || message.contains("',' expected after '\"'")
+        || message.contains("single empty field record must be quoted")
+        || message.contains(
+            "empty field must be quoted if delimiter is space and skipinitialspace is true",
+        )
+        || message.starts_with("iterable expected, not ")
+        || message.contains("iterator should return strings, not ")
+    {
+        return "Error";
+    }
+    if message.contains("csv dialect attributes are read-only") {
+        return "AttributeError";
+    }
+    if message.contains("cannot be a newline")
+        || message.contains("cannot be the same")
+        || message.contains("cannot be a space when skipinitialspace is true")
+        || message.contains("lineterminator cannot contain delimiter, quotechar, or escapechar")
+        || message.contains("lineterminator must not be empty")
+        || message.contains("bad delimiter value")
+        || message.contains("bad quotechar value")
+        || message.contains("bad escapechar value")
+        || message.contains("bad delimiter or quotechar value")
+        || message.contains("bad delimiter or escapechar value")
+        || message.contains("bad escapechar or quotechar value")
+        || message.contains("bad delimiter or lineterminator value")
+        || message.contains("bad quotechar or lineterminator value")
+        || message.contains("bad escapechar or lineterminator value")
+        || message.contains("not enough values to unpack")
+        || message.contains("too many values to unpack")
+    {
+        return "ValueError";
+    }
+    if message.contains("must be a unicode character")
+        || message.contains("must be a string")
+        || message.contains("must be bool")
+        || message.contains("missing required argument")
+        || message.contains("required positional argument")
+        || message.contains("received unexpected arguments")
+        || message.contains("unexpected keyword argument")
+        || message.contains("expected iterable")
+        || message.contains("must have a write method")
+        || message.contains("name must be str")
+        || message.contains("quotechar must be set if quoting enabled")
+        || message.contains("bad \"quoting\" value")
+        || message.contains("argument count mismatch")
+        || message.contains("decoding str is not supported")
+        || message.contains("cannot pickle 'Dialect' instances")
+        || message.contains("write() argument must be str")
+        || message.contains("attempted to call non-function")
+        || message.contains("is not a type object")
+    {
+        return "TypeError";
+    }
+    if runtime_error_line_matches_exception(trimmed, "KeyboardInterrupt") {
+        return "KeyboardInterrupt";
+    }
+    if runtime_error_line_matches_exception(trimmed, "UnsupportedOperation") {
+        return "UnsupportedOperation";
+    }
+    if runtime_error_line_matches_exception(trimmed, "SystemExit") {
+        return "SystemExit";
+    }
+    if message.contains("index out of range")
+        || message.contains("pop index out of range")
+        || message.contains("pop from empty list")
+        || message.contains("out of bounds for axis")
+    {
+        return "IndexError";
+    }
+    if message.contains("key not found") || message.contains("pop from an empty set") {
+        return "KeyError";
+    }
+    if message.contains("division by zero") || message.contains("modulo by zero") {
+        return "ZeroDivisionError";
+    }
+    if message.contains("can't decode bytes")
+        || message.contains("codec can't decode byte")
+        || message.contains("codec can't decode bytes")
+    {
+        return "UnicodeDecodeError";
+    }
+    if message.contains("unknown encoding") {
+        return "LookupError";
+    }
+    if message.contains("Pickler.__init__() was not called by Pickler.__init__") {
+        return "PicklingError";
+    }
+    if message.contains("Unpickler.__init__() was not called by Unpickler.__init__") {
+        return "UnpicklingError";
+    }
+    if message.contains("can't encode character")
+        || message.contains("can't encode")
+        || message.contains("ordinal not in range")
+    {
+        return "UnicodeEncodeError";
+    }
+    if message.starts_with("name '") && message.ends_with("is not defined") {
+        return "NameError";
+    }
+    if message.contains("has no attribute") || message == "attribute access unsupported type" {
+        return "AttributeError";
+    }
+    if message.contains("__init__() should return None") {
+        return "TypeError";
+    }
+    if message.starts_with("module '") && message.ends_with("' not found") {
+        return "ModuleNotFoundError";
+    }
+    if message.starts_with("No module named '") {
+        return "ModuleNotFoundError";
+    }
+    if message.starts_with("cannot import name '") && message.contains("' from '") {
+        return "ImportError";
+    }
+    if message.contains("attempted relative import with no known parent package") {
+        return "ImportError";
+    }
+    if message.contains("metaclass conflict") {
+        return "TypeError";
+    }
+    if message.starts_with("cannot create '") && message.ends_with("' instances") {
+        return "TypeError";
+    }
+    if message.contains("object is not iterable")
+        || message.contains("argument is not iterable")
+        || message.contains("__iter__() returned non-iterator")
+    {
+        return "TypeError";
+    }
+    if message.contains("math domain error")
+        || message.contains("tolerances must be non-negative")
+        || message.contains("inputs are not the same length")
+        || message.contains("not in list")
+        || message.contains("not in tuple")
+        || message.contains("substring not found")
+        || message.contains("Cell is empty")
+        || message.contains("invalid literal for int")
+        || message.contains("int() invalid literal")
+        || message.contains("could not convert string to float")
+        || message.contains("complex() invalid literal")
+        || message.contains("list modified during sort")
+        || message.starts_with("invalid mode:")
+        || message.contains("must have exactly one of create/read/write/append mode")
+        || message.contains("can't have text and binary mode at once")
+        || message.contains("can't have unbuffered text I/O")
+        || message.contains("invalid buffering size")
+        || message.contains("binary mode doesn't take an encoding argument")
+        || message.contains("binary mode doesn't take an errors argument")
+        || message.contains("binary mode doesn't take a newline argument")
+        || message.contains("I/O operation on closed file")
+        || message.contains("Cannot use closefd=False with file name")
+        || message.starts_with("opener returned ")
+    {
+        return "ValueError";
+    }
+    if message.contains("open failed:") {
+        if message.contains("File exists") || message.contains("os error 17") {
+            return "FileExistsError";
+        }
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Is a directory") || message.contains("os error 21") {
+            return "IsADirectoryError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
+    if message.contains("open() failed:") {
+        if message.contains("File exists") || message.contains("os error 17") {
+            return "FileExistsError";
+        }
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Is a directory") || message.contains("os error 21") {
+            return "IsADirectoryError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
+    if message.contains("mkdir failed:") {
+        if message.contains("File exists") || message.contains("os error 17") {
+            return "FileExistsError";
+        }
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
+    if message.contains("access failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+    }
+    if message.contains("chmod failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
+    if message.contains("rmdir failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Permission denied") || message.contains("os error 13") {
+            return "PermissionError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+    }
+    if message.contains("remove failed:") {
+        if message.contains("No such file or directory") || message.contains("os error 2") {
+            return "FileNotFoundError";
+        }
+        if message.contains("Is a directory") || message.contains("os error 21") {
+            return "IsADirectoryError";
+        }
+        if message.contains("Not a directory") || message.contains("os error 20") {
+            return "NotADirectoryError";
+        }
+        if message.contains("Permission denied")
+            || message.contains("os error 13")
+            || message.contains("Operation not permitted")
+            || message.contains("os error 1")
+        {
+            return "PermissionError";
+        }
+    }
+    if message.contains("bad file descriptor")
+        || message.contains("open failed:")
+        || message.contains("open() failed:")
+        || message.contains("mkdir failed:")
+        || message.contains("chmod failed:")
+        || message.contains("access failed:")
+        || message.contains("remove failed:")
+        || message.contains("ftruncate failed:")
+        || message.contains("close failed:")
+        || message.contains("stat failed:")
+        || message.contains("lstat failed:")
+        || message.contains("rmdir failed:")
+        || message.contains("utime failed:")
+        || message.contains("scandir failed:")
+    {
+        return "OSError";
+    }
+    if message.contains("__len__() should return >= 0") {
+        return "ValueError";
+    }
+    if message.contains("__bool__ should return bool")
+        || message.contains("object cannot be interpreted as an integer")
+    {
+        return "TypeError";
+    }
+    if message.contains("unsupported operand type") || message.contains("expects") {
+        return "TypeError";
+    }
+    "RuntimeError"
 }
 
 #[cfg(test)]
@@ -7905,9 +8523,9 @@ mod tests {
     }
 
     #[test]
-    fn runtime_error_new_ignores_non_exception_prefixes() {
+    fn runtime_error_new_classifies_common_os_error_messages() {
         let error = RuntimeError::new("open failed: no such file");
-        assert_eq!(error.exception_name(), None);
+        assert_eq!(error.exception_name(), Some("OSError"));
     }
 
     #[test]

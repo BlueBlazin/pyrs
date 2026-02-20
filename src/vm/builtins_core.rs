@@ -358,7 +358,9 @@ impl Vm {
                                 return Ok(Value::Str(text));
                             }
                             InternalCallOutcome::Value(_) => {
-                                return Err(RuntimeError::type_error("__repr__ returned non-string"));
+                                return Err(RuntimeError::type_error(
+                                    "__repr__ returned non-string",
+                                ));
                             }
                             InternalCallOutcome::CallerExceptionHandled => {
                                 return Err(
@@ -1385,11 +1387,11 @@ impl Vm {
         }
         match BuiltinFunction::Len.call(&self.heap, vec![receiver.clone()]) {
             Ok(value) => Ok(value),
-            Err(err) if err.message == "len() unsupported type" => {
+            Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                 let Some(method) = self.lookup_bound_special_method(&receiver, "__len__")? else {
                     let type_name = self.value_type_name_for_error(&receiver);
-                    return Err(RuntimeError::new(format!(
-                        "TypeError: object of type '{type_name}' has no len()",
+                    return Err(RuntimeError::type_error(format!(
+                        "object of type '{type_name}' has no len()",
                     )));
                 };
                 let result = match self.call_internal(method, Vec::new(), HashMap::new())? {
@@ -1433,9 +1435,9 @@ impl Vm {
                 if number.is_negative() {
                     return Err(RuntimeError::value_error("__len__() should return >= 0"));
                 }
-                let as_i64 = number
-                    .to_i64()
-                    .ok_or_else(|| RuntimeError::overflow_error("len() result does not fit in an index"))?;
+                let as_i64 = number.to_i64().ok_or_else(|| {
+                    RuntimeError::overflow_error("len() result does not fit in an index")
+                })?;
                 Ok(Value::Int(as_i64))
             }
             other => Err(RuntimeError::type_error(format!(
@@ -1451,7 +1453,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::type_error("namedtuple._make() expects iterable"));
+            return Err(RuntimeError::type_error(
+                "namedtuple._make() expects iterable",
+            ));
         }
         let class = match &args[0] {
             Value::Class(class) => class.clone(),
@@ -1981,21 +1985,29 @@ impl Vm {
             Value::Bytes(obj) | Value::ByteArray(obj) => obj,
             Value::MemoryView(obj) => match &*obj.kind() {
                 Object::MemoryView(view_data) => view_data.source.clone(),
-                _ => return Err(RuntimeError::type_error("memoryview() expects bytes-like object")),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "memoryview() expects bytes-like object",
+                    ));
+                }
             },
             Value::Module(obj) => {
                 let is_array = matches!(&*obj.kind(), Object::Module(module_data) if module_data.name == "__array__");
                 if is_array {
                     obj
                 } else {
-                    return Err(RuntimeError::type_error("memoryview() expects bytes-like object"));
+                    return Err(RuntimeError::type_error(
+                        "memoryview() expects bytes-like object",
+                    ));
                 }
             }
             Value::Instance(obj) => {
                 {
                     let kind = obj.kind();
                     let Object::Instance(instance_data) = &*kind else {
-                        return Err(RuntimeError::type_error("memoryview() expects bytes-like object"));
+                        return Err(RuntimeError::type_error(
+                            "memoryview() expects bytes-like object",
+                        ));
                     };
                     let is_picklebuffer = matches!(
                         &*instance_data.class.kind(),
@@ -2072,7 +2084,7 @@ impl Vm {
                             if is_array {
                                 obj
                             } else {
-                                return Err(RuntimeError::new(
+                                return Err(RuntimeError::type_error(
                                     "memoryview() expects bytes-like object",
                                 ));
                             }
@@ -2092,11 +2104,13 @@ impl Vm {
                 ) {
                     obj
                 } else {
-                    return Err(RuntimeError::type_error("memoryview() expects bytes-like object"));
+                    return Err(RuntimeError::type_error(
+                        "memoryview() expects bytes-like object",
+                    ));
                 }
             }
             other => {
-                return Err(RuntimeError::new(format!(
+                return Err(RuntimeError::type_error(format!(
                     "memoryview() expects bytes-like object, not {}",
                     self.value_type_name_for_error(&other)
                 )));
@@ -2447,7 +2461,8 @@ impl Vm {
             _ => return Err(RuntimeError::type_error("range() expects 1-3 arguments")),
         }
 
-        let stop = stop.ok_or_else(|| RuntimeError::type_error("range expected at least 1 argument, got 0"))?;
+        let stop = stop
+            .ok_or_else(|| RuntimeError::type_error("range expected at least 1 argument, got 0"))?;
         let start = start.unwrap_or(Value::Int(0));
         let step = step.unwrap_or(Value::Int(1));
 
@@ -3340,7 +3355,11 @@ impl Vm {
             };
             let class_name = match &args[name_index] {
                 Value::Str(name) => name.clone(),
-                _ => return Err(RuntimeError::type_error("type() first argument must be string")),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "type() first argument must be string",
+                    ));
+                }
             };
             let base_values = match &args[name_index + 1] {
                 Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
@@ -3379,7 +3398,11 @@ impl Vm {
                 .filter(|value| !matches!(value, Value::None));
             let class_name = match &args[0] {
                 Value::Str(name) => name.clone(),
-                _ => return Err(RuntimeError::type_error("type() first argument must be string")),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "type() first argument must be string",
+                    ));
+                }
             };
             let base_values = match &args[1] {
                 Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
@@ -4542,7 +4565,9 @@ impl Vm {
                         name
                     );
                 }
-                return Err(RuntimeError::type_error("attribute assignment unsupported type"));
+                return Err(RuntimeError::type_error(
+                    "attribute assignment unsupported type",
+                ));
             }
         }
         Ok(Value::None)
@@ -4575,7 +4600,11 @@ impl Vm {
                 }
             }
             Value::Cell(cell) => self.delete_attr_cell(&cell, &name)?,
-            _ => return Err(RuntimeError::type_error("attribute deletion unsupported type")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "attribute deletion unsupported type",
+                ));
+            }
         }
         Ok(Value::None)
     }
@@ -4602,7 +4631,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::type_error("tuple() expects at most one argument"));
+            return Err(RuntimeError::type_error(
+                "tuple() expects at most one argument",
+            ));
         }
         let source = match args.len() {
             0 => None,
@@ -4623,11 +4654,19 @@ impl Vm {
                             )));
                         }
                     }
-                    _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "tuple() expects at most one argument",
+                        ));
+                    }
                 }
                 Some(args.remove(0))
             }
-            _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "tuple() expects at most one argument",
+                ));
+            }
         };
         let values = if let Some(source) = source {
             match source {
@@ -4764,7 +4803,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.len() > 2 {
-            return Err(RuntimeError::type_error("dict() expects at most one argument"));
+            return Err(RuntimeError::type_error(
+                "dict() expects at most one argument",
+            ));
         }
 
         if args.len() == 2 {
@@ -4783,7 +4824,11 @@ impl Vm {
                         )));
                     }
                 }
-                _ => return Err(RuntimeError::type_error("dict() expects at most one argument")),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "dict() expects at most one argument",
+                    ));
+                }
             }
         }
 
@@ -4955,7 +5000,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::type_error("set() expects at most one argument"));
+            return Err(RuntimeError::type_error(
+                "set() expects at most one argument",
+            ));
         }
         if args.len() == 2 {
             let cls = args.remove(0);
@@ -4973,7 +5020,11 @@ impl Vm {
                         )));
                     }
                 }
-                _ => return Err(RuntimeError::type_error("set() expects at most one argument")),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "set() expects at most one argument",
+                    ));
+                }
             }
         }
         let values = if args.is_empty() {
@@ -4993,7 +5044,9 @@ impl Vm {
                 _ => self.collect_iterable_values(args.remove(0))?,
             }
         } else {
-            return Err(RuntimeError::type_error("set() expects at most one argument"));
+            return Err(RuntimeError::type_error(
+                "set() expects at most one argument",
+            ));
         };
         Ok(self.heap.alloc_set(dedup_hashable_values(values)?))
     }
@@ -5692,7 +5745,9 @@ impl Vm {
                     return Ok(ordering);
                 }
                 self.compare_order_via_richcmp(left.clone(), right.clone())?
-                    .ok_or_else(|| RuntimeError::type_error("unsupported operand type for comparison"))
+                    .ok_or_else(|| {
+                        RuntimeError::type_error("unsupported operand type for comparison")
+                    })
             }
         }
     }
@@ -5725,7 +5780,9 @@ impl Vm {
                 (Object::List(left), Object::List(right)) => (left.len(), right.len()),
                 (Object::Tuple(left), Object::Tuple(right)) => (left.len(), right.len()),
                 _ => {
-                    return Err(RuntimeError::type_error("unsupported operand type for comparison"));
+                    return Err(RuntimeError::type_error(
+                        "unsupported operand type for comparison",
+                    ));
                 }
             }
         };
@@ -5742,7 +5799,9 @@ impl Vm {
                         (left[idx].clone(), right[idx].clone())
                     }
                     _ => {
-                        return Err(RuntimeError::type_error("unsupported operand type for comparison"));
+                        return Err(RuntimeError::type_error(
+                            "unsupported operand type for comparison",
+                        ));
                     }
                 }
             };
@@ -6029,7 +6088,7 @@ impl Vm {
     ) -> Result<bool, RuntimeError> {
         match compare_in(&needle, &container) {
             Ok(found) => Ok(found),
-            Err(err) if err.message == "unsupported operand type for in" => {
+            Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
                 if let Some(contains_method) =
                     self.lookup_bound_special_method(&container, "__contains__")?
                 {
@@ -6526,11 +6585,12 @@ impl Vm {
         right: Value,
     ) -> Result<Value, RuntimeError> {
         const PY_EQ: i32 = 2;
-        let left_proxy_class =
-            matches!(left, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
-        let right_proxy_class =
-            matches!(right, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
-        if !left_proxy_class && !right_proxy_class
+        let left_proxy_class = matches!(left, Value::Class(_))
+            && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
+        let right_proxy_class = matches!(right, Value::Class(_))
+            && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
+        if !left_proxy_class
+            && !right_proxy_class
             && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_EQ)
         {
             return result;
@@ -6583,11 +6643,12 @@ impl Vm {
         right: Value,
     ) -> Result<Value, RuntimeError> {
         const PY_NE: i32 = 3;
-        let left_proxy_class =
-            matches!(left, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
-        let right_proxy_class =
-            matches!(right, Value::Class(_)) && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
-        if !left_proxy_class && !right_proxy_class
+        let left_proxy_class = matches!(left, Value::Class(_))
+            && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
+        let right_proxy_class = matches!(right, Value::Class(_))
+            && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
+        if !left_proxy_class
+            && !right_proxy_class
             && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_NE)
         {
             return result;
@@ -6971,12 +7032,12 @@ impl Vm {
         expect_all: bool,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("all/any expects one argument"));
+            return Err(RuntimeError::type_error("all/any expects one argument"));
         }
         let iterable = args.remove(0);
         let iter = self
             .to_iterator_value(iterable)
-            .map_err(|_| RuntimeError::new("all/any expects iterable"))?;
+            .map_err(|_| RuntimeError::type_error("all/any expects iterable"))?;
 
         let mut result = expect_all;
         match iter {
@@ -7014,7 +7075,7 @@ impl Vm {
                     }
                 }
             },
-            _ => return Err(RuntimeError::new("all/any expects iterable")),
+            _ => return Err(RuntimeError::type_error("all/any expects iterable")),
         }
         Ok(Value::Bool(result))
     }
@@ -7974,14 +8035,18 @@ impl Vm {
             Value::Bytes(bytes) => {
                 let is_bytes = matches!(&*bytes.kind(), Object::Bytes(_));
                 if !is_bytes {
-                    return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                    return Err(RuntimeError::attribute_error(
+                        "attribute access unsupported type",
+                    ));
                 }
                 self.load_attr_bytes_method(Value::Bytes(bytes), &name)
             }
             Value::ByteArray(bytearray) => {
                 let is_bytearray = matches!(&*bytearray.kind(), Object::ByteArray(_));
                 if !is_bytearray {
-                    return Err(RuntimeError::attribute_error("attribute access unsupported type"));
+                    return Err(RuntimeError::attribute_error(
+                        "attribute access unsupported type",
+                    ));
                 }
                 self.load_attr_bytes_method(Value::ByteArray(bytearray), &name)
             }
@@ -8034,7 +8099,11 @@ impl Vm {
                         },
                         "generator",
                     ),
-                    _ => return Err(RuntimeError::attribute_error("attribute access unsupported type")),
+                    _ => {
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
+                    }
                 };
                 if let Some(kind) = kind {
                     let native = self.heap.alloc_native_method(NativeMethodObject::new(kind));
@@ -8140,7 +8209,9 @@ impl Vm {
                     RuntimeError::attribute_error(format!("exception has no attribute '{}'", name))
                 }),
             },
-            _ => Err(RuntimeError::attribute_error("attribute access unsupported type")),
+            _ => Err(RuntimeError::attribute_error(
+                "attribute access unsupported type",
+            )),
         };
 
         match looked_up {
@@ -8221,7 +8292,9 @@ impl Vm {
                         name
                     );
                 }
-                return Err(RuntimeError::type_error("attribute assignment unsupported type"));
+                return Err(RuntimeError::type_error(
+                    "attribute assignment unsupported type",
+                ));
             }
         }
 
@@ -8286,7 +8359,11 @@ impl Vm {
             Value::Cell(cell) => self.delete_attr_cell(&cell, &name)?,
             Value::Exception(exception) => self.delete_attr_exception(&exception, &name)?,
             Value::Builtin(builtin) => self.delete_attr_builtin(builtin, &name)?,
-            _ => return Err(RuntimeError::type_error("attribute deletion unsupported type")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "attribute deletion unsupported type",
+                ));
+            }
         }
 
         Ok(Value::None)

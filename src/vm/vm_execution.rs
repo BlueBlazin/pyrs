@@ -13,15 +13,13 @@ use super::{
     SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings,
     bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
     decode_call_counts, deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value, dict_set_value_checked, ensure_hashable,
-    exception_message_from_call_args, extract_runtime_error_exception_name, floor_div_values,
-    format_repr, format_value, is_comprehension_code, is_import_error_family, is_os_error_family,
-    is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
+    dict_set_value, dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
+    floor_div_values, format_repr, format_value, is_comprehension_code, is_import_error_family,
+    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
     memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
     mod_values, module_globals_version, pos_value, pow_values, rshift_values,
-    runtime_error_line_matches_exception, runtime_error_matches_exception,
-    slice_bounds_for_step_one, slice_indices, slot_names_from_value,
-    value_from_bigint, value_to_int, value_to_optional_index,
+    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
+    slot_names_from_value, value_from_bigint, value_to_int, value_to_optional_index,
 };
 use crate::runtime::SliceValue;
 
@@ -1893,7 +1891,9 @@ impl Vm {
                                 attr_name
                             );
                         }
-                        return Err(RuntimeError::type_error("attribute assignment unsupported type"));
+                        return Err(RuntimeError::type_error(
+                            "attribute assignment unsupported type",
+                        ));
                     }
                 }
             }
@@ -1961,7 +1961,9 @@ impl Vm {
                                 attr_name
                             );
                         }
-                        return Err(RuntimeError::type_error("attribute assignment unsupported type"));
+                        return Err(RuntimeError::type_error(
+                            "attribute assignment unsupported type",
+                        ));
                     }
                 }
             }
@@ -2029,7 +2031,9 @@ impl Vm {
                         self.delete_attr_builtin(builtin, &attr_name)?;
                     }
                     _ => {
-                        return Err(RuntimeError::type_error("attribute deletion unsupported type"));
+                        return Err(RuntimeError::type_error(
+                            "attribute deletion unsupported type",
+                        ));
                     }
                 }
                 if let Some((module_id, version)) = touched_module_version {
@@ -2867,7 +2871,9 @@ impl Vm {
                                     idx += values.len() as isize;
                                 }
                                 if idx < 0 || idx as usize >= values.len() {
-                                    return Err(RuntimeError::new("list index out of range"));
+                                    return Err(RuntimeError::index_error(
+                                        "list index out of range",
+                                    ));
                                 }
                                 values[idx as usize] = value;
                             }
@@ -2922,7 +2928,9 @@ impl Vm {
                                 }
                                 let byte = value_to_int(value)?;
                                 if !(0..=255).contains(&byte) {
-                                    return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
+                                    return Err(RuntimeError::value_error(
+                                        "byte must be in range(0, 256)",
+                                    ));
                                 }
                                 values[idx as usize] = byte as u8;
                             }
@@ -3286,16 +3294,18 @@ impl Vm {
                                             normalized += logical_len as isize;
                                         }
                                         if normalized < 0 || normalized as usize >= logical_len {
-                                            return Err(RuntimeError::index_error("index out of range"));
+                                            return Err(RuntimeError::index_error(
+                                                "index out of range",
+                                            ));
                                         }
                                         range_start + (normalized as usize).saturating_mul(itemsize)
                                     };
-                                    let end = offset
-                                        .checked_add(itemsize)
-                                        .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
-                                    let target = values
-                                        .get_mut(offset..end)
-                                        .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
+                                    let end = offset.checked_add(itemsize).ok_or_else(|| {
+                                        RuntimeError::index_error("index out of range")
+                                    })?;
+                                    let target = values.get_mut(offset..end).ok_or_else(|| {
+                                        RuntimeError::index_error("index out of range")
+                                    })?;
                                     target.copy_from_slice(&replacement);
                                 }
                                 Object::Module(module_data) if module_data.name == "__array__" => {
@@ -3342,15 +3352,19 @@ impl Vm {
                                             normalized += logical_len as isize;
                                         }
                                         if normalized < 0 || normalized as usize >= logical_len {
-                                            return Err(RuntimeError::index_error("index out of range"));
+                                            return Err(RuntimeError::index_error(
+                                                "index out of range",
+                                            ));
                                         }
                                         range_start + (normalized as usize).saturating_mul(itemsize)
                                     };
-                                    let end = offset
-                                        .checked_add(itemsize)
-                                        .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
+                                    let end = offset.checked_add(itemsize).ok_or_else(|| {
+                                        RuntimeError::index_error("index out of range")
+                                    })?;
                                     if end > values.len() {
-                                        return Err(RuntimeError::index_error("index out of range"));
+                                        return Err(RuntimeError::index_error(
+                                            "index out of range",
+                                        ));
                                     }
                                     for (byte_offset, byte) in replacement.iter().enumerate() {
                                         values[offset + byte_offset] = Value::Int(*byte as i64);
@@ -3442,7 +3456,9 @@ impl Vm {
                                     idx += values.len() as isize;
                                 }
                                 if idx < 0 || idx as usize >= values.len() {
-                                    return Err(RuntimeError::new("list index out of range"));
+                                    return Err(RuntimeError::index_error(
+                                        "list index out of range",
+                                    ));
                                 }
                                 values.remove(idx as usize);
                             }
@@ -3737,9 +3753,7 @@ impl Vm {
                             HashMap::new(),
                         ) {
                             Ok(callable) => Some(callable),
-                            Err(err)
-                                if runtime_error_matches_exception(&err, "AttributeError") =>
-                            {
+                            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
                                 None
                             }
                             Err(err) => return Err(err),
@@ -3755,10 +3769,14 @@ impl Vm {
                             InternalCallOutcome::CallerExceptionHandled => return Ok(None),
                         };
                         let Value::Tuple(entries_tuple) = entries else {
-                            return Err(RuntimeError::type_error("__mro_entries__ must return a tuple"));
+                            return Err(RuntimeError::type_error(
+                                "__mro_entries__ must return a tuple",
+                            ));
                         };
                         let Object::Tuple(items) = &*entries_tuple.kind() else {
-                            return Err(RuntimeError::type_error("__mro_entries__ must return a tuple"));
+                            return Err(RuntimeError::type_error(
+                                "__mro_entries__ must return a tuple",
+                            ));
                         };
                         resolved_bases.extend(items.iter().cloned());
                     } else {
@@ -4835,7 +4853,9 @@ impl Vm {
                         let method_data = match &*method.kind() {
                             Object::BoundMethod(data) => data.clone(),
                             _ => {
-                                return Err(RuntimeError::type_error("attempted to call non-function"));
+                                return Err(RuntimeError::type_error(
+                                    "attempted to call non-function",
+                                ));
                             }
                         };
                         match &*method_data.function.kind() {
@@ -4870,7 +4890,9 @@ impl Vm {
                                 )?;
                             }
                             _ => {
-                                return Err(RuntimeError::type_error("attempted to call non-function"));
+                                return Err(RuntimeError::type_error(
+                                    "attempted to call non-function",
+                                ));
                             }
                         }
                     }
@@ -6220,42 +6242,6 @@ impl Vm {
             message,
             exception: None,
         };
-        let exception_type = err
-            .exception_name()
-            .map(str::to_string)
-            .or_else(|| extract_runtime_error_exception_name(&err.message))
-            .unwrap_or_else(|| "RuntimeError".to_string());
-        if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some()
-            && err.message.contains("module '_ctypes' not found")
-        {
-            let active = self
-                .frames
-                .last()
-                .and_then(|frame| frame.active_exception.as_ref())
-                .map(|value| self.value_type_name_for_error(value))
-                .unwrap_or_else(|| "<none>".to_string());
-            eprintln!(
-                "[handle-runtime-ctypes] exception_type={} active={}",
-                exception_type, active
-            );
-        }
-        if let Some(Value::Exception(active_exception)) = self
-            .frames
-            .last()
-            .and_then(|frame| frame.active_exception.clone())
-        {
-            let traceback_encoded = err
-                .message
-                .starts_with("Traceback (most recent call last):");
-            let prefixed_encoded =
-                runtime_error_line_matches_exception(err.message.trim(), &exception_type);
-            if active_exception.name == exception_type && (traceback_encoded || prefixed_encoded) {
-                if let Some(frame) = self.frames.last_mut() {
-                    frame.active_exception = None;
-                }
-                return self.raise_exception(Value::Exception(active_exception));
-            }
-        }
         let exception = self.runtime_error_to_exception_object(err);
         self.raise_exception(Value::Exception(Box::new(exception)))
     }

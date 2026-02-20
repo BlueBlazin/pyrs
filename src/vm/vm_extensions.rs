@@ -153,22 +153,22 @@ use self::cpython_datetime_runtime::{
     PYRS_DATETIME_TZINFO_TYPE, initialize_datetime_capi_types,
 };
 use self::cpython_descriptor_method_api::{
-    PyCFunction_Call, PyCFunction_GetFlags, PyCFunction_GetFunction, PyCFunction_GetSelf,
-    PyCFunction_New, PyCFunction_NewEx, PyCMethod_New, PyClassMethod_New, PyDescr_NewClassMethod,
-    PyDescr_NewGetSet, PyDescr_NewMember, PyDescr_NewMethod, PyMember_GetOne, PyMember_SetOne,
-    PySlice_AdjustIndices, PySlice_GetIndices, PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack,
-    PyStaticMethod_New, PyWrapper_New, _PyClassMethod_New, _PyStaticMethod_New,
+    _PyClassMethod_New, _PyStaticMethod_New, PyCFunction_Call, PyCFunction_GetFlags,
+    PyCFunction_GetFunction, PyCFunction_GetSelf, PyCFunction_New, PyCFunction_NewEx,
+    PyCMethod_New, PyClassMethod_New, PyDescr_NewClassMethod, PyDescr_NewGetSet, PyDescr_NewMember,
+    PyDescr_NewMethod, PyMember_GetOne, PyMember_SetOne, PySlice_AdjustIndices, PySlice_GetIndices,
+    PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack, PyStaticMethod_New, PyWrapper_New,
     cpython_cfunction_tp_call, cpython_cfunction_tp_getattro, cpython_invoke_method_from_values,
     cpython_method_descriptor_tp_call, cpython_method_descriptor_tp_descr_get,
 };
 use self::cpython_dict_api::{
-    _PyDict_GetItem_KnownHash, _PyDict_NewPresized, _PyDict_Pop, PyDict_Clear, PyDict_Contains,
-    PyDict_ContainsString, PyDict_Copy, PyDict_DelItem, PyDict_DelItemString, PyDict_GetItem,
-    PyDict_GetItemRef, PyDict_GetItemString, PyDict_GetItemStringRef, PyDict_GetItemWithError,
-    PyDict_Items, PyDict_Keys, PyDict_Merge, PyDict_MergeFromSeq2, PyDict_New, PyDict_Next,
-    PyDict_Pop, PyDict_PopString, PyDict_SetDefault, PyDict_SetDefaultRef, PyDict_SetItem,
-    PyDict_SetItemString, PyDict_Size, PyDict_Update, PyDict_Values, PyDictProxy_New,
-    PY_DICT_MAPPING_METHODS,
+    _PyDict_GetItem_KnownHash, _PyDict_NewPresized, _PyDict_Pop, PY_DICT_MAPPING_METHODS,
+    PyDict_Clear, PyDict_Contains, PyDict_ContainsString, PyDict_Copy, PyDict_DelItem,
+    PyDict_DelItemString, PyDict_GetItem, PyDict_GetItemRef, PyDict_GetItemString,
+    PyDict_GetItemStringRef, PyDict_GetItemWithError, PyDict_Items, PyDict_Keys, PyDict_Merge,
+    PyDict_MergeFromSeq2, PyDict_New, PyDict_Next, PyDict_Pop, PyDict_PopString, PyDict_SetDefault,
+    PyDict_SetDefaultRef, PyDict_SetItem, PyDict_SetItemString, PyDict_Size, PyDict_Update,
+    PyDict_Values, PyDictProxy_New,
 };
 use self::cpython_error_numeric_api::{
     Py_GenericAlias, PyComplex_AsCComplex, PyComplex_FromCComplex, PyComplex_FromDoubles,
@@ -241,9 +241,9 @@ use self::cpython_iter_api::{
     cpython_clear_active_exception,
 };
 use self::cpython_list_api::{
-    PyList_Append, PyList_AsTuple, PyList_GetItem, PyList_GetItemRef, PyList_GetSlice,
-    PyList_Insert, PyList_New, PyList_Reverse, PyList_SetItem, PyList_SetSlice, PyList_Size,
-    PyList_Sort, PY_LIST_MAPPING_METHODS, PY_LIST_SEQUENCE_METHODS,
+    PY_LIST_MAPPING_METHODS, PY_LIST_SEQUENCE_METHODS, PyList_Append, PyList_AsTuple,
+    PyList_GetItem, PyList_GetItemRef, PyList_GetSlice, PyList_Insert, PyList_New, PyList_Reverse,
+    PyList_SetItem, PyList_SetSlice, PyList_Size, PyList_Sort,
 };
 use self::cpython_long_float_api::{
     _PyLong_Copy, PyBool_FromLong, PyFloat_FromDouble, PyFloat_FromString, PyLong_AsNativeBytes,
@@ -404,13 +404,14 @@ use self::cpython_tuple_api::{
     PyTuple_GetItem, PyTuple_GetSlice, PyTuple_New, PyTuple_SetItem, PyTuple_Size,
 };
 use self::cpython_type_api::{
-    _PyType_Lookup, PyType_ClearCache, PyType_Freeze, PyType_FromMetaclass,
-    PyType_FromModuleAndSpec, PyType_FromSpec, PyType_FromSpecWithBases, PyType_GenericAlloc,
-    PyType_GenericNew, PyType_GetBaseByToken, PyType_GetFlags, PyType_GetFullyQualifiedName,
-    PyType_GetModule, PyType_GetModuleByDef, PyType_GetModuleName, PyType_GetModuleState,
-    PyType_GetName, PyType_GetQualName, PyType_GetSlot, PyType_GetTypeDataSize, PyType_IsSubtype,
-    PyType_Modified, PyType_Ready, PY_TYPE_MAPPING_METHODS, cpython_is_type_object_ptr,
-    cpython_type_tp_call, cpython_type_tp_getattro, cpython_type_tp_setattro,
+    _PyType_Lookup, PY_TYPE_MAPPING_METHODS, PyType_ClearCache, PyType_Freeze,
+    PyType_FromMetaclass, PyType_FromModuleAndSpec, PyType_FromSpec, PyType_FromSpecWithBases,
+    PyType_GenericAlloc, PyType_GenericNew, PyType_GetBaseByToken, PyType_GetFlags,
+    PyType_GetFullyQualifiedName, PyType_GetModule, PyType_GetModuleByDef, PyType_GetModuleName,
+    PyType_GetModuleState, PyType_GetName, PyType_GetQualName, PyType_GetSlot,
+    PyType_GetTypeDataSize, PyType_IsSubtype, PyType_Modified, PyType_Ready,
+    cpython_is_type_object_ptr, cpython_type_tp_call, cpython_type_tp_getattro,
+    cpython_type_tp_setattro,
 };
 use self::cpython_type_exports::*;
 use self::cpython_type_layout::*;
@@ -1128,9 +1129,7 @@ unsafe fn cpython_foreign_long_to_i64(object: *mut c_void) -> Option<i64> {
         return None;
     }
     let type_addr = type_ptr as usize;
-    if type_addr < MIN_VALID_PTR
-        || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
-    {
+    if type_addr < MIN_VALID_PTR || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0 {
         return None;
     }
     let is_long = type_ptr == std::ptr::addr_of_mut!(PyLong_Type)
@@ -1176,9 +1175,7 @@ unsafe fn cpython_foreign_long_to_u64(object: *mut c_void) -> Option<u64> {
         return None;
     }
     let type_addr = type_ptr as usize;
-    if type_addr < MIN_VALID_PTR
-        || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
-    {
+    if type_addr < MIN_VALID_PTR || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0 {
         return None;
     }
     let is_long = type_ptr == std::ptr::addr_of_mut!(PyLong_Type)
@@ -1839,7 +1836,10 @@ unsafe fn cpython_find_iter_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_voi
 
 unsafe fn cpython_find_setitem_slot(
     type_ptr: *mut CpythonTypeObject,
-) -> (/* mapping */ *mut c_void, /* sequence */ *mut c_void) {
+) -> (
+    /* mapping */ *mut c_void,
+    /* sequence */ *mut c_void,
+) {
     let mut current = type_ptr;
     for _ in 0..64 {
         if current.is_null() {
@@ -3664,10 +3664,8 @@ impl ModuleCapiContext {
         // type-subclass/probe checks.
         unsafe {
             ((*object_type).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
-                || PyType_IsSubtype(
-                    object_type.cast::<c_void>(),
-                    expected_type.cast::<c_void>(),
-                ) != 0
+                || PyType_IsSubtype(object_type.cast::<c_void>(), expected_type.cast::<c_void>())
+                    != 0
         }
     }
 
@@ -4585,8 +4583,7 @@ impl ModuleCapiContext {
                 *data.add(bytes.len()) = 0;
             }
             raw_bytes.cast::<CpythonCompatObject>()
-        } else if let Some((class_name, class_attrs, class_metaclass, class_bases)) = class_state
-        {
+        } else if let Some((class_name, class_attrs, class_metaclass, class_bases)) = class_state {
             // SAFETY: allocate storage for CPython type-compatible header.
             let raw_type = unsafe { malloc(std::mem::size_of::<CpythonTypeObject>()) }
                 .cast::<CpythonTypeObject>();
@@ -5519,8 +5516,8 @@ impl ModuleCapiContext {
         {
             proxy_bases.push(base_class);
         }
-        let proxy_metaclass = proxy_metaclass_value
-            .and_then(|value| vm.class_from_base_value(value).ok());
+        let proxy_metaclass =
+            proxy_metaclass_value.and_then(|value| vm.class_from_base_value(value).ok());
         let is_base_object_type =
             is_type_object && object == std::ptr::addr_of_mut!(PyBaseObject_Type).cast::<c_void>();
         if proxy_bases.is_empty()
@@ -5647,13 +5644,12 @@ impl ModuleCapiContext {
                         {
                             return false;
                         }
-                        let py_type = std::ptr::addr_of_mut!(PyType_Type).cast::<CpythonTypeObject>();
+                        let py_type =
+                            std::ptr::addr_of_mut!(PyType_Type).cast::<CpythonTypeObject>();
                         type_ptr == py_type
                             || ((*type_ptr).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
-                            || PyType_IsSubtype(
-                                type_ptr.cast::<c_void>(),
-                                py_type.cast::<c_void>(),
-                            ) != 0
+                            || PyType_IsSubtype(type_ptr.cast::<c_void>(), py_type.cast::<c_void>())
+                                != 0
                     })
                     .unwrap_or(false)
             };
@@ -5684,12 +5680,7 @@ impl ModuleCapiContext {
             return None;
         }
         let proxy = self.cpython_external_proxy_value(object)?;
-        Some(self.cache_cpython_proxy_value_for_ptr(
-            object,
-            proxy,
-            owns_allocation,
-            false,
-        ))
+        Some(self.cache_cpython_proxy_value_for_ptr(object, proxy, owns_allocation, false))
     }
 
     fn cache_cpython_proxy_value_for_ptr(
@@ -7766,11 +7757,7 @@ impl ModuleCapiContext {
             return;
         };
         if let Some(object_id) = Self::identity_object_id(&slot.value)
-            && self
-                .cpython_object_handles_by_id
-                .get(&object_id)
-                .copied()
-                == Some(handle)
+            && self.cpython_object_handles_by_id.get(&object_id).copied() == Some(handle)
         {
             self.cpython_object_handles_by_id.remove(&object_id);
         }

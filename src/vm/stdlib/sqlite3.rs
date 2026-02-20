@@ -1,8 +1,8 @@
 use super::super::{
-    BigInt, BuiltinFunction, HashMap, InternalCallOutcome, ObjRef, Object, RuntimeError, Value, Vm,
-    bytes_like_from_value, dict_get_value, dict_set_value_checked, format_repr, is_truthy,
-    runtime_error_matches_exception, slice_indices, value_to_f64, value_to_int,
-    vm_current_thread_ident,
+    BigInt, BuiltinFunction, ExceptionObject, HashMap, InternalCallOutcome, ObjRef, Object,
+    RuntimeError, Value, Vm, bytes_like_from_value, dict_get_value, dict_set_value_checked,
+    format_repr, is_truthy, runtime_error_matches_exception, slice_indices, value_to_f64,
+    value_to_int, vm_current_thread_ident,
 };
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
@@ -1196,9 +1196,13 @@ fn sqlite_error_name_for_code(code: c_int) -> &'static str {
 fn sqlite_error_with_code(kind: &str, message: impl Into<String>, code: c_int) -> RuntimeError {
     let message = message.into();
     let name = sqlite_error_name_for_code(code);
-    RuntimeError::new(format!(
-        "{kind}: {message}\n__pyrs_sqlite_meta__:{code}:{name}"
-    ))
+    let exception = ExceptionObject::new(kind.to_string(), Some(message));
+    {
+        let mut attrs = exception.attrs.borrow_mut();
+        attrs.insert("sqlite_errorcode".to_string(), Value::Int(code as i64));
+        attrs.insert("sqlite_errorname".to_string(), Value::Str(name.to_string()));
+    }
+    RuntimeError::from_exception(exception)
 }
 
 fn sqlite_error_kind_for_code(code: c_int, default_kind: &str) -> &'static str {

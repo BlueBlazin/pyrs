@@ -480,7 +480,7 @@ impl Vm {
                             index_int += values.len() as isize;
                         }
                         if index_int < 0 || index_int as usize >= values.len() {
-                            return Err(RuntimeError::new("list index out of range"));
+                            return Err(RuntimeError::index_error("list index out of range"));
                         }
                         Ok(values[index_int as usize].clone())
                     }
@@ -535,12 +535,12 @@ impl Vm {
                         }
                     };
                     let chars: Vec<char> = value.chars().collect();
-                    if index_int < 0 {
-                        index_int += chars.len() as isize;
-                    }
-                    if index_int < 0 || index_int as usize >= chars.len() {
-                        return Err(RuntimeError::new("string index out of range"));
-                    }
+                        if index_int < 0 {
+                            index_int += chars.len() as isize;
+                        }
+                        if index_int < 0 || index_int as usize >= chars.len() {
+                            return Err(RuntimeError::index_error("string index out of range"));
+                        }
                     Ok(Value::Str(chars[index_int as usize].to_string()))
                 }
                 Value::Dict(obj) => {
@@ -891,7 +891,9 @@ impl Vm {
                         GeneratorResumeOutcome::Yield(value) => {
                             let byte = value_to_int(value)?;
                             if !(0..=255).contains(&byte) {
-                                return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
+                                return Err(RuntimeError::value_error(
+                                    "byte must be in range(0, 256)",
+                                ));
                             }
                             out.push(byte as u8);
                         }
@@ -1682,10 +1684,14 @@ impl Vm {
                     }
                 };
                 let Value::Tuple(entries_tuple) = entries else {
-                    return Err(RuntimeError::type_error("__mro_entries__ must return a tuple"));
+                    return Err(RuntimeError::type_error(
+                        "__mro_entries__ must return a tuple",
+                    ));
                 };
                 let Object::Tuple(items) = &*entries_tuple.kind() else {
-                    return Err(RuntimeError::type_error("__mro_entries__ must return a tuple"));
+                    return Err(RuntimeError::type_error(
+                        "__mro_entries__ must return a tuple",
+                    ));
                 };
                 resolved_bases.extend(items.iter().cloned());
             } else {
@@ -1863,7 +1869,9 @@ impl Vm {
                         return self.class_from_base_value(origin);
                     }
                 }
-                Err(RuntimeError::type_error("class base must be a class object"))
+                Err(RuntimeError::type_error(
+                    "class base must be a class object",
+                ))
             }
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_exception_class(&name)),
             Value::Builtin(BuiltinFunction::Type) => Ok(self
@@ -1959,10 +1967,12 @@ impl Vm {
                     );
                 }
                 let _ = other;
-                Err(RuntimeError::type_error("class base must be a class object"))
+                Err(RuntimeError::type_error(
+                    "class base must be a class object",
+                ))
+            }
         }
     }
-}
 }
 
 fn tuple_is_typing_alias_shape(values: &[Value]) -> bool {

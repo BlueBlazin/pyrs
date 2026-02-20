@@ -716,18 +716,22 @@ impl<'a> JsonParser<'a> {
                                 self.expect(b'u')?;
                                 let low = self.parse_hex_u16()?;
                                 if !(0xDC00..=0xDFFF).contains(&low) {
-                                    return Err(RuntimeError::value_error("invalid unicode escape"));
+                                    return Err(RuntimeError::value_error(
+                                        "invalid unicode escape",
+                                    ));
                                 }
                                 let scalar = 0x10000
                                     + (((code as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
-                                let ch = char::from_u32(scalar)
-                                    .ok_or_else(|| RuntimeError::value_error("invalid unicode escape"))?;
+                                let ch = char::from_u32(scalar).ok_or_else(|| {
+                                    RuntimeError::value_error("invalid unicode escape")
+                                })?;
                                 out.push(ch);
                             } else if (0xDC00..=0xDFFF).contains(&code) {
                                 return Err(RuntimeError::value_error("invalid unicode escape"));
                             } else {
-                                let ch = char::from_u32(code as u32)
-                                    .ok_or_else(|| RuntimeError::value_error("invalid unicode escape"))?;
+                                let ch = char::from_u32(code as u32).ok_or_else(|| {
+                                    RuntimeError::value_error("invalid unicode escape")
+                                })?;
                                 out.push(ch);
                             }
                         }

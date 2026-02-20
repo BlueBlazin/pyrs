@@ -47,8 +47,8 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             name.as_str(),
             "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base" | "BoolDType"
         );
-    let trace_exit_lookup = std::env::var_os("PYRS_TRACE_ATTR_EXIT_LOOKUP").is_some()
-        && name == "__exit__";
+    let trace_exit_lookup =
+        std::env::var_os("PYRS_TRACE_ATTR_EXIT_LOOKUP").is_some() && name == "__exit__";
     let trace_seed_attrs = std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some()
         && matches!(
             name.as_str(),
@@ -768,9 +768,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                     object, attr_name, err
                 );
             }
-            if err.contains("__exit__")
-                && std::env::var_os("PYRS_TRACE_ATTR_MISS").is_some()
-            {
+            if err.contains("__exit__") && std::env::var_os("PYRS_TRACE_ATTR_MISS").is_some() {
                 eprintln!(
                     "[cpy-attr-miss] object={:p} object_value={} name={} err={} bt={:?}",
                     object,
@@ -1103,8 +1101,11 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
                         return;
                     }
                     if let Some(attr_value) = context.cpython_value_from_ptr_or_proxy(value_ptr) {
-                        let _ =
-                            context.sync_module_dict_set(&module_obj, &attr_name_for_sync, &attr_value);
+                        let _ = context.sync_module_dict_set(
+                            &module_obj,
+                            &attr_name_for_sync,
+                            &attr_value,
+                        );
                     }
                 });
             }

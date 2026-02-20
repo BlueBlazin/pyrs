@@ -6,9 +6,9 @@ use super::{
     PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
     PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError,
     SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER,
-    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
-    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
-    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
+    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler,
+    cpython, dict_get_value, dict_remove_value, dict_set_value, matches_finder_kind,
+    parse_uuid_like_string, parser, source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -192,11 +192,9 @@ impl Vm {
         class_name: &str,
         base_names: &[&str],
     ) -> Result<(), RuntimeError> {
-        let module = self
-            .modules
-            .get(module_name)
-            .cloned()
-            .ok_or_else(|| RuntimeError::new(format!("module '{module_name}' not found")))?;
+        let module = self.modules.get(module_name).cloned().ok_or_else(|| {
+            RuntimeError::module_not_found_error(format!("module '{module_name}' not found"))
+        })?;
         let (class_ref, base_refs) = {
             let Object::Module(module_data) = &*module.kind() else {
                 return Err(RuntimeError::new(format!(
@@ -248,6 +246,20 @@ impl Vm {
             let _ = self.set_module_class_bases(module, "BytesIO", &["BufferedIOBase"]);
             let _ = self.set_module_class_bases(module, "StringIO", &["TextIOBase"]);
             let _ = self.set_module_class_bases(module, "TextIOWrapper", &["TextIOBase"]);
+            if let Some(module_ref) = self.modules.get(module)
+                && let Object::Module(module_data) = &mut *module_ref.kind_mut()
+            {
+                for (alias, canonical) in [
+                    ("_IOBase", "IOBase"),
+                    ("_RawIOBase", "RawIOBase"),
+                    ("_BufferedIOBase", "BufferedIOBase"),
+                    ("_TextIOBase", "TextIOBase"),
+                ] {
+                    if let Some(value) = module_data.globals.get(canonical).cloned() {
+                        module_data.globals.insert(alias.to_string(), value);
+                    }
+                }
+            }
         }
     }
 
@@ -6225,9 +6237,9 @@ impl Vm {
             }
         }
 
-        let source_info = self
-            .find_module_source(name)
-            .ok_or_else(|| RuntimeError::new(format!("module '{name}' not found")))?;
+        let source_info = self.find_module_source(name).ok_or_else(|| {
+            RuntimeError::module_not_found_error(format!("module '{name}' not found"))
+        })?;
         let loader_name = if source_info.is_namespace {
             NAMESPACE_LOADER
         } else if source_info.is_extension {
@@ -7050,7 +7062,10 @@ impl Vm {
                 }
                 Some(Value::None) => {
                     self.modules.remove(name);
-                    return Err(RuntimeError::new(format!("No module named '{}'", name)));
+                    return Err(RuntimeError::module_not_found_error(format!(
+                        "No module named '{}'",
+                        name
+                    )));
                 }
                 Some(_) => {
                     present_in_sys_modules = true;
@@ -7124,7 +7139,7 @@ impl Vm {
                                     return self.return_imported_module(module, caller_depth);
                                 }
                                 Some(Value::None) => {
-                                    return Err(RuntimeError::new(format!(
+                                    return Err(RuntimeError::module_not_found_error(format!(
                                         "No module named '{}'",
                                         name
                                     )));

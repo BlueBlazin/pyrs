@@ -9,7 +9,8 @@ pub(super) unsafe fn c_name_to_string(name: *const c_char) -> Result<String, Str
     }
     // SAFETY: caller provides at least a readable C string; cap scan length to avoid
     // runaway reads from malformed pointers/doc strings.
-    let raw_bytes = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), MAX_C_STRING_BYTES + 1) };
+    let raw_bytes =
+        unsafe { std::slice::from_raw_parts(name.cast::<u8>(), MAX_C_STRING_BYTES + 1) };
     let Some(end) = raw_bytes.iter().position(|byte| *byte == 0) else {
         return Err("received unterminated C string (exceeds 1 MiB)".to_string());
     };

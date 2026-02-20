@@ -2,8 +2,8 @@ use super::{
     AsRawFd, BigInt, BuiltinFunction, ClassObject, ExceptionObject, GeneratorResumeOutcome,
     HashMap, InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek,
     SeekFrom, StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
-    bytes_like_from_value, class_attr_walk, decode_text_bytes, encode_text_bytes, format_value,
-    fs, is_truthy, memoryview_bounds, value_to_f64, value_to_int,
+    bytes_like_from_value, class_attr_walk, decode_text_bytes, encode_text_bytes, format_value, fs,
+    is_truthy, memoryview_bounds, value_to_f64, value_to_int,
 };
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
@@ -27,7 +27,9 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.is_empty() || args.len() > 8 {
-            return Err(RuntimeError::type_error("open() expected at most 8 arguments"));
+            return Err(RuntimeError::type_error(
+                "open() expected at most 8 arguments",
+            ));
         }
 
         let file_arg = args.remove(0);
@@ -67,12 +69,16 @@ impl Vm {
             None
         };
         if !args.is_empty() {
-            return Err(RuntimeError::type_error("open() expected at most 8 arguments"));
+            return Err(RuntimeError::type_error(
+                "open() expected at most 8 arguments",
+            ));
         }
 
         if let Some(value) = kwargs.remove("mode") {
             if mode_arg.is_some() {
-                return Err(RuntimeError::type_error("open() got multiple values for mode"));
+                return Err(RuntimeError::type_error(
+                    "open() got multiple values for mode",
+                ));
             }
             mode_arg = Some(value);
         }
@@ -86,31 +92,41 @@ impl Vm {
         }
         if let Some(value) = kwargs.remove("encoding") {
             if encoding_arg.is_some() {
-                return Err(RuntimeError::type_error("open() got multiple values for encoding"));
+                return Err(RuntimeError::type_error(
+                    "open() got multiple values for encoding",
+                ));
             }
             encoding_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("errors") {
             if errors_arg.is_some() {
-                return Err(RuntimeError::type_error("open() got multiple values for errors"));
+                return Err(RuntimeError::type_error(
+                    "open() got multiple values for errors",
+                ));
             }
             errors_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("newline") {
             if newline_arg.is_some() {
-                return Err(RuntimeError::type_error("open() got multiple values for newline"));
+                return Err(RuntimeError::type_error(
+                    "open() got multiple values for newline",
+                ));
             }
             newline_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("closefd") {
             if closefd_arg.is_some() {
-                return Err(RuntimeError::type_error("open() got multiple values for closefd"));
+                return Err(RuntimeError::type_error(
+                    "open() got multiple values for closefd",
+                ));
             }
             closefd_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("opener") {
             if opener_arg.is_some() {
-                return Err(RuntimeError::type_error("open() got multiple values for opener"));
+                return Err(RuntimeError::type_error(
+                    "open() got multiple values for opener",
+                ));
             }
             opener_arg = Some(value);
         }
@@ -234,17 +250,29 @@ impl Vm {
         let encoding = match encoding_arg.unwrap_or(Value::None) {
             Value::None => None,
             Value::Str(value) => Some(value),
-            _ => return Err(RuntimeError::type_error("open() encoding must be str or None")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "open() encoding must be str or None",
+                ));
+            }
         };
         let errors = match errors_arg.unwrap_or(Value::None) {
             Value::None => None,
             Value::Str(value) => Some(value),
-            _ => return Err(RuntimeError::type_error("open() errors must be str or None")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "open() errors must be str or None",
+                ));
+            }
         };
         let newline = match newline_arg.unwrap_or(Value::None) {
             Value::None => None,
             Value::Str(value) => Some(value),
-            _ => return Err(RuntimeError::type_error("open() newline must be str or None")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "open() newline must be str or None",
+                ));
+            }
         };
         if let Some(value) = newline.as_deref()
             && !matches!(value, "" | "\n" | "\r" | "\r\n")
@@ -862,7 +890,9 @@ impl Vm {
             match value {
                 Value::Str(text) => text,
                 _ => {
-                    return Err(RuntimeError::type_error("decoder.decode() should return str"));
+                    return Err(RuntimeError::type_error(
+                        "decoder.decode() should return str",
+                    ));
                 }
             }
         };
@@ -1707,18 +1737,24 @@ impl Vm {
             None
         };
         if !args.is_empty() {
-            return Err(RuntimeError::type_error("FileIO() expected at most 4 arguments"));
+            return Err(RuntimeError::type_error(
+                "FileIO() expected at most 4 arguments",
+            ));
         }
 
         if let Some(value) = kwargs.remove("file") {
             if file_arg.is_some() {
-                return Err(RuntimeError::type_error("FileIO() got multiple values for file"));
+                return Err(RuntimeError::type_error(
+                    "FileIO() got multiple values for file",
+                ));
             }
             file_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("mode") {
             if mode_arg.is_some() {
-                return Err(RuntimeError::type_error("FileIO() got multiple values for mode"));
+                return Err(RuntimeError::type_error(
+                    "FileIO() got multiple values for mode",
+                ));
             }
             mode_arg = Some(value);
         }
@@ -1732,7 +1768,9 @@ impl Vm {
         }
         if let Some(value) = kwargs.remove("opener") {
             if opener_arg.is_some() {
-                return Err(RuntimeError::type_error("FileIO() got multiple values for opener"));
+                return Err(RuntimeError::type_error(
+                    "FileIO() got multiple values for opener",
+                ));
             }
             opener_arg = Some(value);
         }
@@ -1748,9 +1786,8 @@ impl Vm {
             )));
         }
 
-        let file = file_arg.ok_or_else(|| {
-            RuntimeError::type_error("FileIO() missing required argument 'file'")
-        })?;
+        let file = file_arg
+            .ok_or_else(|| RuntimeError::type_error("FileIO() missing required argument 'file'"))?;
         let mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
             Value::Str(mode) => mode,
             _ => return Err(RuntimeError::type_error("FileIO() mode must be str")),
@@ -2155,9 +2192,9 @@ impl Vm {
             Value::None => return Ok(None),
             Value::Int(value) => value,
             Value::Bool(value) => i64::from(value),
-            Value::BigInt(value) => value.to_i64().ok_or_else(|| {
-                RuntimeError::os_error("raw readinto() returned invalid length")
-            })?,
+            Value::BigInt(value) => value
+                .to_i64()
+                .ok_or_else(|| RuntimeError::os_error("raw readinto() returned invalid length"))?,
             other => {
                 return Err(RuntimeError::new(format!(
                     "TypeError: readinto() should return integer or None, not {}",
@@ -6027,7 +6064,9 @@ impl Vm {
         instance: &ObjRef,
     ) -> Result<(Vec<char>, usize), RuntimeError> {
         let Object::Instance(instance_data) = &*instance.kind() else {
-            return Err(RuntimeError::type_error("StringIO receiver must be instance"));
+            return Err(RuntimeError::type_error(
+                "StringIO receiver must be instance",
+            ));
         };
         let text = match instance_data.attrs.get("_value") {
             Some(Value::Str(value)) => value.chars().collect::<Vec<_>>(),
@@ -6216,7 +6255,9 @@ impl Vm {
         pos: usize,
     ) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
-            return Err(RuntimeError::type_error("StringIO receiver must be instance"));
+            return Err(RuntimeError::type_error(
+                "StringIO receiver must be instance",
+            ));
         };
         instance_data
             .attrs
@@ -6569,7 +6610,11 @@ impl Vm {
                     self.heap.alloc_dict(entries)
                 }
             }
-            _ => return Err(RuntimeError::type_error("StringIO receiver must be instance")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "StringIO receiver must be instance",
+                ));
+            }
         };
         Ok(self.heap.alloc_tuple(vec![
             Value::Str(text),
@@ -6660,7 +6705,9 @@ impl Vm {
                     _ => return Err(RuntimeError::new("fourth item of state should be a dict")),
                 };
                 let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
-                    return Err(RuntimeError::type_error("StringIO receiver must be instance"));
+                    return Err(RuntimeError::type_error(
+                        "StringIO receiver must be instance",
+                    ));
                 };
                 for (key, value) in updates {
                     let Value::Str(name) = key else {
@@ -6973,7 +7020,9 @@ impl Vm {
         instance: &ObjRef,
     ) -> Result<(ObjRef, usize, bool), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
-            return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
+            return Err(RuntimeError::type_error(
+                "BytesIO receiver must be instance",
+            ));
         };
         let pos = match instance_data.attrs.get("_pos") {
             Some(Value::Int(value)) if *value >= 0 => *value as usize,
@@ -7027,7 +7076,9 @@ impl Vm {
         closed: bool,
     ) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
-            return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
+            return Err(RuntimeError::type_error(
+                "BytesIO receiver must be instance",
+            ));
         };
         if let Some(slot) = instance_data.attrs.get_mut("_value") {
             *slot = Value::ByteArray(value_obj);
@@ -7062,7 +7113,9 @@ impl Vm {
 
     pub(super) fn bytesio_ensure_open(&self, instance: &ObjRef) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &*instance.kind() else {
-            return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
+            return Err(RuntimeError::type_error(
+                "BytesIO receiver must be instance",
+            ));
         };
         if matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true))) {
             Err(RuntimeError::value_error("I/O operation on closed file."))
@@ -7174,7 +7227,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("BytesIO.write expects 1 argument"));
+            return Err(RuntimeError::type_error("BytesIO.write expects 1 argument"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
@@ -7566,7 +7619,11 @@ impl Vm {
                     self.heap.alloc_dict(entries)
                 }
             }
-            _ => return Err(RuntimeError::type_error("BytesIO receiver must be instance")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "BytesIO receiver must be instance",
+                ));
+            }
         };
         Ok(self.heap.alloc_tuple(vec![
             self.heap.alloc_bytes(payload),
@@ -7651,7 +7708,9 @@ impl Vm {
                     _ => return Err(RuntimeError::new("third item of state should be a dict")),
                 };
                 let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
-                    return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
+                    return Err(RuntimeError::type_error(
+                        "BytesIO receiver must be instance",
+                    ));
                 };
                 for (key, value) in updates {
                     let Value::Str(name) = key else {
@@ -7783,7 +7842,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BytesIO.__iter__ expects no arguments"));
+            return Err(RuntimeError::type_error(
+                "BytesIO.__iter__ expects no arguments",
+            ));
         }
         Ok(args.remove(0))
     }
@@ -7794,7 +7855,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BytesIO.__next__ expects no arguments"));
+            return Err(RuntimeError::type_error(
+                "BytesIO.__next__ expects no arguments",
+            ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let line =
@@ -7844,7 +7907,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("BytesIO.close expects no arguments"));
+            return Err(RuntimeError::type_error(
+                "BytesIO.close expects no arguments",
+            ));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         let (value_obj, _pos, _closed) = self.bytesio_state_from_instance(&receiver)?;

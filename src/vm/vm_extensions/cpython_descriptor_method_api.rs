@@ -196,8 +196,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
             arg_tags,
             kw_entries.join(", ")
         );
-        if method_name == "dot"
-            && std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING_BT").is_some()
+        if method_name == "dot" && std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING_BT").is_some()
         {
             let vm_stack = if context.vm.is_null() {
                 "<no-vm>".to_string()
@@ -209,10 +208,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
                     .rev()
                     .take(12)
                     .map(|frame| {
-                        format!(
-                            "{}@{}:{}",
-                            frame.code.name, frame.code.filename, frame.ip
-                        )
+                        format!("{}@{}:{}", frame.code.name, frame.code.filename, frame.ip)
                     })
                     .collect::<Vec<_>>()
                     .join(" <- ")
@@ -772,10 +768,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     std::ptr::null_mut()
 }
 
-fn cpython_set_null_result_without_error(
-    context: &mut ModuleCapiContext,
-    method_name: &str,
-) {
+fn cpython_set_null_result_without_error(context: &mut ModuleCapiContext, method_name: &str) {
     if context.current_error.is_some() {
         return;
     }
@@ -1765,12 +1758,7 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_
             context.set_error("descriptor receiver is not an instance/subclass of owner type");
             return std::ptr::null_mut();
         }
-        context.alloc_cpython_method_cfunction_ptr(
-            method_def,
-            obj,
-            std::ptr::null_mut(),
-            class_arg,
-        )
+        context.alloc_cpython_method_cfunction_ptr(method_def, obj, std::ptr::null_mut(), class_arg)
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);
