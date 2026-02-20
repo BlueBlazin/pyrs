@@ -99,7 +99,7 @@ pub unsafe extern "C" fn PyObject_IsTrue(object: *mut c_void) -> i32 {
                 }
             }
         }
-        if let Some(value) = context.cpython_value_from_ptr_or_proxy(object) {
+        if let Some(value) = context.cpython_value_from_borrowed_ptr(object) {
             return if is_truthy(&value) { 1 } else { 0 };
         }
         context.set_error("PyObject_IsTrue received unknown object pointer");
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn PyObject_Str(object: *mut c_void) -> *mut c_void {
     }
 
     let value = match with_active_cpython_context_mut(|context| {
-        context.cpython_value_from_ptr_or_proxy(object)
+        context.cpython_value_from_borrowed_ptr(object)
     }) {
         Ok(Some(value)) => value,
         Ok(None) => {
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
     }
 
     let value = match with_active_cpython_context_mut(|context| {
-        context.cpython_value_from_ptr_or_proxy(object)
+        context.cpython_value_from_borrowed_ptr(object)
     }) {
         Ok(Some(value)) => value,
         Ok(None) => {
@@ -254,7 +254,7 @@ pub unsafe extern "C" fn PyObject_Repr(object: *mut c_void) -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_ASCII(object: *mut c_void) -> *mut c_void {
     let value = match with_active_cpython_context_mut(|context| {
-        context.cpython_value_from_ptr_or_proxy(object)
+        context.cpython_value_from_borrowed_ptr(object)
     }) {
         Ok(Some(value)) => value,
         Ok(None) => {
@@ -357,7 +357,7 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
     if trace_getiter {
         let (desc, type_name, tp_iter, tp_iternext) = with_active_cpython_context_mut(|context| {
             let desc = context
-                .cpython_value_from_ptr_or_proxy(object)
+                .cpython_value_from_borrowed_ptr(object)
                 .map(|value| cpython_value_debug_tag(&value))
                 .unwrap_or_else(|| "<unknown>".to_string());
             // SAFETY: pointer is a candidate PyObject* for debug-only slot introspection.
@@ -410,7 +410,7 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
             if context.vm.is_null() {
                 return None;
             }
-            let value = context.cpython_value_from_ptr_or_proxy(object)?;
+            let value = context.cpython_value_from_borrowed_ptr(object)?;
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *context.vm };
             match vm.sequence_iterator_via_getitem(value) {
@@ -562,7 +562,7 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
                 }
             }
         }
-        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+        let Some(value) = context.cpython_value_from_borrowed_ptr(object) else {
             context.set_error("PyObject_GetIter received unknown object pointer");
             return std::ptr::null_mut();
         };
@@ -634,7 +634,7 @@ pub unsafe extern "C" fn PyObject_GetAIter(object: *mut c_void) -> *mut c_void {
             context.set_error("PyObject_GetAIter missing VM context");
             return std::ptr::null_mut();
         }
-        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+        let Some(value) = context.cpython_value_from_borrowed_ptr(object) else {
             context.set_error("PyObject_GetAIter received unknown object pointer");
             return std::ptr::null_mut();
         };
@@ -836,11 +836,11 @@ pub unsafe extern "C" fn PyMethod_New(function: *mut c_void, self_obj: *mut c_vo
             context.set_error("PyMethod_New missing VM context");
             return std::ptr::null_mut();
         }
-        let Some(function_value) = context.cpython_value_from_ptr_or_proxy(function) else {
+        let Some(function_value) = context.cpython_value_from_borrowed_ptr(function) else {
             context.set_error("PyMethod_New received unknown function pointer");
             return std::ptr::null_mut();
         };
-        let Some(self_value) = context.cpython_value_from_ptr_or_proxy(self_obj) else {
+        let Some(self_value) = context.cpython_value_from_borrowed_ptr(self_obj) else {
             context.set_error("PyMethod_New received unknown self pointer");
             return std::ptr::null_mut();
         };
@@ -881,7 +881,7 @@ pub unsafe extern "C" fn PyInstanceMethod_New(function: *mut c_void) -> *mut c_v
             context.set_error("PyInstanceMethod_New expected non-null function");
             return std::ptr::null_mut();
         }
-        if context.cpython_value_from_ptr_or_proxy(function).is_none() {
+        if context.cpython_value_from_borrowed_ptr(function).is_none() {
             context.set_error("PyInstanceMethod_New received unknown function pointer");
             return std::ptr::null_mut();
         }
@@ -1154,14 +1154,14 @@ pub unsafe extern "C" fn PyVectorcall_Call(
         }
         if trace_vectorcall_decode {
             let callable_desc = context
-                .cpython_value_from_ptr_or_proxy(callable)
+                .cpython_value_from_borrowed_ptr(callable)
                 .map(|value| cpython_value_debug_tag(&value))
                 .unwrap_or_else(|| format!("<callable:{callable:p}>"));
             let kw_name_desc = if kwnames_ptr.is_null() {
                 String::new()
             } else {
                 context
-                    .cpython_value_from_ptr_or_proxy(kwnames_ptr)
+                    .cpython_value_from_borrowed_ptr(kwnames_ptr)
                     .map(|value| match value {
                         Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                             Object::Tuple(values) => values
@@ -1286,7 +1286,7 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             }
                         };
                         if known_handle || mapped_escaped {
-                            if let Some(value) = context.cpython_value_from_ptr_or_proxy(ptr) {
+                            if let Some(value) = context.cpython_value_from_borrowed_ptr(ptr) {
                                 return Some(value);
                             }
                         }
@@ -1294,7 +1294,7 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             && !pinned_owned
                             && ModuleCapiContext::is_probable_external_cpython_object_ptr(ptr)
                         {
-                            return context.cpython_value_from_ptr_or_proxy(ptr);
+                            return context.cpython_value_from_borrowed_ptr(ptr);
                         }
                         None
                     })
@@ -1438,7 +1438,7 @@ pub unsafe extern "C" fn PyObject_VectorcallDict(
             if trace_seed_calls {
                 positional_raw_ptrs.push(arg_ptr);
             }
-            let Some(value) = context.cpython_value_from_ptr_or_proxy(arg_ptr) else {
+            let Some(value) = context.cpython_value_from_borrowed_ptr(arg_ptr) else {
                 context.set_error("PyObject_VectorcallDict received unknown positional arg");
                 return std::ptr::null_mut();
             };
@@ -1489,7 +1489,7 @@ pub unsafe extern "C" fn PyObject_VectorcallDict(
         let kwargs_entries: Vec<(Value, Value)> = if kwargs.is_null() {
             Vec::new()
         } else {
-            let Some(kwargs_value) = context.cpython_value_from_ptr_or_proxy(kwargs) else {
+            let Some(kwargs_value) = context.cpython_value_from_borrowed_ptr(kwargs) else {
                 context.set_error("PyObject_VectorcallDict received unknown kwargs dict");
                 return std::ptr::null_mut();
             };
@@ -1673,7 +1673,7 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
     if trace_vectorcall_method {
         let method_name_value = with_active_cpython_context_mut(|context| {
             context
-                .cpython_value_from_ptr_or_proxy(name)
+                .cpython_value_from_borrowed_ptr(name)
                 .map(|value| match value {
                     Value::Str(text) => format!("'{}'", text),
                     other => cpython_value_debug_tag(&other),

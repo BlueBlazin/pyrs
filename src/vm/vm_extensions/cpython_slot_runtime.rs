@@ -375,7 +375,7 @@ pub(super) fn cpython_call_object(
             if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
                 if std::env::var_os("PYRS_TRACE_CPY_NULL_NOERR").is_some() {
                     let callable_tag = context
-                        .cpython_value_from_ptr_or_proxy(callable_ptr)
+                        .cpython_value_from_borrowed_ptr(callable_ptr)
                         .map(|value| cpython_value_debug_tag(&value))
                         .unwrap_or_else(|| "<unresolved>".to_string());
                     let callable_type = unsafe {
@@ -400,7 +400,7 @@ pub(super) fn cpython_call_object(
             }
             return result;
         }
-        let Some(mut callable) = context.cpython_value_from_ptr_or_proxy(callable_ptr) else {
+        let Some(mut callable) = context.cpython_value_from_borrowed_ptr(callable_ptr) else {
             context.set_error("unknown callable object pointer");
             return std::ptr::null_mut();
         };

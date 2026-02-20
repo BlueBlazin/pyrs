@@ -222,7 +222,7 @@ impl Vm {
             return Err(RuntimeError::new(detail));
         }
         call_ctx
-            .cpython_value_from_ptr_or_proxy(result_ptr)
+            .cpython_value_from_owned_ptr(result_ptr)
             .ok_or_else(|| RuntimeError::new("proxy call returned unknown object pointer"))
     }
 
@@ -283,7 +283,7 @@ impl Vm {
         }
         Some(
             call_ctx
-                .cpython_value_from_ptr_or_proxy(iter_ptr)
+                .cpython_value_from_owned_ptr(iter_ptr)
                 .ok_or_else(|| RuntimeError::new("proxy iterator returned unknown object pointer"))
                 .and_then(|iter_value| {
                     if Vm::cpython_proxy_raw_ptr_from_value(&iter_value)
@@ -352,7 +352,7 @@ impl Vm {
         }
         Some(
             call_ctx
-                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .cpython_value_from_owned_ptr(result_ptr)
                 .ok_or_else(|| RuntimeError::new(unknown_ptr_label)),
         )
     }
@@ -395,7 +395,7 @@ impl Vm {
         }
         Some(
             call_ctx
-                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .cpython_value_from_owned_ptr(result_ptr)
                 .ok_or_else(|| RuntimeError::new(unknown_ptr_label)),
         )
     }
@@ -481,7 +481,7 @@ impl Vm {
                             ))
                         } else {
                             call_ctx
-                                .cpython_value_from_ptr_or_proxy(result_ptr)
+                                .cpython_value_from_owned_ptr(result_ptr)
                                 .ok_or_else(|| {
                                     RuntimeError::new(
                                         "proxy int conversion returned unknown object pointer",
@@ -566,7 +566,7 @@ impl Vm {
                                     .unwrap_or_else(|| "float() unsupported type".to_string()),
                             ))
                         } else {
-                            match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+                            match call_ctx.cpython_value_from_owned_ptr(result_ptr) {
                                 Some(Value::Float(value)) => Ok(Value::Float(value)),
                                 Some(Value::Int(value)) => Ok(Value::Float(value as f64)),
                                 Some(Value::Bool(flag)) => {
@@ -773,7 +773,7 @@ impl Vm {
         if result_ptr.is_null() {
             return Some(Err(RuntimeError::new("proxy str() failed")));
         }
-        Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+        Some(match call_ctx.cpython_value_from_owned_ptr(result_ptr) {
             Some(Value::Str(text)) => Ok(text),
             Some(_) => Err(RuntimeError::new("proxy str() returned non-string")),
             None => Err(RuntimeError::new(
@@ -837,7 +837,7 @@ impl Vm {
         if result_ptr.is_null() {
             return Some(Err(RuntimeError::new("proxy repr() failed")));
         }
-        Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+        Some(match call_ctx.cpython_value_from_owned_ptr(result_ptr) {
             Some(Value::Str(text)) => Ok(text),
             Some(_) => Err(RuntimeError::new("proxy repr() returned non-string")),
             None => Err(RuntimeError::new(
@@ -890,7 +890,7 @@ impl Vm {
                 .unwrap_or_else(|| "proxy format() failed".to_string());
             return Some(Err(RuntimeError::new(detail)));
         }
-        Some(match call_ctx.cpython_value_from_ptr_or_proxy(result_ptr) {
+        Some(match call_ctx.cpython_value_from_owned_ptr(result_ptr) {
             Some(Value::Str(text)) => Ok(text),
             Some(_) => Err(RuntimeError::new("proxy format() returned non-string")),
             None => Err(RuntimeError::new(
@@ -973,7 +973,7 @@ impl Vm {
         }
         Some(
             call_ctx
-                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .cpython_value_from_owned_ptr(result_ptr)
                 .ok_or_else(|| RuntimeError::new("proxy getitem returned unknown object pointer")),
         )
     }
@@ -1057,7 +1057,7 @@ impl Vm {
         }
         Some(
             call_ctx
-                .cpython_value_from_ptr_or_proxy(result_ptr)
+                .cpython_value_from_owned_ptr(result_ptr)
                 .ok_or_else(|| {
                     RuntimeError::new("proxy comparison returned unknown object pointer")
                 }),
@@ -1194,7 +1194,7 @@ impl Vm {
                     raw_ptr, attr_name, attr_ptr
                 );
             }
-            let mapped = call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr);
+            let mapped = call_ctx.cpython_value_from_borrowed_ptr(attr_ptr);
             if mapped.is_none() && std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
                 let probable = ModuleCapiContext::is_probable_external_cpython_object_ptr(attr_ptr);
                 let owned = call_ctx.owns_cpython_allocation_ptr(attr_ptr);
@@ -1275,7 +1275,7 @@ impl Vm {
                         raw_ptr, attr_name, fallback_ptr
                     );
                 }
-                return call_ctx.cpython_value_from_ptr_or_proxy(fallback_ptr);
+                return call_ctx.cpython_value_from_borrowed_ptr(fallback_ptr);
             }
             if trace_type_attr {
                 eprintln!(
@@ -1318,7 +1318,7 @@ impl Vm {
                 raw_ptr, proxy_tag, attr_name, attr_ptr, attr_type_ptr, attr_type_name
             );
         }
-        let mapped = call_ctx.cpython_value_from_ptr_or_proxy(attr_ptr);
+        let mapped = call_ctx.cpython_value_from_owned_ptr(attr_ptr);
         if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
             let proxy_tag = cpython_value_debug_tag(proxy_value);
             let mapped_tag = mapped

@@ -4,6 +4,7 @@ use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, 
 use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize};
 use std::sync::{Condvar, Mutex, Once, OnceLock};
 
+use super::capi_registry::{BorrowedRef, CapiPtrProvenance, CapiRefKind, OwnedRef, StolenRef};
 use super::{
     BYTES_BACKING_STORAGE_ATTR, ExtensionCallableKind, GeneratorResumeOutcome, InternalCallOutcome,
     NativeCallResult, ObjRef, STR_BACKING_STORAGE_ATTR, Vm, add_values, dict_contains_key_checked,
@@ -3408,6 +3409,22 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
+            self.capi_registry_mark_pending_free_ptr(raw.cast());
+            if !self.capi_registry_should_free_now_ptr(raw.cast()) {
+                if !self.vm.is_null() {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    if vm
+                        .extension_pinned_cpython_allocation_set
+                        .insert(raw as usize)
+                    {
+                        vm.extension_freed_cpython_allocations
+                            .remove(&(raw as usize));
+                        vm.extension_pinned_cpython_allocations.push(raw.cast());
+                    }
+                }
+                continue;
+            }
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
@@ -3445,9 +3462,12 @@ impl Drop for ModuleCapiContext {
             unsafe {
                 free(raw.cast());
             }
+            self.capi_registry_mark_freed_ptr(raw.cast());
         }
+        let drained_list_buffers: Vec<(PyrsObjectHandle, (*mut *mut c_void, usize))> =
+            self.cpython_list_buffers.drain().collect();
         let mut seen_list_buffers: HashSet<usize> = HashSet::new();
-        for (handle, (buffer, _)) in self.cpython_list_buffers.drain() {
+        for (handle, (buffer, _)) in drained_list_buffers {
             if buffer.is_null() {
                 continue;
             }
@@ -3460,6 +3480,7 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
+            self.capi_registry_register_owned_ptr(buffer.cast(), None);
             let keep_pinned =
                 if self.keep_cpython_allocations_on_drop || escaped_handles.contains(&handle) {
                     true
@@ -3492,6 +3513,22 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
+            self.capi_registry_mark_pending_free_ptr(buffer.cast());
+            if !self.capi_registry_should_free_now_ptr(buffer.cast()) {
+                if !self.vm.is_null() {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    if vm
+                        .extension_pinned_cpython_allocation_set
+                        .insert(buffer as usize)
+                    {
+                        vm.extension_freed_cpython_allocations
+                            .remove(&(buffer as usize));
+                        vm.extension_pinned_cpython_allocations.push(buffer.cast());
+                    }
+                }
+                continue;
+            }
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
@@ -3513,9 +3550,12 @@ impl Drop for ModuleCapiContext {
             unsafe {
                 free(buffer.cast());
             }
+            self.capi_registry_mark_freed_ptr(buffer.cast());
         }
+        let drained_aux_allocations: Vec<*mut c_void> =
+            self.cpython_aux_allocations.drain(..).collect();
         let mut seen_aux_allocations: HashSet<usize> = HashSet::new();
-        for raw in self.cpython_aux_allocations.drain(..) {
+        for raw in drained_aux_allocations {
             if raw.is_null() {
                 continue;
             }
@@ -3525,6 +3565,7 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
+            self.capi_registry_register_owned_ptr(raw, None);
             let keep_pinned = if self.keep_cpython_allocations_on_drop || preserve_aux_allocations {
                 true
             } else if self.vm.is_null() {
@@ -3553,6 +3594,22 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
+            self.capi_registry_mark_pending_free_ptr(raw);
+            if !self.capi_registry_should_free_now_ptr(raw) {
+                if !self.vm.is_null() {
+                    // SAFETY: VM pointer is valid for context lifetime.
+                    let vm = unsafe { &mut *self.vm };
+                    if vm
+                        .extension_pinned_cpython_allocation_set
+                        .insert(raw as usize)
+                    {
+                        vm.extension_freed_cpython_allocations
+                            .remove(&(raw as usize));
+                        vm.extension_pinned_cpython_allocations.push(raw);
+                    }
+                }
+                continue;
+            }
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
@@ -3572,6 +3629,7 @@ impl Drop for ModuleCapiContext {
             unsafe {
                 free(raw);
             }
+            self.capi_registry_mark_freed_ptr(raw);
         }
     }
 }
@@ -4199,6 +4257,60 @@ impl ModuleCapiContext {
         handle
     }
 
+    fn capi_registry_register_owned_ptr(&mut self, ptr: *mut c_void, object_id: Option<u64>) {
+        if ptr.is_null() || self.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        vm.capi_registry_register_ptr(ptr as usize, CapiPtrProvenance::OwnedCompat, object_id);
+    }
+
+    fn capi_registry_register_external_ptr(&mut self, ptr: *mut c_void, object_id: Option<u64>) {
+        if ptr.is_null() || self.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        vm.capi_registry_register_ptr(ptr as usize, CapiPtrProvenance::ExternalRef, object_id);
+    }
+
+    fn capi_registry_mark_pending_free_ptr(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() || self.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        vm.capi_registry_mark_pending_free(ptr as usize);
+    }
+
+    fn capi_registry_should_free_now_ptr(&mut self, ptr: *mut c_void) -> bool {
+        if ptr.is_null() || self.vm.is_null() {
+            return true;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        vm.capi_registry_should_free_now(ptr as usize)
+    }
+
+    fn capi_registry_mark_freed_ptr(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() || self.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        vm.capi_registry_mark_freed(ptr as usize);
+    }
+
+    fn capi_registry_pin_external_ptr(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() || self.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        vm.capi_registry_pin_external(ptr as usize);
+    }
+
     fn alloc_cpython_ptr_for_handle(&mut self, handle: PyrsObjectHandle) -> *mut c_void {
         if let Some(existing) = self.cpython_ptr_by_handle.get(&handle).copied() {
             if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
@@ -4524,6 +4636,7 @@ impl ModuleCapiContext {
             }
             self.cpython_aux_allocations.push(keys_stub);
             self.cpython_owned_ptrs.insert(keys_stub as usize);
+            self.capi_registry_register_owned_ptr(keys_stub, None);
             // SAFETY: initialize dict header fields.
             unsafe {
                 raw_dict.write(CpythonDictCompatObject {
@@ -4585,6 +4698,9 @@ impl ModuleCapiContext {
             }
             self.cpython_list_buffers
                 .insert(handle, (buffer_ptr, capacity));
+            if !buffer_ptr.is_null() {
+                self.capi_registry_register_owned_ptr(buffer_ptr.cast(), None);
+            }
             raw_list.cast::<CpythonCompatObject>()
         } else if let Some(bytes) = bytes_payload.as_ref() {
             let storage_bytes = cpython_bytes_storage_bytes(bytes.len());
@@ -4833,14 +4949,17 @@ impl ModuleCapiContext {
         if !self.vm.is_null() {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
+            let mut object_id = None;
             if let Some(value) = self.object_value(handle) {
                 vm.extension_cpython_ptr_values
                     .insert(raw as usize, value.clone());
-                if let Some(object_id) = Self::identity_object_id(&value) {
+                if let Some(id) = Self::identity_object_id(&value) {
+                    object_id = Some(id);
                     vm.extension_cpython_ptr_by_object_id
-                        .insert(object_id, raw as usize);
+                        .insert(id, raw as usize);
                 }
             }
+            vm.capi_registry_register_ptr(raw as usize, CapiPtrProvenance::OwnedCompat, object_id);
         }
         raw.cast()
     }
@@ -5181,6 +5300,36 @@ impl ModuleCapiContext {
             }
         }
         None
+    }
+
+    fn cpython_value_from_borrowed_ptr(&mut self, object: *mut c_void) -> Option<Value> {
+        let borrowed = BorrowedRef::from_ptr(object)?;
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.capi_registry_record_ref_kind(borrowed.ptr(), CapiRefKind::Borrowed);
+        }
+        self.cpython_value_from_ptr_or_proxy(object)
+    }
+
+    fn cpython_value_from_owned_ptr(&mut self, object: *mut c_void) -> Option<Value> {
+        let owned = OwnedRef::from_ptr(object)?;
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.capi_registry_record_ref_kind(owned.ptr(), CapiRefKind::Owned);
+        }
+        self.cpython_value_from_ptr_or_proxy(object)
+    }
+
+    fn cpython_value_from_stolen_ptr(&mut self, object: *mut c_void) -> Option<Value> {
+        let stolen = StolenRef::from_ptr(object)?;
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.capi_registry_record_ref_kind(stolen.ptr(), CapiRefKind::Stolen);
+        }
+        self.cpython_value_from_ptr_or_proxy(object)
     }
 
     fn refresh_external_proxy_instance_type(
@@ -5718,7 +5867,9 @@ impl ModuleCapiContext {
         owns_allocation: bool,
         force_trace_fallback: bool,
     ) -> Value {
+        let proxy_object_id = Self::identity_object_id(&proxy);
         if !owns_allocation {
+            self.capi_registry_register_external_ptr(object, proxy_object_id);
             // Keep external PyObject* proxies alive for the VM lifetime once they are
             // materialized into runtime values. Context-scoped incref/decref churn can
             // leave escaped proxy values pointing at reclaimed CPython objects.
@@ -5739,8 +5890,10 @@ impl ModuleCapiContext {
                 unsafe {
                     Py_IncRef(object);
                 }
+                self.capi_registry_pin_external_ptr(object);
             }
         } else {
+            self.capi_registry_register_owned_ptr(object, proxy_object_id);
             self.pin_owned_cpython_allocation_for_vm(object);
         }
         if !self.vm.is_null() {
@@ -5835,6 +5988,7 @@ impl ModuleCapiContext {
             return std::ptr::null_mut();
         }
         self.cpython_aux_allocations.push(raw);
+        self.capi_registry_register_owned_ptr(raw, None);
         raw
     }
 
@@ -5843,6 +5997,7 @@ impl ModuleCapiContext {
             return;
         }
         self.cpython_aux_allocations.push(raw);
+        self.capi_registry_register_owned_ptr(raw, None);
     }
 
     fn alloc_owned_c_string_for_capi(&mut self, text: &str) -> Result<*const c_char, String> {
@@ -6080,6 +6235,7 @@ impl ModuleCapiContext {
                 }
                 let raw_object = raw.cast::<CpythonCompatObject>();
                 self.cpython_allocations.push(raw_object);
+                self.capi_registry_register_owned_ptr(raw_object.cast(), None);
                 raw.cast::<c_void>()
             }
             CpythonDescriptorKind::GetSet { getset, .. } => {
@@ -6107,6 +6263,7 @@ impl ModuleCapiContext {
                 }
                 let raw_object = raw.cast::<CpythonCompatObject>();
                 self.cpython_allocations.push(raw_object);
+                self.capi_registry_register_owned_ptr(raw_object.cast(), None);
                 raw.cast::<c_void>()
             }
             CpythonDescriptorKind::Member { member, .. } => {
@@ -6134,6 +6291,7 @@ impl ModuleCapiContext {
                 }
                 let raw_object = raw.cast::<CpythonCompatObject>();
                 self.cpython_allocations.push(raw_object);
+                self.capi_registry_register_owned_ptr(raw_object.cast(), None);
                 raw.cast::<c_void>()
             }
         };
@@ -7842,10 +8000,12 @@ impl ModuleCapiContext {
                 && !buffer.is_null()
             {
                 self.cpython_owned_ptrs.remove(&(buffer as usize));
+                self.capi_registry_mark_pending_free_ptr(buffer.cast());
                 // SAFETY: list buffer pointer was allocated through C allocator.
                 unsafe {
                     free(buffer.cast());
                 }
+                self.capi_registry_mark_freed_ptr(buffer.cast());
             }
             // SAFETY: frame pointer was created by PyFrame_New and points to frame-compatible
             // storage with referenced object pointers that need balanced decref.
@@ -7866,8 +8026,10 @@ impl ModuleCapiContext {
                 Py_XDecRef(code);
                 Py_XDecRef(globals);
                 Py_XDecRef(locals);
+                self.capi_registry_mark_pending_free_ptr(ptr);
                 free(ptr);
             }
+            self.capi_registry_mark_freed_ptr(ptr);
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for active C-API context lifetime.
                 let vm = unsafe { &mut *self.vm };
@@ -8504,6 +8666,7 @@ impl ModuleCapiContext {
         }
         self.register_known_type_ptr(ptr);
         let inserted = self.cpython_owned_ptrs.insert(ptr as usize);
+        self.capi_registry_register_owned_ptr(ptr, None);
         if inserted {
             self.refresh_owned_type_proxy_name(ptr);
         }
@@ -8533,6 +8696,7 @@ impl ModuleCapiContext {
         if ptr.is_null() || self.vm.is_null() || !self.owns_cpython_allocation_ptr(ptr) {
             return;
         }
+        self.capi_registry_register_owned_ptr(ptr, None);
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
         if vm
@@ -8558,6 +8722,7 @@ impl ModuleCapiContext {
         if !self.owns_cpython_allocation_ptr(ptr) {
             return;
         }
+        self.capi_registry_register_owned_ptr(ptr, None);
         let Some(handle) = self.cpython_objects_by_ptr.get(&(ptr as usize)).copied() else {
             return;
         };

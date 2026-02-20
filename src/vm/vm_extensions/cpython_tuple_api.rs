@@ -135,7 +135,7 @@ pub unsafe extern "C" fn PyTuple_SetItem(
             return -1;
         };
         let tuple_owned = context.owns_cpython_allocation_ptr(tuple);
-        let item_value = match context.cpython_value_from_ptr_or_proxy(item) {
+        let item_value = match context.cpython_value_from_stolen_ptr(item) {
             Some(value) => value,
             None => {
                 // SAFETY: best-effort diagnostics for unknown tuple item pointers.

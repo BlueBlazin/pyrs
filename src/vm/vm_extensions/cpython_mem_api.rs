@@ -48,6 +48,7 @@ pub unsafe extern "C" fn PyMem_RawFree(ptr: *mut c_void) {
                 .extension_pinned_cpython_allocation_set
                 .remove(&(ptr as usize))
             {
+                context.capi_registry_mark_pending_free_ptr(ptr);
                 vm.extension_pinned_capsule_names.remove(&(ptr as usize));
                 vm.extension_freed_cpython_allocations.insert(ptr as usize);
                 deregistered_vm_pin = true;
@@ -71,10 +72,19 @@ pub unsafe extern "C" fn PyMem_RawFree(ptr: *mut c_void) {
         unsafe {
             free(ptr);
         }
+        let _ = with_active_cpython_context_mut(|context: &mut ModuleCapiContext| {
+            context.capi_registry_mark_freed_ptr(ptr);
+        });
         return;
     }
+    let _ = with_active_cpython_context_mut(|context: &mut ModuleCapiContext| {
+        context.capi_registry_mark_pending_free_ptr(ptr);
+    });
     // SAFETY: forwarded directly to C allocator.
     unsafe { free(ptr) };
+    let _ = with_active_cpython_context_mut(|context: &mut ModuleCapiContext| {
+        context.capi_registry_mark_freed_ptr(ptr);
+    });
 }
 
 #[unsafe(no_mangle)]

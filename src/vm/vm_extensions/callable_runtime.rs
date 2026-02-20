@@ -163,8 +163,7 @@ impl Vm {
                 );
                 if result_ptr.is_null() {
                     -1
-                } else if let Some(result_value) =
-                    call_ctx.cpython_value_from_ptr_or_proxy(result_ptr)
+                } else if let Some(result_value) = call_ctx.cpython_value_from_owned_ptr(result_ptr)
                 {
                     result_handle = call_ctx.alloc_object(result_value);
                     0

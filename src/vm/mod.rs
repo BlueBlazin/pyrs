@@ -7,6 +7,7 @@ mod builtins_io;
 mod builtins_numeric_time;
 mod builtins_os;
 mod builtins_system_misc;
+mod capi_registry;
 mod containers;
 mod ops;
 mod stdlib;
@@ -39,6 +40,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};
 use self::containers::{
     dedup_hashable_values, dict_contains_key_checked, dict_get_value, dict_remove_value,
     dict_set_value, dict_set_value_checked, ensure_hashable,
@@ -772,6 +774,7 @@ pub struct Vm {
     extension_pinned_capsule_names: HashMap<usize, CString>,
     extension_cpython_ptr_values: HashMap<usize, Value>,
     extension_cpython_ptr_by_object_id: HashMap<u64, usize>,
+    capi_object_registry: CapiObjectRegistry,
     extension_module_def_registry: HashMap<u64, usize>,
     extension_module_state_registry: HashMap<u64, ExtensionModuleStateEntry>,
     extension_init_in_progress: HashSet<String>,
@@ -846,30 +849,44 @@ impl Drop for Vm {
                 }
             }
         }
-        for ptr in self.extension_pinned_external_cpython_refs.drain() {
+        let drained_external_refs: Vec<usize> = self
+            .extension_pinned_external_cpython_refs
+            .drain()
+            .collect();
+        for ptr in drained_external_refs {
             if ptr == 0 {
                 continue;
             }
+            self.capi_registry_mark_pending_free(ptr);
+            self.capi_registry_unpin_external(ptr);
             // SAFETY: pointers in this set were incref'd when external proxies were
             // materialized and must be decref'd exactly once at VM teardown.
             unsafe {
                 vm_extensions::Py_DecRef(ptr as *mut c_void);
             }
+            self.capi_registry_mark_freed(ptr);
         }
+        let drained_pinned_allocations: Vec<*mut c_void> = self
+            .extension_pinned_cpython_allocations
+            .drain(..)
+            .collect();
         let mut freed_pinned_allocations: HashSet<usize> = HashSet::new();
-        for raw in self.extension_pinned_cpython_allocations.drain(..) {
+        for raw in drained_pinned_allocations {
             if !raw.is_null() {
                 let addr = raw as usize;
+                self.capi_registry_mark_pending_free(addr);
                 if !self.extension_pinned_cpython_allocation_set.contains(&addr) {
                     if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=not-in-set", raw);
                     }
+                    self.capi_registry_mark_freed(addr);
                     continue;
                 }
                 if self.extension_freed_cpython_allocations.contains(&addr) {
                     if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=already-freed", raw);
                     }
+                    self.capi_registry_mark_freed(addr);
                     continue;
                 }
                 if !freed_pinned_allocations.insert(addr) {
@@ -885,6 +902,7 @@ impl Drop for Vm {
                 unsafe {
                     free(raw);
                 }
+                self.capi_registry_mark_freed(addr);
             }
         }
         self.extension_pinned_cpython_allocation_set.clear();
@@ -987,6 +1005,7 @@ impl Vm {
             extension_pinned_capsule_names: HashMap::new(),
             extension_cpython_ptr_values: HashMap::new(),
             extension_cpython_ptr_by_object_id: HashMap::new(),
+            capi_object_registry: CapiObjectRegistry::default(),
             extension_module_def_registry: HashMap::new(),
             extension_module_state_registry: HashMap::new(),
             extension_init_in_progress: HashSet::new(),
@@ -1035,6 +1054,40 @@ impl Vm {
         vm.refresh_import_resolver_state();
         vm.gc_last_allocation_count = vm.heap.total_allocations();
         vm
+    }
+
+    pub(super) fn capi_registry_register_ptr(
+        &mut self,
+        ptr: usize,
+        provenance: CapiPtrProvenance,
+        object_id: Option<u64>,
+    ) {
+        self.capi_object_registry
+            .register_ptr(ptr, provenance, object_id);
+    }
+
+    pub(super) fn capi_registry_record_ref_kind(&mut self, ptr: usize, ref_kind: CapiRefKind) {
+        self.capi_object_registry.record_ref_kind(ptr, ref_kind);
+    }
+
+    pub(super) fn capi_registry_pin_external(&mut self, ptr: usize) {
+        self.capi_object_registry.pin_external(ptr);
+    }
+
+    pub(super) fn capi_registry_unpin_external(&mut self, ptr: usize) {
+        self.capi_object_registry.unpin_external(ptr);
+    }
+
+    pub(super) fn capi_registry_mark_pending_free(&mut self, ptr: usize) {
+        self.capi_object_registry.mark_pending_free(ptr);
+    }
+
+    pub(super) fn capi_registry_should_free_now(&self, ptr: usize) -> bool {
+        self.capi_object_registry.should_free_now(ptr)
+    }
+
+    pub(super) fn capi_registry_mark_freed(&mut self, ptr: usize) {
+        self.capi_object_registry.mark_freed(ptr);
     }
 
     pub(super) fn current_thread_ident_value(&self) -> i64 {

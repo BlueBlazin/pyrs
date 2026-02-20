@@ -65,7 +65,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
         let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
         let target_kind = with_active_cpython_context_mut(|context| {
             context
-                .cpython_value_from_ptr_or_proxy(object)
+                .cpython_value_from_borrowed_ptr(object)
                 .map(|value| match value {
                     Value::None => "None".to_string(),
                     Value::Class(_) => "Class".to_string(),
@@ -522,7 +522,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
     let trace_generate_state = std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
         && with_active_cpython_context_mut(|context| {
             context
-                .cpython_value_from_ptr_or_proxy(name)
+                .cpython_value_from_borrowed_ptr(name)
                 .and_then(|value| match value {
                     Value::Str(text) => Some(text == "generate_state"),
                     _ => None,
@@ -534,7 +534,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
         let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
         let target_kind = with_active_cpython_context_mut(|context| {
             context
-                .cpython_value_from_ptr_or_proxy(object)
+                .cpython_value_from_borrowed_ptr(object)
                 .map(|value| match value {
                     Value::None => "None".to_string(),
                     Value::Class(_) => "Class".to_string(),
@@ -559,7 +559,7 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
     let trace_reduce_attr_name = if cpython_trace_numpy_reduce_enabled() {
         with_active_cpython_context_mut(|context| {
             context
-                .cpython_value_from_ptr_or_proxy(name)
+                .cpython_value_from_borrowed_ptr(name)
                 .and_then(|value| match value {
                     Value::Str(text) if cpython_is_reduce_probe_name(&text) => Some(text),
                     _ => None,
@@ -865,7 +865,7 @@ pub unsafe extern "C" fn PyObject_GenericSetAttr(
                 {
                     if value.is_null() {
                         let _ = context.sync_module_dict_del(module_obj, attr_name);
-                    } else if let Some(attr_value) = context.cpython_value_from_ptr_or_proxy(value)
+                    } else if let Some(attr_value) = context.cpython_value_from_borrowed_ptr(value)
                     {
                         let _ = context.sync_module_dict_set(module_obj, attr_name, &attr_value);
                     }
@@ -1091,7 +1091,7 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
                 let attr_name_for_sync = name_text.clone();
                 let _ = with_active_cpython_context_mut(|context| {
                     let Some(Value::Module(module_obj)) =
-                        context.cpython_value_from_ptr_or_proxy(object)
+                        context.cpython_value_from_borrowed_ptr(object)
                     else {
                         return;
                     };
@@ -1099,7 +1099,7 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
                         let _ = context.sync_module_dict_del(&module_obj, &attr_name_for_sync);
                         return;
                     }
-                    if let Some(attr_value) = context.cpython_value_from_ptr_or_proxy(value_ptr) {
+                    if let Some(attr_value) = context.cpython_value_from_borrowed_ptr(value_ptr) {
                         let _ = context.sync_module_dict_set(
                             &module_obj,
                             &attr_name_for_sync,
@@ -1124,11 +1124,11 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         }
     }
     let (object_value, value) = match with_active_cpython_context_mut(|context| {
-        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+        let Some(object_value) = context.cpython_value_from_borrowed_ptr(object) else {
             context.set_error("PyObject_SetAttrString received unknown object pointer");
             return None;
         };
-        let Some(value) = context.cpython_value_from_ptr_or_proxy(value) else {
+        let Some(value) = context.cpython_value_from_borrowed_ptr(value) else {
             context.set_error("PyObject_SetAttrString received unknown value pointer");
             return None;
         };
@@ -1217,7 +1217,7 @@ pub unsafe extern "C" fn PyObject_SetAttr(
     let trace_pyx_capi = if std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() {
         with_active_cpython_context_mut(|context| {
             context
-                .cpython_value_from_ptr_or_proxy(name)
+                .cpython_value_from_borrowed_ptr(name)
                 .and_then(|value| match value {
                     Value::Str(text) if text == "__pyx_capi__" => Some(text),
                     _ => None,

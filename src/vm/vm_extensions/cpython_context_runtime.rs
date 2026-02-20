@@ -154,7 +154,7 @@ pub(in crate::vm::vm_extensions) fn cpython_value_from_ptr(
         return Err("received null PyObject pointer".to_string());
     }
     let resolved =
-        with_active_cpython_context_mut(|context| context.cpython_value_from_ptr(object))
+        with_active_cpython_context_mut(|context| context.cpython_value_from_borrowed_ptr(object))
             .map_err(|err| err.to_string())?;
     if resolved.is_none() && std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
         eprintln!(
@@ -172,7 +172,7 @@ pub(in crate::vm::vm_extensions) fn cpython_value_from_ptr_or_proxy(
         return Err("received null PyObject pointer".to_string());
     }
     let resolved =
-        with_active_cpython_context_mut(|context| context.cpython_value_from_ptr_or_proxy(object))
+        with_active_cpython_context_mut(|context| context.cpython_value_from_borrowed_ptr(object))
             .map_err(|err| err.to_string())?;
     if resolved.is_none() && std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some() {
         eprintln!(
