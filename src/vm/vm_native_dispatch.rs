@@ -224,7 +224,7 @@ impl Vm {
                 if is_coroutine {
                     Ok(NativeCallResult::Value(Value::Generator(receiver)))
                 } else {
-                    Err(RuntimeError::new("object is not awaitable"))
+                    Err(RuntimeError::type_error("object is not awaitable"))
                 }
             }
             NativeMethodKind::GeneratorANext => {
@@ -311,7 +311,7 @@ impl Vm {
                         return Ok(NativeCallResult::Value(Value::None));
                     }
                     Object::Generator(_) => {}
-                    _ => return Err(RuntimeError::new("object is not a generator")),
+                    _ => return Err(RuntimeError::type_error("object is not a generator")),
                 }
                 let close_exc = Value::ExceptionType("GeneratorExit".to_string());
                 match self.resume_generator(
@@ -321,7 +321,7 @@ impl Vm {
                     GeneratorResumeKind::Close,
                 ) {
                     Ok(GeneratorResumeOutcome::Yield(_)) => {
-                        Err(RuntimeError::new("generator ignored GeneratorExit"))
+                        Err(RuntimeError::runtime_error("generator ignored GeneratorExit"))
                     }
                     Ok(GeneratorResumeOutcome::Complete(_)) => {
                         self.set_generator_closed(&receiver, true)?;
@@ -5037,16 +5037,16 @@ impl Vm {
                 if is_coroutine {
                     Ok(Value::Generator(generator))
                 } else if is_async_generator {
-                    Err(RuntimeError::new("async generator object is not awaitable"))
+                    Err(RuntimeError::type_error("async generator object is not awaitable"))
                 } else {
-                    Err(RuntimeError::new("object is not awaitable"))
+                    Err(RuntimeError::type_error("object is not awaitable"))
                 }
             }
-            Value::Iterator(_) => Err(RuntimeError::new("object is not awaitable")),
+            Value::Iterator(_) => Err(RuntimeError::type_error("object is not awaitable")),
             other => {
                 let method = self
                     .lookup_bound_special_method(&other, "__await__")?
-                    .ok_or_else(|| RuntimeError::new("object is not awaitable"))?;
+                    .ok_or_else(|| RuntimeError::type_error("object is not awaitable"))?;
                 match self.call_internal(method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(awaitable) => match awaitable {
                         Value::Generator(generator) => {
@@ -5060,7 +5060,7 @@ impl Vm {
                             Ok(Value::Generator(generator))
                         }
                         Value::Iterator(iterator) => Ok(Value::Iterator(iterator)),
-                        _ => Err(RuntimeError::new("__await__() returned non-iterator")),
+                        _ => Err(RuntimeError::type_error("__await__() returned non-iterator")),
                     },
                     InternalCallOutcome::CallerExceptionHandled => {
                         Err(RuntimeError::new("__await__() failed"))
@@ -5086,7 +5086,7 @@ impl Vm {
                 while self.iterator_next_value(&iterator)?.is_some() {}
                 Ok(Value::None)
             }
-            _ => Err(RuntimeError::new("object is not awaitable")),
+            _ => Err(RuntimeError::type_error("object is not awaitable")),
         }
     }
 
@@ -5109,7 +5109,7 @@ impl Vm {
             && let Object::Generator(state) = &*generator.kind()
             && (state.is_coroutine || state.is_async_generator)
         {
-            return Err(RuntimeError::new("object is not iterable"));
+            return Err(RuntimeError::type_error("object is not iterable"));
         }
         Ok(())
     }
@@ -5146,7 +5146,7 @@ impl Vm {
                             }
                             _ => None,
                         },
-                        _ => return Err(RuntimeError::new("yield from expects iterable")),
+                        _ => return Err(RuntimeError::type_error("yield from expects iterable")),
                     }
                 };
                 if let Some((start, stop, step)) = range_parts {
@@ -5167,7 +5167,7 @@ impl Vm {
                 Object::DictKeysView(view) => {
                     self.to_iterator_value(Value::Dict(view.dict.clone()))
                 }
-                _ => Err(RuntimeError::new("yield from expects iterable")),
+                _ => Err(RuntimeError::type_error("yield from expects iterable")),
             },
             Value::Instance(instance) => {
                 if let Some(values) = self.namedtuple_instance_values(&instance) {
@@ -5227,7 +5227,7 @@ impl Vm {
                     if let Some(iterator) = self.sequence_iterator_via_getitem(other.clone())? {
                         return Ok(iterator);
                     }
-                    return Err(RuntimeError::new("yield from expects iterable"));
+                    return Err(RuntimeError::type_error("yield from expects iterable"));
                 };
                 match self.call_internal(iter_method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(iterable) => match iterable {
@@ -5249,10 +5249,10 @@ impl Vm {
                             {
                                 Ok(iterable)
                             } else {
-                                Err(RuntimeError::new("__iter__() returned non-iterator"))
+                                Err(RuntimeError::type_error("__iter__() returned non-iterator"))
                             }
                         }
-                        _ => Err(RuntimeError::new("__iter__() returned non-iterator")),
+                        _ => Err(RuntimeError::type_error("__iter__() returned non-iterator")),
                     },
                     InternalCallOutcome::CallerExceptionHandled => {
                         Err(self.runtime_error_from_active_exception("__iter__() failed"))
@@ -5267,7 +5267,7 @@ impl Vm {
                         index: 0,
                     }))
                 } else {
-                    Err(RuntimeError::new("yield from expects iterable"))
+                    Err(RuntimeError::type_error("yield from expects iterable"))
                 }
             }
             Value::Tuple(obj) => {
@@ -5278,7 +5278,7 @@ impl Vm {
                         index: 0,
                     }))
                 } else {
-                    Err(RuntimeError::new("yield from expects iterable"))
+                    Err(RuntimeError::type_error("yield from expects iterable"))
                 }
             }
             Value::Str(value) => Ok(self.heap.alloc_iterator(IteratorObject {
@@ -5293,7 +5293,7 @@ impl Vm {
                         index: 0,
                     }))
                 } else {
-                    Err(RuntimeError::new("yield from expects iterable"))
+                    Err(RuntimeError::type_error("yield from expects iterable"))
                 }
             }
             Value::Set(obj) | Value::FrozenSet(obj) => {
@@ -5333,7 +5333,7 @@ impl Vm {
                     if let Some(iterator) = self.sequence_iterator_via_getitem(other.clone())? {
                         return Ok(iterator);
                     }
-                    return Err(RuntimeError::new("yield from expects iterable"));
+                    return Err(RuntimeError::type_error("yield from expects iterable"));
                 };
 
                 match self.call_internal(iter_method, Vec::new(), HashMap::new())? {
@@ -5356,10 +5356,10 @@ impl Vm {
                             {
                                 Ok(iterable)
                             } else {
-                                Err(RuntimeError::new("__iter__() returned non-iterator"))
+                                Err(RuntimeError::type_error("__iter__() returned non-iterator"))
                             }
                         }
-                        _ => Err(RuntimeError::new("__iter__() returned non-iterator")),
+                        _ => Err(RuntimeError::type_error("__iter__() returned non-iterator")),
                     },
                     InternalCallOutcome::CallerExceptionHandled => {
                         Err(RuntimeError::new("__iter__() failed"))
@@ -5378,7 +5378,7 @@ impl Vm {
                     if let Some(iterator) = self.sequence_iterator_via_getitem(other.clone())? {
                         return Ok(iterator);
                     }
-                    return Err(RuntimeError::new("yield from expects iterable"));
+                    return Err(RuntimeError::type_error("yield from expects iterable"));
                 };
 
                 match self.call_internal(iter_method, Vec::new(), HashMap::new())? {
@@ -5400,10 +5400,10 @@ impl Vm {
                             {
                                 Ok(iterable)
                             } else {
-                                Err(RuntimeError::new("__iter__() returned non-iterator"))
+                                Err(RuntimeError::type_error("__iter__() returned non-iterator"))
                             }
                         }
-                        _ => Err(RuntimeError::new("__iter__() returned non-iterator")),
+                        _ => Err(RuntimeError::type_error("__iter__() returned non-iterator")),
                     },
                     InternalCallOutcome::CallerExceptionHandled => {
                         Err(RuntimeError::new("__iter__() failed"))
@@ -5578,7 +5578,7 @@ impl Vm {
                         && Vm::cpython_proxy_has_iternext(&receiver).unwrap_or(false);
                 let method = self
                     .lookup_bound_special_method(&receiver, "__next__")?
-                    .ok_or_else(|| RuntimeError::new("yield from expects iterable"))?;
+                    .ok_or_else(|| RuntimeError::type_error("yield from expects iterable"))?;
                 let caller_depth = self.frames.len();
                 let (caller_ip, caller_stack_len, caller_blocks, caller_active_exception) = self
                     .frames
@@ -5665,7 +5665,7 @@ impl Vm {
                     }
                 }
             }
-            _ => Err(RuntimeError::new("yield from expects iterable")),
+            _ => Err(RuntimeError::type_error("yield from expects iterable")),
         }
     }
 
@@ -5693,7 +5693,7 @@ impl Vm {
                     {
                         match outcome {
                             GeneratorResumeOutcome::Yield(_) => {
-                                Err(RuntimeError::new("generator ignored GeneratorExit"))
+                                Err(RuntimeError::runtime_error("generator ignored GeneratorExit"))
                             }
                             GeneratorResumeOutcome::Complete(_) => {
                                 self.raise_exception(exc)?;
@@ -5715,7 +5715,7 @@ impl Vm {
                     self.raise_exception(exc)?;
                     Ok(GeneratorResumeOutcome::PropagatedException)
                 }
-                _ => Err(RuntimeError::new("yield from expects iterable")),
+                _ => Err(RuntimeError::type_error("yield from expects iterable")),
             };
         }
 
@@ -5728,7 +5728,7 @@ impl Vm {
                     "'{}' object has no attribute 'send'",
                     self.iterator_type_name(iterator)
                 ))),
-                _ => Err(RuntimeError::new("yield from expects iterable")),
+                _ => Err(RuntimeError::type_error("yield from expects iterable")),
             };
         }
 
@@ -6294,7 +6294,7 @@ impl Vm {
                 state.started = started;
                 Ok(())
             }
-            _ => Err(RuntimeError::new("object is not a generator")),
+            _ => Err(RuntimeError::type_error("object is not a generator")),
         }
     }
 
@@ -6308,7 +6308,7 @@ impl Vm {
                 state.running = running;
                 Ok(())
             }
-            _ => Err(RuntimeError::new("object is not a generator")),
+            _ => Err(RuntimeError::type_error("object is not a generator")),
         }
     }
 
@@ -6325,7 +6325,7 @@ impl Vm {
                 }
                 Ok(())
             }
-            _ => Err(RuntimeError::new("object is not a generator")),
+            _ => Err(RuntimeError::type_error("object is not a generator")),
         }
     }
 

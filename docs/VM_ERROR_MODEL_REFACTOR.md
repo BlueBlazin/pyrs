@@ -32,6 +32,10 @@ Status: in progress (phase 1 + initial phase 2 landed).
 16. Generator resume error parity improved in `vm_native_dispatch`:
    - re-entrancy now raises typed `ValueError` (`generator already executing`)
    - non-generator and invalid initial `send` paths now raise typed `TypeError`.
+17. Await/yield-from iterator protocol paths now raise typed exceptions in `vm_native_dispatch`:
+   - `object is not awaitable` / `object is not iterable` / `yield from expects iterable` now raise `TypeError`
+   - `__iter__()` / `__await__()` non-iterator contract failures now raise `TypeError`
+   - `generator ignored GeneratorExit` now raises typed `RuntimeError`.
 
 ## Why This Exists
 
