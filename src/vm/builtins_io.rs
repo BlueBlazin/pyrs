@@ -4194,7 +4194,7 @@ impl Vm {
         depth: usize,
     ) -> Result<i64, RuntimeError> {
         if depth > 8 {
-            return Err(RuntimeError::new("invalid file object"));
+            return Err(RuntimeError::type_error("invalid file object"));
         }
         let closed = matches!(
             Self::instance_attr_get(instance, "_closed"),
@@ -4213,7 +4213,7 @@ impl Vm {
                         return self.io_file_fd_from_instance_inner(&inner, depth + 1);
                     }
                 }
-                Err(RuntimeError::new("invalid file object"))
+                Err(RuntimeError::type_error("invalid file object"))
             }
         }
     }
@@ -4449,10 +4449,10 @@ impl Vm {
         fallback: &str,
     ) -> Result<Value, RuntimeError> {
         let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") else {
-            return Err(RuntimeError::new("invalid file object"));
+            return Err(RuntimeError::type_error("invalid file object"));
         };
         if buffer.id() == instance.id() {
-            return Err(RuntimeError::new("invalid file object"));
+            return Err(RuntimeError::type_error("invalid file object"));
         }
         let method_value = self.builtin_getattr(
             vec![Value::Instance(buffer), Value::Str(method.to_string())],
@@ -4472,10 +4472,10 @@ impl Vm {
         payload: Vec<u8>,
     ) -> Result<(), RuntimeError> {
         let Some(Value::Instance(buffer)) = Self::instance_attr_get(instance, "buffer") else {
-            return Err(RuntimeError::new("invalid file object"));
+            return Err(RuntimeError::type_error("invalid file object"));
         };
         if buffer.id() == instance.id() {
-            return Err(RuntimeError::new("invalid file object"));
+            return Err(RuntimeError::type_error("invalid file object"));
         }
         let write = self.builtin_getattr(
             vec![Value::Instance(buffer), Value::Str("write".to_string())],

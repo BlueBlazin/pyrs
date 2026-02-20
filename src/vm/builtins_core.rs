@@ -358,7 +358,7 @@ impl Vm {
                                 return Ok(Value::Str(text));
                             }
                             InternalCallOutcome::Value(_) => {
-                                return Err(RuntimeError::new("__repr__ returned non-string"));
+                                return Err(RuntimeError::type_error("__repr__ returned non-string"));
                             }
                             InternalCallOutcome::CallerExceptionHandled => {
                                 return Err(
@@ -378,7 +378,7 @@ impl Vm {
         let render_nested = |vm: &mut Vm, nested: Value| -> Result<String, RuntimeError> {
             match vm.builtin_repr(vec![nested], HashMap::new())? {
                 Value::Str(text) => Ok(text),
-                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+                _ => Err(RuntimeError::type_error("__repr__ returned non-string")),
             }
         };
 
@@ -504,7 +504,7 @@ impl Vm {
         let repr_text = |vm: &mut Vm, value: Value| -> Result<String, RuntimeError> {
             match vm.builtin_repr(vec![value], HashMap::new())? {
                 Value::Str(text) => Ok(text),
-                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+                _ => Err(RuntimeError::type_error("__repr__ returned non-string")),
             }
         };
 
@@ -602,7 +602,7 @@ impl Vm {
         if !self.frames.is_empty() {
             return match self.builtin_repr(vec![value], HashMap::new())? {
                 Value::Str(text) => Ok(text),
-                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+                _ => Err(RuntimeError::type_error("__repr__ returned non-string")),
             };
         }
         const TEMP_REPR_NAME: &str = "__pyrs_repl_repr_target__";
@@ -618,7 +618,7 @@ impl Vm {
             )?;
             match self.execute(&code)? {
                 Value::Str(text) => Ok(text),
-                _ => Err(RuntimeError::new("__repr__ returned non-string")),
+                _ => Err(RuntimeError::type_error("__repr__ returned non-string")),
             }
         })();
         match previous {
@@ -2419,20 +2419,20 @@ impl Vm {
             0 => {}
             1 => {
                 if stop.is_some() {
-                    return Err(RuntimeError::new("range() got multiple values"));
+                    return Err(RuntimeError::type_error("range() got multiple values"));
                 }
                 stop = Some(args.remove(0));
             }
             2 => {
                 if start.is_some() || stop.is_some() {
-                    return Err(RuntimeError::new("range() got multiple values"));
+                    return Err(RuntimeError::type_error("range() got multiple values"));
                 }
                 start = Some(args.remove(0));
                 stop = Some(args.remove(0));
             }
             3 => {
                 if start.is_some() || stop.is_some() || step.is_some() {
-                    return Err(RuntimeError::new("range() got multiple values"));
+                    return Err(RuntimeError::type_error("range() got multiple values"));
                 }
                 start = Some(args.remove(0));
                 stop = Some(args.remove(0));

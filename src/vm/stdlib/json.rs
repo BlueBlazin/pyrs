@@ -716,18 +716,18 @@ impl<'a> JsonParser<'a> {
                                 self.expect(b'u')?;
                                 let low = self.parse_hex_u16()?;
                                 if !(0xDC00..=0xDFFF).contains(&low) {
-                                    return Err(RuntimeError::new("invalid unicode escape"));
+                                    return Err(RuntimeError::value_error("invalid unicode escape"));
                                 }
                                 let scalar = 0x10000
                                     + (((code as u32 - 0xD800) << 10) | (low as u32 - 0xDC00));
                                 let ch = char::from_u32(scalar)
-                                    .ok_or_else(|| RuntimeError::new("invalid unicode escape"))?;
+                                    .ok_or_else(|| RuntimeError::value_error("invalid unicode escape"))?;
                                 out.push(ch);
                             } else if (0xDC00..=0xDFFF).contains(&code) {
-                                return Err(RuntimeError::new("invalid unicode escape"));
+                                return Err(RuntimeError::value_error("invalid unicode escape"));
                             } else {
                                 let ch = char::from_u32(code as u32)
-                                    .ok_or_else(|| RuntimeError::new("invalid unicode escape"))?;
+                                    .ok_or_else(|| RuntimeError::value_error("invalid unicode escape"))?;
                                 out.push(ch);
                             }
                         }
@@ -749,24 +749,24 @@ impl<'a> JsonParser<'a> {
         } else if first >> 3 == 0b11110 {
             4
         } else {
-            return Err(RuntimeError::new("invalid UTF-8 in JSON string"));
+            return Err(RuntimeError::value_error("invalid UTF-8 in JSON string"));
         };
         let mut bytes = vec![first];
         for _ in 1..width {
             let next = self
                 .next()
-                .ok_or_else(|| RuntimeError::new("invalid UTF-8 in JSON string"))?;
+                .ok_or_else(|| RuntimeError::value_error("invalid UTF-8 in JSON string"))?;
             if (next & 0b1100_0000) != 0b1000_0000 {
-                return Err(RuntimeError::new("invalid UTF-8 in JSON string"));
+                return Err(RuntimeError::value_error("invalid UTF-8 in JSON string"));
             }
             bytes.push(next);
         }
         let text = std::str::from_utf8(&bytes)
-            .map_err(|_| RuntimeError::new("invalid UTF-8 in JSON string"))?;
+            .map_err(|_| RuntimeError::value_error("invalid UTF-8 in JSON string"))?;
         let ch = text
             .chars()
             .next()
-            .ok_or_else(|| RuntimeError::new("invalid UTF-8 in JSON string"))?;
+            .ok_or_else(|| RuntimeError::value_error("invalid UTF-8 in JSON string"))?;
         out.push(ch);
         Ok(())
     }
@@ -776,13 +776,13 @@ impl<'a> JsonParser<'a> {
         for _ in 0..4 {
             let byte = self
                 .next()
-                .ok_or_else(|| RuntimeError::new("invalid unicode escape"))?;
+                .ok_or_else(|| RuntimeError::value_error("invalid unicode escape"))?;
             value <<= 4;
             value |= match byte {
                 b'0'..=b'9' => (byte - b'0') as u16,
                 b'a'..=b'f' => (byte - b'a' + 10) as u16,
                 b'A'..=b'F' => (byte - b'A' + 10) as u16,
-                _ => return Err(RuntimeError::new("invalid unicode escape")),
+                _ => return Err(RuntimeError::value_error("invalid unicode escape")),
             };
         }
         Ok(value)
@@ -846,7 +846,7 @@ impl<'a> JsonParser<'a> {
             Some(b'0') => {
                 self.pos += 1;
                 if matches!(self.peek(), Some(b'0'..=b'9')) {
-                    return Err(RuntimeError::new("invalid JSON number"));
+                    return Err(RuntimeError::value_error("invalid JSON number"));
                 }
             }
             Some(b'1'..=b'9') => {
@@ -855,12 +855,12 @@ impl<'a> JsonParser<'a> {
                     self.pos += 1;
                 }
             }
-            _ => return Err(RuntimeError::new("invalid JSON number")),
+            _ => return Err(RuntimeError::value_error("invalid JSON number")),
         }
         if self.peek() == Some(b'.') {
             self.pos += 1;
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
-                return Err(RuntimeError::new("invalid JSON number"));
+                return Err(RuntimeError::value_error("invalid JSON number"));
             }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
                 self.pos += 1;
@@ -872,18 +872,18 @@ impl<'a> JsonParser<'a> {
                 self.pos += 1;
             }
             if !matches!(self.peek(), Some(b'0'..=b'9')) {
-                return Err(RuntimeError::new("invalid JSON number"));
+                return Err(RuntimeError::value_error("invalid JSON number"));
             }
             while matches!(self.peek(), Some(b'0'..=b'9')) {
                 self.pos += 1;
             }
         }
         let text = std::str::from_utf8(&self.source[start..self.pos])
-            .map_err(|_| RuntimeError::new("invalid JSON number"))?;
+            .map_err(|_| RuntimeError::value_error("invalid JSON number"))?;
         if text.contains('.') || text.contains('e') || text.contains('E') {
             let value = text
                 .parse::<f64>()
-                .map_err(|_| RuntimeError::new("invalid JSON number"))?;
+                .map_err(|_| RuntimeError::value_error("invalid JSON number"))?;
             Ok(JsonNode::Float(value))
         } else if let Ok(value) = text.parse::<i64>() {
             Ok(JsonNode::Int(value))
@@ -893,7 +893,7 @@ impl<'a> JsonParser<'a> {
                 None => (false, text),
             };
             let mut value = BigInt::from_str_radix(digits, 10)
-                .ok_or_else(|| RuntimeError::new("invalid JSON number"))?;
+                .ok_or_else(|| RuntimeError::value_error("invalid JSON number"))?;
             if negative {
                 value = value.negated();
             }

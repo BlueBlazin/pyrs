@@ -66,6 +66,24 @@ Status: in progress (phase 1 + initial phase 2 landed).
 26. Added conformance regressions for this batch in `/Users/$USER/pyrs/tests/vm.rs`:
    - `constructor_contract_errors_for_memoryview_type_and_set_are_typed`
    - `io_method_arity_and_closed_file_contracts_are_typed`
+27. `memoryview.cast(...)` keyword/positional argument validation now follows CPython argument-clinic semantics:
+   - duplicate positional+keyword `format`/`shape` now raises typed `TypeError` with CPython-style text (`argument for cast() given by name ... and position ...`)
+   - over-arity now raises typed `TypeError` with dynamic count (`takes at most 2 arguments` / `takes at most 2 keyword arguments`).
+28. Additional typed-constructor conversion landed for parsing/conversion contracts:
+   - `invalid JSON number` / `invalid unicode escape` / `invalid UTF-8 in JSON string` -> typed `ValueError`
+   - `float() invalid literal` -> typed `ValueError`
+   - `range() got multiple values` / `unpack expects iterable` / invalid file-object contracts -> typed `TypeError`
+   - unsupported codec encoding normalization now raises typed `LookupError`.
+29. CSV unknown-dialect failures now produce typed `Error` exceptions via explicit `RuntimeError::with_exception("Error", ...)` instead of relying on classifier text matching.
+30. Added additional regression tests in `/Users/$USER/pyrs/tests/vm.rs` for this conversion wave:
+   - `range_duplicate_argument_error_is_typed`
+   - `unpack_non_iterable_error_is_typed`
+   - `float_invalid_literal_error_is_typed_value_error`
+   - `csv_unknown_dialect_error_is_typed_error`
+31. Current highest-frequency remaining `RuntimeError::new(...)` buckets are now mostly:
+   - VM-internal diagnostics (`name index out of range`, `constant index out of range`, stack underflow),
+   - specialized memoryview format/tolist long-tail (`memoryview.tolist() unsupported format`, `memoryview: unsupported format`),
+   - narrower domain contract messages (`setstate() expects one argument`, `path/pattern/name must be ...`).
 
 ## Why This Exists
 

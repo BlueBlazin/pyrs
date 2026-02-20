@@ -6971,7 +6971,7 @@ fn normalize_codec_encoding(value: Value) -> Result<String, RuntimeError> {
         }
         "raw-unicode-escape" | "raw_unicode_escape" => Ok("raw-unicode-escape".to_string()),
         "unicode-escape" | "unicode_escape" => Ok("unicode-escape".to_string()),
-        _ => Err(RuntimeError::new("unsupported encoding")),
+        _ => Err(RuntimeError::lookup_error("unsupported encoding")),
     }
 }
 
@@ -7185,7 +7185,7 @@ fn encode_text_bytes(text: &str, encoding: &str, errors: &str) -> Result<Vec<u8>
         }
         "raw-unicode-escape" => Ok(encode_raw_unicode_escape(text)),
         "unicode-escape" => Ok(encode_unicode_escape(text)),
-        _ => Err(RuntimeError::new("unsupported encoding")),
+        _ => Err(RuntimeError::lookup_error("unsupported encoding")),
     }
 }
 
@@ -7247,7 +7247,7 @@ fn decode_text_bytes(bytes: &[u8], encoding: &str, errors: &str) -> Result<Strin
         }
         "raw-unicode-escape" => decode_raw_unicode_escape(bytes, errors),
         "unicode-escape" => decode_unicode_escape(bytes, errors),
-        _ => Err(RuntimeError::new("unsupported encoding")),
+        _ => Err(RuntimeError::lookup_error("unsupported encoding")),
     }
 }
 
@@ -8353,20 +8353,20 @@ fn call_builtin_with_kwargs(
                 0 => {}
                 1 => {
                     if stop.is_some() {
-                        return Err(RuntimeError::new("range() got multiple values"));
+                        return Err(RuntimeError::type_error("range() got multiple values"));
                     }
                     stop = Some(args.remove(0));
                 }
                 2 => {
                     if start.is_some() || stop.is_some() {
-                        return Err(RuntimeError::new("range() got multiple values"));
+                        return Err(RuntimeError::type_error("range() got multiple values"));
                     }
                     start = Some(args.remove(0));
                     stop = Some(args.remove(0));
                 }
                 3 => {
                     if start.is_some() || stop.is_some() || step.is_some() {
-                        return Err(RuntimeError::new("range() got multiple values"));
+                        return Err(RuntimeError::type_error("range() got multiple values"));
                     }
                     start = Some(args.remove(0));
                     stop = Some(args.remove(0));

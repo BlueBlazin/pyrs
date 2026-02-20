@@ -1533,7 +1533,7 @@ impl Vm {
         if let Some(timeout) = args.first().cloned() {
             let timeout = value_to_f64(timeout)?;
             if timeout.is_sign_negative() {
-                return Err(RuntimeError::new("timeout must be non-negative"));
+                return Err(RuntimeError::value_error("timeout must be non-negative"));
             }
         }
         Ok(Value::None)
@@ -1620,7 +1620,7 @@ impl Vm {
         if let Some(timeout) = args.first().cloned() {
             let timeout = value_to_f64(timeout)?;
             if timeout.is_sign_negative() {
-                return Err(RuntimeError::new("timeout must be non-negative"));
+                return Err(RuntimeError::value_error("timeout must be non-negative"));
             }
         }
         Ok(Value::Bool(matches!(
@@ -1665,7 +1665,7 @@ impl Vm {
         if let Some(timeout) = kwargs.get("timeout").cloned() {
             let timeout = value_to_f64(timeout)?;
             if timeout.is_sign_negative() {
-                return Err(RuntimeError::new("timeout must be non-negative"));
+                return Err(RuntimeError::value_error("timeout must be non-negative"));
             }
         }
         Self::instance_attr_set(&instance, "_locked", Value::Bool(true))?;
@@ -1759,7 +1759,7 @@ impl Vm {
         if let Some(timeout) = timeout {
             let timeout = value_to_f64(timeout)?;
             if timeout.is_sign_negative() {
-                return Err(RuntimeError::new("timeout must be non-negative"));
+                return Err(RuntimeError::value_error("timeout must be non-negative"));
             }
         }
         Ok(Value::Bool(true))
@@ -1913,7 +1913,7 @@ impl Vm {
         if timeout != Value::None {
             let timeout = value_to_f64(timeout)?;
             if timeout.is_sign_negative() {
-                return Err(RuntimeError::new("timeout must be non-negative"));
+                return Err(RuntimeError::value_error("timeout must be non-negative"));
             }
         }
         if !args.is_empty() || !kwargs.is_empty() {
@@ -1968,7 +1968,7 @@ impl Vm {
         if let Some(timeout) = timeout {
             let timeout = value_to_f64(timeout)?;
             if timeout.is_sign_negative() {
-                return Err(RuntimeError::new("timeout must be non-negative"));
+                return Err(RuntimeError::value_error("timeout must be non-negative"));
             }
         }
         if matches!(
@@ -2280,7 +2280,7 @@ impl Vm {
             value => {
                 let timeout = value_to_f64(value)?;
                 if timeout.is_sign_negative() {
-                    return Err(RuntimeError::new("timeout must be non-negative"));
+                    return Err(RuntimeError::value_error("timeout must be non-negative"));
                 }
                 self.socket_default_timeout = Some(timeout);
             }

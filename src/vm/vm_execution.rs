@@ -2597,7 +2597,7 @@ impl Vm {
                     Value::List(obj) => {
                         let kind = obj.kind();
                         let Object::List(values) = &*kind else {
-                            return Err(RuntimeError::new("unpack expects iterable"));
+                            return Err(RuntimeError::type_error("unpack expects iterable"));
                         };
                         if values.len() < count {
                             return Err(RuntimeError::new(format!(
@@ -2617,7 +2617,7 @@ impl Vm {
                     Value::Tuple(obj) => {
                         let kind = obj.kind();
                         let Object::Tuple(values) = &*kind else {
-                            return Err(RuntimeError::new("unpack expects iterable"));
+                            return Err(RuntimeError::type_error("unpack expects iterable"));
                         };
                         if values.len() < count {
                             return Err(RuntimeError::new(format!(
@@ -2637,7 +2637,7 @@ impl Vm {
                     other => {
                         let items = self
                             .collect_iterable_values(other)
-                            .map_err(|_| RuntimeError::new("unpack expects iterable"))?;
+                            .map_err(|_| RuntimeError::type_error("unpack expects iterable"))?;
                         if items.len() < count {
                             return Err(RuntimeError::new(format!(
                                 "not enough values to unpack (expected {count}, got {})",
@@ -2666,7 +2666,7 @@ impl Vm {
                     Value::List(obj) => {
                         let kind = obj.kind();
                         let Object::List(values) = &*kind else {
-                            return Err(RuntimeError::new("unpack expects iterable"));
+                            return Err(RuntimeError::type_error("unpack expects iterable"));
                         };
                         if values.len() < before + after {
                             return Err(RuntimeError::new(format!(
@@ -2688,7 +2688,7 @@ impl Vm {
                     Value::Tuple(obj) => {
                         let kind = obj.kind();
                         let Object::Tuple(values) = &*kind else {
-                            return Err(RuntimeError::new("unpack expects iterable"));
+                            return Err(RuntimeError::type_error("unpack expects iterable"));
                         };
                         if values.len() < before + after {
                             return Err(RuntimeError::new(format!(
@@ -2710,7 +2710,7 @@ impl Vm {
                     other => {
                         let mut items = self
                             .collect_iterable_values(other)
-                            .map_err(|_| RuntimeError::new("unpack expects iterable"))?;
+                            .map_err(|_| RuntimeError::type_error("unpack expects iterable"))?;
                         if items.len() < before + after {
                             return Err(RuntimeError::new(format!(
                                 "not enough values to unpack (expected at least {}, got {})",

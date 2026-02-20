@@ -2825,10 +2825,18 @@ impl Vm {
                 ))
             }
             NativeMethodKind::MemoryViewCast => {
-                if args.len() > 2 {
-                    return Err(RuntimeError::new(
-                        "cast() takes at most 2 arguments (3 given)",
-                    ));
+                let total_args = args.len() + kwargs.len();
+                if total_args > 2 {
+                    if args.is_empty() {
+                        return Err(RuntimeError::type_error(format!(
+                            "cast() takes at most 2 keyword arguments ({} given)",
+                            kwargs.len()
+                        )));
+                    }
+                    return Err(RuntimeError::type_error(format!(
+                        "cast() takes at most 2 arguments ({} given)",
+                        total_args
+                    )));
                 }
                 let mut format_arg = args.first().cloned();
                 let mut shape_arg = args.get(1).cloned();
@@ -2836,22 +2844,22 @@ impl Vm {
                     match name.as_str() {
                         "format" => {
                             if format_arg.is_some() {
-                                return Err(RuntimeError::new(
-                                    "cast() got multiple values for argument 'format'",
+                                return Err(RuntimeError::type_error(
+                                    "argument for cast() given by name ('format') and position (1)",
                                 ));
                             }
                             format_arg = Some(value);
                         }
                         "shape" => {
                             if shape_arg.is_some() {
-                                return Err(RuntimeError::new(
-                                    "cast() got multiple values for argument 'shape'",
+                                return Err(RuntimeError::type_error(
+                                    "argument for cast() given by name ('shape') and position (2)",
                                 ));
                             }
                             shape_arg = Some(value);
                         }
                         _ => {
-                            return Err(RuntimeError::new(format!(
+                            return Err(RuntimeError::type_error(format!(
                                 "cast() got an unexpected keyword argument '{name}'"
                             )));
                         }
@@ -2860,10 +2868,10 @@ impl Vm {
                 let format = match format_arg {
                     Some(Value::Str(value)) => value,
                     Some(_) => {
-                        return Err(RuntimeError::new("memoryview.cast() format must be str"));
+                        return Err(RuntimeError::type_error("memoryview.cast() format must be str"));
                     }
                     None => {
-                        return Err(RuntimeError::new(
+                        return Err(RuntimeError::type_error(
                             "cast() missing required argument 'format' (pos 1)",
                         ));
                     }

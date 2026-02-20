@@ -3692,17 +3692,17 @@ impl BuiltinFunction {
                         let trimmed = value.trim();
                         let parsed = trimmed
                             .parse::<f64>()
-                            .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                            .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
                         Ok(Value::Float(parsed))
                     }
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) => {
                             let text = std::str::from_utf8(values)
-                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
                             let parsed = text
                                 .trim()
                                 .parse::<f64>()
-                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
                             Ok(Value::Float(parsed))
                         }
                         _ => Err(RuntimeError::type_error("float() unsupported type")),
@@ -3710,11 +3710,11 @@ impl BuiltinFunction {
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) => {
                             let text = std::str::from_utf8(values)
-                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
                             let parsed = text
                                 .trim()
                                 .parse::<f64>()
-                                .map_err(|_| RuntimeError::new("float() invalid literal"))?;
+                                .map_err(|_| RuntimeError::value_error("float() invalid literal"))?;
                             Ok(Value::Float(parsed))
                         }
                         _ => Err(RuntimeError::type_error("float() unsupported type")),
@@ -6509,7 +6509,7 @@ fn value_to_bytes_with_encoding(
 ) -> Result<Vec<u8>, RuntimeError> {
     let encoding_name = match encoding {
         Some(Value::Str(name)) => normalize_text_encoding_name(&name)
-            .ok_or_else(|| RuntimeError::new("unsupported encoding"))?
+            .ok_or_else(|| RuntimeError::lookup_error("unsupported encoding"))?
             .to_string(),
         Some(_) => return Err(RuntimeError::new("encoding must be string")),
         None => "utf-8".to_string(),

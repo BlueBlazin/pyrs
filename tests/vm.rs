@@ -8028,6 +8028,67 @@ ok = iter_ok and next_ok and write_ok and close_ok and closed_ok
 }
 
 #[test]
+fn range_duplicate_argument_error_is_typed() {
+    let source = r#"ok = False
+try:
+    range(1, stop=2)
+except Exception as exc:
+    ok = (type(exc).__name__ == "TypeError") and ("multiple values" in str(exc))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn unpack_non_iterable_error_is_typed() {
+    let source = r#"ok = False
+try:
+    a, b = 1
+except Exception as exc:
+    ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn float_invalid_literal_error_is_typed_value_error() {
+    let source = r#"ok = False
+try:
+    float("abc")
+except Exception as exc:
+    ok = (type(exc).__name__ == "ValueError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn csv_unknown_dialect_error_is_typed_error() {
+    let source = r#"import _csv
+ok = False
+try:
+    _csv.get_dialect(1)
+except Exception as exc:
+    ok = (type(exc).__name__ == "Error")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -960,10 +960,10 @@ impl Vm {
         }
         let name = match &args[0] {
             Value::Str(name) => name.clone(),
-            _ => return Err(RuntimeError::new("unknown dialect")),
+            _ => return Err(RuntimeError::with_exception("Error", Some("unknown dialect".to_string()))),
         };
         if self.csv_dialects.remove(&name).is_none() {
-            return Err(RuntimeError::new("unknown dialect"));
+            return Err(RuntimeError::with_exception("Error", Some("unknown dialect".to_string())));
         }
         Ok(Value::None)
     }
@@ -978,12 +978,12 @@ impl Vm {
         }
         let name = match &args[0] {
             Value::Str(name) => name.clone(),
-            _ => return Err(RuntimeError::new("unknown dialect")),
+            _ => return Err(RuntimeError::with_exception("Error", Some("unknown dialect".to_string()))),
         };
         self.csv_dialects
             .get(&name)
             .cloned()
-            .ok_or_else(|| RuntimeError::new("unknown dialect"))
+            .ok_or_else(|| RuntimeError::with_exception("Error", Some("unknown dialect".to_string())))
     }
 
     pub(in crate::vm) fn builtin_csv_list_dialects(
@@ -1090,7 +1090,7 @@ impl Vm {
                 .get(&name)
                 .cloned()
                 .map(Some)
-                .ok_or_else(|| RuntimeError::new("unknown dialect")),
+                .ok_or_else(|| RuntimeError::with_exception("Error", Some("unknown dialect".to_string()))),
             other => Ok(other),
         }
     }

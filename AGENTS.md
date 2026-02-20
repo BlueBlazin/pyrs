@@ -84,6 +84,15 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - IO/iterator method arity (`__iter__`/`__next__`/`close`/`write`) now raises typed `TypeError`.
     - closed-file IO paths now raise typed `ValueError` (`I/O operation on closed file.`).
   - new regressions cover these contracts (`constructor_contract_errors_for_memoryview_type_and_set_are_typed`, `io_method_arity_and_closed_file_contracts_are_typed`).
+  - `memoryview.cast(...)` argument-clinic parity improved: duplicate positional+keyword arg errors now use CPython-style TypeError text (`argument for cast() given by name ... and position ...`) and over-arity now reports dynamic counts.
+  - json/parse conversion paths now emit typed `ValueError` for invalid number/unicode/utf8 payloads; range duplicate-arg/unpack/file-object contract failures now emit typed `TypeError`; unsupported encoding normalization now emits typed `LookupError`.
+  - csv unknown-dialect paths now raise explicit typed `Error` exception objects instead of message-only classifier dependency.
+  - additional regressions landed for this wave:
+    - `range_duplicate_argument_error_is_typed`
+    - `unpack_non_iterable_error_is_typed`
+    - `float_invalid_literal_error_is_typed_value_error`
+    - `csv_unknown_dialect_error_is_typed_error`
+  - remaining message-only hotspots are now concentrated in VM-internal diagnostics and specialized memoryview-format long-tail buckets (tracked for subsequent conversion slices).
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.
