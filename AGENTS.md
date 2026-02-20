@@ -110,6 +110,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - VM Python-function argument binding now raises typed `TypeError` for unexpected keywords and duplicate argument binding (`got multiple values for argument '<name>'`) instead of generic runtime errors.
     - fallback `_random` `randrange(start, stop=None, step=1)` binding now follows CPython parameter semantics (duplicate/missing-arg/step-zero typed behavior).
     - regressions landed: `range_error_contracts_are_typed`, `randrange_duplicate_and_empty_range_contracts_are_typed`.
+  - random contract typing closure (2026-02-20, latest):
+    - `seed/random/randint/getrandbits/choice/choices/shuffle` signature/argument/domain errors now emit typed exceptions (TypeError/ValueError/IndexError) instead of message-only runtime errors.
+    - random keyword-argument contract failures now include offending keyword names in TypeError text.
+    - regressions landed: `random_empty_population_contracts_are_typed`, `random_argument_contracts_are_typed`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

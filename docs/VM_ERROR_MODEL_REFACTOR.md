@@ -110,6 +110,17 @@ Status: in progress (phase 1 + initial phase 2 landed).
 39. Added typed-conformance regressions in `/Users/$USER/pyrs/tests/vm.rs`:
    - `range_error_contracts_are_typed`
    - `randrange_duplicate_and_empty_range_contracts_are_typed`
+40. Random-module argument/contract typing closure landed in `/Users/$USER/pyrs/src/vm/builtins_numeric_time.rs`:
+   - `seed/random/randint/getrandbits/choice/choices/shuffle` now emit typed exceptions for signature and contract failures.
+   - unexpected keyword errors now include the offending keyword name.
+41. Empty-sequence random selection paths now raise typed `IndexError`:
+   - `choice([])` and `choices([], k>0)`.
+42. Random-domain validation now raises typed `ValueError` for:
+   - negative `getrandbits(k)` bit counts,
+   - invalid `choices()` weight/cumulative-weight numeric domains and cardinality checks.
+43. Added additional regressions in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `random_empty_population_contracts_are_typed`
+   - `random_argument_contracts_are_typed`
 
 ## Why This Exists
 

@@ -48,16 +48,22 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if args.len() > 1 {
-            return Err(RuntimeError::new("seed() takes at most 1 argument"));
+            return Err(RuntimeError::type_error("seed() takes at most 1 argument"));
         }
         let kw_value = kwargs.remove("a");
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "seed() got an unexpected keyword argument",
-            ));
+            let keyword = kwargs
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(RuntimeError::type_error(format!(
+                "seed() got an unexpected keyword argument '{}'",
+                keyword
+            )));
         }
         if kw_value.is_some() && !args.is_empty() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "seed() got multiple values for argument 'a'",
             ));
         }
@@ -74,7 +80,7 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if !args.is_empty() || !kwargs.is_empty() {
-            return Err(RuntimeError::new("random() takes no arguments"));
+            return Err(RuntimeError::type_error("random() takes no arguments"));
         }
         Ok(Value::Float(self.random.random_f64()))
     }
@@ -174,19 +180,25 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if args.len() > 2 {
-            return Err(RuntimeError::new("randint() expected 2 arguments"));
+            return Err(RuntimeError::type_error("randint() expected 2 arguments"));
         }
         let a_kw = kwargs.remove("a");
         let b_kw = kwargs.remove("b");
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "randint() got an unexpected keyword argument",
-            ));
+            let keyword = kwargs
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(RuntimeError::type_error(format!(
+                "randint() got an unexpected keyword argument '{}'",
+                keyword
+            )));
         }
 
         let a_value = if let Some(value) = a_kw {
             if !args.is_empty() {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "randint() got multiple values for argument 'a'",
                 ));
             }
@@ -194,11 +206,13 @@ impl Vm {
         } else if !args.is_empty() {
             args.remove(0)
         } else {
-            return Err(RuntimeError::new("randint() missing argument 'a'"));
+            return Err(RuntimeError::type_error(
+                "randint() missing required argument 'a'",
+            ));
         };
         let b_value = if let Some(value) = b_kw {
             if !args.is_empty() {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "randint() got multiple values for argument 'b'",
                 ));
             }
@@ -206,17 +220,19 @@ impl Vm {
         } else if !args.is_empty() {
             args.remove(0)
         } else {
-            return Err(RuntimeError::new("randint() missing argument 'b'"));
+            return Err(RuntimeError::type_error(
+                "randint() missing required argument 'b'",
+            ));
         };
         if !args.is_empty() {
-            return Err(RuntimeError::new("randint() expected 2 arguments"));
+            return Err(RuntimeError::type_error("randint() expected 2 arguments"));
         }
 
         let a = value_to_int(a_value)?;
         let b = value_to_int(b_value)?;
         let upper = b
             .checked_add(1)
-            .ok_or_else(|| RuntimeError::new("empty range for randint()"))?;
+            .ok_or_else(|| RuntimeError::value_error("empty range for randint()"))?;
         let count = random_range_count(a, upper, 1)?;
         let offset = self.random_randbelow(count)?;
         let result = a
@@ -232,19 +248,25 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if args.len() > 1 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "getrandbits() takes exactly one argument",
             ));
         }
         let kw_k = kwargs.remove("k");
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "getrandbits() got an unexpected keyword argument",
-            ));
+            let keyword = kwargs
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(RuntimeError::type_error(format!(
+                "getrandbits() got an unexpected keyword argument '{}'",
+                keyword
+            )));
         }
         let k_value = if let Some(value) = kw_k {
             if !args.is_empty() {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "getrandbits() got multiple values for 'k'",
                 ));
             }
@@ -252,18 +274,22 @@ impl Vm {
         } else if !args.is_empty() {
             args.remove(0)
         } else {
-            return Err(RuntimeError::new("getrandbits() missing argument 'k'"));
+            return Err(RuntimeError::type_error(
+                "getrandbits() missing required argument 'k'",
+            ));
         };
 
         let bits = value_to_int(k_value)?;
         if bits < 0 {
-            return Err(RuntimeError::new("number of bits must be non-negative"));
+            return Err(RuntimeError::value_error(
+                "number of bits must be non-negative",
+            ));
         }
         if bits == 0 {
             return Ok(Value::Int(0));
         }
         if bits > 63 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::value_error(
                 "getrandbits() supports up to 63 bits in this runtime",
             ));
         }
@@ -291,38 +317,44 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("choice() expects one argument"));
+            return Err(RuntimeError::type_error("choice() expects one argument"));
         }
         match &args[0] {
             Value::List(obj) => match &*obj.kind() {
                 Object::List(values) => {
                     if values.is_empty() {
-                        return Err(RuntimeError::new("Cannot choose from an empty sequence"));
+                        return Err(RuntimeError::index_error(
+                            "Cannot choose from an empty sequence",
+                        ));
                     }
                     let idx = self.random_randbelow(values.len() as i64)? as usize;
                     Ok(values[idx].clone())
                 }
-                _ => Err(RuntimeError::new("choice() expects a sequence")),
+                _ => Err(RuntimeError::type_error("choice() expects a sequence")),
             },
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(values) => {
                     if values.is_empty() {
-                        return Err(RuntimeError::new("Cannot choose from an empty sequence"));
+                        return Err(RuntimeError::index_error(
+                            "Cannot choose from an empty sequence",
+                        ));
                     }
                     let idx = self.random_randbelow(values.len() as i64)? as usize;
                     Ok(values[idx].clone())
                 }
-                _ => Err(RuntimeError::new("choice() expects a sequence")),
+                _ => Err(RuntimeError::type_error("choice() expects a sequence")),
             },
             Value::Str(value) => {
                 let chars: Vec<char> = value.chars().collect();
                 if chars.is_empty() {
-                    return Err(RuntimeError::new("Cannot choose from an empty sequence"));
+                    return Err(RuntimeError::index_error(
+                        "Cannot choose from an empty sequence",
+                    ));
                 }
                 let idx = self.random_randbelow(chars.len() as i64)? as usize;
                 Ok(Value::Str(chars[idx].to_string()))
             }
-            _ => Err(RuntimeError::new("choice() expects a sequence")),
+            _ => Err(RuntimeError::type_error("choice() expects a sequence")),
         }
     }
 
@@ -333,12 +365,12 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if args.is_empty() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "choices() missing required argument 'population'",
             ));
         }
         if args.len() > 2 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "choices() expected at most 2 positional arguments",
             ));
         }
@@ -357,7 +389,7 @@ impl Vm {
         };
         if let Some(value) = kwargs.remove("weights") {
             if weights.is_some() {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "choices() got multiple values for argument 'weights'",
                 ));
             }
@@ -365,34 +397,40 @@ impl Vm {
         }
         let cum_weights = kwargs.remove("cum_weights");
         if weights.is_some() && cum_weights.is_some() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "cannot specify both weights and cum_weights",
             ));
         }
         let k_value = kwargs.remove("k").unwrap_or(Value::Int(1));
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "choices() got an unexpected keyword argument",
-            ));
+            let keyword = kwargs
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(RuntimeError::type_error(format!(
+                "choices() got an unexpected keyword argument '{}'",
+                keyword
+            )));
         }
 
         let k = value_to_int(k_value)?;
         if k < 0 {
-            return Err(RuntimeError::new("k must be a non-negative integer"));
+            return Err(RuntimeError::value_error("k must be a non-negative integer"));
         }
         let k = k as usize;
         if population.is_empty() {
             if k == 0 {
                 return Ok(self.heap.alloc_list(Vec::new()));
             }
-            return Err(RuntimeError::new("Cannot choose from an empty sequence"));
+            return Err(RuntimeError::index_error("Cannot choose from an empty sequence"));
         }
 
         let mut out = Vec::with_capacity(k);
         if let Some(weight_source) = weights.or(cum_weights) {
             let raw = self.collect_iterable_values(weight_source)?;
             if raw.len() != population.len() {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::value_error(
                     "the number of weights does not match the population",
                 ));
             }
@@ -401,7 +439,7 @@ impl Vm {
             for value in raw {
                 let weight = value_to_f64(value)?;
                 if !weight.is_finite() || weight < 0.0 {
-                    return Err(RuntimeError::new(
+                    return Err(RuntimeError::value_error(
                         "weights must be non-negative finite numbers",
                     ));
                 }
@@ -409,7 +447,7 @@ impl Vm {
                 cumulative.push(total);
             }
             if total <= 0.0 {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::value_error(
                     "total of weights must be greater than zero",
                 ));
             }
@@ -437,13 +475,13 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         self.strip_random_self_arg(&mut args);
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("shuffle() expects one argument"));
+            return Err(RuntimeError::type_error("shuffle() expects one argument"));
         }
         match &args[0] {
             Value::List(obj) => {
                 let len = match &*obj.kind() {
                     Object::List(values) => values.len(),
-                    _ => return Err(RuntimeError::new("shuffle() expects list")),
+                    _ => return Err(RuntimeError::type_error("shuffle() expects list")),
                 };
                 if len <= 1 {
                     return Ok(Value::None);
@@ -456,7 +494,7 @@ impl Vm {
                 }
                 Ok(Value::None)
             }
-            _ => Err(RuntimeError::new("shuffle() expects list")),
+            _ => Err(RuntimeError::type_error("shuffle() expects list")),
         }
     }
 

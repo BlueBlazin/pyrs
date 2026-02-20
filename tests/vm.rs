@@ -8191,6 +8191,60 @@ ok = dup_ok and empty_ok
 }
 
 #[test]
+fn random_empty_population_contracts_are_typed() {
+    let source = r#"import random
+choice_ok = False
+choices_ok = False
+try:
+    random.choice([])
+except Exception as exc:
+    choice_ok = (type(exc).__name__ == "IndexError")
+try:
+    random.choices([], k=1)
+except Exception as exc:
+    choices_ok = (type(exc).__name__ == "IndexError")
+ok = choice_ok and choices_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn random_argument_contracts_are_typed() {
+    let source = r#"import random
+seed_kw_ok = False
+random_args_ok = False
+getrandbits_ok = False
+shuffle_ok = False
+try:
+    random.seed(1, b=2)
+except Exception as exc:
+    seed_kw_ok = (type(exc).__name__ == "TypeError")
+try:
+    random.random(1)
+except Exception as exc:
+    random_args_ok = (type(exc).__name__ == "TypeError")
+try:
+    random.getrandbits(-1)
+except Exception as exc:
+    getrandbits_ok = (type(exc).__name__ == "ValueError")
+try:
+    random.shuffle((1, 2, 3))
+except Exception as exc:
+    shuffle_ok = (type(exc).__name__ == "TypeError")
+ok = seed_kw_ok and random_args_ok and getrandbits_ok and shuffle_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");
