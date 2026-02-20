@@ -7802,14 +7802,29 @@ impl RuntimeError {
 }
 
 fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject> {
-    let candidate_line = if message.starts_with("Traceback (most recent call last):") {
+    const TRACEBACK_PREFIX: &str = "Traceback (most recent call last):";
+    let candidate_line = if message.starts_with(TRACEBACK_PREFIX) {
         message
             .lines()
             .rev()
             .find(|line| !line.trim().is_empty())
             .map(str::trim)?
     } else {
-        message.trim()
+        let trimmed = message.trim();
+        let mut chars = trimmed.chars();
+        let first = chars.next()?;
+        if !(first.is_ascii_uppercase() || first == '_') {
+            return None;
+        }
+        // Fast-path reject for non-exception freeform messages.
+        if !trimmed.contains(':')
+            && !trimmed
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        {
+            return None;
+        }
+        trimmed
     };
     let (name, details) = if let Some((name, details)) = candidate_line.split_once(':') {
         (name.trim(), Some(details.trim_start()))

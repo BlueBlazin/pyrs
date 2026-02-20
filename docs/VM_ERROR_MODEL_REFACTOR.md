@@ -23,6 +23,7 @@ Status: in progress (phase 1 + initial phase 2 landed).
 9. VM execution error handling no longer builds exceptions from string parsing directly; it now uses centralized `runtime_error_to_exception_object(...)`.
 10. Replaced prefixed `RuntimeError::new(\"XError: ...\")` callsites with typed constructors across VM/stdlib surfaces (136 callsites), reducing fallback classifier pressure.
 11. `runtime_error_to_exception_object(...)` and `runtime_error_matches_exception(...)` now prefer extracted/typed exception names before invoking legacy classifier heuristics.
+12. `RuntimeError::new(...)` exception extraction now has a fast reject path for non-exception freeform messages to keep the compatibility lane cheap.
 
 ## Why This Exists
 
