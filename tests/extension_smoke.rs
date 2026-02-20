@@ -9161,6 +9161,132 @@ PyInit_cpython_api_batch62_probe(void) {
 }
 
 #[test]
+fn cpython_vectorcall_decodes_non_numpy_foreign_object_args() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping vectorcall foreign-arg smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping vectorcall foreign-arg smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_vectorcall_foreign_arg");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("vectorcall_foreign_arg_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+#include <stddef.h>
+
+extern PyObject *PyObject_Vectorcall(
+    PyObject *callable,
+    PyObject *const *args,
+    size_t nargsf,
+    PyObject *kwnames
+);
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    static PyType_Slot slots[] = {
+        {0, 0}
+    };
+    static PyType_Spec spec = {
+        "vectorcall_probe.ForeignArg",
+        16,
+        0,
+        0,
+        slots
+    };
+
+    PyObject *type_obj = PyType_FromSpec(&spec);
+    if (!type_obj) {
+        return 0;
+    }
+    PyObject *foreign_obj = PyObject_CallNoArgs(type_obj);
+    if (!foreign_obj) {
+        Py_DECREF(type_obj);
+        return 0;
+    }
+
+    PyObject *builtins = PyImport_ImportModule("builtins");
+    if (!builtins) {
+        Py_DECREF(foreign_obj);
+        Py_DECREF(type_obj);
+        return 0;
+    }
+    PyObject *id_fn = PyObject_GetAttrString(builtins, "id");
+    Py_DECREF(builtins);
+    if (!id_fn) {
+        Py_DECREF(foreign_obj);
+        Py_DECREF(type_obj);
+        return 0;
+    }
+
+    PyObject *argv[1] = {foreign_obj};
+    PyObject *result = PyObject_Vectorcall(id_fn, argv, 1, 0);
+
+    Py_DECREF(id_fn);
+    Py_DECREF(foreign_obj);
+    Py_DECREF(type_obj);
+    return result;
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "vectorcall decode foreign object arg probe"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "vectorcall_foreign_arg_probe",
+    "vectorcall decode foreign object arg probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_vectorcall_foreign_arg_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "vectorcall_foreign_arg_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("vectorcall foreign-arg extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import vectorcall_foreign_arg_probe as m\nres = m.run()\nassert isinstance(res, int) and res > 0, res",
+    )
+    .expect("vectorcall foreign-arg extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn cpython_compat_unicode_fromformat_abi_batch63_apis_work() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping cpython api batch63 smoke (pyrs binary not found)");
