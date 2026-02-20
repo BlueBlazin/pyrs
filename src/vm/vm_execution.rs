@@ -14,16 +14,14 @@ use super::{
     bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
     classify_runtime_error, decode_call_counts, deref_name, dict_contains_key_checked,
     dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, ensure_hashable,
-    exception_message_from_call_args, extract_import_error_name, extract_os_error_errno,
-    extract_os_error_strerror, extract_prefixed_exception_message,
-    extract_runtime_error_exception_name, extract_runtime_error_final_message, floor_div_values,
-    format_repr, format_value, infer_os_error_errno, is_comprehension_code, is_import_error_family,
-    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
+    exception_message_from_call_args, extract_runtime_error_exception_name, floor_div_values,
+    format_repr, format_value, is_comprehension_code, is_import_error_family, is_os_error_family,
+    is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
     memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
     mod_values, module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_line_matches_exception, runtime_error_matches_exception,
     slice_bounds_for_step_one, slice_indices, slot_names_from_value,
-    strip_sqlite_exception_metadata, value_from_bigint, value_to_int, value_to_optional_index,
+    value_from_bigint, value_to_int, value_to_optional_index,
 };
 use crate::runtime::SliceValue;
 
@@ -6260,92 +6258,8 @@ impl Vm {
                 return self.raise_exception(Value::Exception(active_exception));
             }
         }
-        let mut exception_message = Some(err.message.clone());
-        if let Some(from_traceback) =
-            extract_runtime_error_final_message(&err.message, &exception_type)
-        {
-            exception_message = from_traceback;
-        } else if let Some(from_prefixed) =
-            extract_prefixed_exception_message(&err.message, &exception_type)
-        {
-            exception_message = from_prefixed;
-        }
-        let (exception_message, sqlite_metadata) =
-            strip_sqlite_exception_metadata(exception_message);
-        let exception = ExceptionObject::new(exception_type.clone(), exception_message);
-        let mut os_errno = None;
-        let mut os_strerror = None;
-        if is_os_error_family(exception_type.as_str()) {
-            os_errno =
-                extract_os_error_errno(&err.message).or_else(|| infer_os_error_errno(&err.message));
-            os_strerror = extract_os_error_strerror(&err.message);
-            if let Some(errno) = os_errno {
-                exception
-                    .attrs
-                    .borrow_mut()
-                    .insert("errno".to_string(), Value::Int(errno));
-            }
-            if let Some(strerror) = os_strerror.clone() {
-                exception
-                    .attrs
-                    .borrow_mut()
-                    .insert("strerror".to_string(), Value::Str(strerror));
-            }
-        }
-        if matches!(
-            exception_type.as_str(),
-            "ImportError" | "ModuleNotFoundError"
-        ) {
-            let mut attrs = exception.attrs.borrow_mut();
-            attrs.insert(
-                "msg".to_string(),
-                exception
-                    .message
-                    .as_ref()
-                    .map(|message| Value::Str(message.clone()))
-                    .unwrap_or(Value::None),
-            );
-            attrs.insert("name".to_string(), Value::None);
-            attrs.insert("path".to_string(), Value::None);
-            if let Some(name) = extract_import_error_name(&err.message) {
-                attrs.insert("name".to_string(), Value::Str(name));
-            }
-        }
-        if let Some((code, name)) = sqlite_metadata {
-            exception
-                .attrs
-                .borrow_mut()
-                .insert("sqlite_errorcode".to_string(), Value::Int(code));
-            exception
-                .attrs
-                .borrow_mut()
-                .insert("sqlite_errorname".to_string(), Value::Str(name));
-        }
-        let args = if is_os_error_family(exception_type.as_str()) {
-            if let Some(errno) = os_errno {
-                let mut items = vec![Value::Int(errno)];
-                if let Some(strerror) = os_strerror {
-                    items.push(Value::Str(strerror));
-                }
-                self.heap.alloc_tuple(items)
-            } else if let Some(strerror) = os_strerror {
-                self.heap.alloc_tuple(vec![Value::Str(strerror)])
-            } else if let Some(message) = &exception.message {
-                self.heap.alloc_tuple(vec![Value::Str(message.clone())])
-            } else {
-                self.heap.alloc_tuple(Vec::new())
-            }
-        } else if let Some(message) = &exception.message {
-            self.heap.alloc_tuple(vec![Value::Str(message.clone())])
-        } else {
-            self.heap.alloc_tuple(Vec::new())
-        };
-        exception
-            .attrs
-            .borrow_mut()
-            .insert("args".to_string(), args);
-        let exception = Value::Exception(Box::new(exception));
-        self.raise_exception(exception)
+        let exception = self.runtime_error_to_exception_object(err);
+        self.raise_exception(Value::Exception(Box::new(exception)))
     }
 
     pub(super) fn normalize_exception_value(&self, value: Value) -> Result<Value, RuntimeError> {

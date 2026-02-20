@@ -1812,7 +1812,38 @@ impl Vm {
             .map(|text| Value::Str(text.clone()))
             .unwrap_or(Value::None);
         let exception = ExceptionObject::new(exception_type, exception_message);
-        let args = if let Some(message) = &exception.message {
+        let mut os_errno = None;
+        let mut os_strerror = None;
+        if is_os_error_family(exception.name.as_str()) {
+            os_errno =
+                extract_os_error_errno(&err.message).or_else(|| infer_os_error_errno(&err.message));
+            os_strerror = extract_os_error_strerror(&err.message);
+            if let Some(errno) = os_errno {
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("errno".to_string(), Value::Int(errno));
+            }
+            if let Some(strerror) = os_strerror.clone() {
+                exception
+                    .attrs
+                    .borrow_mut()
+                    .insert("strerror".to_string(), Value::Str(strerror));
+            }
+        }
+        let args = if is_os_error_family(exception.name.as_str()) {
+            if let Some(errno) = os_errno {
+                let mut values = vec![Value::Int(errno)];
+                if let Some(strerror) = os_strerror {
+                    values.push(Value::Str(strerror));
+                }
+                self.heap.alloc_tuple(values)
+            } else if let Some(message) = &exception.message {
+                self.heap.alloc_tuple(vec![Value::Str(message.clone())])
+            } else {
+                self.heap.alloc_tuple(Vec::new())
+            }
+        } else if let Some(message) = &exception.message {
             self.heap.alloc_tuple(vec![Value::Str(message.clone())])
         } else {
             self.heap.alloc_tuple(Vec::new())
@@ -1824,6 +1855,9 @@ impl Vm {
                 attrs.insert("msg".to_string(), import_error_msg);
                 attrs.insert("name".to_string(), Value::None);
                 attrs.insert("path".to_string(), Value::None);
+                if let Some(name) = extract_import_error_name(&err.message) {
+                    attrs.insert("name".to_string(), Value::Str(name));
+                }
             }
             if let Some((code, name)) = sqlite_metadata {
                 attrs.insert("sqlite_errorcode".to_string(), Value::Int(code));
