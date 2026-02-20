@@ -12,8 +12,8 @@ use super::{
     OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, QuickenedSiteKind, Rc, RuntimeError,
     SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings,
     bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
-    classify_runtime_error, decode_call_counts, deref_name, dict_contains_key_checked,
-    dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, ensure_hashable,
+    decode_call_counts, deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value,
+    dict_set_value, dict_set_value_checked, ensure_hashable,
     exception_message_from_call_args, extract_runtime_error_exception_name, floor_div_values,
     format_repr, format_value, is_comprehension_code, is_import_error_family, is_os_error_family,
     is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
@@ -6220,13 +6220,11 @@ impl Vm {
             message,
             exception: None,
         };
-        let classified = classify_runtime_error(&err.message);
-        let exception_type = if classified == "RuntimeError" {
-            extract_runtime_error_exception_name(&err.message)
-                .unwrap_or_else(|| classified.to_string())
-        } else {
-            classified.to_string()
-        };
+        let exception_type = err
+            .exception_name()
+            .map(str::to_string)
+            .or_else(|| extract_runtime_error_exception_name(&err.message))
+            .unwrap_or_else(|| "RuntimeError".to_string());
         if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some()
             && err.message.contains("module '_ctypes' not found")
         {
@@ -6237,8 +6235,8 @@ impl Vm {
                 .map(|value| self.value_type_name_for_error(value))
                 .unwrap_or_else(|| "<none>".to_string());
             eprintln!(
-                "[handle-runtime-ctypes] classified={} exception_type={} active={}",
-                classified, exception_type, active
+                "[handle-runtime-ctypes] exception_type={} active={}",
+                exception_type, active
             );
         }
         if let Some(Value::Exception(active_exception)) = self
