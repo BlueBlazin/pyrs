@@ -3224,8 +3224,7 @@ impl Drop for ModuleCapiContext {
                 if let Some(ptr) = ptr {
                     // SAFETY: VM pointer is valid for context lifetime.
                     let vm = unsafe { &mut *self.vm };
-                    vm.extension_pinned_cpython_allocation_set
-                        .contains(&(ptr as usize))
+                    vm.capi_owned_ptr_is_pinned(ptr as usize)
                 } else {
                     false
                 }
@@ -3283,10 +3282,7 @@ impl Drop for ModuleCapiContext {
             if self.keep_cpython_allocations_on_drop && !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                if vm
-                    .extension_pinned_cpython_allocation_set
-                    .insert(raw as usize)
-                {
+                if vm.capi_pin_owned_ptr(raw as usize) {
                     vm.capi_registry_mark_alive(raw as usize);
                     if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!(
@@ -3294,7 +3290,6 @@ impl Drop for ModuleCapiContext {
                             raw.cast::<c_void>()
                         );
                     }
-                    vm.extension_pinned_cpython_allocations.push(raw.cast());
                 }
                 if let Some(handle) = self.cpython_objects_by_ptr.get(&(raw as usize)).copied() {
                     escaped_handles.insert(handle);
@@ -3317,14 +3312,9 @@ impl Drop for ModuleCapiContext {
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                keep_pinned = vm
-                    .extension_pinned_cpython_allocation_set
-                    .contains(&(raw as usize));
+                keep_pinned = vm.capi_owned_ptr_is_pinned(raw as usize);
                 if !keep_pinned && let Some(handle) = identity_wrapper_handle {
-                    if vm
-                        .extension_pinned_cpython_allocation_set
-                        .insert(raw as usize)
-                    {
+                    if vm.capi_pin_owned_ptr(raw as usize) {
                         vm.capi_registry_mark_alive(raw as usize);
                         if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                             eprintln!(
@@ -3332,7 +3322,6 @@ impl Drop for ModuleCapiContext {
                                 raw.cast::<c_void>()
                             );
                         }
-                        vm.extension_pinned_cpython_allocations.push(raw.cast());
                     }
                     escaped_handles.insert(handle);
                     self.persist_escaped_ptr_value(vm, handle, raw as usize);
@@ -3340,10 +3329,7 @@ impl Drop for ModuleCapiContext {
                 }
                 if !keep_pinned {
                     if interned_unicode {
-                        if vm
-                            .extension_pinned_cpython_allocation_set
-                            .insert(raw as usize)
-                        {
+                        if vm.capi_pin_owned_ptr(raw as usize) {
                             vm.capi_registry_mark_alive(raw as usize);
                             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                                 eprintln!(
@@ -3351,7 +3337,6 @@ impl Drop for ModuleCapiContext {
                                     raw.cast::<c_void>()
                                 );
                             }
-                            vm.extension_pinned_cpython_allocations.push(raw.cast());
                         }
                         if let Some(handle) =
                             self.cpython_objects_by_ptr.get(&(raw as usize)).copied()
@@ -3373,10 +3358,7 @@ impl Drop for ModuleCapiContext {
                         unsafe {
                             (*raw.cast::<CpythonObjectHead>()).ob_refcnt = refcount - 1;
                         }
-                        if vm
-                            .extension_pinned_cpython_allocation_set
-                            .insert(raw as usize)
-                        {
+                        if vm.capi_pin_owned_ptr(raw as usize) {
                             vm.capi_registry_mark_alive(raw as usize);
                             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                                 eprintln!(
@@ -3384,7 +3366,6 @@ impl Drop for ModuleCapiContext {
                                     raw.cast::<c_void>()
                                 );
                             }
-                            vm.extension_pinned_cpython_allocations.push(raw.cast());
                         }
                         if let Some(handle) =
                             self.cpython_objects_by_ptr.get(&(raw as usize)).copied()
@@ -3410,12 +3391,8 @@ impl Drop for ModuleCapiContext {
                 if !self.vm.is_null() {
                     // SAFETY: VM pointer is valid for context lifetime.
                     let vm = unsafe { &mut *self.vm };
-                    if vm
-                        .extension_pinned_cpython_allocation_set
-                        .insert(raw as usize)
-                    {
+                    if vm.capi_pin_owned_ptr(raw as usize) {
                         vm.capi_registry_mark_alive(raw as usize);
-                        vm.extension_pinned_cpython_allocations.push(raw.cast());
                     }
                 }
                 continue;
@@ -3440,9 +3417,7 @@ impl Drop for ModuleCapiContext {
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                let was_pinned = vm
-                    .extension_pinned_cpython_allocation_set
-                    .remove(&(raw as usize));
+                let was_pinned = vm.capi_unpin_owned_ptr(raw as usize);
                 vm.extension_pinned_capsule_names.remove(&(raw as usize));
                 vm.capi_registry_mark_freed(raw as usize);
                 if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
@@ -3484,17 +3459,13 @@ impl Drop for ModuleCapiContext {
                 } else {
                     // SAFETY: VM pointer is valid for context lifetime.
                     let vm = unsafe { &mut *self.vm };
-                    vm.extension_pinned_cpython_allocation_set
-                        .contains(&(buffer as usize))
+                    vm.capi_owned_ptr_is_pinned(buffer as usize)
                 };
             if keep_pinned {
                 if !self.vm.is_null() {
                     // SAFETY: VM pointer is valid for context lifetime.
                     let vm = unsafe { &mut *self.vm };
-                    if vm
-                        .extension_pinned_cpython_allocation_set
-                        .insert(buffer as usize)
-                    {
+                    if vm.capi_pin_owned_ptr(buffer as usize) {
                         vm.capi_registry_mark_alive(buffer as usize);
                         if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                             eprintln!(
@@ -3502,7 +3473,6 @@ impl Drop for ModuleCapiContext {
                                 buffer.cast::<c_void>()
                             );
                         }
-                        vm.extension_pinned_cpython_allocations.push(buffer.cast());
                     }
                 }
                 continue;
@@ -3512,12 +3482,8 @@ impl Drop for ModuleCapiContext {
                 if !self.vm.is_null() {
                     // SAFETY: VM pointer is valid for context lifetime.
                     let vm = unsafe { &mut *self.vm };
-                    if vm
-                        .extension_pinned_cpython_allocation_set
-                        .insert(buffer as usize)
-                    {
+                    if vm.capi_pin_owned_ptr(buffer as usize) {
                         vm.capi_registry_mark_alive(buffer as usize);
-                        vm.extension_pinned_cpython_allocations.push(buffer.cast());
                     }
                 }
                 continue;
@@ -3525,9 +3491,7 @@ impl Drop for ModuleCapiContext {
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                let was_pinned = vm
-                    .extension_pinned_cpython_allocation_set
-                    .remove(&(buffer as usize));
+                let was_pinned = vm.capi_unpin_owned_ptr(buffer as usize);
                 vm.extension_pinned_capsule_names.remove(&(buffer as usize));
                 vm.capi_registry_mark_freed(buffer as usize);
                 if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
@@ -3565,22 +3529,17 @@ impl Drop for ModuleCapiContext {
             } else {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                vm.extension_pinned_cpython_allocation_set
-                    .contains(&(raw as usize))
+                vm.capi_owned_ptr_is_pinned(raw as usize)
             };
             if keep_pinned {
                 if !self.vm.is_null() {
                     // SAFETY: VM pointer is valid for context lifetime.
                     let vm = unsafe { &mut *self.vm };
-                    if vm
-                        .extension_pinned_cpython_allocation_set
-                        .insert(raw as usize)
-                    {
+                    if vm.capi_pin_owned_ptr(raw as usize) {
                         vm.capi_registry_mark_alive(raw as usize);
                         if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                             eprintln!("[pin-free] pin-insert ptr={:p} reason=aux_keep", raw);
                         }
-                        vm.extension_pinned_cpython_allocations.push(raw);
                     }
                 }
                 continue;
@@ -3590,12 +3549,8 @@ impl Drop for ModuleCapiContext {
                 if !self.vm.is_null() {
                     // SAFETY: VM pointer is valid for context lifetime.
                     let vm = unsafe { &mut *self.vm };
-                    if vm
-                        .extension_pinned_cpython_allocation_set
-                        .insert(raw as usize)
-                    {
+                    if vm.capi_pin_owned_ptr(raw as usize) {
                         vm.capi_registry_mark_alive(raw as usize);
-                        vm.extension_pinned_cpython_allocations.push(raw);
                     }
                 }
                 continue;
@@ -3603,9 +3558,7 @@ impl Drop for ModuleCapiContext {
             if !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for context lifetime.
                 let vm = unsafe { &mut *self.vm };
-                let was_pinned = vm
-                    .extension_pinned_cpython_allocation_set
-                    .remove(&(raw as usize));
+                let was_pinned = vm.capi_unpin_owned_ptr(raw as usize);
                 vm.extension_pinned_capsule_names.remove(&(raw as usize));
                 vm.capi_registry_mark_freed(raw as usize);
                 if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
@@ -3812,12 +3765,8 @@ impl ModuleCapiContext {
         if child_ptr.is_null() || !self.owns_cpython_allocation_ptr(child_ptr) {
             return;
         }
-        if vm
-            .extension_pinned_cpython_allocation_set
-            .insert(child_ptr as usize)
-        {
-            vm.extension_pinned_cpython_allocations
-                .push(child_ptr.cast::<c_void>());
+        if vm.capi_pin_owned_ptr(child_ptr as usize) {
+            vm.capi_registry_mark_alive(child_ptr as usize);
         }
         if let Some(handle) = self
             .cpython_objects_by_ptr
@@ -5058,9 +5007,7 @@ impl ModuleCapiContext {
                 .get(&object_id)
                 .copied()
             {
-                if vm
-                    .extension_pinned_cpython_allocation_set
-                    .contains(&raw_ptr)
+                if vm.capi_owned_ptr_is_pinned(raw_ptr)
                     && vm.extension_cpython_ptr_values.contains_key(&raw_ptr)
                 {
                     vm.extension_cpython_ptr_values
