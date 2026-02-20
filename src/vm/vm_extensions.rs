@@ -758,6 +758,11 @@ const CPY_SLOT_EQ_NAME: &[u8] = b"__eq__\0";
 const CPY_SLOT_NE_NAME: &[u8] = b"__ne__\0";
 const CPY_SLOT_GT_NAME: &[u8] = b"__gt__\0";
 const CPY_SLOT_GE_NAME: &[u8] = b"__ge__\0";
+const CPY_SLOT_BOOL_NAME: &[u8] = b"__bool__\0";
+const CPY_SLOT_INT_NAME: &[u8] = b"__int__\0";
+const CPY_SLOT_FLOAT_NAME: &[u8] = b"__float__\0";
+const CPY_SLOT_INDEX_NAME: &[u8] = b"__index__\0";
+const CPY_SLOT_GETITEM_NAME: &[u8] = b"__getitem__\0";
 const CPY_SLOT_INIT_NAME: &[u8] = b"__init__\0";
 
 static mut CPY_SLOT_LT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
@@ -793,6 +798,36 @@ static mut CPY_SLOT_GT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
 static mut CPY_SLOT_GE_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
     ml_name: CPY_SLOT_GE_NAME.as_ptr().cast::<c_char>(),
     ml_meth: Some(cpython_slot_dunder_ge),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_BOOL_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_BOOL_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_bool),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_INT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_INT_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_int),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_FLOAT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_FLOAT_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_float),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_INDEX_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_INDEX_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_index),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_GETITEM_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_GETITEM_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_getitem),
     ml_flags: METH_VARARGS,
     ml_doc: std::ptr::null(),
 };
@@ -1563,6 +1598,175 @@ fn cpython_slot_richcompare_method_def(attr_name: &str) -> Option<*mut CpythonMe
     }
 }
 
+fn cpython_slot_unary_method_def(attr_name: &str) -> Option<*mut CpythonMethodDef> {
+    match attr_name {
+        "__bool__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_BOOL_METHOD_DEF)),
+        "__int__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_INT_METHOD_DEF)),
+        "__float__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_FLOAT_METHOD_DEF)),
+        "__index__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_INDEX_METHOD_DEF)),
+        _ => None,
+    }
+}
+
+fn cpython_slot_getitem_method_def(attr_name: &str) -> Option<*mut CpythonMethodDef> {
+    (attr_name == "__getitem__").then_some(std::ptr::addr_of_mut!(CPY_SLOT_GETITEM_METHOD_DEF))
+}
+
+unsafe fn cpython_find_nb_bool_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is read-only slot metadata from type hierarchy walk.
+        let as_number = unsafe { (*current).tp_as_number.cast::<CpythonNumberMethods>() };
+        if !as_number.is_null() {
+            // SAFETY: number slot table is read-only.
+            let slot = unsafe { (*as_number).nb_bool };
+            if !slot.is_null() {
+                return slot;
+            }
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn cpython_find_nb_int_or_index_slot(
+    type_ptr: *mut CpythonTypeObject,
+) -> Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void> {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is read-only slot metadata from type hierarchy walk.
+        let as_number = unsafe { (*current).tp_as_number.cast::<CpythonNumberMethods>() };
+        if !as_number.is_null() {
+            // SAFETY: number slot table is read-only.
+            if let Some(slot) = unsafe { (*as_number).nb_int } {
+                return Some(slot);
+            }
+            // SAFETY: number slot table is read-only.
+            if let Some(slot) = unsafe { (*as_number).nb_index } {
+                return Some(slot);
+            }
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    None
+}
+
+unsafe fn cpython_find_nb_float_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is read-only slot metadata from type hierarchy walk.
+        let as_number = unsafe { (*current).tp_as_number.cast::<CpythonNumberMethods>() };
+        if !as_number.is_null() {
+            // SAFETY: number slot table is read-only.
+            let slot = unsafe { (*as_number).nb_float };
+            if !slot.is_null() {
+                return slot;
+            }
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn cpython_find_nb_index_slot(
+    type_ptr: *mut CpythonTypeObject,
+) -> Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void> {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is read-only slot metadata from type hierarchy walk.
+        let as_number = unsafe { (*current).tp_as_number.cast::<CpythonNumberMethods>() };
+        if !as_number.is_null() {
+            // SAFETY: number slot table is read-only.
+            if let Some(slot) = unsafe { (*as_number).nb_index } {
+                return Some(slot);
+            }
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    None
+}
+
+unsafe fn cpython_find_getitem_mapping_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is read-only slot metadata from type hierarchy walk.
+        let as_mapping = unsafe { (*current).tp_as_mapping.cast::<CpythonMappingMethods>() };
+        if !as_mapping.is_null() {
+            // SAFETY: mapping table is read-only.
+            let slot = unsafe { (*as_mapping).mp_subscript };
+            if !slot.is_null() {
+                return slot;
+            }
+        }
+        // SAFETY: `current` is read-only slot metadata from type hierarchy walk.
+        let as_sequence = unsafe { (*current).tp_as_sequence.cast::<CpythonSequenceMethods>() };
+        if !as_sequence.is_null() {
+            // SAFETY: sequence table is read-only.
+            let slot = unsafe { (*as_sequence).sq_item };
+            if !slot.is_null() {
+                return slot;
+            }
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn cpython_slot_unary_available(type_ptr: *mut CpythonTypeObject, attr_name: &str) -> bool {
+    match attr_name {
+        "__bool__" => unsafe { !cpython_find_nb_bool_slot(type_ptr).is_null() },
+        "__int__" => unsafe { cpython_find_nb_int_or_index_slot(type_ptr).is_some() },
+        "__float__" => unsafe { !cpython_find_nb_float_slot(type_ptr).is_null() },
+        "__index__" => unsafe { cpython_find_nb_index_slot(type_ptr).is_some() },
+        _ => false,
+    }
+}
+
+unsafe fn cpython_slot_getitem_available(type_ptr: *mut CpythonTypeObject) -> bool {
+    // SAFETY: helper performs bounded type hierarchy walk.
+    unsafe { !cpython_find_getitem_mapping_slot(type_ptr).is_null() }
+}
+
 fn cpython_slot_init_method_def() -> *mut CpythonMethodDef {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
@@ -1626,6 +1830,266 @@ unsafe fn cpython_slot_richcompare_dunder_call(
     // SAFETY: singleton is process-lifetime stable.
     unsafe { Py_IncRef(not_implemented) };
     not_implemented
+}
+
+unsafe fn cpython_slot_unary_target(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+    opname: &str,
+) -> *mut c_void {
+    if args.is_null() {
+        cpython_set_error(format!(
+            "TypeError: descriptor '{opname}' requires an argument tuple"
+        ));
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `args` is expected to be a tuple pointer for METH_VARARGS call flow.
+    let argc = unsafe { PyTuple_Size(args) };
+    if argc < 0 {
+        return std::ptr::null_mut();
+    }
+    if !self_obj.is_null() {
+        if argc != 0 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '{opname}' expected 0 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        return self_obj;
+    }
+    if argc != 1 {
+        cpython_set_error(format!(
+            "TypeError: descriptor '{opname}' expected 1 arguments, got {argc}"
+        ));
+        return std::ptr::null_mut();
+    }
+    // SAFETY: arg tuple size validated above.
+    unsafe { PyTuple_GetItem(args, 0) }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_bool(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    // SAFETY: wrapper validates tuple arity and returns either `self_obj` or arg0.
+    let target = unsafe { cpython_slot_unary_target(self_obj, args, "__bool__") };
+    if target.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `target` is a valid candidate object pointer.
+    let type_ptr = unsafe {
+        target
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: bounded type hierarchy walk for `nb_bool`.
+    let slot = unsafe { cpython_find_nb_bool_slot(type_ptr) };
+    if slot.is_null() {
+        cpython_set_error("TypeError: descriptor '__bool__' is unavailable for this object");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `nb_bool` follows `inquiry` ABI.
+    let bool_fn: unsafe extern "C" fn(*mut c_void) -> i32 = unsafe { std::mem::transmute(slot) };
+    // SAFETY: slot ABI invocation.
+    let result = unsafe { bool_fn(target) };
+    if result < 0 {
+        return std::ptr::null_mut();
+    }
+    cpython_new_ptr_for_value(Value::Bool(result != 0))
+}
+
+unsafe extern "C" fn cpython_slot_dunder_int(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    // SAFETY: wrapper validates tuple arity and returns either `self_obj` or arg0.
+    let target = unsafe { cpython_slot_unary_target(self_obj, args, "__int__") };
+    if target.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `target` is a valid candidate object pointer.
+    let type_ptr = unsafe {
+        target
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: bounded type hierarchy walk for `nb_int`/`nb_index`.
+    if let Some(slot_fn) = unsafe { cpython_find_nb_int_or_index_slot(type_ptr) } {
+        // SAFETY: slot ABI invocation.
+        return unsafe { slot_fn(target) };
+    }
+    cpython_set_error("TypeError: descriptor '__int__' is unavailable for this object");
+    std::ptr::null_mut()
+}
+
+unsafe extern "C" fn cpython_slot_dunder_float(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    // SAFETY: wrapper validates tuple arity and returns either `self_obj` or arg0.
+    let target = unsafe { cpython_slot_unary_target(self_obj, args, "__float__") };
+    if target.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `target` is a valid candidate object pointer.
+    let type_ptr = unsafe {
+        target
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: bounded type hierarchy walk for `nb_float`.
+    let slot = unsafe { cpython_find_nb_float_slot(type_ptr) };
+    if slot.is_null() {
+        cpython_set_error("TypeError: descriptor '__float__' is unavailable for this object");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `nb_float` follows unaryfunc ABI.
+    let float_fn: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+        unsafe { std::mem::transmute(slot) };
+    // SAFETY: slot ABI invocation.
+    unsafe { float_fn(target) }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_index(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    // SAFETY: wrapper validates tuple arity and returns either `self_obj` or arg0.
+    let target = unsafe { cpython_slot_unary_target(self_obj, args, "__index__") };
+    if target.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `target` is a valid candidate object pointer.
+    let type_ptr = unsafe {
+        target
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: bounded type hierarchy walk for `nb_index`.
+    if let Some(index_fn) = unsafe { cpython_find_nb_index_slot(type_ptr) } {
+        // SAFETY: slot ABI invocation.
+        return unsafe { index_fn(target) };
+    }
+    cpython_set_error("TypeError: descriptor '__index__' is unavailable for this object");
+    std::ptr::null_mut()
+}
+
+unsafe extern "C" fn cpython_slot_dunder_getitem(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    if args.is_null() {
+        cpython_set_error("TypeError: descriptor '__getitem__' requires an argument tuple");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `args` is expected to be a tuple pointer for METH_VARARGS call flow.
+    let argc = unsafe { PyTuple_Size(args) };
+    if argc < 0 {
+        return std::ptr::null_mut();
+    }
+    let (target, key) = if !self_obj.is_null() {
+        if argc != 1 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__getitem__' expected 1 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let key = unsafe { PyTuple_GetItem(args, 0) };
+        (self_obj, key)
+    } else {
+        if argc != 2 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__getitem__' expected 2 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let target = unsafe { PyTuple_GetItem(args, 0) };
+        // SAFETY: arg tuple size validated above.
+        let key = unsafe { PyTuple_GetItem(args, 1) };
+        (target, key)
+    };
+    if target.is_null() || key.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `target` is a valid candidate object pointer.
+    let type_ptr = unsafe {
+        target
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is a type pointer from bounded hierarchy walk.
+        let as_mapping = unsafe { (*current).tp_as_mapping.cast::<CpythonMappingMethods>() };
+        if !as_mapping.is_null() {
+            // SAFETY: mapping table is readable in this branch.
+            let slot = unsafe { (*as_mapping).mp_subscript };
+            if !slot.is_null() {
+                // SAFETY: `mp_subscript` follows binaryfunc ABI.
+                let getitem_fn: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+                    unsafe { std::mem::transmute(slot) };
+                // SAFETY: slot ABI invocation.
+                return unsafe { getitem_fn(target, key) };
+            }
+        }
+        // SAFETY: `current` is a type pointer from bounded hierarchy walk.
+        let as_sequence = unsafe { (*current).tp_as_sequence.cast::<CpythonSequenceMethods>() };
+        if !as_sequence.is_null() {
+            // SAFETY: sequence table is readable in this branch.
+            let slot = unsafe { (*as_sequence).sq_item };
+            if !slot.is_null() {
+                // SAFETY: converts index object to Py_ssize_t per CPython ABI.
+                let index = unsafe { PyLong_AsSsize_t(key) };
+                // SAFETY: checks active C error indicator after conversion.
+                if index == -1 && unsafe { !PyErr_Occurred().is_null() } {
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: `sq_item` follows `ssizeargfunc` ABI.
+                let sq_item_fn: unsafe extern "C" fn(*mut c_void, isize) -> *mut c_void =
+                    unsafe { std::mem::transmute(slot) };
+                // SAFETY: slot ABI invocation.
+                return unsafe { sq_item_fn(target, index) };
+            }
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    cpython_set_error("TypeError: descriptor '__getitem__' is unavailable for this object");
+    std::ptr::null_mut()
 }
 
 unsafe extern "C" fn cpython_slot_dunder_lt(
@@ -6031,6 +6495,44 @@ impl ModuleCapiContext {
                         if trace_lookup_branch {
                             eprintln!(
                                 "[proxy-lookup-branch] attr={} branch=tp_richcompare_bound_slot_wrapper object={:p} current={:p} value_ptr={:p}",
+                                attr_name, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
+                }
+                if let Some(method_def) = cpython_slot_unary_method_def(attr_name)
+                    && unsafe { cpython_slot_unary_available(current, attr_name) }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        current.cast::<c_void>(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch=tp_unary_bound_slot_wrapper object={:p} current={:p} value_ptr={:p}",
+                                attr_name, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
+                }
+                if let Some(method_def) = cpython_slot_getitem_method_def(attr_name)
+                    && unsafe { cpython_slot_getitem_available(current) }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        current.cast::<c_void>(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch=tp_getitem_bound_slot_wrapper object={:p} current={:p} value_ptr={:p}",
                                 attr_name, object, current, callable_ptr
                             );
                         }

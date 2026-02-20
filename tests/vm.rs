@@ -13478,6 +13478,44 @@ for left, right, expected in cases:
 }
 
 #[test]
+fn numpy_proxy_scalar_unary_and_getitem_dunders_are_slot_backed() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let Some(site_packages) = numpy_site_packages_path() else {
+        return;
+    };
+    run_with_large_stack("vm-numpy-proxy-unary-getitem-dunders", move || {
+        let source = r#"import numpy as np
+
+x = np.float64(1.5)
+ok = (
+    hasattr(x, "__bool__")
+    and hasattr(x, "__int__")
+    and hasattr(x, "__float__")
+    and hasattr(x, "__getitem__")
+    and hasattr(np.bool_(True), "__getitem__")
+    and hasattr(np.int64(7), "__index__")
+    and hasattr(np.uint32(9), "__index__")
+    and bool(np.float64(0.0).__bool__()) is False
+    and int(np.float64(1.5).__int__()) == 1
+    and float(np.float64(1.5).__float__()) == 1.5
+    and float(np.float64(1.5).__getitem__(())) == 1.5
+    and np.int64(7).__index__() == 7
+    and np.uint32(9).__index__() == 9
+)
+"#;
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.add_module_path(site_packages);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn io_text_encoding_handles_none_and_strings() {
     let Some(lib) = cpython_lib_path() else {
         return;
