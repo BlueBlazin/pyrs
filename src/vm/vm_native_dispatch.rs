@@ -2958,7 +2958,7 @@ impl Vm {
                         _ => return Err(RuntimeError::type_error("memoryview receiver is invalid")),
                     };
                 let cast_format = memoryview_format_for_view(itemsize, format.as_deref())
-                    .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                    .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
                 with_bytes_like_source(&source, |values| {
                     let (shape, strides) = memoryview_shape_and_strides_from_parts(
                         start,
@@ -2968,7 +2968,7 @@ impl Vm {
                         itemsize,
                         values.len(),
                     )
-                    .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                    .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
                     memoryview_decode_tolist(
                         values,
                         start,
@@ -2979,7 +2979,7 @@ impl Vm {
                         &self.heap,
                     )
                 })
-                .unwrap_or_else(|| Err(RuntimeError::new("memoryview.tolist() unsupported format")))
+                .unwrap_or_else(|| Err(RuntimeError::not_implemented_error("memoryview: unsupported format")))
                 .map(NativeCallResult::Value)
             }
             NativeMethodKind::MemoryViewRelease => {

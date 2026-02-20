@@ -91,6 +91,10 @@ Status: in progress (phase 1 + initial phase 2 landed).
 33. Added conformance regressions in `/Users/$USER/pyrs/tests/vm.rs`:
    - `regex_pattern_type_contract_errors_are_typed`
    - `mro_entries_non_tuple_contract_error_is_typed`
+34. Memoryview unsupported-format closure:
+   - `memoryview_format_for_view(...)` now raises typed `NotImplementedError` for unsupported format specs with CPython-style messaging (`memoryview: format <fmt> not supported`).
+   - `memoryview.tolist()` unsupported-format paths now raise typed `NotImplementedError` (`memoryview: unsupported format`) instead of message-only runtime errors.
+35. Added regression `memoryview_tolist_unsupported_format_raises_not_implemented` to lock this behavior.
 
 ## Why This Exists
 

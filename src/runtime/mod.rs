@@ -7815,6 +7815,10 @@ impl RuntimeError {
         Self::with_exception("UnicodeEncodeError", Some(message.into()))
     }
 
+    pub fn not_implemented_error(message: impl Into<String>) -> Self {
+        Self::with_exception("NotImplementedError", Some(message.into()))
+    }
+
     pub fn zero_division_error(message: impl Into<String>) -> Self {
         Self::with_exception("ZeroDivisionError", Some(message.into()))
     }

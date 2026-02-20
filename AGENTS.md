@@ -101,6 +101,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tuple.count/index` receiver+arity contracts,
     - `__mro_entries__` non-tuple return contract.
   - new regressions landed: `regex_pattern_type_contract_errors_are_typed` and `mro_entries_non_tuple_contract_error_is_typed`.
+  - memoryview unsupported-format paths now raise typed `NotImplementedError`:
+    - format-spec decode path (`memoryview: format <fmt> not supported`),
+    - `tolist()` unsupported-format path (`memoryview: unsupported format`).
+  - regression landed: `memoryview_tolist_unsupported_format_raises_not_implemented`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

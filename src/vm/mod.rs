@@ -4997,10 +4997,15 @@ fn memoryview_format_for_view(
     format: Option<&str>,
 ) -> Result<MemoryViewCastFormat, RuntimeError> {
     let format_spec = format.unwrap_or("B");
-    let cast_format = parse_memoryview_cast_format(format_spec)
-        .ok_or_else(|| RuntimeError::new("memoryview: unsupported format"))?;
+    let cast_format = parse_memoryview_cast_format(format_spec).ok_or_else(|| {
+        RuntimeError::not_implemented_error(format!(
+            "memoryview: format {format_spec} not supported"
+        ))
+    })?;
     if cast_format.itemsize() != itemsize.max(1) {
-        return Err(RuntimeError::new("memoryview: unsupported format"));
+        return Err(RuntimeError::not_implemented_error(
+            "memoryview: unsupported format",
+        ));
     }
     Ok(cast_format)
 }
@@ -5039,7 +5044,9 @@ fn memoryview_decode_element(
 ) -> Result<Value, RuntimeError> {
     let itemsize = itemsize.max(1);
     if chunk.len() != itemsize || format.itemsize() != itemsize {
-        return Err(RuntimeError::new("memoryview: unsupported format"));
+        return Err(RuntimeError::not_implemented_error(
+            "memoryview: unsupported format",
+        ));
     }
     match format {
         MemoryViewCastFormat::UnsignedByte
@@ -5080,7 +5087,9 @@ fn memoryview_encode_element(
 ) -> Result<Vec<u8>, RuntimeError> {
     let itemsize = itemsize.max(1);
     if format.itemsize() != itemsize {
-        return Err(RuntimeError::new("memoryview: unsupported format"));
+        return Err(RuntimeError::not_implemented_error(
+            "memoryview: unsupported format",
+        ));
     }
     match format {
         MemoryViewCastFormat::UnsignedByte
@@ -5356,43 +5365,43 @@ fn memoryview_decode_tolist_recursive(
     heap: &Heap,
 ) -> Result<Value, RuntimeError> {
     if shape.is_empty() || shape.len() != strides.len() {
-        return Err(RuntimeError::new("memoryview.tolist() unsupported format"));
+        return Err(RuntimeError::not_implemented_error("memoryview: unsupported format"));
     }
     let dim = usize::try_from(shape[0])
-        .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+        .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
     let stride = strides[0];
     if shape.len() == 1 {
         let mut values = Vec::with_capacity(dim);
         let itemsize_isize = isize::try_from(itemsize)
-            .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+            .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
         for index in 0..dim {
             let delta = stride
                 .checked_mul(index as isize)
-                .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             let offset = base
                 .checked_add(delta)
-                .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             if offset < 0 {
-                return Err(RuntimeError::new("memoryview.tolist() unsupported format"));
+                return Err(RuntimeError::not_implemented_error("memoryview: unsupported format"));
             }
             let end = offset
                 .checked_add(itemsize_isize)
-                .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             let source_len = isize::try_from(source.len())
-                .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             if end > source_len {
-                return Err(RuntimeError::new("memoryview.tolist() unsupported format"));
+                return Err(RuntimeError::not_implemented_error("memoryview: unsupported format"));
             }
             let offset_usize = usize::try_from(offset)
-                .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             let end_usize = offset_usize
                 .checked_add(itemsize)
-                .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             let chunk = source
                 .get(offset_usize..end_usize)
-                .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             let value = memoryview_decode_element(chunk, format, itemsize, heap)
-                .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             values.push(value);
         }
         Ok(heap.alloc_list(values))
@@ -5401,10 +5410,10 @@ fn memoryview_decode_tolist_recursive(
         for index in 0..dim {
             let delta = stride
                 .checked_mul(index as isize)
-                .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             let row_base = base
                 .checked_add(delta)
-                .ok_or_else(|| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+                .ok_or_else(|| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
             let row = memoryview_decode_tolist_recursive(
                 source,
                 row_base,
@@ -5430,7 +5439,7 @@ fn memoryview_decode_tolist(
     heap: &Heap,
 ) -> Result<Value, RuntimeError> {
     let start = isize::try_from(start)
-        .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
+        .map_err(|_| RuntimeError::not_implemented_error("memoryview: unsupported format"))?;
     memoryview_decode_tolist_recursive(source, start, itemsize.max(1), format, shape, strides, heap)
 }
 

@@ -5314,6 +5314,25 @@ ok = bytes_ok and typed_iter_ok and ndim_iter_err
 }
 
 #[test]
+fn memoryview_tolist_unsupported_format_raises_not_implemented() {
+    let source = r#"import array
+ok = False
+try:
+    memoryview(array.array('u', 'ab')).tolist()
+except Exception as exc:
+    ok = (
+        type(exc).__name__ == "NotImplementedError"
+        and "memoryview: unsupported format" in str(exc)
+    )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn bytes_and_bytearray_index_method_parity_baseline() {
     let source = r#"ok = (b"abc".index(b"b") == 1 and bytearray(b"abc").index(b"c") == 2)
 missing = False
