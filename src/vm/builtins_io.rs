@@ -732,30 +732,41 @@ impl Vm {
             kwargs.remove("errors")
         };
         if decoder.is_some() && kwargs.contains_key("decoder") {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "IncrementalNewlineDecoder.__init__() got multiple values for argument 'decoder'",
             ));
         }
         if translate.is_some() && kwargs.contains_key("translate") {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "IncrementalNewlineDecoder.__init__() got multiple values for argument 'translate'",
             ));
         }
         if errors.is_some() && kwargs.contains_key("errors") {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "IncrementalNewlineDecoder.__init__() got multiple values for argument 'errors'",
             ));
         }
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new(
+            if !kwargs.is_empty() {
+                let keyword = kwargs
+                    .keys()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                return Err(RuntimeError::type_error(format!(
+                    "IncrementalNewlineDecoder.__init__() got an unexpected keyword argument '{}'",
+                    keyword
+                )));
+            }
+            return Err(RuntimeError::type_error(
                 "IncrementalNewlineDecoder.__init__() got unexpected arguments",
             ));
         }
         let decoder = decoder.take().ok_or_else(|| {
-            RuntimeError::new("IncrementalNewlineDecoder.__init__() missing decoder")
+            RuntimeError::type_error("IncrementalNewlineDecoder.__init__() missing decoder")
         })?;
         let translate = translate.take().ok_or_else(|| {
-            RuntimeError::new("IncrementalNewlineDecoder.__init__() missing translate")
+            RuntimeError::type_error("IncrementalNewlineDecoder.__init__() missing translate")
         })?;
         let errors = errors.take().unwrap_or(Value::Str("strict".to_string()));
         if !matches!(errors, Value::Str(_)) {
@@ -780,7 +791,7 @@ impl Vm {
         let input = if !args.is_empty() {
             args.remove(0)
         } else {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "IncrementalNewlineDecoder.decode() missing input",
             ));
         };
@@ -790,12 +801,23 @@ impl Vm {
             kwargs.remove("final")
         };
         if final_flag.is_some() && kwargs.contains_key("final") {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "IncrementalNewlineDecoder.decode() got multiple values for argument 'final'",
             ));
         }
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new(
+            if !kwargs.is_empty() {
+                let keyword = kwargs
+                    .keys()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                return Err(RuntimeError::type_error(format!(
+                    "IncrementalNewlineDecoder.decode() got an unexpected keyword argument '{}'",
+                    keyword
+                )));
+            }
+            return Err(RuntimeError::type_error(
                 "IncrementalNewlineDecoder.decode() got unexpected arguments",
             ));
         }
@@ -813,8 +835,8 @@ impl Vm {
             match input {
                 Value::Str(text) => text,
                 _ => {
-                    return Err(RuntimeError::new(
-                        "TypeError: IncrementalNewlineDecoder with decoder=None expects str input",
+                    return Err(RuntimeError::type_error(
+                        "IncrementalNewlineDecoder with decoder=None expects str input",
                     ));
                 }
             }
@@ -840,9 +862,7 @@ impl Vm {
             match value {
                 Value::Str(text) => text,
                 _ => {
-                    return Err(RuntimeError::new(
-                        "TypeError: decoder.decode() should return str",
-                    ));
+                    return Err(RuntimeError::type_error("decoder.decode() should return str"));
                 }
             }
         };

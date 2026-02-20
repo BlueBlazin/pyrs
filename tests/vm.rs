@@ -10360,6 +10360,65 @@ except ValueError:
 }
 
 #[test]
+fn _io_incremental_newline_decoder_contract_errors_are_typed() {
+    let source = r#"import _io
+init_dup_ok = False
+init_kw_ok = False
+decode_missing_ok = False
+decode_dup_ok = False
+decode_kw_ok = False
+none_input_ok = False
+bad_decode_ret_ok = False
+try:
+    _io.IncrementalNewlineDecoder(None, True, decoder=None)
+except Exception as exc:
+    init_dup_ok = (type(exc).__name__ == "TypeError")
+try:
+    _io.IncrementalNewlineDecoder(None, True, badkw=True)
+except Exception as exc:
+    init_kw_ok = (type(exc).__name__ == "TypeError")
+
+dec = _io.IncrementalNewlineDecoder(None, True)
+try:
+    dec.decode()
+except Exception as exc:
+    decode_missing_ok = (type(exc).__name__ == "TypeError")
+try:
+    dec.decode("x", True, final=False)
+except Exception as exc:
+    decode_dup_ok = (type(exc).__name__ == "TypeError")
+try:
+    dec.decode("x", badkw=True)
+except Exception as exc:
+    decode_kw_ok = (type(exc).__name__ == "TypeError")
+try:
+    dec.decode(b"x")
+except Exception as exc:
+    none_input_ok = (type(exc).__name__ == "TypeError")
+
+class BadDecoder:
+    def decode(self, data, final=False):
+        return 1
+
+bad = _io.IncrementalNewlineDecoder(BadDecoder(), False)
+try:
+    bad.decode(b"x")
+except Exception as exc:
+    bad_decode_ret_ok = (type(exc).__name__ == "TypeError")
+
+ok = (
+    init_dup_ok and init_kw_ok and decode_missing_ok and decode_dup_ok and
+    decode_kw_ok and none_input_ok and bad_decode_ret_ok
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn _io_stringio_and_bytesio_extra_method_surface_parity() {
     let source = r#"import _io
 s = _io.StringIO("a\nb\n")

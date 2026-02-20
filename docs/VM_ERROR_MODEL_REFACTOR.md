@@ -140,6 +140,13 @@ Status: in progress (phase 1 + initial phase 2 landed).
 51. Added IO typed-conformance regressions in `/Users/$USER/pyrs/tests/vm.rs`:
    - `io_open_contract_errors_are_typed`
    - `io_fileio_contract_errors_are_typed`.
+52. `IncrementalNewlineDecoder` argument-contract typing closure landed in `/Users/$USER/pyrs/src/vm/builtins_io.rs`:
+   - `__init__`/`decode` duplicate-value, missing-arg, and unexpected-keyword paths now emit typed `TypeError`.
+   - decoder contract violations now emit typed `TypeError`:
+     - `decoder=None` with non-`str` input,
+     - wrapped decoder returning non-`str`.
+53. Added IO typed-conformance regression in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `_io_incremental_newline_decoder_contract_errors_are_typed`.
 
 ## Why This Exists
 

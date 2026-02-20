@@ -120,7 +120,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - IO contract typing cleanup (2026-02-20, latest):
     - `io.open(...)` and `FileIO.__init__(...)` argument/keyword/type contracts now emit typed `TypeError`/`ValueError` and bad-fd paths now emit typed `OSError` (`bad file descriptor`).
     - opener-callback failure path in `io.open(..., opener=...)` now preserves active exception objects instead of replacing with generic message-only runtime errors.
-    - regressions landed: `io_open_contract_errors_are_typed`, `io_fileio_contract_errors_are_typed`.
+    - `IncrementalNewlineDecoder.__init__/decode` argument and decoder-contract errors now emit typed `TypeError` (including unexpected keyword + duplicate arg paths).
+    - regressions landed: `io_open_contract_errors_are_typed`, `io_fileio_contract_errors_are_typed`, `_io_incremental_newline_decoder_contract_errors_are_typed`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.
