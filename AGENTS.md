@@ -63,6 +63,13 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- VM error-model refactor checkpoint (2026-02-20):
+  - `RuntimeError` now carries optional typed exception payload (`exception: Option<Box<ExceptionObject>>`).
+  - `RuntimeError::new(...)` now auto-extracts exception type/message from prefixed and traceback-tail messages.
+  - `runtime_error_matches_exception(...)` now matches typed payloads first, with legacy message fallback.
+  - VM runtime-error conversion is centralized via `runtime_error_to_exception_object(...)` + `ensure_exception_default_attrs(...)`.
+  - `runtime_error_from_active_exception(...)` now preserves the original `ExceptionObject` while keeping traceback text compatibility.
+  - explicit `raise ... from ...` now preserves `__context__` in addition to `__cause__` + `__suppress_context__`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.
