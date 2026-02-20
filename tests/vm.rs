@@ -13550,6 +13550,15 @@ ok = (
 }
 
 #[test]
+fn vectorcall_decode_does_not_hardcode_numpy_type_name_gates() {
+    let source = include_str!("../src/vm/vm_extensions/cpython_object_call_api.rs");
+    assert!(
+        !source.contains("starts_with(\"numpy.\")"),
+        "PyObject_Vectorcall decode must remain provenance-based, not library-name gated",
+    );
+}
+
+#[test]
 fn io_text_encoding_handles_none_and_strings() {
     let Some(lib) = cpython_lib_path() else {
         return;

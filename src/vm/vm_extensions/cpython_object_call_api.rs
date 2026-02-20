@@ -1263,29 +1263,37 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                 Ok(value) => value,
                 Err(err) => {
                     let proxied = with_active_cpython_context_mut(|context| {
-                        if context.owns_cpython_allocation_ptr(ptr) {
-                            return None;
-                        }
-                        if ModuleCapiContext::is_probable_external_cpython_object_ptr(ptr) {
-                            // Restrict proxy-materialization in vectorcall argument decoding to
-                            // known scientific-stack object families for now; random stale/raw
-                            // pointers should fail closed.
-                            // SAFETY: probability guard above validated object/type pointer layout.
-                            let type_name = unsafe {
-                                let type_ptr = ptr
-                                    .cast::<CpythonObjectHead>()
-                                    .as_ref()
-                                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                                    .unwrap_or(std::ptr::null_mut());
-                                if type_ptr.is_null() {
-                                    String::new()
-                                } else {
-                                    c_name_to_string((*type_ptr).tp_name).unwrap_or_default()
-                                }
-                            };
-                            if !type_name.starts_with("numpy.") {
-                                return None;
+                        let owned = context.owns_cpython_allocation_ptr(ptr);
+                        let pinned_owned = if context.vm.is_null() {
+                            false
+                        } else {
+                            // SAFETY: VM pointer is valid for active C-API context lifetime.
+                            unsafe {
+                                (&*context.vm)
+                                    .extension_pinned_cpython_allocation_set
+                                    .contains(&(ptr as usize))
                             }
+                        };
+                        let known_handle = context.cpython_handle_from_ptr(ptr).is_some();
+                        let mapped_escaped = if context.vm.is_null() {
+                            false
+                        } else {
+                            // SAFETY: VM pointer is valid for active C-API context lifetime.
+                            unsafe {
+                                (&*context.vm)
+                                    .extension_cpython_ptr_values
+                                    .contains_key(&(ptr as usize))
+                            }
+                        };
+                        if known_handle || mapped_escaped {
+                            if let Some(value) = context.cpython_value_from_ptr_or_proxy(ptr) {
+                                return Some(value);
+                            }
+                        }
+                        if !owned
+                            && !pinned_owned
+                            && ModuleCapiContext::is_probable_external_cpython_object_ptr(ptr)
+                        {
                             return context.cpython_value_from_ptr_or_proxy(ptr);
                         }
                         None
@@ -1298,6 +1306,16 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                     }
                     let detail = with_active_cpython_context_mut(|context| {
                         let owned = context.owns_cpython_allocation_ptr(ptr);
+                        let pinned_owned = if context.vm.is_null() {
+                            false
+                        } else {
+                            // SAFETY: VM pointer is valid for active C-API context lifetime.
+                            unsafe {
+                                (&*context.vm)
+                                    .extension_pinned_cpython_allocation_set
+                                    .contains(&(ptr as usize))
+                            }
+                        };
                         let known_handle = context.cpython_handle_from_ptr(ptr).is_some();
                         let mapped_value = if context.vm.is_null() {
                             false
@@ -1306,6 +1324,8 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             let vm = unsafe { &*context.vm };
                             vm.extension_cpython_ptr_values.contains_key(&(ptr as usize))
                         };
+                        let probable_external =
+                            ModuleCapiContext::is_probable_external_cpython_object_ptr(ptr);
                         // SAFETY: best-effort pointer diagnostics; guarded for null/invalid headers.
                         let (type_ptr, type_name) = unsafe {
                             let head = ptr.cast::<CpythonObjectHead>();
@@ -1324,8 +1344,8 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             }
                         };
                         format!(
-                            "ptr={:p} owned={} known_handle={} mapped_value={} type={:p} type_name={}",
-                            ptr, owned, known_handle, mapped_value, type_ptr, type_name
+                            "ptr={:p} owned={} pinned_owned={} known_handle={} mapped_value={} probable_external={} type={:p} type_name={}",
+                            ptr, owned, pinned_owned, known_handle, mapped_value, probable_external, type_ptr, type_name
                         )
                     })
                     .unwrap_or_else(|_| format!("ptr={:p}", ptr));
