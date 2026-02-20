@@ -1121,7 +1121,11 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        self.builtin_opcode_has_flag(args, kwargs, "ESCAPES", "has_exc")
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("has_exc() expects one opcode"));
+        }
+        let _ = value_to_int(args[0].clone())?;
+        Ok(Value::Bool(false))
     }
 
     pub(super) fn builtin_opcode_get_executor(
@@ -1132,6 +1136,11 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new(
                 "get_executor() expects code object and instruction offset",
+            ));
+        }
+        if !matches!(args[0], Value::Code(_)) {
+            return Err(RuntimeError::type_error(
+                "get_executor() expected code object as first argument",
             ));
         }
         let _ = value_to_int(args[1].clone())?;
