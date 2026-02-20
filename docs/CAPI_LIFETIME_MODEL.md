@@ -1,6 +1,28 @@
 # C-API Lifetime Model (P0)
 
-Status: `IN_PROGRESS` (execution lock).
+Status: `IN_PROGRESS` (execution lock, Phase 1/2 in progress).
+
+## Latest Checkpoint (2026-02-20)
+
+- VM-global registry substrate is now wired (`src/vm/capi_registry.rs`) with:
+  - pointer provenance (`OwnedCompat`, `ExternalRef`, `StaticSingleton`),
+  - lifecycle state (`Alive`, `PendingFree`, `Freed`),
+  - reference-kind accounting (`Borrowed`, `Owned`, `Stolen`),
+  - pointer/object-id index + stats surface.
+- Registry integration now covers core ownership flows:
+  - compat allocation registration in `ModuleCapiContext` allocation paths,
+  - external proxy registration + explicit pin accounting on first materialization,
+  - context-drop + VM-drop deallocation paths now mark pending/free through registry APIs.
+- High-traffic pointer-conversion paths now record ownership kind explicitly:
+  - proxy/callable call-result conversion paths use owned-reference wrappers,
+  - call/attr/vectorcall argument conversion paths use borrowed-reference wrappers.
+- Regression hardening:
+  - added NumPy lifetime stress probes in `tests/vm.rs`:
+    - `numpy_axis_sum_survives_gc_and_repr_stress`
+    - `numpy_reimport_and_axis_sum_stays_stable`
+- CI hardening:
+  - added `sanitizer-stability` job in `.github/workflows/parity-gate.yml`
+    (nightly ASan lane with NumPy lifetime + extension vectorcall smoke probes).
 
 ## Problem Statement
 

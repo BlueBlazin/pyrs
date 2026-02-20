@@ -14204,6 +14204,34 @@ print(ok)
 }
 
 #[test]
+fn numpy_axis_sum_and_repr_stress_stays_stable() {
+    let source = r#"import numpy as np
+ok = True
+for _ in range(200):
+    value = np.array([0, 1, 2, 3]).reshape((2, 2)).sum(axis=0)
+    ok = ok and int(value[0]) == 2 and int(value[1]) == 4
+    ok = ok and repr(value).startswith("array")
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_repeated_array_ops_and_reprs_stay_stable() {
+    let source = r#"import numpy as np
+ok = True
+for _ in range(120):
+    arr = np.array([0, 1, 2, 3]).reshape((2, 2))
+    doubled = arr * 2
+    rows = doubled.sum(axis=1)
+    ok = ok and int(rows[0]) == 2 and int(rows[1]) == 10
+    ok = ok and repr(arr).startswith("array")
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
 fn vectorcall_decode_does_not_hardcode_numpy_type_name_gates() {
     let source = include_str!("../src/vm/vm_extensions/cpython_object_call_api.rs");
     assert!(

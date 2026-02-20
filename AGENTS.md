@@ -68,6 +68,14 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- C-API lifetime-model checkpoint (2026-02-20, latest):
+  - VM-global pointer registry landed in `src/vm/capi_registry.rs` (provenance/lifecycle/ref-kind tracking).
+  - registry is now wired into core compat allocation and teardown paths (`src/vm/vm_extensions.rs`, `src/vm/mod.rs`), including external-pin accounting and pending/free state transitions.
+  - high-traffic proxy/callable call-result conversions now use owned-reference mapping; call/attr/vectorcall argument conversions use borrowed-reference mapping.
+  - new NumPy lifetime stress regressions landed in `tests/vm.rs`:
+    - `numpy_axis_sum_survives_gc_and_repr_stress`
+    - `numpy_reimport_and_axis_sum_stays_stable`
+  - CI now includes a nightly ASan lifetime lane (`sanitizer-stability` job in `.github/workflows/parity-gate.yml`).
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,
