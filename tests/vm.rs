@@ -8283,6 +8283,75 @@ ok = ord_ok and dict_ok and all_ok and divmod_ok and make_ok
 }
 
 #[test]
+fn io_open_contract_errors_are_typed() {
+    let source = r#"import io
+type_ok = False
+kw_ok = False
+newline_ok = False
+binary_encoding_ok = False
+badfd_ok = False
+try:
+    io.open(0, mode=1)
+except Exception as exc:
+    type_ok = (type(exc).__name__ == "TypeError")
+try:
+    io.open(0, badkw=True)
+except Exception as exc:
+    kw_ok = (type(exc).__name__ == "TypeError")
+try:
+    io.open(0, "r", newline="x")
+except Exception as exc:
+    newline_ok = (type(exc).__name__ == "ValueError")
+try:
+    io.open(0, "rb", encoding="utf-8")
+except Exception as exc:
+    binary_encoding_ok = (type(exc).__name__ == "ValueError")
+try:
+    io.open(-1, "r")
+except Exception as exc:
+    badfd_ok = (type(exc).__name__ == "OSError")
+ok = type_ok and kw_ok and newline_ok and binary_encoding_ok and badfd_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_fileio_contract_errors_are_typed() {
+    let source = r#"import _io
+missing_ok = False
+mode_ok = False
+kw_ok = False
+dup_ok = False
+try:
+    _io.FileIO()
+except Exception as exc:
+    missing_ok = (type(exc).__name__ == "TypeError")
+try:
+    _io.FileIO(0, mode=1)
+except Exception as exc:
+    mode_ok = (type(exc).__name__ == "TypeError")
+try:
+    _io.FileIO(0, badkw=True)
+except Exception as exc:
+    kw_ok = (type(exc).__name__ == "TypeError")
+try:
+    _io.FileIO(0, file=0)
+except Exception as exc:
+    dup_ok = (type(exc).__name__ == "TypeError")
+ok = missing_ok and mode_ok and kw_ok and dup_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

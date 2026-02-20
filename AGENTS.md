@@ -117,6 +117,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - typed core-contract cleanup (2026-02-20, latest):
     - `ord`, `dict`, `all/any`, `namedtuple._make`, and `divmod` contract/domain failures now emit typed exceptions (`TypeError`/`ValueError`/`ZeroDivisionError`) instead of untyped message-only runtime errors.
     - regression landed: `core_contract_errors_are_typed_for_ord_dict_all_divmod_and_namedtuple_make`.
+  - IO contract typing cleanup (2026-02-20, latest):
+    - `io.open(...)` and `FileIO.__init__(...)` argument/keyword/type contracts now emit typed `TypeError`/`ValueError` and bad-fd paths now emit typed `OSError` (`bad file descriptor`).
+    - opener-callback failure path in `io.open(..., opener=...)` now preserves active exception objects instead of replacing with generic message-only runtime errors.
+    - regressions landed: `io_open_contract_errors_are_typed`, `io_fileio_contract_errors_are_typed`.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

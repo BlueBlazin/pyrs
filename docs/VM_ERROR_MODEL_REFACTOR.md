@@ -129,6 +129,17 @@ Status: in progress (phase 1 + initial phase 2 landed).
 46. `namedtuple._make(...)` receiver/class/iterable contract failures now raise typed `TypeError` in both core VM and builtin dispatch paths.
 47. Added regression in `/Users/$USER/pyrs/tests/vm.rs`:
    - `core_contract_errors_are_typed_for_ord_dict_all_divmod_and_namedtuple_make`.
+48. IO open-path contract typing closure landed in `/Users/$USER/pyrs/src/vm/builtins_io.rs`:
+   - `io.open(...)` arity/duplicate-arg/unexpected-keyword/mode-type contract paths now emit typed `TypeError`.
+   - mode/newline/buffering/binary-option incompatibility paths now emit typed `ValueError`.
+   - bad-fd paths now emit typed `OSError` via `RuntimeError::bad_file_descriptor()`.
+49. `io.open(..., opener=...)` exception propagation now preserves the active exception object when opener callbacks raise (no generic string replacement).
+50. `FileIO.__init__` contract typing closure landed:
+   - missing/duplicate/unexpected argument paths now emit typed `TypeError`,
+   - invalid mode-string/type paths now emit typed `ValueError`/`TypeError` as appropriate.
+51. Added IO typed-conformance regressions in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `io_open_contract_errors_are_typed`
+   - `io_fileio_contract_errors_are_typed`.
 
 ## Why This Exists
 

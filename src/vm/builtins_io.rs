@@ -27,7 +27,7 @@ impl Vm {
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.is_empty() || args.len() > 8 {
-            return Err(RuntimeError::new("open() expected at most 8 arguments"));
+            return Err(RuntimeError::type_error("open() expected at most 8 arguments"));
         }
 
         let file_arg = args.remove(0);
@@ -67,18 +67,18 @@ impl Vm {
             None
         };
         if !args.is_empty() {
-            return Err(RuntimeError::new("open() expected at most 8 arguments"));
+            return Err(RuntimeError::type_error("open() expected at most 8 arguments"));
         }
 
         if let Some(value) = kwargs.remove("mode") {
             if mode_arg.is_some() {
-                return Err(RuntimeError::new("open() got multiple values for mode"));
+                return Err(RuntimeError::type_error("open() got multiple values for mode"));
             }
             mode_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("buffering") {
             if buffering_arg.is_some() {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "open() got multiple values for buffering",
                 ));
             }
@@ -86,43 +86,54 @@ impl Vm {
         }
         if let Some(value) = kwargs.remove("encoding") {
             if encoding_arg.is_some() {
-                return Err(RuntimeError::new("open() got multiple values for encoding"));
+                return Err(RuntimeError::type_error("open() got multiple values for encoding"));
             }
             encoding_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("errors") {
             if errors_arg.is_some() {
-                return Err(RuntimeError::new("open() got multiple values for errors"));
+                return Err(RuntimeError::type_error("open() got multiple values for errors"));
             }
             errors_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("newline") {
             if newline_arg.is_some() {
-                return Err(RuntimeError::new("open() got multiple values for newline"));
+                return Err(RuntimeError::type_error("open() got multiple values for newline"));
             }
             newline_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("closefd") {
             if closefd_arg.is_some() {
-                return Err(RuntimeError::new("open() got multiple values for closefd"));
+                return Err(RuntimeError::type_error("open() got multiple values for closefd"));
             }
             closefd_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("opener") {
             if opener_arg.is_some() {
-                return Err(RuntimeError::new("open() got multiple values for opener"));
+                return Err(RuntimeError::type_error("open() got multiple values for opener"));
             }
             opener_arg = Some(value);
         }
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "open() got an unexpected keyword argument",
-            ));
+            let keyword = kwargs
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(RuntimeError::type_error(format!(
+                "open() got an unexpected keyword argument '{}'",
+                keyword
+            )));
         }
 
         let mut mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
             Value::Str(value) => value,
-            _ => return Err(RuntimeError::new("open() mode must be str")),
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "open() argument 'mode' must be str, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
         };
         // Keep mode validation close to CPython's _io_open_impl in Modules/_io/_iomodule.c.
         let mut creating = false;
@@ -136,56 +147,58 @@ impl Vm {
             match ch {
                 'x' => {
                     if creating {
-                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                        return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
                     }
                     creating = true;
                 }
                 'r' => {
                     if reading {
-                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                        return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
                     }
                     reading = true;
                 }
                 'w' => {
                     if writing {
-                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                        return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
                     }
                     writing = true;
                 }
                 'a' => {
                     if appending {
-                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                        return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
                     }
                     appending = true;
                 }
                 '+' => {
                     if updating {
-                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                        return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
                     }
                     updating = true;
                 }
                 't' => {
                     if text_mode {
-                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                        return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
                     }
                     text_mode = true;
                 }
                 'b' => {
                     if binary_mode {
-                        return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+                        return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
                     }
                     binary_mode = true;
                 }
-                _ => return Err(RuntimeError::new(format!("invalid mode: '{mode}'"))),
+                _ => return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'"))),
             }
         }
 
         if text_mode && binary_mode {
-            return Err(RuntimeError::new("can't have text and binary mode at once"));
+            return Err(RuntimeError::value_error(
+                "can't have text and binary mode at once",
+            ));
         }
         let mode_kind_count = creating as u8 + reading as u8 + writing as u8 + appending as u8;
         if mode_kind_count != 1 {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::value_error(
                 "must have exactly one of create/read/write/append mode",
             ));
         }
@@ -208,50 +221,50 @@ impl Vm {
 
         let mut buffering = value_to_int(buffering_arg.unwrap_or(Value::Int(-1)))?;
         if buffering < -1 {
-            return Err(RuntimeError::new("invalid buffering size"));
+            return Err(RuntimeError::value_error("invalid buffering size"));
         }
         if binary_mode && buffering == 1 {
             // CPython emits RuntimeWarning and falls back to default buffering.
             buffering = -1;
         }
         if buffering == 0 && !binary_mode {
-            return Err(RuntimeError::new("can't have unbuffered text I/O"));
+            return Err(RuntimeError::value_error("can't have unbuffered text I/O"));
         }
 
         let encoding = match encoding_arg.unwrap_or(Value::None) {
             Value::None => None,
             Value::Str(value) => Some(value),
-            _ => return Err(RuntimeError::new("open() encoding must be str or None")),
+            _ => return Err(RuntimeError::type_error("open() encoding must be str or None")),
         };
         let errors = match errors_arg.unwrap_or(Value::None) {
             Value::None => None,
             Value::Str(value) => Some(value),
-            _ => return Err(RuntimeError::new("open() errors must be str or None")),
+            _ => return Err(RuntimeError::type_error("open() errors must be str or None")),
         };
         let newline = match newline_arg.unwrap_or(Value::None) {
             Value::None => None,
             Value::Str(value) => Some(value),
-            _ => return Err(RuntimeError::new("open() newline must be str or None")),
+            _ => return Err(RuntimeError::type_error("open() newline must be str or None")),
         };
         if let Some(value) = newline.as_deref()
             && !matches!(value, "" | "\n" | "\r" | "\r\n")
         {
-            return Err(RuntimeError::new(format!(
-                "ValueError: illegal newline value: {value}",
+            return Err(RuntimeError::value_error(format!(
+                "illegal newline value: {value}",
             )));
         }
         if binary_mode && encoding.is_some() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::value_error(
                 "binary mode doesn't take an encoding argument",
             ));
         }
         if binary_mode && errors.is_some() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::value_error(
                 "binary mode doesn't take an errors argument",
             ));
         }
         if binary_mode && newline.is_some() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::value_error(
                 "binary mode doesn't take a newline argument",
             ));
         }
@@ -270,9 +283,7 @@ impl Vm {
         let fd = match file_arg {
             Value::Int(fd) => {
                 if fd < 0 {
-                    return Err(RuntimeError::new(
-                        "OSError: bad file descriptor (os error 9)",
-                    ));
+                    return Err(RuntimeError::bad_file_descriptor());
                 }
                 let Some(resolved_fd) = self.resolve_open_file_fd(fd).or_else(|| {
                     if (0..=2).contains(&fd) {
@@ -281,9 +292,7 @@ impl Vm {
                         None
                     }
                 }) else {
-                    return Err(RuntimeError::new(
-                        "OSError: bad file descriptor (os error 9)",
-                    ));
+                    return Err(RuntimeError::bad_file_descriptor());
                 };
                 resolved_fd
             }
@@ -293,7 +302,9 @@ impl Vm {
             }
             pathlike => {
                 if !closefd {
-                    return Err(RuntimeError::new("Cannot use closefd=False with file name"));
+                    return Err(RuntimeError::value_error(
+                        "Cannot use closefd=False with file name",
+                    ));
                 }
                 let open_path = self.io_open_path_from_value(pathlike)?;
                 if let Some(opener) = opener_value {
@@ -323,12 +334,14 @@ impl Vm {
                     )? {
                         InternalCallOutcome::Value(value) => value,
                         InternalCallOutcome::CallerExceptionHandled => {
-                            return Err(RuntimeError::new("open failed: opener callback raised"));
+                            return Err(
+                                self.runtime_error_from_active_exception("open opener failed")
+                            );
                         }
                     };
                     let fd = value_to_int(opener_result)?;
                     if fd < 0 {
-                        return Err(RuntimeError::new(format!("opener returned {fd}")));
+                        return Err(RuntimeError::value_error(format!("opener returned {fd}")));
                     }
                     let Some(resolved_fd) = self.resolve_open_file_fd(fd).or_else(|| {
                         if (0..=2).contains(&fd) {
@@ -337,9 +350,7 @@ impl Vm {
                             None
                         }
                     }) else {
-                        return Err(RuntimeError::new(
-                            "OSError: bad file descriptor (os error 9)",
-                        ));
+                        return Err(RuntimeError::bad_file_descriptor());
                     };
                     resolved_fd
                 } else {
@@ -369,7 +380,7 @@ impl Vm {
                                 options.read(true);
                             }
                         }
-                        _ => return Err(RuntimeError::new("invalid mode")),
+                        _ => return Err(RuntimeError::value_error("invalid mode")),
                     }
                     let file = options
                         .open(&open_path.path)
@@ -1637,7 +1648,7 @@ impl Vm {
 
     fn fileio_force_binary_mode(mode: &str) -> Result<String, RuntimeError> {
         if mode.chars().any(|ch| ch == 't') {
-            return Err(RuntimeError::new(format!("invalid mode: '{mode}'")));
+            return Err(RuntimeError::value_error(format!("invalid mode: '{mode}'")));
         }
         if mode.chars().any(|ch| ch == 'b') {
             return Ok(mode.to_string());
@@ -1676,24 +1687,24 @@ impl Vm {
             None
         };
         if !args.is_empty() {
-            return Err(RuntimeError::new("FileIO() expected at most 4 arguments"));
+            return Err(RuntimeError::type_error("FileIO() expected at most 4 arguments"));
         }
 
         if let Some(value) = kwargs.remove("file") {
             if file_arg.is_some() {
-                return Err(RuntimeError::new("FileIO() got multiple values for file"));
+                return Err(RuntimeError::type_error("FileIO() got multiple values for file"));
             }
             file_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("mode") {
             if mode_arg.is_some() {
-                return Err(RuntimeError::new("FileIO() got multiple values for mode"));
+                return Err(RuntimeError::type_error("FileIO() got multiple values for mode"));
             }
             mode_arg = Some(value);
         }
         if let Some(value) = kwargs.remove("closefd") {
             if closefd_arg.is_some() {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "FileIO() got multiple values for closefd",
                 ));
             }
@@ -1701,21 +1712,28 @@ impl Vm {
         }
         if let Some(value) = kwargs.remove("opener") {
             if opener_arg.is_some() {
-                return Err(RuntimeError::new("FileIO() got multiple values for opener"));
+                return Err(RuntimeError::type_error("FileIO() got multiple values for opener"));
             }
             opener_arg = Some(value);
         }
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "FileIO() got an unexpected keyword argument",
-            ));
+            let keyword = kwargs
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<unknown>".to_string());
+            return Err(RuntimeError::type_error(format!(
+                "FileIO() got an unexpected keyword argument '{}'",
+                keyword
+            )));
         }
 
-        let file = file_arg
-            .ok_or_else(|| RuntimeError::new("FileIO() missing required argument 'file'"))?;
+        let file = file_arg.ok_or_else(|| {
+            RuntimeError::type_error("FileIO() missing required argument 'file'")
+        })?;
         let mode = match mode_arg.unwrap_or(Value::Str("r".to_string())) {
             Value::Str(mode) => mode,
-            _ => return Err(RuntimeError::new("FileIO() mode must be str")),
+            _ => return Err(RuntimeError::type_error("FileIO() mode must be str")),
         };
         let normalized_mode = Self::fileio_force_binary_mode(&mode)?;
 
@@ -1744,7 +1762,7 @@ impl Vm {
             }
         };
         let Object::Instance(receiver_data) = &mut *receiver.kind_mut() else {
-            return Err(RuntimeError::new("FileIO receiver must be instance"));
+            return Err(RuntimeError::type_error("FileIO receiver must be instance"));
         };
         receiver_data.attrs = attrs;
         Ok(Value::None)
