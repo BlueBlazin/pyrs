@@ -2639,6 +2639,26 @@ impl Vm {
                 _ => None,
             })
             .ok_or_else(|| RuntimeError::new("inspect.Signature unavailable"))?;
+        let signature_empty = match &*signature_class.kind() {
+            Object::Class(class_data) => class_data.attrs.get("empty").cloned().unwrap_or(Value::None),
+            _ => Value::None,
+        };
+        let parameter_class = self
+            .modules
+            .get("inspect")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("Parameter").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| RuntimeError::new("inspect.Parameter unavailable"))?;
+        let parameter_empty = match &*parameter_class.kind() {
+            Object::Class(class_data) => class_data.attrs.get("empty").cloned().unwrap_or(Value::None),
+            _ => Value::None,
+        };
 
         let text_signature_override = match self.builtin_getattr(
             vec![
@@ -2655,22 +2675,44 @@ impl Vm {
 
         let mut params = Vec::new();
         let mut parts = Vec::new();
-        let mut return_annotation = Value::None;
+        let mut return_annotation = signature_empty;
 
         let make_param =
             |name: String, kind: &str, default: Option<Value>| -> (String, (Value, Value)) {
-                let rendered = match default.clone() {
-                    Some(value) => format!("{name}={}", format_value(&value)),
-                    None => name.clone(),
+                let has_default = default.is_some();
+                let default_value = default.unwrap_or_else(|| parameter_empty.clone());
+                let rendered = if has_default {
+                    format!("{name}={}", format_value(&default_value))
+                } else {
+                    name.clone()
                 };
-                let entry = (
-                    Value::Str(name),
-                    self.heap.alloc_tuple(vec![
-                        Value::Str(kind.to_string()),
-                        default.unwrap_or(Value::None),
-                    ]),
-                );
-                (rendered, entry)
+                let kind_value = match &*parameter_class.kind() {
+                    Object::Class(class_data) => {
+                        class_data.attrs.get(kind).cloned().unwrap_or(Value::None)
+                    }
+                    _ => Value::None,
+                };
+                let parameter_instance =
+                    match self
+                        .heap
+                        .alloc_instance(InstanceObject::new(parameter_class.clone()))
+                    {
+                        Value::Instance(obj) => obj,
+                        _ => unreachable!(),
+                    };
+                if let Object::Instance(instance_data) = &mut *parameter_instance.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("name".to_string(), Value::Str(name.clone()));
+                    instance_data.attrs.insert("kind".to_string(), kind_value);
+                    instance_data
+                        .attrs
+                        .insert("default".to_string(), default_value);
+                    instance_data
+                        .attrs
+                        .insert("annotation".to_string(), parameter_empty.clone());
+                }
+                (rendered, (Value::Str(name), Value::Instance(parameter_instance)))
             };
 
         match callable {
@@ -2733,14 +2775,9 @@ impl Vm {
                 }
 
                 if let Some(vararg) = &vararg {
-                    parts.push(format!("*{vararg}"));
-                    params.push((
-                        Value::Str(vararg.clone()),
-                        self.heap.alloc_tuple(vec![
-                            Value::Str("VAR_POSITIONAL".to_string()),
-                            Value::None,
-                        ]),
-                    ));
+                    let (rendered, entry) = make_param(vararg.clone(), "VAR_POSITIONAL", None);
+                    parts.push(format!("*{rendered}"));
+                    params.push(entry);
                 } else if !kwonly_params.is_empty() {
                     parts.push("*".to_string());
                 }
@@ -2753,12 +2790,9 @@ impl Vm {
                 }
 
                 if let Some(kwarg) = &kwarg {
-                    parts.push(format!("**{kwarg}"));
-                    params.push((
-                        Value::Str(kwarg.clone()),
-                        self.heap
-                            .alloc_tuple(vec![Value::Str("VAR_KEYWORD".to_string()), Value::None]),
-                    ));
+                    let (rendered, entry) = make_param(kwarg.clone(), "VAR_KEYWORD", None);
+                    parts.push(format!("**{rendered}"));
+                    params.push(entry);
                 }
 
                 if let Some(annotations) = &annotations
@@ -2772,20 +2806,14 @@ impl Vm {
             }
             _ => {
                 if text_signature_override.is_none() {
-                    parts.push("*args".to_string());
-                    params.push((
-                        Value::Str("args".to_string()),
-                        self.heap.alloc_tuple(vec![
-                            Value::Str("VAR_POSITIONAL".to_string()),
-                            Value::None,
-                        ]),
-                    ));
-                    parts.push("**kwargs".to_string());
-                    params.push((
-                        Value::Str("kwargs".to_string()),
-                        self.heap
-                            .alloc_tuple(vec![Value::Str("VAR_KEYWORD".to_string()), Value::None]),
-                    ));
+                    let (args_rendered, args_entry) =
+                        make_param("args".to_string(), "VAR_POSITIONAL", None);
+                    parts.push(format!("*{args_rendered}"));
+                    params.push(args_entry);
+                    let (kwargs_rendered, kwargs_entry) =
+                        make_param("kwargs".to_string(), "VAR_KEYWORD", None);
+                    parts.push(format!("**{kwargs_rendered}"));
+                    params.push(kwargs_entry);
                 }
             }
         }

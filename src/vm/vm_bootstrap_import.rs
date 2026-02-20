@@ -3911,6 +3911,9 @@ impl Vm {
             class_data
                 .attrs
                 .insert("__module__".to_string(), Value::Str("inspect".to_string()));
+            class_data
+                .attrs
+                .insert("empty".to_string(), inspect_sentinel.clone());
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::InspectSignatureInit),
