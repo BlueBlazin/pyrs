@@ -3287,8 +3287,7 @@ impl Drop for ModuleCapiContext {
                     .extension_pinned_cpython_allocation_set
                     .insert(raw as usize)
                 {
-                    vm.extension_freed_cpython_allocations
-                        .remove(&(raw as usize));
+                    vm.capi_registry_mark_alive(raw as usize);
                     if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!(
                             "[pin-free] pin-insert ptr={:p} reason=keep_cpython_allocations_on_drop",
@@ -3326,8 +3325,7 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(raw as usize)
                     {
-                        vm.extension_freed_cpython_allocations
-                            .remove(&(raw as usize));
+                        vm.capi_registry_mark_alive(raw as usize);
                         if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                             eprintln!(
                                 "[pin-free] pin-insert ptr={:p} reason=identity_wrapper",
@@ -3346,8 +3344,7 @@ impl Drop for ModuleCapiContext {
                             .extension_pinned_cpython_allocation_set
                             .insert(raw as usize)
                         {
-                            vm.extension_freed_cpython_allocations
-                                .remove(&(raw as usize));
+                            vm.capi_registry_mark_alive(raw as usize);
                             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                                 eprintln!(
                                     "[pin-free] pin-insert ptr={:p} reason=interned_unicode",
@@ -3380,8 +3377,7 @@ impl Drop for ModuleCapiContext {
                             .extension_pinned_cpython_allocation_set
                             .insert(raw as usize)
                         {
-                            vm.extension_freed_cpython_allocations
-                                .remove(&(raw as usize));
+                            vm.capi_registry_mark_alive(raw as usize);
                             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                                 eprintln!(
                                     "[pin-free] pin-insert ptr={:p} reason=refcount_escape",
@@ -3418,8 +3414,7 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(raw as usize)
                     {
-                        vm.extension_freed_cpython_allocations
-                            .remove(&(raw as usize));
+                        vm.capi_registry_mark_alive(raw as usize);
                         vm.extension_pinned_cpython_allocations.push(raw.cast());
                     }
                 }
@@ -3449,7 +3444,7 @@ impl Drop for ModuleCapiContext {
                     .extension_pinned_cpython_allocation_set
                     .remove(&(raw as usize));
                 vm.extension_pinned_capsule_names.remove(&(raw as usize));
-                vm.extension_freed_cpython_allocations.insert(raw as usize);
+                vm.capi_registry_mark_freed(raw as usize);
                 if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                     eprintln!(
                         "[pin-free] context-free compat ptr={:p} was_pinned={}",
@@ -3500,8 +3495,7 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(buffer as usize)
                     {
-                        vm.extension_freed_cpython_allocations
-                            .remove(&(buffer as usize));
+                        vm.capi_registry_mark_alive(buffer as usize);
                         if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                             eprintln!(
                                 "[pin-free] pin-insert ptr={:p} reason=list_buffer_keep",
@@ -3522,8 +3516,7 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(buffer as usize)
                     {
-                        vm.extension_freed_cpython_allocations
-                            .remove(&(buffer as usize));
+                        vm.capi_registry_mark_alive(buffer as usize);
                         vm.extension_pinned_cpython_allocations.push(buffer.cast());
                     }
                 }
@@ -3536,8 +3529,7 @@ impl Drop for ModuleCapiContext {
                     .extension_pinned_cpython_allocation_set
                     .remove(&(buffer as usize));
                 vm.extension_pinned_capsule_names.remove(&(buffer as usize));
-                vm.extension_freed_cpython_allocations
-                    .insert(buffer as usize);
+                vm.capi_registry_mark_freed(buffer as usize);
                 if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                     eprintln!(
                         "[pin-free] context-free list-buffer ptr={:p} was_pinned={}",
@@ -3584,8 +3576,7 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(raw as usize)
                     {
-                        vm.extension_freed_cpython_allocations
-                            .remove(&(raw as usize));
+                        vm.capi_registry_mark_alive(raw as usize);
                         if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                             eprintln!("[pin-free] pin-insert ptr={:p} reason=aux_keep", raw);
                         }
@@ -3603,8 +3594,7 @@ impl Drop for ModuleCapiContext {
                         .extension_pinned_cpython_allocation_set
                         .insert(raw as usize)
                     {
-                        vm.extension_freed_cpython_allocations
-                            .remove(&(raw as usize));
+                        vm.capi_registry_mark_alive(raw as usize);
                         vm.extension_pinned_cpython_allocations.push(raw);
                     }
                 }
@@ -3617,7 +3607,7 @@ impl Drop for ModuleCapiContext {
                     .extension_pinned_cpython_allocation_set
                     .remove(&(raw as usize));
                 vm.extension_pinned_capsule_names.remove(&(raw as usize));
-                vm.extension_freed_cpython_allocations.insert(raw as usize);
+                vm.capi_registry_mark_freed(raw as usize);
                 if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                     eprintln!(
                         "[pin-free] context-free aux ptr={:p} was_pinned={}",
@@ -4302,13 +4292,13 @@ impl ModuleCapiContext {
         vm.capi_registry_mark_freed(ptr as usize);
     }
 
-    fn capi_registry_pin_external_ptr(&mut self, ptr: *mut c_void) {
+    fn capi_registry_pin_external_once_ptr(&mut self, ptr: *mut c_void) -> bool {
         if ptr.is_null() || self.vm.is_null() {
-            return;
+            return false;
         }
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
-        vm.capi_registry_pin_external(ptr as usize);
+        vm.capi_registry_pin_external_once(ptr as usize)
     }
 
     fn alloc_cpython_ptr_for_handle(&mut self, handle: PyrsObjectHandle) -> *mut c_void {
@@ -5873,11 +5863,7 @@ impl ModuleCapiContext {
             // Keep external PyObject* proxies alive for the VM lifetime once they are
             // materialized into runtime values. Context-scoped incref/decref churn can
             // leave escaped proxy values pointing at reclaimed CPython objects.
-            // SAFETY: VM pointer is valid for active C-API context lifetime.
-            let vm = unsafe { &mut *self.vm };
-            let inserted = vm
-                .extension_pinned_external_cpython_refs
-                .insert(object as usize);
+            let inserted = self.capi_registry_pin_external_once_ptr(object);
             if std::env::var_os("PYRS_TRACE_CPY_PIN").is_some() || force_trace_fallback {
                 eprintln!(
                     "[cpy-pin] ptr={:p} branch=external inserted={}",
@@ -5890,7 +5876,6 @@ impl ModuleCapiContext {
                 unsafe {
                     Py_IncRef(object);
                 }
-                self.capi_registry_pin_external_ptr(object);
             }
         } else {
             self.capi_registry_register_owned_ptr(object, proxy_object_id);
@@ -8045,7 +8030,7 @@ impl ModuleCapiContext {
                 }
                 vm.extension_pinned_cpython_allocation_set.remove(&ptr_addr);
                 vm.extension_pinned_capsule_names.remove(&ptr_addr);
-                vm.extension_freed_cpython_allocations.insert(ptr_addr);
+                vm.capi_registry_mark_freed(ptr_addr);
             }
         }
     }
@@ -8703,8 +8688,7 @@ impl ModuleCapiContext {
             .extension_pinned_cpython_allocation_set
             .insert(ptr as usize)
         {
-            vm.extension_freed_cpython_allocations
-                .remove(&(ptr as usize));
+            vm.capi_registry_mark_alive(ptr as usize);
             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                 eprintln!(
                     "[pin-free] pin-insert ptr={:p} reason=pin_owned_allocation_for_vm",
@@ -8735,8 +8719,7 @@ impl ModuleCapiContext {
             .extension_pinned_cpython_allocation_set
             .insert(ptr as usize)
         {
-            vm.extension_freed_cpython_allocations
-                .remove(&(ptr as usize));
+            vm.capi_registry_mark_alive(ptr as usize);
             if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                 eprintln!(
                     "[pin-free] pin-insert ptr={:p} reason=pin_capsule_allocation_for_vm",

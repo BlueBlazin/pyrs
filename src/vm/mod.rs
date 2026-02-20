@@ -769,8 +769,6 @@ pub struct Vm {
     extension_contextvar_allocations: Vec<*mut u8>,
     extension_pinned_cpython_allocations: Vec<*mut c_void>,
     extension_pinned_cpython_allocation_set: HashSet<usize>,
-    extension_freed_cpython_allocations: HashSet<usize>,
-    extension_pinned_external_cpython_refs: HashSet<usize>,
     extension_pinned_capsule_names: HashMap<usize, CString>,
     extension_cpython_ptr_values: HashMap<usize, Value>,
     extension_cpython_ptr_by_object_id: HashMap<u64, usize>,
@@ -849,20 +847,18 @@ impl Drop for Vm {
                 }
             }
         }
-        let drained_external_refs: Vec<usize> = self
-            .extension_pinned_external_cpython_refs
-            .drain()
-            .collect();
-        for ptr in drained_external_refs {
+        let drained_external_refs = self.capi_registry_drain_external_pins();
+        for (ptr, pin_count) in drained_external_refs {
             if ptr == 0 {
                 continue;
             }
             self.capi_registry_mark_pending_free(ptr);
-            self.capi_registry_unpin_external(ptr);
             // SAFETY: pointers in this set were incref'd when external proxies were
             // materialized and must be decref'd exactly once at VM teardown.
-            unsafe {
-                vm_extensions::Py_DecRef(ptr as *mut c_void);
+            for _ in 0..pin_count {
+                unsafe {
+                    vm_extensions::Py_DecRef(ptr as *mut c_void);
+                }
             }
             self.capi_registry_mark_freed(ptr);
         }
@@ -882,7 +878,7 @@ impl Drop for Vm {
                     self.capi_registry_mark_freed(addr);
                     continue;
                 }
-                if self.extension_freed_cpython_allocations.contains(&addr) {
+                if self.capi_registry_is_freed(addr) {
                     if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
                         eprintln!("[pin-free] vm-skip ptr={:p} reason=already-freed", raw);
                     }
@@ -906,7 +902,6 @@ impl Drop for Vm {
             }
         }
         self.extension_pinned_cpython_allocation_set.clear();
-        self.extension_freed_cpython_allocations.clear();
         self.extension_pinned_capsule_names.clear();
         self.extension_cpython_ptr_values.clear();
         self.extension_cpython_ptr_by_object_id.clear();
@@ -1000,8 +995,6 @@ impl Vm {
             extension_contextvar_allocations: Vec::new(),
             extension_pinned_cpython_allocations: Vec::new(),
             extension_pinned_cpython_allocation_set: HashSet::new(),
-            extension_freed_cpython_allocations: HashSet::new(),
-            extension_pinned_external_cpython_refs: HashSet::new(),
             extension_pinned_capsule_names: HashMap::new(),
             extension_cpython_ptr_values: HashMap::new(),
             extension_cpython_ptr_by_object_id: HashMap::new(),
@@ -1070,20 +1063,28 @@ impl Vm {
         self.capi_object_registry.record_ref_kind(ptr, ref_kind);
     }
 
-    pub(super) fn capi_registry_pin_external(&mut self, ptr: usize) {
-        self.capi_object_registry.pin_external(ptr);
+    pub(super) fn capi_registry_pin_external_once(&mut self, ptr: usize) -> bool {
+        self.capi_object_registry.pin_external_once(ptr)
     }
 
-    pub(super) fn capi_registry_unpin_external(&mut self, ptr: usize) {
-        self.capi_object_registry.unpin_external(ptr);
+    pub(super) fn capi_registry_drain_external_pins(&mut self) -> Vec<(usize, usize)> {
+        self.capi_object_registry.drain_external_pins()
     }
 
     pub(super) fn capi_registry_mark_pending_free(&mut self, ptr: usize) {
         self.capi_object_registry.mark_pending_free(ptr);
     }
 
+    pub(super) fn capi_registry_mark_alive(&mut self, ptr: usize) {
+        self.capi_object_registry.mark_alive(ptr);
+    }
+
     pub(super) fn capi_registry_should_free_now(&self, ptr: usize) -> bool {
         self.capi_object_registry.should_free_now(ptr)
+    }
+
+    pub(super) fn capi_registry_is_freed(&self, ptr: usize) -> bool {
+        self.capi_object_registry.is_freed(ptr)
     }
 
     pub(super) fn capi_registry_mark_freed(&mut self, ptr: usize) {

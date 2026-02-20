@@ -50,7 +50,7 @@ pub unsafe extern "C" fn PyMem_RawFree(ptr: *mut c_void) {
             {
                 context.capi_registry_mark_pending_free_ptr(ptr);
                 vm.extension_pinned_capsule_names.remove(&(ptr as usize));
-                vm.extension_freed_cpython_allocations.insert(ptr as usize);
+                vm.capi_registry_mark_freed(ptr as usize);
                 deregistered_vm_pin = true;
                 handled = true;
             }

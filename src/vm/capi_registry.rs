@@ -168,6 +168,7 @@ impl CapiObjectRegistry {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn pin_external(&mut self, ptr: usize) {
         if ptr == 0 {
             return;
@@ -179,6 +180,22 @@ impl CapiObjectRegistry {
         entry.lifecycle = CapiPtrLifecycleState::Alive;
     }
 
+    pub(crate) fn pin_external_once(&mut self, ptr: usize) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(&ptr) else {
+            return false;
+        };
+        if entry.external_pins > 0 {
+            return false;
+        }
+        entry.external_pins = 1;
+        entry.lifecycle = CapiPtrLifecycleState::Alive;
+        true
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn unpin_external(&mut self, ptr: usize) {
         if ptr == 0 {
             return;
@@ -203,6 +220,16 @@ impl CapiObjectRegistry {
         }
     }
 
+    pub(crate) fn mark_alive(&mut self, ptr: usize) {
+        if ptr == 0 {
+            return;
+        }
+        let Some(entry) = self.entries.get_mut(&ptr) else {
+            return;
+        };
+        entry.lifecycle = CapiPtrLifecycleState::Alive;
+    }
+
     pub(crate) fn mark_freed(&mut self, ptr: usize) {
         if ptr == 0 {
             return;
@@ -218,6 +245,12 @@ impl CapiObjectRegistry {
         }
     }
 
+    pub(crate) fn is_freed(&self, ptr: usize) -> bool {
+        self.entries
+            .get(&ptr)
+            .is_some_and(|entry| entry.lifecycle == CapiPtrLifecycleState::Freed)
+    }
+
     pub(crate) fn should_free_now(&self, ptr: usize) -> bool {
         let Some(entry) = self.entries.get(&ptr) else {
             return false;
@@ -230,6 +263,24 @@ impl CapiObjectRegistry {
             CapiPtrProvenance::ExternalRef => false,
             CapiPtrProvenance::StaticSingleton => false,
         }
+    }
+
+    pub(crate) fn drain_external_pins(&mut self) -> Vec<(usize, usize)> {
+        let mut drained = Vec::new();
+        for (ptr, entry) in self.entries.iter_mut() {
+            if entry.provenance != CapiPtrProvenance::ExternalRef {
+                continue;
+            }
+            if entry.external_pins == 0 {
+                continue;
+            }
+            drained.push((*ptr, entry.external_pins));
+            entry.external_pins = 0;
+            if entry.lifecycle != CapiPtrLifecycleState::Freed {
+                entry.lifecycle = CapiPtrLifecycleState::PendingFree;
+            }
+        }
+        drained
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -315,5 +366,20 @@ mod tests {
         assert_eq!(stats.entries_freed, 1);
         assert!(stats.entries_total >= 1);
         assert_eq!(CapiPtrLifecycleState::Freed, CapiPtrLifecycleState::Freed);
+    }
+
+    #[test]
+    fn external_pin_once_and_drain_behavior_is_stable() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x99, CapiPtrProvenance::ExternalRef, None);
+        assert!(registry.pin_external_once(0x99));
+        assert!(!registry.pin_external_once(0x99));
+        assert!(!registry.should_free_now(0x99));
+        let drained = registry.drain_external_pins();
+        assert_eq!(drained, vec![(0x99, 1)]);
+        assert!(!registry.should_free_now(0x99));
+        assert!(!registry.is_freed(0x99));
+        registry.mark_freed(0x99);
+        assert!(registry.is_freed(0x99));
     }
 }
