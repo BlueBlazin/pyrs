@@ -52,7 +52,7 @@ pub(crate) fn dict_contains_key_checked(dict: &ObjRef, key: &Value) -> Result<bo
     let dict_kind = dict.kind();
     let entries = match &*dict_kind {
         Object::Dict(entries) => entries,
-        _ => return Err(RuntimeError::new("unsupported operand type for in")),
+        _ => return Err(RuntimeError::type_error("unsupported operand type for in")),
     };
     Ok(entries.contains_key_with_hash(key, hash))
 }

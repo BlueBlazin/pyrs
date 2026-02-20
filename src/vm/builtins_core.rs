@@ -2343,7 +2343,7 @@ impl Vm {
                                     _ => Err(RuntimeError::new("__int__ returned non-int")),
                                 },
                                 InternalCallOutcome::CallerExceptionHandled => {
-                                    Err(RuntimeError::new("int() unsupported type"))
+                                    Err(RuntimeError::type_error("int() unsupported type"))
                                 }
                             };
                         }
@@ -2808,7 +2808,7 @@ impl Vm {
                     for item in self.collect_iterable_values(value)? {
                         let byte = value_to_int(item)?;
                         if !(0..=255).contains(&byte) {
-                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                         }
                         out.push(byte as u8);
                     }
@@ -4456,7 +4456,7 @@ impl Vm {
         let target = args.remove(0);
         let name = match args.remove(0) {
             Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("attribute name must be string")),
+            _ => return Err(RuntimeError::type_error("attribute name must be string")),
         };
 
         match target {
@@ -4513,7 +4513,7 @@ impl Vm {
         let target = args.remove(0);
         let name = match args.remove(0) {
             Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("attribute name must be string")),
+            _ => return Err(RuntimeError::type_error("attribute name must be string")),
         };
         let value = args.remove(0);
         match target {
@@ -4536,7 +4536,7 @@ impl Vm {
                         name
                     );
                 }
-                return Err(RuntimeError::new("attribute assignment unsupported type"));
+                return Err(RuntimeError::type_error("attribute assignment unsupported type"));
             }
         }
         Ok(Value::None)
@@ -4555,7 +4555,7 @@ impl Vm {
         let target = args.remove(0);
         let name = match args.remove(0) {
             Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("attribute name must be string")),
+            _ => return Err(RuntimeError::type_error("attribute name must be string")),
         };
         match target {
             Value::Instance(instance) => {
@@ -4569,7 +4569,7 @@ impl Vm {
                 }
             }
             Value::Cell(cell) => self.delete_attr_cell(&cell, &name)?,
-            _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
+            _ => return Err(RuntimeError::type_error("attribute deletion unsupported type")),
         }
         Ok(Value::None)
     }
@@ -4596,7 +4596,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("tuple() expects at most one argument"));
+            return Err(RuntimeError::type_error("tuple() expects at most one argument"));
         }
         let source = match args.len() {
             0 => None,
@@ -4617,11 +4617,11 @@ impl Vm {
                             )));
                         }
                     }
-                    _ => return Err(RuntimeError::new("tuple() expects at most one argument")),
+                    _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
                 }
                 Some(args.remove(0))
             }
-            _ => return Err(RuntimeError::new("tuple() expects at most one argument")),
+            _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
         };
         let values = if let Some(source) = source {
             match source {
@@ -5686,7 +5686,7 @@ impl Vm {
                     return Ok(ordering);
                 }
                 self.compare_order_via_richcmp(left.clone(), right.clone())?
-                    .ok_or_else(|| RuntimeError::new("unsupported operand type for comparison"))
+                    .ok_or_else(|| RuntimeError::type_error("unsupported operand type for comparison"))
             }
         }
     }
@@ -5719,7 +5719,7 @@ impl Vm {
                 (Object::List(left), Object::List(right)) => (left.len(), right.len()),
                 (Object::Tuple(left), Object::Tuple(right)) => (left.len(), right.len()),
                 _ => {
-                    return Err(RuntimeError::new("unsupported operand type for comparison"));
+                    return Err(RuntimeError::type_error("unsupported operand type for comparison"));
                 }
             }
         };
@@ -5736,7 +5736,7 @@ impl Vm {
                         (left[idx].clone(), right[idx].clone())
                     }
                     _ => {
-                        return Err(RuntimeError::new("unsupported operand type for comparison"));
+                        return Err(RuntimeError::type_error("unsupported operand type for comparison"));
                     }
                 }
             };
@@ -7408,7 +7408,7 @@ impl Vm {
         let source = args.remove(0);
         self.ensure_sync_iterator_target(&source)?;
         self.to_iterator_value(source)
-            .map_err(|_| RuntimeError::new("object is not iterable"))
+            .map_err(|_| RuntimeError::type_error("object is not iterable"))
     }
 
     pub(super) fn builtin_next(
@@ -7448,7 +7448,7 @@ impl Vm {
                     if let Some(default) = default {
                         Ok(default)
                     } else {
-                        Err(RuntimeError::new("StopIteration"))
+                        Err(RuntimeError::stop_iteration("StopIteration"))
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
@@ -7461,7 +7461,7 @@ impl Vm {
                 } else if let Some(default) = default {
                     Ok(default)
                 } else {
-                    Err(RuntimeError::new("StopIteration"))
+                    Err(RuntimeError::stop_iteration("StopIteration"))
                 }
             }
             Value::Instance(_) => match self.next_from_iterator_value(&iterator)? {
@@ -7470,7 +7470,7 @@ impl Vm {
                     if let Some(default) = default {
                         Ok(default)
                     } else {
-                        Err(RuntimeError::new("StopIteration"))
+                        Err(RuntimeError::stop_iteration("StopIteration"))
                     }
                 }
                 GeneratorResumeOutcome::PropagatedException => {
@@ -7893,7 +7893,7 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("getattr() expects 2-3 arguments"))?
         {
             Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("attribute name must be string")),
+            _ => return Err(RuntimeError::type_error("attribute name must be string")),
         };
         let default = args_iter.next();
         // Preserve the caller's active exception context: getattr(..., default)
@@ -8173,7 +8173,7 @@ impl Vm {
         let target = args.remove(0);
         let name = match args.remove(0) {
             Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("attribute name must be string")),
+            _ => return Err(RuntimeError::type_error("attribute name must be string")),
         };
         let value = args.remove(0);
 
@@ -8215,7 +8215,7 @@ impl Vm {
                         name
                     );
                 }
-                return Err(RuntimeError::new("attribute assignment unsupported type"));
+                return Err(RuntimeError::type_error("attribute assignment unsupported type"));
             }
         }
 
@@ -8239,7 +8239,7 @@ impl Vm {
         let target = args.remove(0);
         let name = match args.remove(0) {
             Value::Str(name) => name,
-            _ => return Err(RuntimeError::new("attribute name must be string")),
+            _ => return Err(RuntimeError::type_error("attribute name must be string")),
         };
 
         match target {
@@ -8280,7 +8280,7 @@ impl Vm {
             Value::Cell(cell) => self.delete_attr_cell(&cell, &name)?,
             Value::Exception(exception) => self.delete_attr_exception(&exception, &name)?,
             Value::Builtin(builtin) => self.delete_attr_builtin(builtin, &name)?,
-            _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
+            _ => return Err(RuntimeError::type_error("attribute deletion unsupported type")),
         }
 
         Ok(Value::None)

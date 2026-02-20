@@ -142,8 +142,8 @@ impl Vm {
         let offset = self.random_randbelow(count)?;
         let result = (start as i128)
             .checked_add((step as i128) * (offset as i128))
-            .ok_or_else(|| RuntimeError::new("integer overflow"))?;
-        let result = i64::try_from(result).map_err(|_| RuntimeError::new("integer overflow"))?;
+            .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
+        let result = i64::try_from(result).map_err(|_| RuntimeError::overflow_error("integer overflow"))?;
         Ok(Value::Int(result))
     }
 
@@ -201,7 +201,7 @@ impl Vm {
         let offset = self.random_randbelow(count)?;
         let result = a
             .checked_add(offset)
-            .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+            .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
         Ok(Value::Int(result))
     }
 
@@ -629,7 +629,7 @@ impl Vm {
         }
         let value = value_to_f64(args[0].clone())?.floor();
         if value < i64::MIN as f64 || value > i64::MAX as f64 {
-            return Err(RuntimeError::new("integer overflow"));
+            return Err(RuntimeError::overflow_error("integer overflow"));
         }
         Ok(Value::Int(value as i64))
     }
@@ -644,7 +644,7 @@ impl Vm {
         }
         let value = value_to_f64(args[0].clone())?.ceil();
         if value < i64::MIN as f64 || value > i64::MAX as f64 {
-            return Err(RuntimeError::new("integer overflow"));
+            return Err(RuntimeError::overflow_error("integer overflow"));
         }
         Ok(Value::Int(value as i64))
     }

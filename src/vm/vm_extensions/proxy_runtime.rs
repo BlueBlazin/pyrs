@@ -241,13 +241,13 @@ impl Vm {
             )));
         }
         if !ModuleCapiContext::is_probable_external_cpython_object_ptr(raw_ptr) {
-            return Some(Err(RuntimeError::new("object is not iterable")));
+            return Some(Err(RuntimeError::type_error("object is not iterable")));
         }
         if self
             .extension_pinned_cpython_allocation_set
             .contains(&(raw_ptr as usize))
         {
-            return Some(Err(RuntimeError::new("object is not iterable")));
+            return Some(Err(RuntimeError::type_error("object is not iterable")));
         }
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
         let _active_context_guard =
@@ -431,7 +431,7 @@ impl Vm {
             }
         });
         if already_active {
-            return Some(Err(RuntimeError::new("int() unsupported type")));
+            return Some(Err(RuntimeError::type_error("int() unsupported type")));
         }
         struct CpythonProxyLongGuard;
         impl Drop for CpythonProxyLongGuard {
@@ -445,7 +445,7 @@ impl Vm {
         let _active_context_guard =
             ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let result = if raw_ptr.is_null() {
-            Err(RuntimeError::new("int() unsupported type"))
+            Err(RuntimeError::type_error("int() unsupported type"))
         } else {
             // SAFETY: `raw_ptr` is a candidate CPython object pointer.
             let type_ptr = unsafe {
@@ -456,7 +456,7 @@ impl Vm {
                     .unwrap_or(std::ptr::null_mut())
             };
             if !cpython_valid_type_ptr(type_ptr) {
-                Err(RuntimeError::new("int() unsupported type"))
+                Err(RuntimeError::type_error("int() unsupported type"))
             } else {
                 // SAFETY: `type_ptr` is validated above.
                 let number_methods = unsafe {
@@ -469,7 +469,7 @@ impl Vm {
                     number_methods.and_then(|methods| methods.nb_int.or(methods.nb_index));
                 if let Some(converter) = converter {
                     if (converter as usize) == (PyNumber_Long as usize) {
-                        Err(RuntimeError::new("int() unsupported type"))
+                        Err(RuntimeError::type_error("int() unsupported type"))
                     } else {
                         // SAFETY: converter slot comes from validated number methods table.
                         let result_ptr = unsafe { converter(raw_ptr) };
@@ -491,7 +491,7 @@ impl Vm {
                         }
                     }
                 } else {
-                    Err(RuntimeError::new("int() unsupported type"))
+                    Err(RuntimeError::type_error("int() unsupported type"))
                 }
             }
         };
@@ -514,7 +514,7 @@ impl Vm {
             }
         });
         if already_active {
-            return Some(Err(RuntimeError::new("float() unsupported type")));
+            return Some(Err(RuntimeError::type_error("float() unsupported type")));
         }
         struct CpythonProxyFloatGuard;
         impl Drop for CpythonProxyFloatGuard {
@@ -528,7 +528,7 @@ impl Vm {
         let _active_context_guard =
             ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let result = if raw_ptr.is_null() {
-            Err(RuntimeError::new("float() unsupported type"))
+            Err(RuntimeError::type_error("float() unsupported type"))
         } else {
             // SAFETY: `raw_ptr` is a candidate CPython object pointer.
             let type_ptr = unsafe {
@@ -539,7 +539,7 @@ impl Vm {
                     .unwrap_or(std::ptr::null_mut())
             };
             if !cpython_valid_type_ptr(type_ptr) {
-                Err(RuntimeError::new("float() unsupported type"))
+                Err(RuntimeError::type_error("float() unsupported type"))
             } else {
                 // SAFETY: `type_ptr` is validated above.
                 let number_methods = unsafe {
@@ -552,7 +552,7 @@ impl Vm {
                     .and_then(|methods| (!methods.nb_float.is_null()).then_some(methods.nb_float));
                 if let Some(converter) = converter {
                     if converter as usize == PyNumber_Float as usize {
-                        Err(RuntimeError::new("float() unsupported type"))
+                        Err(RuntimeError::type_error("float() unsupported type"))
                     } else {
                         // SAFETY: converter slot comes from validated number methods table.
                         let converter: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
@@ -581,7 +581,7 @@ impl Vm {
                         }
                     }
                 } else {
-                    Err(RuntimeError::new("float() unsupported type"))
+                    Err(RuntimeError::type_error("float() unsupported type"))
                 }
             }
         };

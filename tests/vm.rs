@@ -7837,6 +7837,87 @@ fn executes_len_with_keyword() {
 }
 
 #[test]
+fn builtin_constructor_unsupported_type_errors_are_typed() {
+    let source = r#"list_ok = False
+tuple_ok = False
+bytes_ok = False
+int_ok = False
+float_ok = False
+try:
+    list(1)
+except Exception as exc:
+    list_ok = (type(exc).__name__ == "TypeError")
+try:
+    tuple(1)
+except Exception as exc:
+    tuple_ok = (type(exc).__name__ == "TypeError")
+try:
+    bytes(1.25)
+except Exception as exc:
+    bytes_ok = (type(exc).__name__ == "TypeError")
+try:
+    int(object())
+except Exception as exc:
+    int_ok = (type(exc).__name__ == "TypeError")
+try:
+    float(object())
+except Exception as exc:
+    float_ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("list_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("tuple_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("bytes_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("int_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("float_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn membership_and_index_contract_errors_are_typed() {
+    let source = r#"in_ok = False
+index_ok = False
+try:
+    1 in 3
+except Exception as exc:
+    in_ok = (type(exc).__name__ == "TypeError")
+try:
+    [1][3]
+except Exception as exc:
+    index_ok = (type(exc).__name__ == "IndexError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("in_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("index_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_and_bytearray_range_errors_are_typed() {
+    let source = r#"bytes_ok = False
+bytearray_ok = False
+try:
+    bytes([300])
+except Exception as exc:
+    bytes_ok = (type(exc).__name__ == "ValueError")
+try:
+    bytearray([300])
+except Exception as exc:
+    bytearray_ok = (type(exc).__name__ == "ValueError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("bytes_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("bytearray_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -3910,7 +3910,7 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
         Value::BigInt(value) => value
             .to_i64()
-            .ok_or_else(|| RuntimeError::new("integer overflow")),
+            .ok_or_else(|| RuntimeError::overflow_error("integer overflow")),
         other => {
             if std::env::var_os("PYRS_TRACE_VALUE_TO_INT").is_some() {
                 eprintln!("[value_to_int] unsupported value={}", format_repr(&other));
@@ -3919,7 +3919,7 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
                     std::backtrace::Backtrace::force_capture()
                 );
             }
-            Err(RuntimeError::new("unsupported operand type"))
+            Err(RuntimeError::type_error("unsupported operand type"))
         }
     }
 }
@@ -4155,14 +4155,14 @@ fn random_range_count(start: i64, stop: i64, step: i64) -> Result<i64, RuntimeEr
             return Err(RuntimeError::new("empty range for randrange()"));
         }
         let count = ((stop as i128 - start as i128 - 1) / step as i128) + 1;
-        return i64::try_from(count).map_err(|_| RuntimeError::new("integer overflow"));
+        return i64::try_from(count).map_err(|_| RuntimeError::overflow_error("integer overflow"));
     }
     if start <= stop {
         return Err(RuntimeError::new("empty range for randrange()"));
     }
     let step_mag = -(step as i128);
     let count = ((start as i128 - stop as i128 - 1) / step_mag) + 1;
-    i64::try_from(count).map_err(|_| RuntimeError::new("integer overflow"))
+    i64::try_from(count).map_err(|_| RuntimeError::overflow_error("integer overflow"))
 }
 
 fn deref_name(code: &CodeObject, idx: usize) -> Option<&str> {
@@ -4203,7 +4203,7 @@ fn python_floor_div(left: i64, right: i64) -> Result<i64, RuntimeError> {
         div -= 1;
     }
     if div < i64::MIN as i128 || div > i64::MAX as i128 {
-        return Err(RuntimeError::new("integer overflow"));
+        return Err(RuntimeError::overflow_error("integer overflow"));
     }
     Ok(div as i64)
 }
@@ -4217,7 +4217,7 @@ fn python_mod(left: i64, right: i64) -> Result<i64, RuntimeError> {
     let div = python_floor_div(left, right)? as i128;
     let value = a - b * div;
     if value < i64::MIN as i128 || value > i64::MAX as i128 {
-        return Err(RuntimeError::new("integer overflow"));
+        return Err(RuntimeError::overflow_error("integer overflow"));
     }
     Ok(value as i64)
 }
@@ -5640,7 +5640,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                     step,
                 } => {
                     if step.is_zero() {
-                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                        return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
                     }
                     let mut out = Vec::new();
                     let mut cursor = current.clone();
@@ -5661,7 +5661,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 }
                 IteratorKind::RangeObject { start, stop, step } => {
                     if step.is_zero() {
-                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                        return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
                     }
                     let mut cursor = start.clone();
                     for _ in 0..iterator.index {
@@ -5731,7 +5731,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
             for value in values {
                 let byte = value_to_int(value)?;
                 if !(0..=255).contains(&byte) {
-                    return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                    return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                 }
                 out.push(byte as u8);
             }
@@ -5744,7 +5744,7 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 for value in values {
                     let byte = value_to_int(value.clone())?;
                     if !(0..=255).contains(&byte) {
-                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                     }
                     out.push(byte as u8);
                 }

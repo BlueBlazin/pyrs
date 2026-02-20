@@ -5765,7 +5765,7 @@ Parameter '{parameter_name}' will become positional-only in Python 3.15."
     ) -> Result<Value, RuntimeError> {
         let value = self.builtin_sqlite_cursor_fetchone(args, kwargs)?;
         if matches!(value, Value::None) {
-            return Err(RuntimeError::new("StopIteration"));
+            return Err(RuntimeError::stop_iteration("StopIteration"));
         }
         Ok(value)
     }

@@ -5427,7 +5427,7 @@ impl Vm {
             _ => false,
         };
         if is_empty {
-            Err(RuntimeError::new("StopIteration"))
+            Err(RuntimeError::stop_iteration("StopIteration"))
         } else {
             Ok(line)
         }
@@ -5978,7 +5978,7 @@ impl Vm {
             }
         };
         if is_empty {
-            Err(RuntimeError::new("StopIteration"))
+            Err(RuntimeError::stop_iteration("StopIteration"))
         } else {
             Ok(line)
         }
@@ -6153,7 +6153,7 @@ impl Vm {
             other => {
                 let Some(index_method) = self.lookup_bound_special_method(&other, "__index__")?
                 else {
-                    return Err(RuntimeError::new("unsupported operand type"));
+                    return Err(RuntimeError::type_error("unsupported operand type"));
                 };
                 let indexed = match self.call_internal(index_method, Vec::new(), HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
@@ -6837,7 +6837,7 @@ impl Vm {
         Self::stringio_ensure_open(&receiver)?;
         let (buffer, pos) = self.stringio_buffer_from_instance(&receiver)?;
         if pos >= buffer.len() {
-            return Err(RuntimeError::new("StopIteration"));
+            return Err(RuntimeError::stop_iteration("StopIteration"));
         }
         let newline = Self::stringio_newline(&receiver);
         let end = Self::stringio_next_line_end(&buffer, pos, None, newline.as_deref());
@@ -7767,7 +7767,7 @@ impl Vm {
             false
         };
         if is_empty {
-            return Err(RuntimeError::new("StopIteration"));
+            return Err(RuntimeError::stop_iteration("StopIteration"));
         }
         Ok(line)
     }

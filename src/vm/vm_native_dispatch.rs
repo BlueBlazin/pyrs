@@ -93,7 +93,7 @@ impl Vm {
         method_name: &str,
     ) -> Result<String, RuntimeError> {
         let Object::Module(module_data) = &*receiver.kind() else {
-            return Err(RuntimeError::new("str receiver is invalid"));
+            return Err(RuntimeError::type_error("str receiver is invalid"));
         };
         if let Some(Value::Str(value)) = module_data.globals.get("value") {
             if !args.is_empty() {
@@ -116,11 +116,11 @@ impl Vm {
                 Value::Str(value) => Ok(value),
                 Value::Instance(instance) => self
                     .instance_backing_str(&instance)
-                    .ok_or_else(|| RuntimeError::new("str receiver is invalid")),
-                _ => Err(RuntimeError::new("str receiver is invalid")),
+                    .ok_or_else(|| RuntimeError::type_error("str receiver is invalid")),
+                _ => Err(RuntimeError::type_error("str receiver is invalid")),
             };
         }
-        Err(RuntimeError::new("str receiver is invalid"))
+        Err(RuntimeError::type_error("str receiver is invalid"))
     }
 
     pub(super) fn call_native_method(
@@ -253,7 +253,7 @@ impl Vm {
                 }
                 match self.resume_generator(&receiver, None, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::new("StopIteration")),
+                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::stop_iteration("StopIteration")),
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
                     }
@@ -266,7 +266,7 @@ impl Vm {
                 let sent = args.into_iter().next();
                 match self.resume_generator(&receiver, sent, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::new("StopIteration")),
+                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::stop_iteration("StopIteration")),
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
                     }
@@ -296,7 +296,7 @@ impl Vm {
                     GeneratorResumeKind::Throw,
                 )? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
-                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::new("StopIteration")),
+                    GeneratorResumeOutcome::Complete(_) => Err(RuntimeError::stop_iteration("StopIteration")),
                     GeneratorResumeOutcome::PropagatedException => {
                         Ok(NativeCallResult::PropagatedException)
                     }
@@ -372,7 +372,7 @@ impl Vm {
                 }
                 match self.iterator_next_value(&receiver)? {
                     Some(value) => Ok(NativeCallResult::Value(value)),
-                    None => Err(RuntimeError::new("StopIteration")),
+                    None => Err(RuntimeError::stop_iteration("StopIteration")),
                 }
             }
             NativeMethodKind::DictKeys => {
@@ -1403,9 +1403,9 @@ impl Vm {
                 let value = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(value) => value_to_bigint(value.clone())?,
-                        _ => return Err(RuntimeError::new("int receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("int receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("int receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("int receiver is invalid")),
                 };
                 let length = value_to_int(length_arg)?;
                 if length < 0 {
@@ -1431,9 +1431,9 @@ impl Vm {
                 let value = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(value) => value_to_bigint(value.clone())?,
-                        _ => return Err(RuntimeError::new("int receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("int receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("int receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("int receiver is invalid")),
                 };
                 Ok(NativeCallResult::Value(Value::Int(
                     value.bit_length() as i64
@@ -1448,9 +1448,9 @@ impl Vm {
                         Some(Value::Int(value)) => Value::Int(*value),
                         Some(Value::Bool(value)) => Value::Int(if *value { 1 } else { 0 }),
                         Some(Value::BigInt(value)) => Value::BigInt(value.clone()),
-                        _ => return Err(RuntimeError::new("int receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("int receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("int receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("int receiver is invalid")),
                 };
                 Ok(NativeCallResult::Value(value))
             }
@@ -1468,9 +1468,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let len = text.len() as i64;
                 let mut start = if let Some(value) = args.get(1) {
@@ -1559,9 +1559,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 if old.is_empty() {
                     return Ok(NativeCallResult::Value(Value::Str(text)));
@@ -1591,9 +1591,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 Ok(NativeCallResult::Value(Value::Str(text.to_uppercase())))
             }
@@ -1604,9 +1604,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 Ok(NativeCallResult::Value(Value::Str(text.to_lowercase())))
             }
@@ -1617,9 +1617,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let mut chars = text.chars();
                 let Some(first) = chars.next() else {
@@ -1658,9 +1658,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let encoding = normalize_codec_encoding(
                     args.first()
@@ -1685,9 +1685,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 if let Some(value) = args.first() {
                     let _ = normalize_codec_encoding(value.clone())?;
@@ -1706,9 +1706,9 @@ impl Vm {
                 let bytes = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(value) => bytes_like_from_value(value.clone())?,
-                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        None => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let encoding = normalize_codec_encoding(
                     args.first()
@@ -1737,9 +1737,9 @@ impl Vm {
                 let bytes = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(value) => bytes_like_from_value(value.clone())?,
-                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        None => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let len = bytes.len() as i64;
                 let mut start = if let Some(value) = args.get(1) {
@@ -1819,23 +1819,23 @@ impl Vm {
                 let bytes = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(value) => bytes_like_from_value(value.clone())?,
-                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        None => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let needle = match args.remove(0) {
                     Value::Int(value) => {
                         if !(0..=255).contains(&value) {
-                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                         }
                         vec![value as u8]
                     }
                     Value::BigInt(value) => {
                         let Some(value) = value.to_i64() else {
-                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                         };
                         if !(0..=255).contains(&value) {
-                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                         }
                         vec![value as u8]
                     }
@@ -1897,23 +1897,23 @@ impl Vm {
                 let bytes = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(value) => bytes_like_from_value(value.clone())?,
-                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        None => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let needle = match args.remove(0) {
                     Value::Int(value) => {
                         if !(0..=255).contains(&value) {
-                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                         }
                         vec![value as u8]
                     }
                     Value::BigInt(value) => {
                         let Some(value) = value.to_i64() else {
-                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                         };
                         if !(0..=255).contains(&value) {
-                            return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                            return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                         }
                         vec![value as u8]
                     }
@@ -1971,13 +1971,13 @@ impl Vm {
                 let (bytes, output_bytearray) = match &*receiver.kind() {
                     Object::Module(module_data) => {
                         let Some(value) = module_data.globals.get("value").cloned() else {
-                            return Err(RuntimeError::new("bytes receiver is invalid"));
+                            return Err(RuntimeError::type_error("bytes receiver is invalid"));
                         };
                         let bytes = bytes_like_from_value(value.clone())?;
                         let output_bytearray = matches!(value, Value::ByteArray(_));
                         (bytes, output_bytearray)
                     }
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let mut lines = Vec::new();
                 let mut start = 0usize;
@@ -2044,8 +2044,8 @@ impl Vm {
                         .globals
                         .get("value")
                         .cloned()
-                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let source = bytes_like_from_value(receiver_value.clone())?;
                 let delete = bytes_like_from_value(delete_arg)?;
@@ -2088,9 +2088,9 @@ impl Vm {
                 let separator = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(value) => bytes_like_from_value(value.clone())?,
-                        None => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        None => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let values = self.collect_iterable_values(args.remove(0))?;
                 let mut output = Vec::new();
@@ -2126,8 +2126,8 @@ impl Vm {
                         .globals
                         .get("value")
                         .cloned()
-                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let bytes = bytes_like_from_value(receiver_value.clone())?;
                 let width = value_to_int(args.remove(0))?;
@@ -2174,8 +2174,8 @@ impl Vm {
                         .globals
                         .get("value")
                         .cloned()
-                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let bytes = bytes_like_from_value(receiver_value.clone())?;
                 let chars = if args.is_empty() || matches!(args[0], Value::None) {
@@ -2208,8 +2208,8 @@ impl Vm {
                         .globals
                         .get("value")
                         .cloned()
-                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let bytes = bytes_like_from_value(receiver_value.clone())?;
                 let chars = if args.is_empty() || matches!(args[0], Value::None) {
@@ -2242,8 +2242,8 @@ impl Vm {
                         .globals
                         .get("value")
                         .cloned()
-                        .ok_or_else(|| RuntimeError::new("bytes receiver is invalid"))?,
-                    _ => return Err(RuntimeError::new("bytes receiver is invalid")),
+                        .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
                 let bytes = bytes_like_from_value(receiver_value.clone())?;
                 let chars = if args.is_empty() || matches!(args[0], Value::None) {
@@ -2681,13 +2681,13 @@ impl Vm {
                 let buffer = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::ByteArray(obj)) => obj.clone(),
-                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                 };
                 let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
-                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                    return Err(RuntimeError::type_error("bytearray receiver is invalid"));
                 };
                 if has_exports {
                     return Err(RuntimeError::new(
@@ -2719,13 +2719,13 @@ impl Vm {
                 let buffer = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::ByteArray(obj)) => obj.clone(),
-                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                 };
                 let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
-                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                    return Err(RuntimeError::type_error("bytearray receiver is invalid"));
                 };
                 if has_exports {
                     return Err(RuntimeError::new(
@@ -2742,13 +2742,13 @@ impl Vm {
                 let buffer = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::ByteArray(obj)) => obj.clone(),
-                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                 };
                 let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
-                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                    return Err(RuntimeError::type_error("bytearray receiver is invalid"));
                 };
                 if !values.is_empty() && has_exports {
                     return Err(RuntimeError::new(
@@ -2765,9 +2765,9 @@ impl Vm {
                 let buffer = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::ByteArray(obj)) => obj.clone(),
-                        _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("bytearray receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("bytearray receiver is invalid")),
                 };
                 let new_size = self.io_index_arg_to_int(args.remove(0))?;
                 if new_size < 0 {
@@ -2777,7 +2777,7 @@ impl Vm {
                 }
                 let has_exports = self.heap.count_live_buffer_exports_for_source(&buffer) > 0;
                 let Object::ByteArray(values) = &mut *buffer.kind_mut() else {
-                    return Err(RuntimeError::new("bytearray receiver is invalid"));
+                    return Err(RuntimeError::type_error("bytearray receiver is invalid"));
                 };
                 if has_exports && values.len() != new_size as usize {
                     return Err(RuntimeError::new(
@@ -2803,7 +2803,7 @@ impl Vm {
                         view.export_owner = None;
                     }
                 } else {
-                    return Err(RuntimeError::new("memoryview receiver is invalid"));
+                    return Err(RuntimeError::type_error("memoryview receiver is invalid"));
                 }
                 Ok(NativeCallResult::Value(Value::Bool(false)))
             }
@@ -2813,7 +2813,7 @@ impl Vm {
                 }
                 let (itemsize, format) = match &*receiver.kind() {
                     Object::MemoryView(view_data) => (view_data.itemsize, view_data.format.clone()),
-                    _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("memoryview receiver is invalid")),
                 };
                 let bytes = self.value_to_bytes_payload(Value::MemoryView(receiver.clone()))?;
                 let source = match self.heap.alloc_bytes(bytes) {
@@ -2878,7 +2878,7 @@ impl Vm {
                         view_data.length,
                         view_data.contiguous,
                     ),
-                    _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("memoryview receiver is invalid")),
                 };
                 if !contiguous {
                     return Err(RuntimeError::new(
@@ -2889,7 +2889,7 @@ impl Vm {
                     let (start, end) = memoryview_bounds(start, length, values.len());
                     end.saturating_sub(start)
                 })
-                .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))?;
+                .ok_or_else(|| RuntimeError::type_error("memoryview receiver is invalid"))?;
                 let shape_override = if let Some(shape_value) = shape_arg {
                     let shape_dims = parse_memoryview_cast_shape(&shape_value)?;
                     if shape_dims.is_empty() {
@@ -2947,7 +2947,7 @@ impl Vm {
                             view_data.shape.clone(),
                             view_data.strides.clone(),
                         ),
-                        _ => return Err(RuntimeError::new("memoryview receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("memoryview receiver is invalid")),
                     };
                 let cast_format = memoryview_format_for_view(itemsize, format.as_deref())
                     .map_err(|_| RuntimeError::new("memoryview.tolist() unsupported format"))?;
@@ -2984,7 +2984,7 @@ impl Vm {
                         view.export_owner = None;
                     }
                 } else {
-                    return Err(RuntimeError::new("memoryview receiver is invalid"));
+                    return Err(RuntimeError::type_error("memoryview receiver is invalid"));
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -2999,9 +2999,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let value = match text.strip_prefix(prefix) {
                     Some(stripped) => stripped.to_string(),
@@ -3020,9 +3020,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let value = match text.strip_suffix(suffix) {
                     Some(stripped) => stripped.to_string(),
@@ -3034,9 +3034,9 @@ impl Vm {
                 let template = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let parsed = parse_string_formatter(&template)?;
                 let mut out = String::new();
@@ -3185,9 +3185,9 @@ impl Vm {
                 let separator = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let values = self.collect_iterable_values(args[0].clone())?;
                 let mut parts = Vec::with_capacity(values.len());
@@ -3224,9 +3224,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 if sep_kw.is_some() && !args.is_empty() {
                     return Err(RuntimeError::new("split() got multiple values for sep"));
@@ -3297,9 +3297,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let keepends = match args.into_iter().next().or(keepends_kw) {
                     Some(value) => is_truthy(&value),
@@ -3325,9 +3325,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 if sep_kw.is_some() && !args.is_empty() {
                     return Err(RuntimeError::new("rsplit() got multiple values for sep"));
@@ -3388,9 +3388,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let sep = match &args[0] {
                     Value::Str(value) => value.clone(),
@@ -3421,9 +3421,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let sep = match &args[0] {
                     Value::Str(value) => value.clone(),
@@ -3469,14 +3469,14 @@ impl Vm {
                                 Value::Str(value) => value,
                                 Value::Instance(instance) => {
                                     self.instance_backing_str(&instance).ok_or_else(|| {
-                                        RuntimeError::new("str receiver is invalid")
+                                        RuntimeError::type_error("str receiver is invalid")
                                     })?
                                 }
-                                _ => return Err(RuntimeError::new("str receiver is invalid")),
+                                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                             }
                         }
                     }
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 if args.is_empty() || args.len() > 3 {
                     return Err(RuntimeError::new(
@@ -3565,11 +3565,11 @@ impl Vm {
                             }
                             match args.remove(0) {
                                 Value::Str(value) => value,
-                                _ => return Err(RuntimeError::new("str receiver is invalid")),
+                                _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                             }
                         }
                     }
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 if args.is_empty() || args.len() > 3 {
                     return Err(RuntimeError::new(format!(
@@ -3647,9 +3647,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let table = args.remove(0);
                 let mut out = String::with_capacity(text.len());
@@ -3726,9 +3726,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let stripped = match args.first() {
                     None | Some(Value::None) => text.trim_start().to_string(),
@@ -3774,9 +3774,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let text_len = text.chars().count() as i64;
                 if width <= text_len {
@@ -3798,9 +3798,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let stripped = match args.first() {
                     None | Some(Value::None) => text.trim_end().to_string(),
@@ -3822,9 +3822,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let stripped = match args.first() {
                     None | Some(Value::None) => text.trim().to_string(),
@@ -3854,9 +3854,9 @@ impl Vm {
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
                         Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::new("str receiver is invalid")),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                     },
-                    _ => return Err(RuntimeError::new("str receiver is invalid")),
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
                 let mut out = String::with_capacity(text.len());
                 let mut column = 0usize;
@@ -4190,10 +4190,10 @@ impl Vm {
                 }
                 let receiver_kind = receiver.kind();
                 let Object::Module(module_data) = &*receiver_kind else {
-                    return Err(RuntimeError::new("exception receiver is invalid"));
+                    return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
                 let Some(Value::Exception(exception)) = module_data.globals.get("exception") else {
-                    return Err(RuntimeError::new("exception receiver is invalid"));
+                    return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
                 Ok(NativeCallResult::Value(Value::Exception(exception.clone())))
             }
@@ -4207,11 +4207,11 @@ impl Vm {
                 };
                 let mut receiver_kind = receiver.kind_mut();
                 let Object::Module(module_data) = &mut *receiver_kind else {
-                    return Err(RuntimeError::new("exception receiver is invalid"));
+                    return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
                 let Some(Value::Exception(exception)) = module_data.globals.get_mut("exception")
                 else {
-                    return Err(RuntimeError::new("exception receiver is invalid"));
+                    return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
                 let target_name = exception.name.clone();
                 let target_message = exception.message.clone();
@@ -4637,7 +4637,7 @@ impl Vm {
                     return Ok(NativeCallResult::Value(Value::Instance(receiver)));
                 }
                 let Some((fget, _, _, _, _)) = self.property_descriptor_parts(&receiver) else {
-                    return Err(RuntimeError::new("property receiver is invalid"));
+                    return Err(RuntimeError::type_error("property receiver is invalid"));
                 };
                 if matches!(fget, Value::None) {
                     return Err(RuntimeError::new("unreadable attribute"));
@@ -4656,7 +4656,7 @@ impl Vm {
                 let obj = args.first().cloned().expect("checked len");
                 let value = args.get(1).cloned().expect("checked len");
                 let Some((_, fset, _, _, _)) = self.property_descriptor_parts(&receiver) else {
-                    return Err(RuntimeError::new("property receiver is invalid"));
+                    return Err(RuntimeError::type_error("property receiver is invalid"));
                 };
                 if matches!(fset, Value::None) {
                     return Err(RuntimeError::new("can't set attribute"));
@@ -4674,7 +4674,7 @@ impl Vm {
                 }
                 let obj = args.first().cloned().expect("checked len");
                 let Some((_, _, fdel, _, _)) = self.property_descriptor_parts(&receiver) else {
-                    return Err(RuntimeError::new("property receiver is invalid"));
+                    return Err(RuntimeError::type_error("property receiver is invalid"));
                 };
                 if matches!(fdel, Value::None) {
                     return Err(RuntimeError::new("can't delete attribute"));
@@ -4751,7 +4751,7 @@ impl Vm {
                         .insert("__name__".to_string(), explicit_name);
                     return Ok(NativeCallResult::Value(Value::None));
                 }
-                Err(RuntimeError::new("property receiver is invalid"))
+                Err(RuntimeError::type_error("property receiver is invalid"))
             }
             NativeMethodKind::CachedPropertyGet => {
                 if args.len() != 2 {
@@ -5922,13 +5922,13 @@ impl Vm {
                                 stride,
                                 state.index as isize,
                             )
-                            .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                            .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             let end = offset
                                 .checked_add(itemsize)
-                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             let chunk = values
                                 .get(offset..end)
-                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             let value =
                                 super::memoryview_decode_element(chunk, format, itemsize, &self.heap)?;
                             state.index += 1;
@@ -5974,7 +5974,7 @@ impl Vm {
                 }
                 IteratorKind::RangeObject { start, stop, step } => {
                     if step.is_zero() {
-                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                        return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
                     }
                     let offset = step.mul(&BigInt::from_u64(state.index as u64));
                     let current = start.add(&offset);

@@ -3359,38 +3359,38 @@ impl BuiltinFunction {
                     Value::Str(value) => Ok(Value::Int(value.chars().count() as i64)),
                     Value::List(obj) => match &*obj.kind() {
                         Object::List(values) => Ok(Value::Int(values.len() as i64)),
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => Ok(Value::Int(values.len() as i64)),
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::Dict(obj) => match &*obj.kind() {
                         Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::DictKeys(obj) => match &*obj.kind() {
                         Object::DictKeysView(view) => match &*view.dict.kind() {
                             Object::Dict(values) => Ok(Value::Int(values.len() as i64)),
-                            _ => Err(RuntimeError::new("len() unsupported type")),
+                            _ => Err(RuntimeError::type_error("len() unsupported type")),
                         },
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::Set(obj) => match &*obj.kind() {
                         Object::Set(values) => Ok(Value::Int(values.len() as i64)),
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::FrozenSet(obj) => match &*obj.kind() {
                         Object::FrozenSet(values) => Ok(Value::Int(values.len() as i64)),
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) => Ok(Value::Int(values.len() as i64)),
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) => Ok(Value::Int(values.len() as i64)),
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
@@ -3400,9 +3400,9 @@ impl BuiltinFunction {
                                     memoryview_bounds(view.start, view.length, values.len());
                                 Ok(Value::Int((end.saturating_sub(start) / itemsize) as i64))
                             })
-                            .unwrap_or_else(|| Err(RuntimeError::new("len() unsupported type")))
+                            .unwrap_or_else(|| Err(RuntimeError::type_error("len() unsupported type")))
                         }
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
                     Value::Module(obj) => match &*obj.kind() {
                         Object::Module(module_data) if module_data.name == "__array__" => {
@@ -3427,14 +3427,14 @@ impl BuiltinFunction {
                                         };
                                         Ok(Value::Int(logical_len as i64))
                                     }
-                                    _ => Err(RuntimeError::new("len() unsupported type")),
+                                    _ => Err(RuntimeError::type_error("len() unsupported type")),
                                 },
-                                _ => Err(RuntimeError::new("len() unsupported type")),
+                                _ => Err(RuntimeError::type_error("len() unsupported type")),
                             }
                         }
-                        _ => Err(RuntimeError::new("len() unsupported type")),
+                        _ => Err(RuntimeError::type_error("len() unsupported type")),
                     },
-                    _ => Err(RuntimeError::new("len() unsupported type")),
+                    _ => Err(RuntimeError::type_error("len() unsupported type")),
                 }
             }
             BuiltinFunction::Range => {
@@ -3516,7 +3516,7 @@ impl BuiltinFunction {
                  -> Result<Value, RuntimeError> {
                     let trimmed = text.trim();
                     if trimmed.is_empty() {
-                        return Err(RuntimeError::new("invalid literal for int()"));
+                        return Err(RuntimeError::value_error("invalid literal for int()"));
                     }
                     let (is_negative, body) = if let Some(rest) = trimmed.strip_prefix('-') {
                         (true, rest)
@@ -3526,7 +3526,7 @@ impl BuiltinFunction {
                         (false, trimmed)
                     };
                     if body.is_empty() {
-                        return Err(RuntimeError::new("invalid literal for int()"));
+                        return Err(RuntimeError::value_error("invalid literal for int()"));
                     }
 
                     let mut base = explicit_base.unwrap_or(10);
@@ -3587,18 +3587,18 @@ impl BuiltinFunction {
                     }
 
                     let normalized = normalize_int_digits_for_base(digits, base as u32, saw_prefix)
-                        .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
+                        .ok_or_else(|| RuntimeError::value_error("invalid literal for int()"))?;
                     if explicit_base == Some(0)
                         && !saw_prefix
                         && normalized.len() > 1
                         && normalized.starts_with('0')
                         && normalized.chars().any(|ch| ch != '0')
                     {
-                        return Err(RuntimeError::new("invalid literal for int()"));
+                        return Err(RuntimeError::value_error("invalid literal for int()"));
                     }
 
                     let mut parsed = BigInt::from_str_radix(&normalized, base as u32)
-                        .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
+                        .ok_or_else(|| RuntimeError::value_error("invalid literal for int()"))?;
                     if is_negative {
                         parsed = parsed.negated();
                     }
@@ -3638,7 +3638,7 @@ impl BuiltinFunction {
                         }
                         let truncated = value.trunc();
                         let bigint = BigInt::from_f64_integral(truncated)
-                            .ok_or_else(|| RuntimeError::new("invalid literal for int()"))?;
+                            .ok_or_else(|| RuntimeError::value_error("invalid literal for int()"))?;
                         Ok(match bigint.to_i64() {
                             Some(value) => Value::Int(value),
                             None => Value::BigInt(Box::new(bigint)),
@@ -3648,12 +3648,12 @@ impl BuiltinFunction {
                     Value::Bytes(obj) | Value::ByteArray(obj) => match &*obj.kind() {
                         Object::Bytes(bytes) | Object::ByteArray(bytes) => {
                             let text = std::str::from_utf8(bytes)
-                                .map_err(|_| RuntimeError::new("invalid literal for int()"))?;
+                                .map_err(|_| RuntimeError::value_error("invalid literal for int()"))?;
                             parse_with_base(text, explicit_base)
                         }
-                        _ => Err(RuntimeError::new("int() unsupported type")),
+                        _ => Err(RuntimeError::type_error("int() unsupported type")),
                     },
-                    _ => Err(RuntimeError::new("int() unsupported type")),
+                    _ => Err(RuntimeError::type_error("int() unsupported type")),
                 }
             }
             BuiltinFunction::IntBitLength => {
@@ -3670,7 +3670,7 @@ impl BuiltinFunction {
                         }
                     }
                     Value::BigInt(value) => value.bit_length() as i64,
-                    _ => return Err(RuntimeError::new("expected integer")),
+                    _ => return Err(RuntimeError::type_error("expected integer")),
                 };
                 Ok(Value::Int(bits))
             }
@@ -3705,7 +3705,7 @@ impl BuiltinFunction {
                                 .map_err(|_| RuntimeError::new("float() invalid literal"))?;
                             Ok(Value::Float(parsed))
                         }
-                        _ => Err(RuntimeError::new("float() unsupported type")),
+                        _ => Err(RuntimeError::type_error("float() unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) => {
@@ -3717,9 +3717,9 @@ impl BuiltinFunction {
                                 .map_err(|_| RuntimeError::new("float() invalid literal"))?;
                             Ok(Value::Float(parsed))
                         }
-                        _ => Err(RuntimeError::new("float() unsupported type")),
+                        _ => Err(RuntimeError::type_error("float() unsupported type")),
                     },
-                    _ => Err(RuntimeError::new("float() unsupported type")),
+                    _ => Err(RuntimeError::type_error("float() unsupported type")),
                 }
             }
             BuiltinFunction::Str => {
@@ -3901,33 +3901,33 @@ impl BuiltinFunction {
                 match &args[0] {
                     Value::List(obj) => match &*obj.kind() {
                         Object::List(values) => Ok(heap.alloc_list(values.clone())),
-                        _ => Err(RuntimeError::new("list() unsupported type")),
+                        _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => Ok(heap.alloc_list(values.clone())),
-                        _ => Err(RuntimeError::new("list() unsupported type")),
+                        _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
                     Value::Str(value) => Ok(heap
                         .alloc_list(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
                     Value::Set(obj) => match &*obj.kind() {
                         Object::Set(values) => Ok(heap.alloc_list(values.to_vec())),
-                        _ => Err(RuntimeError::new("list() unsupported type")),
+                        _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
                     Value::FrozenSet(obj) => match &*obj.kind() {
                         Object::FrozenSet(values) => Ok(heap.alloc_list(values.to_vec())),
-                        _ => Err(RuntimeError::new("list() unsupported type")),
+                        _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) => Ok(heap.alloc_list(
                             values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
                         )),
-                        _ => Err(RuntimeError::new("list() unsupported type")),
+                        _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) => Ok(heap.alloc_list(
                             values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
                         )),
-                        _ => Err(RuntimeError::new("list() unsupported type")),
+                        _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
@@ -3941,11 +3941,11 @@ impl BuiltinFunction {
                                         .collect(),
                                 ))
                             })
-                            .unwrap_or_else(|| Err(RuntimeError::new("list() unsupported type")))
+                            .unwrap_or_else(|| Err(RuntimeError::type_error("list() unsupported type")))
                         }
-                        _ => Err(RuntimeError::new("list() unsupported type")),
+                        _ => Err(RuntimeError::type_error("list() unsupported type")),
                     },
-                    _ => Err(RuntimeError::new("list() unsupported type")),
+                    _ => Err(RuntimeError::type_error("list() unsupported type")),
                 }
             }
             BuiltinFunction::ListAppendDescriptor => {
@@ -3974,9 +3974,9 @@ impl BuiltinFunction {
                         Value::Class(_) | Value::Builtin(BuiltinFunction::Tuple) => {
                             Some(args[1].clone())
                         }
-                        _ => return Err(RuntimeError::new("tuple() expects at most one argument")),
+                        _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
                     },
-                    _ => return Err(RuntimeError::new("tuple() expects at most one argument")),
+                    _ => return Err(RuntimeError::type_error("tuple() expects at most one argument")),
                 };
                 if source.is_none() {
                     return Ok(heap.alloc_tuple(Vec::new()));
@@ -3984,33 +3984,33 @@ impl BuiltinFunction {
                 match source.expect("checked is_some") {
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => Ok(heap.alloc_tuple(values.clone())),
-                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
                     Value::List(obj) => match &*obj.kind() {
                         Object::List(values) => Ok(heap.alloc_tuple(values.clone())),
-                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
                     Value::Str(value) => Ok(heap
                         .alloc_tuple(value.chars().map(|ch| Value::Str(ch.to_string())).collect())),
                     Value::Set(obj) => match &*obj.kind() {
                         Object::Set(values) => Ok(heap.alloc_tuple(values.to_vec())),
-                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
                     Value::FrozenSet(obj) => match &*obj.kind() {
                         Object::FrozenSet(values) => Ok(heap.alloc_tuple(values.to_vec())),
-                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
                     Value::Bytes(obj) => match &*obj.kind() {
                         Object::Bytes(values) => Ok(heap.alloc_tuple(
                             values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
                         )),
-                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) => Ok(heap.alloc_tuple(
                             values.iter().map(|byte| Value::Int(*byte as i64)).collect(),
                         )),
-                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
@@ -4024,11 +4024,11 @@ impl BuiltinFunction {
                                         .collect(),
                                 ))
                             })
-                            .unwrap_or_else(|| Err(RuntimeError::new("tuple() unsupported type")))
+                            .unwrap_or_else(|| Err(RuntimeError::type_error("tuple() unsupported type")))
                         }
-                        _ => Err(RuntimeError::new("tuple() unsupported type")),
+                        _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                     },
-                    _ => Err(RuntimeError::new("tuple() unsupported type")),
+                    _ => Err(RuntimeError::type_error("tuple() unsupported type")),
                 }
             }
             BuiltinFunction::Dict | BuiltinFunction::CollectionsOrderedDict => {
@@ -6057,7 +6057,7 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
             .to_i64()
             .ok_or_else(|| RuntimeError::new("integer too large to convert")),
         Value::Bool(value) => Ok(if value { 1 } else { 0 }),
-        _ => Err(RuntimeError::new("expected integer")),
+        _ => Err(RuntimeError::type_error("expected integer")),
     }
 }
 
@@ -6222,42 +6222,42 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
     match source {
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => Ok(values.clone()),
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::Tuple(obj) => match &*obj.kind() {
             Object::Tuple(values) => Ok(values.clone()),
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => Ok(values.to_vec()),
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::FrozenSet(obj) => match &*obj.kind() {
             Object::FrozenSet(values) => Ok(values.to_vec()),
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(values) => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::DictKeys(obj) => match &*obj.kind() {
             Object::DictKeysView(view) => match &*view.dict.kind() {
                 Object::Dict(values) => Ok(values.iter().map(|(key, _)| key.clone()).collect()),
-                _ => Err(RuntimeError::new("expected iterable")),
+                _ => Err(RuntimeError::type_error("expected iterable")),
             },
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(values) => {
                 Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
             }
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
             Object::ByteArray(values) => {
                 Ok(values.iter().map(|byte| Value::Int(*byte as i64)).collect())
             }
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
@@ -6267,13 +6267,13 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     .map(|byte| Value::Int(*byte as i64))
                     .collect())
             })
-            .unwrap_or_else(|| Err(RuntimeError::new("expected iterable"))),
-            _ => Err(RuntimeError::new("expected iterable")),
+            .unwrap_or_else(|| Err(RuntimeError::type_error("expected iterable"))),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         },
         Value::Iterator(obj) => {
             let mut obj_kind = obj.kind_mut();
             let Object::Iterator(iterator) = &mut *obj_kind else {
-                return Err(RuntimeError::new("expected iterable"));
+                return Err(RuntimeError::type_error("expected iterable"));
             };
             match &mut iterator.kind {
                 IteratorKind::List(list_obj) => match &*list_obj.kind() {
@@ -6283,7 +6283,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         iterator.index = values.len();
                         Ok(out)
                     }
-                    _ => Err(RuntimeError::new("expected iterable")),
+                    _ => Err(RuntimeError::type_error("expected iterable")),
                 },
                 IteratorKind::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                     Object::Tuple(values) => {
@@ -6292,7 +6292,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         iterator.index = values.len();
                         Ok(out)
                     }
-                    _ => Err(RuntimeError::new("expected iterable")),
+                    _ => Err(RuntimeError::type_error("expected iterable")),
                 },
                 IteratorKind::Str(text) => {
                     let chars = text.chars().collect::<Vec<_>>();
@@ -6315,7 +6315,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         iterator.index = values.len();
                         Ok(out)
                     }
-                    _ => Err(RuntimeError::new("expected iterable")),
+                    _ => Err(RuntimeError::type_error("expected iterable")),
                 },
                 IteratorKind::Set(set_obj) => match &*set_obj.kind() {
                     Object::Set(values) | Object::FrozenSet(values) => {
@@ -6325,7 +6325,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         iterator.index = start.saturating_add(out.len());
                         Ok(out)
                     }
-                    _ => Err(RuntimeError::new("expected iterable")),
+                    _ => Err(RuntimeError::type_error("expected iterable")),
                 },
                 IteratorKind::Bytes(bytes_obj) => match &*bytes_obj.kind() {
                     Object::Bytes(values) => {
@@ -6337,7 +6337,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         iterator.index = values.len();
                         Ok(out)
                     }
-                    _ => Err(RuntimeError::new("expected iterable")),
+                    _ => Err(RuntimeError::type_error("expected iterable")),
                 },
                 IteratorKind::ByteArray(bytearray_obj) => match &*bytearray_obj.kind() {
                     Object::ByteArray(values) => {
@@ -6349,7 +6349,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         iterator.index = values.len();
                         Ok(out)
                     }
-                    _ => Err(RuntimeError::new("expected iterable")),
+                    _ => Err(RuntimeError::type_error("expected iterable")),
                 },
                 IteratorKind::MemoryView(memory_obj) => match &*memory_obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
@@ -6364,8 +6364,8 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                         iterator.index = view_len;
                         Ok(out)
                     })
-                    .unwrap_or_else(|| Err(RuntimeError::new("expected iterable"))),
-                    _ => Err(RuntimeError::new("expected iterable")),
+                    .unwrap_or_else(|| Err(RuntimeError::type_error("expected iterable"))),
+                    _ => Err(RuntimeError::type_error("expected iterable")),
                 },
                 IteratorKind::Map { values, .. } => {
                     let start = iterator.index.min(values.len());
@@ -6381,7 +6381,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     let mut out = Vec::new();
                     let mut cursor = current.clone();
                     if step.is_zero() {
-                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                        return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
                     }
                     if !step.is_negative() {
                         while cursor.cmp_total(stop) == Ordering::Less {
@@ -6406,7 +6406,7 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 }
                 IteratorKind::RangeObject { start, stop, step } => {
                     if step.is_zero() {
-                        return Err(RuntimeError::new("range() arg 3 must not be zero"));
+                        return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
                     }
                     let mut cursor = start.clone();
                     for _ in 0..iterator.index {
@@ -6433,15 +6433,15 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                     iterator.index = iterator.index.saturating_add(out.len());
                     Ok(out)
                 }
-                IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::new("expected iterable")),
-                IteratorKind::CpythonSequence { .. } => Err(RuntimeError::new("expected iterable")),
+                IteratorKind::SequenceGetItem { .. } => Err(RuntimeError::type_error("expected iterable")),
+                IteratorKind::CpythonSequence { .. } => Err(RuntimeError::type_error("expected iterable")),
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
-                | IteratorKind::Cycle { .. } => Err(RuntimeError::new("expected iterable")),
+                | IteratorKind::Cycle { .. } => Err(RuntimeError::type_error("expected iterable")),
             }
         }
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),
-        _ => Err(RuntimeError::new("expected iterable")),
+        _ => Err(RuntimeError::type_error("expected iterable")),
     }
 }
 
@@ -6548,11 +6548,11 @@ fn value_to_bytes_with_encoding(
         }
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(values) => Ok(values.clone()),
-            _ => Err(RuntimeError::new("bytes() unsupported type")),
+            _ => Err(RuntimeError::type_error("bytes() unsupported type")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
             Object::ByteArray(values) => Ok(values.clone()),
-            _ => Err(RuntimeError::new("bytes() unsupported type")),
+            _ => Err(RuntimeError::type_error("bytes() unsupported type")),
         },
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
@@ -6572,32 +6572,32 @@ fn value_to_bytes_with_encoding(
                 match instance_data.attrs.get("__pyrs_bytes_storage__") {
                     Some(Value::Bytes(storage)) => match &*storage.kind() {
                         Object::Bytes(values) => Ok(values.clone()),
-                        _ => Err(RuntimeError::new("bytes() unsupported type")),
+                        _ => Err(RuntimeError::type_error("bytes() unsupported type")),
                     },
                     Some(Value::ByteArray(storage)) => match &*storage.kind() {
                         Object::ByteArray(values) => Ok(values.clone()),
-                        _ => Err(RuntimeError::new("bytes() unsupported type")),
+                        _ => Err(RuntimeError::type_error("bytes() unsupported type")),
                     },
-                    _ => Err(RuntimeError::new("bytes() unsupported type")),
+                    _ => Err(RuntimeError::type_error("bytes() unsupported type")),
                 }
             }
-            _ => Err(RuntimeError::new("bytes() unsupported type")),
+            _ => Err(RuntimeError::type_error("bytes() unsupported type")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
                 let (start, end) = memoryview_bounds(view.start, view.length, values.len());
                 values[start..end].to_vec()
             })
-            .ok_or_else(|| RuntimeError::new("bytes() unsupported type")),
-            _ => Err(RuntimeError::new("bytes() unsupported type")),
+            .ok_or_else(|| RuntimeError::type_error("bytes() unsupported type")),
+            _ => Err(RuntimeError::type_error("bytes() unsupported type")),
         },
         Value::Module(obj) => match &*obj.kind() {
             Object::Module(module_data) if module_data.name == "__array__" => {
                 let Some(Value::List(values_obj)) = module_data.globals.get("values") else {
-                    return Err(RuntimeError::new("bytes() unsupported type"));
+                    return Err(RuntimeError::type_error("bytes() unsupported type"));
                 };
                 let Object::List(values) = &*values_obj.kind() else {
-                    return Err(RuntimeError::new("bytes() unsupported type"));
+                    return Err(RuntimeError::type_error("bytes() unsupported type"));
                 };
                 let mut out = Vec::with_capacity(values.len());
                 for item in values {
@@ -6609,7 +6609,7 @@ fn value_to_bytes_with_encoding(
                 }
                 Ok(out)
             }
-            _ => Err(RuntimeError::new("bytes() unsupported type")),
+            _ => Err(RuntimeError::type_error("bytes() unsupported type")),
         },
         other => {
             let mut out = Vec::new();
@@ -6709,7 +6709,7 @@ fn add_numeric_values(left: Value, right: Value) -> Result<Value, RuntimeError> 
         (Some(NumericValue::Int(left)), Some(NumericValue::Int(right))) => {
             let value = left
                 .checked_add(right)
-                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+                .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
             Ok(Value::Int(value))
         }
         (Some(left), Some(right)) => {
@@ -6723,7 +6723,7 @@ fn add_numeric_values(left: Value, right: Value) -> Result<Value, RuntimeError> 
             };
             Ok(Value::Float(left + right))
         }
-        _ => Err(RuntimeError::new("unsupported operand type")),
+        _ => Err(RuntimeError::type_error("unsupported operand type")),
     }
 }
 
@@ -6732,7 +6732,7 @@ fn pow_numeric_values(base: Value, exponent: Value) -> Result<Value, RuntimeErro
         (Some(NumericValue::Int(base)), Some(NumericValue::Int(exp))) if exp >= 0 => {
             let value = base
                 .checked_pow(exp as u32)
-                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+                .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
             Ok(Value::Int(value))
         }
         (Some(base), Some(exponent)) => {
@@ -6749,7 +6749,7 @@ fn pow_numeric_values(base: Value, exponent: Value) -> Result<Value, RuntimeErro
             }
             Ok(Value::Float(base.powf(exponent)))
         }
-        _ => Err(RuntimeError::new("unsupported operand type")),
+        _ => Err(RuntimeError::type_error("unsupported operand type")),
     }
 }
 
@@ -6770,7 +6770,7 @@ fn mod_pow_i64(base: i64, exponent: i64, modulo: i64) -> Result<i64, RuntimeErro
             factor = (factor * factor).rem_euclid(modulus);
         }
     }
-    i64::try_from(acc).map_err(|_| RuntimeError::new("integer overflow"))
+    i64::try_from(acc).map_err(|_| RuntimeError::overflow_error("integer overflow"))
 }
 
 fn int_like_bigint(value: &Value) -> Option<BigInt> {
@@ -6824,7 +6824,7 @@ fn divmod_values(left: Value, right: Value) -> Result<(Value, Value), RuntimeErr
             }
             Ok((Value::Float(div), Value::Float(rem)))
         }
-        _ => Err(RuntimeError::new("unsupported operand type")),
+        _ => Err(RuntimeError::type_error("unsupported operand type")),
     }
 }
 

@@ -47,7 +47,7 @@ impl Vm {
         let iterator = match self.to_iterator_value(source) {
             Ok(iterator) => iterator,
             Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
-                return Err(RuntimeError::new("expected iterable"));
+                return Err(RuntimeError::type_error("expected iterable"));
             }
             Err(err) => return Err(err),
         };
@@ -380,7 +380,7 @@ impl Vm {
                                 .attrs
                                 .insert("line_num".to_string(), Value::Int(physical_line_num));
                         }
-                        return Err(RuntimeError::new("StopIteration"));
+                        return Err(RuntimeError::stop_iteration("StopIteration"));
                     }
                     let fields = parse_csv_row_simple(
                         &pending_record,
@@ -670,7 +670,7 @@ impl Vm {
         let iterator = match self.to_iterator_value(rows.clone()) {
             Ok(iterator) => iterator,
             Err(err) if runtime_error_matches_exception(&err, "TypeError") => {
-                return Err(RuntimeError::new("expected iterable"));
+                return Err(RuntimeError::type_error("expected iterable"));
             }
             Err(err) => return Err(err),
         };

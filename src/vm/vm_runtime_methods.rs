@@ -177,7 +177,7 @@ impl Vm {
                             }
                             Ok(self.heap.alloc_list(result))
                         }
-                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                        _ => Err(RuntimeError::type_error("subscript unsupported type")),
                     },
                     Value::Tuple(obj) => match &*obj.kind() {
                         Object::Tuple(values) => {
@@ -188,7 +188,7 @@ impl Vm {
                             }
                             Ok(self.heap.alloc_tuple(result))
                         }
-                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                        _ => Err(RuntimeError::type_error("subscript unsupported type")),
                     },
                     Value::Str(value) => {
                         let chars: Vec<char> = value.chars().collect();
@@ -208,7 +208,7 @@ impl Vm {
                             }
                             Ok(self.heap.alloc_bytes(result))
                         }
-                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                        _ => Err(RuntimeError::type_error("subscript unsupported type")),
                     },
                     Value::ByteArray(obj) => match &*obj.kind() {
                         Object::ByteArray(values) => {
@@ -219,7 +219,7 @@ impl Vm {
                             }
                             Ok(self.heap.alloc_bytearray(result))
                         }
-                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                        _ => Err(RuntimeError::type_error("subscript unsupported type")),
                     },
                     Value::MemoryView(obj) => match &*obj.kind() {
                         Object::MemoryView(view) => {
@@ -235,35 +235,35 @@ impl Vm {
                                 ) && shape.len() > 1
                                 {
                                     if shape.len() != strides.len() {
-                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                        return Err(RuntimeError::type_error("subscript unsupported type"));
                                     }
                                     let rows = usize::try_from(shape[0])
-                                        .map_err(|_| RuntimeError::new("subscript unsupported type"))?;
+                                        .map_err(|_| RuntimeError::type_error("subscript unsupported type"))?;
                                     let indices = slice_indices(rows, lower, upper, step)?;
                                     let origin = isize::try_from(view.start)
-                                        .map_err(|_| RuntimeError::new("subscript unsupported type"))?;
+                                        .map_err(|_| RuntimeError::type_error("subscript unsupported type"))?;
                                     let base_stride = strides[0];
                                     let new_start = if let Some(first) = indices.first() {
                                         let delta = base_stride
                                             .checked_mul(*first as isize)
-                                            .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?;
+                                            .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?;
                                         origin
                                             .checked_add(delta)
-                                            .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?
+                                            .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?
                                     } else {
                                         origin
                                     };
                                     if new_start < 0 {
-                                        return Err(RuntimeError::new("subscript unsupported type"));
+                                        return Err(RuntimeError::type_error("subscript unsupported type"));
                                     }
                                     let mut new_shape = shape.clone();
                                     new_shape[0] = indices.len() as isize;
                                     let mut new_strides = strides.clone();
                                     new_strides[0] = base_stride
                                         .checked_mul(step_value as isize)
-                                        .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?;
+                                        .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?;
                                     let byte_len = memoryview_logical_nbytes(&new_shape, view.itemsize)
-                                        .ok_or_else(|| RuntimeError::new("subscript unsupported type"))?;
+                                        .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?;
                                     let sliced = self.heap.alloc_memoryview_with(
                                         view.source.clone(),
                                         view.itemsize,
@@ -291,11 +291,11 @@ impl Vm {
                                             slice_bounds_for_step_one(logical_len, lower, upper);
                                         let start_delta =
                                             stride.checked_mul(start_idx as isize).ok_or_else(
-                                                || RuntimeError::new("subscript unsupported type"),
+                                                || RuntimeError::type_error("subscript unsupported type"),
                                             )?;
                                         let new_start =
                                             origin.checked_add(start_delta).ok_or_else(|| {
-                                                RuntimeError::new("subscript unsupported type")
+                                                RuntimeError::type_error("subscript unsupported type")
                                             })?;
                                         if new_start < 0 {
                                             return Err(RuntimeError::new(
@@ -334,17 +334,17 @@ impl Vm {
                                             let first_delta = stride
                                                 .checked_mul(*first as isize)
                                                 .ok_or_else(|| {
-                                                RuntimeError::new("subscript unsupported type")
+                                                RuntimeError::type_error("subscript unsupported type")
                                             })?;
                                             let start = origin
                                                 .checked_add(first_delta)
                                                 .ok_or_else(|| {
-                                                    RuntimeError::new("subscript unsupported type")
+                                                    RuntimeError::type_error("subscript unsupported type")
                                                 })?;
                                             let stride_scaled = stride
                                                 .checked_mul(step_value as isize)
                                                 .ok_or_else(|| {
-                                                    RuntimeError::new("subscript unsupported type")
+                                                    RuntimeError::type_error("subscript unsupported type")
                                                 })?;
                                             (start, stride_scaled)
                                         } else {
@@ -406,13 +406,13 @@ impl Vm {
                                     Ok(sliced)
                                 }
                             })
-                            .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type")))
+                            .unwrap_or_else(|| Err(RuntimeError::type_error("subscript unsupported type")))
                         }
-                        _ => Err(RuntimeError::new("subscript unsupported type")),
+                        _ => Err(RuntimeError::type_error("subscript unsupported type")),
                     },
                     Value::Iterator(obj) => {
                         let Some((start, stop, step_value)) = self.range_object_parts(&obj) else {
-                            return Err(RuntimeError::new("subscript unsupported type"));
+                            return Err(RuntimeError::type_error("subscript unsupported type"));
                         };
                         let length = self.range_object_len_bigint(&start, &stop, &step_value);
                         let Some(length_i64) = length.to_i64() else {
@@ -455,7 +455,7 @@ impl Vm {
                                     )),
                             }
                         } else {
-                            Err(RuntimeError::new("subscript unsupported type"))
+                            Err(RuntimeError::type_error("subscript unsupported type"))
                         }
                     }
                 }
@@ -484,7 +484,7 @@ impl Vm {
                         }
                         Ok(values[index_int as usize].clone())
                     }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                    _ => Err(RuntimeError::type_error("subscript unsupported type")),
                 },
                 Value::Tuple(obj) => match &*obj.kind() {
                     Object::Tuple(values) => {
@@ -518,7 +518,7 @@ impl Vm {
                         }
                         Ok(values[index_int as usize].clone())
                     }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                    _ => Err(RuntimeError::type_error("subscript unsupported type")),
                 },
                 Value::Str(value) => {
                     let mut index_int = match value_to_int(index.clone()) {
@@ -573,12 +573,12 @@ impl Vm {
                 Value::Module(obj) => {
                     let module_kind = obj.kind();
                     let Object::Module(module_data) = &*module_kind else {
-                        return Err(RuntimeError::new("subscript unsupported type"));
+                        return Err(RuntimeError::type_error("subscript unsupported type"));
                     };
                     if module_data.name == "__module_spec__" {
                         let key = match index {
                             Value::Str(name) => name,
-                            _ => return Err(RuntimeError::new("subscript unsupported type")),
+                            _ => return Err(RuntimeError::type_error("subscript unsupported type")),
                         };
                         return module_data
                             .globals
@@ -597,7 +597,7 @@ impl Vm {
                             }
                         };
                     }
-                    Err(RuntimeError::new("subscript unsupported type"))
+                    Err(RuntimeError::type_error("subscript unsupported type"))
                 }
                 Value::Bytes(obj) => match &*obj.kind() {
                     Object::Bytes(values) => {
@@ -606,11 +606,11 @@ impl Vm {
                             index_int += values.len() as isize;
                         }
                         if index_int < 0 || index_int as usize >= values.len() {
-                            return Err(RuntimeError::new("index out of range"));
+                            return Err(RuntimeError::index_error("index out of range"));
                         }
                         Ok(Value::Int(values[index_int as usize] as i64))
                     }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                    _ => Err(RuntimeError::type_error("subscript unsupported type")),
                 },
                 Value::ByteArray(obj) => match &*obj.kind() {
                     Object::ByteArray(values) => {
@@ -619,11 +619,11 @@ impl Vm {
                             index_int += values.len() as isize;
                         }
                         if index_int < 0 || index_int as usize >= values.len() {
-                            return Err(RuntimeError::new("index out of range"));
+                            return Err(RuntimeError::index_error("index out of range"));
                         }
                         Ok(Value::Int(values[index_int as usize] as i64))
                     }
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                    _ => Err(RuntimeError::type_error("subscript unsupported type")),
                 },
                 Value::MemoryView(obj) => match &*obj.kind() {
                     Object::MemoryView(view) => with_bytes_like_source(&view.source, |values| {
@@ -646,13 +646,13 @@ impl Vm {
                             let index_int = value_to_int(index)? as isize;
                             let offset =
                                 memoryview_element_offset(origin, logical_len, stride, index_int)
-                                    .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                    .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             let end = offset
                                 .checked_add(itemsize)
-                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             let chunk = values
                                 .get(offset..end)
-                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             memoryview_decode_element(chunk, format, itemsize, &self.heap)
                         } else {
                             let (start, end) =
@@ -669,24 +669,24 @@ impl Vm {
                                 index_int += logical_len as isize;
                             }
                             if index_int < 0 || index_int as usize >= logical_len {
-                                return Err(RuntimeError::new("index out of range"));
+                                return Err(RuntimeError::index_error("index out of range"));
                             }
                             let offset = start + (index_int as usize).saturating_mul(itemsize);
                             let end = offset
                                 .checked_add(itemsize)
-                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             let chunk = values
                                 .get(offset..end)
-                                .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                             memoryview_decode_element(chunk, format, itemsize, &self.heap)
                         }
                     })
-                    .unwrap_or_else(|| Err(RuntimeError::new("subscript unsupported type"))),
-                    _ => Err(RuntimeError::new("subscript unsupported type")),
+                    .unwrap_or_else(|| Err(RuntimeError::type_error("subscript unsupported type"))),
+                    _ => Err(RuntimeError::type_error("subscript unsupported type")),
                 },
                 Value::Iterator(obj) => {
                     let Some((start, stop, step_value)) = self.range_object_parts(&obj) else {
-                        return Err(RuntimeError::new("subscript unsupported type"));
+                        return Err(RuntimeError::type_error("subscript unsupported type"));
                     };
                     let length = self.range_object_len_bigint(&start, &stop, &step_value);
                     let Some(length_i64) = length.to_i64() else {
@@ -765,7 +765,7 @@ impl Vm {
                                 format_repr(&index)
                             );
                         }
-                        Err(RuntimeError::new("subscript unsupported type"))
+                        Err(RuntimeError::type_error("subscript unsupported type"))
                     }
                 }
             },
@@ -829,7 +829,7 @@ impl Vm {
                         frames
                     );
                 }
-                return Err(RuntimeError::new("expected iterable"));
+                return Err(RuntimeError::type_error("expected iterable"));
             }
             Err(err) => return Err(err),
         };
@@ -867,7 +867,7 @@ impl Vm {
                 }
                 Ok(out)
             }
-            _ => Err(RuntimeError::new("expected iterable")),
+            _ => Err(RuntimeError::type_error("expected iterable")),
         }
     }
 
@@ -878,7 +878,7 @@ impl Vm {
                 while let Some(value) = self.iterator_next_value(&iterator_ref)? {
                     let byte = value_to_int(value)?;
                     if !(0..=255).contains(&byte) {
-                        return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                        return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                     }
                     out.push(byte as u8);
                 }
@@ -891,7 +891,7 @@ impl Vm {
                         GeneratorResumeOutcome::Yield(value) => {
                             let byte = value_to_int(value)?;
                             if !(0..=255).contains(&byte) {
-                                return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                                return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                             }
                             out.push(byte as u8);
                         }

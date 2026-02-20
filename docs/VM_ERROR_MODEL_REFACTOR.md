@@ -40,6 +40,16 @@ Status: in progress (phase 1 + initial phase 2 landed).
    - `executes_generator_yield_from_non_iterable_raises_type_error`
    - `executes_await_non_awaitable_raises_type_error`
    - `executes_await_requires_iterator_from_dunder_await`
+19. Converted high-frequency message-only producers to typed constructors across core runtime paths:
+   - `TypeError`: unsupported constructors/conversions (`list/tuple/bytes/int/float`), invalid receiver contracts, unsupported membership/operand paths, and non-exception `except` targets.
+   - `IndexError`: common `index out of range` paths.
+   - `ValueError`: byte-range violations and selected argument-domain violations.
+   - `OverflowError`: selected integer overflow paths.
+   - `StopIteration`: direct message-only producers moved to typed `RuntimeError::stop_iteration(...)`.
+20. Added targeted VM regressions in `/Users/$USER/pyrs/tests/vm.rs` for typed exception parity on:
+   - builtin constructor unsupported-type contracts,
+   - membership/index protocol contract failures,
+   - bytes/bytearray range validation.
 
 ## Why This Exists
 

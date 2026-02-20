@@ -1893,7 +1893,7 @@ impl Vm {
                                 attr_name
                             );
                         }
-                        return Err(RuntimeError::new("attribute assignment unsupported type"));
+                        return Err(RuntimeError::type_error("attribute assignment unsupported type"));
                     }
                 }
             }
@@ -1961,7 +1961,7 @@ impl Vm {
                                 attr_name
                             );
                         }
-                        return Err(RuntimeError::new("attribute assignment unsupported type"));
+                        return Err(RuntimeError::type_error("attribute assignment unsupported type"));
                     }
                 }
             }
@@ -2029,7 +2029,7 @@ impl Vm {
                         self.delete_attr_builtin(builtin, &attr_name)?;
                     }
                     _ => {
-                        return Err(RuntimeError::new("attribute deletion unsupported type"));
+                        return Err(RuntimeError::type_error("attribute deletion unsupported type"));
                     }
                 }
                 if let Some((module_id, version)) = touched_module_version {
@@ -2918,11 +2918,11 @@ impl Vm {
                                     idx += values.len() as isize;
                                 }
                                 if idx < 0 || idx as usize >= values.len() {
-                                    return Err(RuntimeError::new("index out of range"));
+                                    return Err(RuntimeError::index_error("index out of range"));
                                 }
                                 let byte = value_to_int(value)?;
                                 if !(0..=255).contains(&byte) {
-                                    return Err(RuntimeError::new("byte must be in range(0, 256)"));
+                                    return Err(RuntimeError::value_error("byte must be in range(0, 256)"));
                                 }
                                 values[idx as usize] = byte as u8;
                             }
@@ -3066,7 +3066,7 @@ impl Vm {
                                                 idx as isize,
                                             )
                                             .ok_or_else(|| {
-                                                RuntimeError::new("index out of range")
+                                                RuntimeError::index_error("index out of range")
                                             })?;
                                             values[offset] = item;
                                         }
@@ -3150,7 +3150,7 @@ impl Vm {
                                                 idx as isize,
                                             )
                                             .ok_or_else(|| {
-                                                RuntimeError::new("index out of range")
+                                                RuntimeError::index_error("index out of range")
                                             })?;
                                             values[offset] = Value::Int(item as i64);
                                         }
@@ -3266,7 +3266,7 @@ impl Vm {
                                         ) {
                                         memoryview_element_offset(origin, logical_len, stride, idx)
                                             .ok_or_else(|| {
-                                                RuntimeError::new("index out of range")
+                                                RuntimeError::index_error("index out of range")
                                             })?
                                     } else {
                                         let (range_start, range_end) = memoryview_bounds(
@@ -3286,16 +3286,16 @@ impl Vm {
                                             normalized += logical_len as isize;
                                         }
                                         if normalized < 0 || normalized as usize >= logical_len {
-                                            return Err(RuntimeError::new("index out of range"));
+                                            return Err(RuntimeError::index_error("index out of range"));
                                         }
                                         range_start + (normalized as usize).saturating_mul(itemsize)
                                     };
                                     let end = offset
                                         .checked_add(itemsize)
-                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                        .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                                     let target = values
                                         .get_mut(offset..end)
-                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                        .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                                     target.copy_from_slice(&replacement);
                                 }
                                 Object::Module(module_data) if module_data.name == "__array__" => {
@@ -3322,7 +3322,7 @@ impl Vm {
                                         ) {
                                         memoryview_element_offset(origin, logical_len, stride, idx)
                                             .ok_or_else(|| {
-                                                RuntimeError::new("index out of range")
+                                                RuntimeError::index_error("index out of range")
                                             })?
                                     } else {
                                         let (range_start, range_end) = memoryview_bounds(
@@ -3342,15 +3342,15 @@ impl Vm {
                                             normalized += logical_len as isize;
                                         }
                                         if normalized < 0 || normalized as usize >= logical_len {
-                                            return Err(RuntimeError::new("index out of range"));
+                                            return Err(RuntimeError::index_error("index out of range"));
                                         }
                                         range_start + (normalized as usize).saturating_mul(itemsize)
                                     };
                                     let end = offset
                                         .checked_add(itemsize)
-                                        .ok_or_else(|| RuntimeError::new("index out of range"))?;
+                                        .ok_or_else(|| RuntimeError::index_error("index out of range"))?;
                                     if end > values.len() {
-                                        return Err(RuntimeError::new("index out of range"));
+                                        return Err(RuntimeError::index_error("index out of range"));
                                     }
                                     for (byte_offset, byte) in replacement.iter().enumerate() {
                                         values[offset + byte_offset] = Value::Int(*byte as i64);
@@ -3493,7 +3493,7 @@ impl Vm {
                                     idx += values.len() as isize;
                                 }
                                 if idx < 0 || idx as usize >= values.len() {
-                                    return Err(RuntimeError::new("index out of range"));
+                                    return Err(RuntimeError::index_error("index out of range"));
                                 }
                                 values.remove(idx as usize);
                             }
@@ -5153,7 +5153,7 @@ impl Vm {
                 self.ensure_sync_iterator_target(&value)?;
                 let iterator = self
                     .to_iterator_value(value)
-                    .map_err(|_| RuntimeError::new("object is not iterable"))?;
+                    .map_err(|_| RuntimeError::type_error("object is not iterable"))?;
                 self.push_value(iterator);
             }
             Opcode::ForIter => {
@@ -6341,12 +6341,12 @@ impl Vm {
                 Value::Class(class) if self.class_is_exception_class(class) => {
                     let class_kind = class.kind();
                     let Object::Class(class_data) = &*class_kind else {
-                        return Err(RuntimeError::new("expected exception instance"));
+                        return Err(RuntimeError::type_error("expected exception instance"));
                     };
                     std::borrow::Cow::Owned(class_data.name.clone())
                 }
                 _ => {
-                    return Err(RuntimeError::new("expected exception instance"));
+                    return Err(RuntimeError::type_error("expected exception instance"));
                 }
             }
         } else {
@@ -6355,7 +6355,7 @@ impl Vm {
                 .last()
                 .and_then(|frame| frame.active_exception.clone())
             else {
-                return Err(RuntimeError::new("expected exception instance"));
+                return Err(RuntimeError::type_error("expected exception instance"));
             };
             match active {
                 Value::Exception(exc) => std::borrow::Cow::Owned(exc.name.clone()),
@@ -6363,18 +6363,18 @@ impl Vm {
                 Value::Class(class) if self.class_is_exception_class(&class) => {
                     let class_kind = class.kind();
                     let Object::Class(class_data) = &*class_kind else {
-                        return Err(RuntimeError::new("expected exception instance"));
+                        return Err(RuntimeError::type_error("expected exception instance"));
                     };
                     std::borrow::Cow::Owned(class_data.name.clone())
                 }
-                _ => return Err(RuntimeError::new("expected exception instance")),
+                _ => return Err(RuntimeError::type_error("expected exception instance")),
             }
         };
 
         let handler_name = match handler_type {
             Value::Tuple(obj) => {
                 let Object::Tuple(items) = &*obj.kind() else {
-                    return Err(RuntimeError::new("except expects exception type"));
+                    return Err(RuntimeError::type_error("except expects exception type"));
                 };
                 for item in items {
                     if self.exception_matches(exception, item)? {
@@ -6385,7 +6385,7 @@ impl Vm {
             }
             Value::List(obj) => {
                 let Object::List(items) = &*obj.kind() else {
-                    return Err(RuntimeError::new("except expects exception type"));
+                    return Err(RuntimeError::type_error("except expects exception type"));
                 };
                 for item in items {
                     if self.exception_matches(exception, item)? {
@@ -6398,15 +6398,15 @@ impl Vm {
             Value::Exception(exc) => exc.name.as_str(),
             Value::Class(class) => {
                 if !self.class_is_exception_class(class) {
-                    return Err(RuntimeError::new("except expects exception type"));
+                    return Err(RuntimeError::type_error("except expects exception type"));
                 }
                 let class_kind = class.kind();
                 let Object::Class(class_data) = &*class_kind else {
-                    return Err(RuntimeError::new("except expects exception type"));
+                    return Err(RuntimeError::type_error("except expects exception type"));
                 };
                 return Ok(self.exception_inherits(&exception_name, &class_data.name));
             }
-            _ => return Err(RuntimeError::new("except expects exception type")),
+            _ => return Err(RuntimeError::type_error("except expects exception type")),
         };
 
         Ok(self.exception_inherits(&exception_name, handler_name))
@@ -6418,7 +6418,7 @@ impl Vm {
         handler_type: &Value,
     ) -> Result<(Option<ExceptionObject>, Option<ExceptionObject>), RuntimeError> {
         let Value::Exception(exception_obj) = exception else {
-            return Err(RuntimeError::new("expected exception instance"));
+            return Err(RuntimeError::type_error("expected exception instance"));
         };
         self.exception_split_for_star_object(exception_obj, handler_type)
     }

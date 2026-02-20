@@ -1233,7 +1233,7 @@ impl Vm {
             Some(Value::Bool(true))
         );
         if is_closed {
-            return Err(RuntimeError::new("StopIteration"));
+            return Err(RuntimeError::stop_iteration("StopIteration"));
         }
         let index = match Self::instance_attr_get(instance, "_index") {
             Some(Value::Int(value)) if value >= 0 => value as usize,
@@ -1247,7 +1247,7 @@ impl Vm {
             return Err(RuntimeError::new("__next__() expects scandir iterator"));
         };
         if index >= values.len() {
-            return Err(RuntimeError::new("StopIteration"));
+            return Err(RuntimeError::stop_iteration("StopIteration"));
         }
         Self::instance_attr_set(instance, "_index", Value::Int((index + 1) as i64))?;
         Ok(values[index].clone())

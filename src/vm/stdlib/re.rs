@@ -183,34 +183,34 @@ impl Vm {
         RuntimeError,
     > {
         let Object::Module(module_data) = &*receiver.kind() else {
-            return Err(RuntimeError::new("re match receiver is invalid"));
+            return Err(RuntimeError::type_error("re match receiver is invalid"));
         };
         if module_data.name != RE_MATCH_MODULE_NAME {
-            return Err(RuntimeError::new("re match receiver is invalid"));
+            return Err(RuntimeError::type_error("re match receiver is invalid"));
         }
         let source = module_data
             .globals
             .get("_source")
             .cloned()
-            .ok_or_else(|| RuntimeError::new("re match receiver is invalid"))?;
+            .ok_or_else(|| RuntimeError::type_error("re match receiver is invalid"))?;
         let start = match module_data.globals.get("_start") {
             Some(Value::Int(value)) => *value,
-            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+            _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
         let end = match module_data.globals.get("_end") {
             Some(Value::Int(value)) => *value,
-            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+            _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
         let groups = match module_data.globals.get("_groups") {
             Some(Value::Tuple(obj)) => match &*obj.kind() {
                 Object::Tuple(values) => values.clone(),
-                _ => return Err(RuntimeError::new("re match receiver is invalid")),
+                _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
             },
             Some(Value::List(obj)) => match &*obj.kind() {
                 Object::List(values) => values.clone(),
-                _ => return Err(RuntimeError::new("re match receiver is invalid")),
+                _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
             },
-            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+            _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
         let spans = match module_data.globals.get("_spans") {
             Some(Value::List(obj)) => match &*obj.kind() {
@@ -220,21 +220,21 @@ impl Vm {
                         Value::None => Ok(None),
                         Value::Tuple(tuple_obj) => {
                             let Object::Tuple(items) = &*tuple_obj.kind() else {
-                                return Err(RuntimeError::new("re match receiver is invalid"));
+                                return Err(RuntimeError::type_error("re match receiver is invalid"));
                             };
                             if items.len() != 2 {
-                                return Err(RuntimeError::new("re match receiver is invalid"));
+                                return Err(RuntimeError::type_error("re match receiver is invalid"));
                             }
                             let start = value_to_int(items[0].clone())?;
                             let end = value_to_int(items[1].clone())?;
                             Ok(Some((start, end)))
                         }
-                        _ => Err(RuntimeError::new("re match receiver is invalid")),
+                        _ => Err(RuntimeError::type_error("re match receiver is invalid")),
                     })
                     .collect::<Result<Vec<_>, _>>()?,
-                _ => return Err(RuntimeError::new("re match receiver is invalid")),
+                _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
             },
-            _ => return Err(RuntimeError::new("re match receiver is invalid")),
+            _ => return Err(RuntimeError::type_error("re match receiver is invalid")),
         };
         let groupindex = match module_data.globals.get("_groupindex") {
             Some(Value::Dict(dict)) => Some(dict.clone()),
@@ -285,7 +285,7 @@ impl Vm {
                         .heap
                         .alloc_bytes(bytes[start as usize..end as usize].to_vec()))
                 }
-                _ => Err(RuntimeError::new("re match receiver is invalid")),
+                _ => Err(RuntimeError::type_error("re match receiver is invalid")),
             };
         }
         Ok(groups[index - 1].clone())

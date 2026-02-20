@@ -1480,7 +1480,7 @@ impl Vm {
                         .insert("value".to_string(), receiver_value);
                 }
                 _ => {
-                    return Err(RuntimeError::new("bytes receiver is invalid"));
+                    return Err(RuntimeError::type_error("bytes receiver is invalid"));
                 }
             }
         }
@@ -1602,34 +1602,34 @@ impl Vm {
                             _ => contiguous,
                         })
                     })
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                    .ok_or_else(|| RuntimeError::type_error("memoryview receiver is invalid"))
                 }
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "readonly" => match &*view.kind() {
                 Object::MemoryView(view_data) => bytes_like_source_is_readonly(&view_data.source)
                     .map(Value::Bool)
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid")),
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                    .ok_or_else(|| RuntimeError::type_error("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "obj" => match &*view.kind() {
                 Object::MemoryView(view_data) => match &*view_data.source.kind() {
                     Object::Bytes(_) => Ok(Value::Bytes(view_data.source.clone())),
                     Object::ByteArray(_) => Ok(Value::ByteArray(view_data.source.clone())),
                     Object::Instance(_) => Ok(Value::Instance(view_data.source.clone())),
-                    _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                    _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
                 },
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "itemsize" => match &*view.kind() {
                 Object::MemoryView(view_data) => Ok(Value::Int(view_data.itemsize as i64)),
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "format" => match &*view.kind() {
                 Object::MemoryView(view_data) => Ok(Value::Str(
                     view_data.format.clone().unwrap_or_else(|| "B".to_string()),
                 )),
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "ndim" => match &*view.kind() {
                 Object::MemoryView(view_data) => {
@@ -1640,9 +1640,9 @@ impl Vm {
                         let (shape, _strides) = memoryview_shape_and_strides(view_data, byte_len);
                         Value::Int(shape.len() as i64)
                     })
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                    .ok_or_else(|| RuntimeError::type_error("memoryview receiver is invalid"))
                 }
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "shape" => match &*view.kind() {
                 Object::MemoryView(view_data) => {
@@ -1657,9 +1657,9 @@ impl Vm {
                             .collect::<Vec<Value>>();
                         self.heap.alloc_tuple(tuple_values)
                     })
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                    .ok_or_else(|| RuntimeError::type_error("memoryview receiver is invalid"))
                 }
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "strides" => match &*view.kind() {
                 Object::MemoryView(view_data) => {
@@ -1674,9 +1674,9 @@ impl Vm {
                             .collect::<Vec<Value>>();
                         self.heap.alloc_tuple(tuple_values)
                     })
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                    .ok_or_else(|| RuntimeError::type_error("memoryview receiver is invalid"))
                 }
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             "nbytes" => match &*view.kind() {
                 Object::MemoryView(view_data) => {
@@ -1701,9 +1701,9 @@ impl Vm {
                         let nbytes = elements.saturating_mul(view_data.itemsize.max(1));
                         Value::Int(nbytes as i64)
                     })
-                    .ok_or_else(|| RuntimeError::new("memoryview receiver is invalid"))
+                    .ok_or_else(|| RuntimeError::type_error("memoryview receiver is invalid"))
                 }
-                _ => Err(RuntimeError::new("memoryview receiver is invalid")),
+                _ => Err(RuntimeError::type_error("memoryview receiver is invalid")),
             },
             _ => Err(RuntimeError::attribute_error(format!(
                 "memoryview has no attribute '{}'",
@@ -2242,7 +2242,7 @@ impl Vm {
         let function = {
             let method_ref = method.kind();
             let Object::BoundMethod(method_data) = &*method_ref else {
-                return Err(RuntimeError::new("attribute assignment unsupported type"));
+                return Err(RuntimeError::type_error("attribute assignment unsupported type"));
             };
             method_data.function.clone()
         };
@@ -2267,7 +2267,7 @@ impl Vm {
                     .insert(attr_name.to_string(), value);
                 Ok(())
             }
-            _ => Err(RuntimeError::new("attribute assignment unsupported type")),
+            _ => Err(RuntimeError::type_error("attribute assignment unsupported type")),
         }
     }
 
@@ -2410,7 +2410,7 @@ impl Vm {
                 };
                 let mut func_ref = func.kind_mut();
                 let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::new("attribute assignment unsupported type"));
+                    return Err(RuntimeError::type_error("attribute assignment unsupported type"));
                 };
                 func_data.annotations = Some(annotations);
                 Ok(())
@@ -2422,7 +2422,7 @@ impl Vm {
                 };
                 let mut func_ref = func.kind_mut();
                 let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::new("attribute assignment unsupported type"));
+                    return Err(RuntimeError::type_error("attribute assignment unsupported type"));
                 };
                 func_data.dict = Some(dict);
                 Ok(())
@@ -2519,7 +2519,7 @@ impl Vm {
             "__annotations__" => {
                 let mut func_ref = func.kind_mut();
                 let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::new("attribute deletion unsupported type"));
+                    return Err(RuntimeError::type_error("attribute deletion unsupported type"));
                 };
                 if func_data.annotations.take().is_none() {
                     return Err(RuntimeError::new(format!(
@@ -2536,7 +2536,7 @@ impl Vm {
                 let dict = {
                     let func_ref = func.kind();
                     let Object::Function(func_data) = &*func_ref else {
-                        return Err(RuntimeError::new("attribute deletion unsupported type"));
+                        return Err(RuntimeError::type_error("attribute deletion unsupported type"));
                     };
                     func_data.dict.clone()
                 };
@@ -5164,7 +5164,7 @@ impl Vm {
     ) -> Result<AttrMutationOutcome, RuntimeError> {
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => return Err(RuntimeError::new("attribute assignment unsupported type")),
+            _ => return Err(RuntimeError::type_error("attribute assignment unsupported type")),
         };
         let mro_class_names = class_attr_walk(&class_ref)
             .into_iter()
@@ -5276,7 +5276,7 @@ impl Vm {
     ) -> Result<AttrMutationOutcome, RuntimeError> {
         let class_ref = match &*instance.kind() {
             Object::Instance(instance_data) => instance_data.class.clone(),
-            _ => return Err(RuntimeError::new("attribute deletion unsupported type")),
+            _ => return Err(RuntimeError::type_error("attribute deletion unsupported type")),
         };
         if attr_name == "_CHUNK_SIZE"
             && matches!(

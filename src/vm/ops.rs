@@ -197,7 +197,7 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                 result.extend(right.clone());
                 Ok(heap.alloc_bytes(result))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
         (Value::Bytes(a), Value::ByteArray(b)) => match (&*a.kind(), &*b.kind()) {
             (Object::Bytes(left), Object::ByteArray(right)) => {
@@ -205,7 +205,7 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                 result.extend(right.clone());
                 Ok(heap.alloc_bytes(result))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
         (Value::ByteArray(a), Value::Bytes(b)) => match (&*a.kind(), &*b.kind()) {
             (Object::ByteArray(left), Object::Bytes(right)) => {
@@ -213,7 +213,7 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                 result.extend(right.clone());
                 Ok(heap.alloc_bytearray(result))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
         (Value::ByteArray(a), Value::ByteArray(b)) => match (&*a.kind(), &*b.kind()) {
             (Object::ByteArray(left), Object::ByteArray(right)) => {
@@ -221,7 +221,7 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                 result.extend(right.clone());
                 Ok(heap.alloc_bytearray(result))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
         (Value::Bytes(a), other) => match &*a.kind() {
             Object::Bytes(left) => {
@@ -230,10 +230,10 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                     result.extend(right);
                     Ok(heap.alloc_bytes(result))
                 } else {
-                    Err(RuntimeError::new("unsupported operand type for +"))
+                    Err(RuntimeError::type_error("unsupported operand type for +"))
                 }
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
         (Value::ByteArray(a), other) => match &*a.kind() {
             Object::ByteArray(left) => {
@@ -242,10 +242,10 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                     result.extend(right);
                     Ok(heap.alloc_bytearray(result))
                 } else {
-                    Err(RuntimeError::new("unsupported operand type for +"))
+                    Err(RuntimeError::type_error("unsupported operand type for +"))
                 }
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
         (Value::List(a), Value::List(b)) => match (&*a.kind(), &*b.kind()) {
             (Object::List(left), Object::List(right)) => {
@@ -253,7 +253,7 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                 result.extend(right.clone());
                 Ok(heap.alloc_list(result))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
         (Value::Tuple(a), Value::Tuple(b)) => match (&*a.kind(), &*b.kind()) {
             (Object::Tuple(left), Object::Tuple(right)) => {
@@ -261,9 +261,9 @@ pub(super) fn add_values(left: Value, right: Value, heap: &Heap) -> Result<Value
                 result.extend(right.clone());
                 Ok(heap.alloc_tuple(result))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for +")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for +")),
         },
-        _ => Err(RuntimeError::new("unsupported operand type for +")),
+        _ => Err(RuntimeError::type_error("unsupported operand type for +")),
     }
 }
 
@@ -370,7 +370,7 @@ pub(super) fn mod_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         let format = match &*format.kind() {
             Object::Bytes(values) => values.clone(),
             _ => {
-                return Err(RuntimeError::new("unsupported operand type for %"));
+                return Err(RuntimeError::type_error("unsupported operand type for %"));
             }
         };
         return bytes_percent_format(&format, right).map(|value| heap.alloc_bytes(value));
@@ -379,7 +379,7 @@ pub(super) fn mod_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         let format = match &*format.kind() {
             Object::ByteArray(values) => values.clone(),
             _ => {
-                return Err(RuntimeError::new("unsupported operand type for %"));
+                return Err(RuntimeError::type_error("unsupported operand type for %"));
             }
         };
         return bytes_percent_format(&format, right).map(|value| heap.alloc_bytes(value));
@@ -394,7 +394,7 @@ pub(super) fn mod_values(left: Value, right: Value, heap: &Heap) -> Result<Value
         return Ok(bigint_to_value(remainder));
     }
     let (left, right) = numeric_pair(&left, &right)
-        .ok_or_else(|| RuntimeError::new("unsupported operand type for %"))?;
+        .ok_or_else(|| RuntimeError::type_error("unsupported operand type for %"))?;
     match (left, right) {
         (NumericValue::Int(left), NumericValue::Int(right)) => {
             Ok(Value::Int(python_mod(left, right)?))
@@ -437,7 +437,7 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
         }
         if idx < format.len() && format[idx] == b'*' {
             if arg_idx >= positional_args.len() {
-                return Err(RuntimeError::new("not enough arguments for format string"));
+                return Err(RuntimeError::type_error("not enough arguments for format string"));
             }
             let _ = value_to_int(positional_args[arg_idx].clone())?;
             arg_idx += 1;
@@ -451,7 +451,7 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
             idx += 1;
             if idx < format.len() && format[idx] == b'*' {
                 if arg_idx >= positional_args.len() {
-                    return Err(RuntimeError::new("not enough arguments for format string"));
+                    return Err(RuntimeError::type_error("not enough arguments for format string"));
                 }
                 let _ = value_to_int(positional_args[arg_idx].clone())?;
                 arg_idx += 1;
@@ -468,13 +468,13 @@ fn bytes_percent_format(format: &[u8], right: Value) -> Result<Vec<u8>, RuntimeE
         let conv = format[idx];
         idx += 1;
         if arg_idx >= positional_args.len() {
-            return Err(RuntimeError::new("not enough arguments for format string"));
+            return Err(RuntimeError::type_error("not enough arguments for format string"));
         }
         let value = positional_args[arg_idx].clone();
         arg_idx += 1;
         match conv {
             b'b' | b's' => out.extend(value_to_bytes_percent_value(value)?),
-            _ => return Err(RuntimeError::new("unsupported operand type for %")),
+            _ => return Err(RuntimeError::type_error("unsupported operand type for %")),
         }
     }
     if arg_idx < positional_args.len() {
@@ -489,11 +489,11 @@ fn value_to_bytes_percent_value(value: Value) -> Result<Vec<u8>, RuntimeError> {
     match value {
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(bytes) => Ok(bytes.clone()),
-            _ => Err(RuntimeError::new("unsupported operand type for %")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for %")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
             Object::ByteArray(bytes) => Ok(bytes.clone()),
-            _ => Err(RuntimeError::new("unsupported operand type for %")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for %")),
         },
         _ => Err(RuntimeError::new("%b requires a bytes-like object")),
     }
@@ -575,7 +575,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                 return Err(RuntimeError::new("format requires a mapping"));
             }
             if arg_idx >= positional_args.len() {
-                return Err(RuntimeError::new("not enough arguments for format string"));
+                return Err(RuntimeError::type_error("not enough arguments for format string"));
             }
             let width_value = value_to_int(positional_args[arg_idx].clone())?;
             arg_idx += 1;
@@ -610,7 +610,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                     return Err(RuntimeError::new("format requires a mapping"));
                 }
                 if arg_idx >= positional_args.len() {
-                    return Err(RuntimeError::new("not enough arguments for format string"));
+                    return Err(RuntimeError::type_error("not enough arguments for format string"));
                 }
                 let precision_value = value_to_int(positional_args[arg_idx].clone())?;
                 arg_idx += 1;
@@ -658,7 +658,7 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                 .ok_or_else(|| RuntimeError::new("format key not found"))?
         } else {
             if arg_idx >= positional_args.len() {
-                return Err(RuntimeError::new("not enough arguments for format string"));
+                return Err(RuntimeError::type_error("not enough arguments for format string"));
             }
             let value = positional_args[arg_idx].clone();
             arg_idx += 1;
@@ -758,7 +758,7 @@ fn format_percent_value(
         }
         'd' | 'i' | 'u' => {
             let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             let mut text = integer.to_string();
             if !text.starts_with('-') {
                 if force_sign {
@@ -799,14 +799,14 @@ fn format_percent_value(
         }
         'x' => {
             let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             integer
                 .to_str_radix(16)
                 .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))
         }
         'X' => {
             let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             let value = integer
                 .to_str_radix(16)
                 .ok_or_else(|| RuntimeError::new("unsupported operand type for hex formatting"))?;
@@ -814,7 +814,7 @@ fn format_percent_value(
         }
         'o' => {
             let integer =
-                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::new("expected integer"))?;
+                int_like_to_bigint(&value).ok_or_else(|| RuntimeError::type_error("expected integer"))?;
             integer
                 .to_str_radix(8)
                 .ok_or_else(|| RuntimeError::new("unsupported operand type for octal formatting"))
@@ -932,7 +932,7 @@ pub(super) fn neg_value(value: Value) -> Result<Value, RuntimeError> {
         Value::Int(value) => {
             let value = value
                 .checked_neg()
-                .ok_or_else(|| RuntimeError::new("integer overflow"))?;
+                .ok_or_else(|| RuntimeError::overflow_error("integer overflow"))?;
             Ok(Value::Int(value))
         }
         Value::BigInt(value) => Ok(bigint_to_value(value.negated())),
@@ -948,7 +948,7 @@ pub(super) fn pos_value(value: Value) -> Result<Value, RuntimeError> {
         Value::BigInt(value) => Ok(bigint_to_value(*value)),
         Value::Bool(value) => Ok(Value::Int(if value { 1 } else { 0 })),
         Value::Float(value) => Ok(Value::Float(value)),
-        _ => Err(RuntimeError::new("unsupported operand type for +")),
+        _ => Err(RuntimeError::type_error("unsupported operand type for +")),
     }
 }
 
@@ -1292,13 +1292,13 @@ pub(super) fn compare_order(left: Value, right: Value) -> Result<Ordering, Runti
         (Value::Str(a), Value::Str(b)) => Ok(a.cmp(&b)),
         (Value::Tuple(left), Value::Tuple(right)) => match (&*left.kind(), &*right.kind()) {
             (Object::Tuple(left), Object::Tuple(right)) => compare_sequence_order(left, right),
-            _ => Err(RuntimeError::new("unsupported operand type for comparison")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for comparison")),
         },
         (Value::List(left), Value::List(right)) => match (&*left.kind(), &*right.kind()) {
             (Object::List(left), Object::List(right)) => compare_sequence_order(left, right),
-            _ => Err(RuntimeError::new("unsupported operand type for comparison")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for comparison")),
         },
-        _ => Err(RuntimeError::new("unsupported operand type for comparison")),
+        _ => Err(RuntimeError::type_error("unsupported operand type for comparison")),
     }
 }
 
@@ -1407,36 +1407,36 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
     match right {
         Value::List(obj) => match &*obj.kind() {
             Object::List(values) => Ok(values.iter().any(|value| value == left)),
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::Tuple(obj) => match &*obj.kind() {
             Object::Tuple(values) => Ok(values.iter().any(|value| value == left)),
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::Dict(obj) => match &*obj.kind() {
             Object::Dict(_) => dict_contains_key_checked(obj, left),
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::DictKeys(obj) => match &*obj.kind() {
             Object::DictKeysView(view) => match &*view.dict.kind() {
                 Object::Dict(_) => dict_contains_key_checked(&view.dict, left),
-                _ => Err(RuntimeError::new("unsupported operand type for in")),
+                _ => Err(RuntimeError::type_error("unsupported operand type for in")),
             },
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::Set(obj) => match &*obj.kind() {
             Object::Set(values) => {
                 ensure_hashable(left)?;
                 Ok(values.contains(left))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::FrozenSet(obj) => match &*obj.kind() {
             Object::FrozenSet(values) => {
                 ensure_hashable(left)?;
                 Ok(values.contains(left))
             }
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::Str(haystack) => match left {
             Value::Str(needle) => Ok(haystack.contains(needle)),
@@ -1444,22 +1444,22 @@ pub(super) fn compare_in(left: &Value, right: &Value) -> Result<bool, RuntimeErr
         },
         Value::Bytes(obj) => match &*obj.kind() {
             Object::Bytes(values) => compare_bytes_like_membership(left, values),
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::ByteArray(obj) => match &*obj.kind() {
             Object::ByteArray(values) => compare_bytes_like_membership(left, values),
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
         Value::MemoryView(obj) => match &*obj.kind() {
             Object::MemoryView(view) => match &*view.source.kind() {
                 Object::Bytes(values) | Object::ByteArray(values) => {
                     compare_bytes_like_membership(left, values)
                 }
-                _ => Err(RuntimeError::new("unsupported operand type for in")),
+                _ => Err(RuntimeError::type_error("unsupported operand type for in")),
             },
-            _ => Err(RuntimeError::new("unsupported operand type for in")),
+            _ => Err(RuntimeError::type_error("unsupported operand type for in")),
         },
-        _ => Err(RuntimeError::new("unsupported operand type for in")),
+        _ => Err(RuntimeError::type_error("unsupported operand type for in")),
     }
 }
 
@@ -1545,7 +1545,7 @@ fn bytes_contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value, RuntimeError> {
     let repeat_count = |value: Value| {
-        value_to_int(value).map_err(|_| RuntimeError::new("unsupported operand type for *"))
+        value_to_int(value).map_err(|_| RuntimeError::type_error("unsupported operand type for *"))
     };
     if let Some((left, right)) = integer_i64_pair(&left, &right) {
         if let Some(product) = left.checked_mul(right) {
@@ -1588,7 +1588,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             }
             let values = match &*obj.kind() {
                 Object::List(values) => values.clone(),
-                _ => return Err(RuntimeError::new("unsupported operand type for *")),
+                _ => return Err(RuntimeError::type_error("unsupported operand type for *")),
             };
             let mut result = Vec::new();
             for _ in 0..count {
@@ -1603,7 +1603,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             }
             let values = match &*obj.kind() {
                 Object::Tuple(values) => values.clone(),
-                _ => return Err(RuntimeError::new("unsupported operand type for *")),
+                _ => return Err(RuntimeError::type_error("unsupported operand type for *")),
             };
             let mut result = Vec::new();
             for _ in 0..count {
@@ -1618,7 +1618,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             }
             let values = match &*obj.kind() {
                 Object::Bytes(values) => values.clone(),
-                _ => return Err(RuntimeError::new("unsupported operand type for *")),
+                _ => return Err(RuntimeError::type_error("unsupported operand type for *")),
             };
             let mut result = Vec::new();
             for _ in 0..count {
@@ -1633,7 +1633,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             }
             let values = match &*obj.kind() {
                 Object::ByteArray(values) => values.clone(),
-                _ => return Err(RuntimeError::new("unsupported operand type for *")),
+                _ => return Err(RuntimeError::type_error("unsupported operand type for *")),
             };
             let mut result = Vec::new();
             for _ in 0..count {
@@ -1641,7 +1641,7 @@ pub(super) fn mul_values(left: Value, right: Value, heap: &Heap) -> Result<Value
             }
             Ok(heap.alloc_bytearray(result))
         }
-        _ => Err(RuntimeError::new("unsupported operand type for *")),
+        _ => Err(RuntimeError::type_error("unsupported operand type for *")),
     }
 }
 
