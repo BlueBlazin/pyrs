@@ -1442,6 +1442,62 @@ fn executes_generator_yield_from_lazily() {
 }
 
 #[test]
+fn executes_generator_yield_from_non_iterable_raises_type_error() {
+    let source = r#"ok = False
+def g():
+    yield from 1
+try:
+    next(g())
+except Exception as exc:
+    ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_await_non_awaitable_raises_type_error() {
+    let source = r#"async def f():
+    await 1
+coro = f()
+ok = False
+try:
+    coro.send(None)
+except Exception as exc:
+    ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_await_requires_iterator_from_dunder_await() {
+    let source = r#"class BadAwait:
+    def __await__(self):
+        return 1
+async def f():
+    await BadAwait()
+coro = f()
+ok = False
+try:
+    coro.send(None)
+except Exception as exc:
+    ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_generator_throw_and_stop_iteration() {
     let source = "def gen():\n    yield 1\ng = gen()\nfirst = g.send(None)\nhandled = False\ntry:\n    g.throw(RuntimeError)\nexcept RuntimeError:\n    handled = True\nstopped = False\ntry:\n    g.send(None)\nexcept StopIteration:\n    stopped = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");

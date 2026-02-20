@@ -36,6 +36,10 @@ Status: in progress (phase 1 + initial phase 2 landed).
    - `object is not awaitable` / `object is not iterable` / `yield from expects iterable` now raise `TypeError`
    - `__iter__()` / `__await__()` non-iterator contract failures now raise `TypeError`
    - `generator ignored GeneratorExit` now raises typed `RuntimeError`.
+18. Added VM conformance regressions for these contracts in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `executes_generator_yield_from_non_iterable_raises_type_error`
+   - `executes_await_non_awaitable_raises_type_error`
+   - `executes_await_requires_iterator_from_dunder_await`
 
 ## Why This Exists
 
