@@ -72,6 +72,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - explicit `raise ... from ...` now preserves `__context__` in addition to `__cause__` + `__suppress_context__`.
   - prefixed `RuntimeError::new("XError: ...")` callsites were bulk-migrated to typed constructors (136 sites); fallback classifier is now a compatibility lane, not the primary path.
   - `runtime_error_matches_exception(...)` no longer uses classifier fallback; matching is now typed/structured, and attribute lookup surfaces were updated to raise typed `AttributeError` instead of untyped message-only errors in key VM paths.
+  - len/generator parity updates: non-int `__len__` now raises typed `TypeError`, negative `__len__` raises typed `ValueError`, and generator re-entrancy now raises typed `ValueError` (`generator already executing`) with typed `TypeError` for non-generator/invalid initial send paths.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

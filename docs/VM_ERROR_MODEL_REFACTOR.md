@@ -26,6 +26,12 @@ Status: in progress (phase 1 + initial phase 2 landed).
 12. `RuntimeError::new(...)` exception extraction now has a fast reject path for non-exception freeform messages to keep the compatibility lane cheap.
 13. `runtime_error_matches_exception(...)` no longer falls back to `classify_runtime_error(...)`; matches now depend on typed payloads, extracted exception names, or traceback-tail exception lines.
 14. Core attribute lookup surfaces were migrated to emit typed `AttributeError` (`RuntimeError::attribute_error(...)`) instead of untyped text in major VM paths (`vm_builtin_metadata`, `vm_execution`, `builtins_core`).
+15. `__len__` parity improved for non-int and negative returns:
+   - non-int now raises typed `TypeError` (`'<type>' object cannot be interpreted as an integer`)
+   - negative values now raise typed `ValueError` (`__len__() should return >= 0`)
+16. Generator resume error parity improved in `vm_native_dispatch`:
+   - re-entrancy now raises typed `ValueError` (`generator already executing`)
+   - non-generator and invalid initial `send` paths now raise typed `TypeError`.
 
 ## Why This Exists
 

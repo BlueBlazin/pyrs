@@ -73,19 +73,19 @@ impl Vm {
             Value::Bool(flag) => Ok(flag),
             Value::Int(number) => {
                 if number < 0 {
-                    Err(RuntimeError::new("__len__() should return >= 0"))
+                    Err(RuntimeError::value_error("__len__() should return >= 0"))
                 } else {
                     Ok(number != 0)
                 }
             }
             Value::BigInt(number) => {
                 if number.is_negative() {
-                    Err(RuntimeError::new("__len__() should return >= 0"))
+                    Err(RuntimeError::value_error("__len__() should return >= 0"))
                 } else {
                     Ok(!number.is_zero())
                 }
             }
-            other => Err(RuntimeError::new(format!(
+            other => Err(RuntimeError::type_error(format!(
                 "'{}' object cannot be interpreted as an integer",
                 self.value_type_name_for_error(&other)
             ))),
@@ -1424,21 +1424,24 @@ impl Vm {
             Value::Bool(flag) => Ok(Value::Int(if flag { 1 } else { 0 })),
             Value::Int(number) => {
                 if number < 0 {
-                    Err(RuntimeError::new("__len__() should return >= 0"))
+                    Err(RuntimeError::value_error("__len__() should return >= 0"))
                 } else {
                     Ok(Value::Int(number))
                 }
             }
             Value::BigInt(number) => {
                 if number.is_negative() {
-                    return Err(RuntimeError::new("__len__() should return >= 0"));
+                    return Err(RuntimeError::value_error("__len__() should return >= 0"));
                 }
                 let as_i64 = number
                     .to_i64()
-                    .ok_or_else(|| RuntimeError::new("len() result does not fit in an index"))?;
+                    .ok_or_else(|| RuntimeError::overflow_error("len() result does not fit in an index"))?;
                 Ok(Value::Int(as_i64))
             }
-            _ => Err(RuntimeError::new("__len__() should return an integer")),
+            other => Err(RuntimeError::type_error(format!(
+                "'{}' object cannot be interpreted as an integer",
+                self.value_type_name_for_error(&other)
+            ))),
         }
     }
 

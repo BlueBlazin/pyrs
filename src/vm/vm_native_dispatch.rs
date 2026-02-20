@@ -5724,7 +5724,7 @@ impl Vm {
                 Value::Generator(obj) => {
                     self.resume_generator(obj, Some(sent), None, GeneratorResumeKind::Next)
                 }
-                Value::Iterator(_) => Err(RuntimeError::new(format!(
+                Value::Iterator(_) => Err(RuntimeError::attribute_error(format!(
                     "'{}' object has no attribute 'send'",
                     self.iterator_type_name(iterator)
                 ))),
@@ -6202,10 +6202,10 @@ impl Vm {
     ) -> Result<GeneratorResumeOutcome, RuntimeError> {
         let (started, running, closed) = match &*generator.kind() {
             Object::Generator(state) => (state.started, state.running, state.closed),
-            _ => return Err(RuntimeError::new("object is not a generator")),
+            _ => return Err(RuntimeError::type_error("object is not a generator")),
         };
         if running {
-            return Err(RuntimeError::new("generator already executing"));
+            return Err(RuntimeError::value_error("generator already executing"));
         }
         if closed {
             let value = self
@@ -6220,7 +6220,7 @@ impl Vm {
             && let Some(value) = &sent
             && *value != Value::None
         {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "can't send non-None value to a just-started generator",
             ));
         }
