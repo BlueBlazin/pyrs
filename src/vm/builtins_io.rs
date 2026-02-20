@@ -3,7 +3,7 @@ use super::{
     HashMap, InstanceObject, InternalCallOutcome, ObjRef, Object, Read, RuntimeError, Seek,
     SeekFrom, StructEndian, StructFieldKind, StructFieldSpec, StructFormatSpec, Value, Vm, Write,
     bytes_like_from_value, class_attr_walk, decode_text_bytes, encode_text_bytes, format_value, fs,
-    is_truthy, memoryview_bounds, value_to_f64, value_to_int,
+    is_truthy, memoryview_bounds, runtime_error_matches_exception, value_to_f64, value_to_int,
 };
 
 const IO_BUFFERED_ATTR_READ_BUF: &str = "__pyrs_buffered_read_buf";
@@ -2394,16 +2394,7 @@ impl Vm {
 
     fn io_runtime_error_from_exception_value(&self, exc: &Value, fallback: &str) -> RuntimeError {
         match exc {
-            Value::Exception(exception) => {
-                let mut line = exception.name.clone();
-                if let Some(message) = &exception.message
-                    && !message.is_empty()
-                {
-                    line.push_str(": ");
-                    line.push_str(message);
-                }
-                RuntimeError::new(line)
-            }
+            Value::Exception(exception) => RuntimeError::from_exception((**exception).clone()),
             _ => RuntimeError::new(fallback),
         }
     }
@@ -3048,16 +3039,6 @@ impl Vm {
                 }
                 Err(err) => Some(self.io_exception_value_from_runtime_error(err)?),
             };
-        let raw_closed = self
-            .builtin_getattr(
-                vec![raw.clone(), Value::Str("closed".to_string())],
-                HashMap::new(),
-            )
-            .map(|value| is_truthy(&value))
-            .unwrap_or(false);
-        if raw_closed {
-            Self::io_buffered_mark_closed(&instance)?;
-        }
         if let Some(mut close_exc) = close_error {
             if let (Value::Exception(close_exception), Some(Value::Exception(flush_exception))) =
                 (&mut close_exc, flush_error.clone())
@@ -3071,9 +3052,6 @@ impl Vm {
                 self.io_runtime_error_from_exception_value(&close_exc, "buffered close failed")
             );
         }
-        if !raw_closed {
-            Self::io_buffered_mark_closed(&instance)?;
-        }
         if let Some(flush_exc) = flush_error {
             if let Some(frame) = self.frames.last_mut() {
                 frame.active_exception = Some(flush_exc.clone());
@@ -3082,6 +3060,7 @@ impl Vm {
                 self.io_runtime_error_from_exception_value(&flush_exc, "buffered close failed")
             );
         }
+        Self::io_buffered_mark_closed(&instance)?;
         Ok(Value::None)
     }
 
@@ -3210,13 +3189,6 @@ impl Vm {
             return Err(RuntimeError::new(
                 "ValueError: I/O operation on closed file.",
             ));
-        }
-        let seekable = self.builtin_io_buffered_seekable(
-            vec![Value::Instance(instance.clone())],
-            HashMap::new(),
-        )?;
-        if !is_truthy(&seekable) {
-            return Err(RuntimeError::unsupported_operation("not seekable"));
         }
         self.io_buffered_drain_write_buffer(&instance)?;
         let raw_position = self.io_buffered_delegate_method(
@@ -4591,7 +4563,10 @@ impl Vm {
                     .map_err(|err| RuntimeError::new(format!("write failed: {err}")))?;
                 Ok(())
             }
-            Err(err) if err.message == "invalid file object" => {
+            Err(err)
+                if runtime_error_matches_exception(&err, "TypeError")
+                    && err.message.contains("invalid file object") =>
+            {
                 self.io_write_text_payload_via_buffer(instance, payload)
             }
             Err(err) => Err(err),
@@ -4776,7 +4751,9 @@ impl Vm {
         let bytes = match self.io_file_fd_from_instance(&instance) {
             Ok(fd) => self.io_file_read_bytes(fd, size)?,
             Err(err)
-                if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" =>
+                if !Self::io_file_is_binary(&instance)
+                    && runtime_error_matches_exception(&err, "TypeError")
+                    && err.message.contains("invalid file object") =>
             {
                 let mut call_args = Vec::new();
                 if let Some(limit) = size {
@@ -4899,7 +4876,9 @@ impl Vm {
         let fd = match self.io_file_fd_from_instance(&instance) {
             Ok(fd) => fd,
             Err(err)
-                if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" =>
+                if !Self::io_file_is_binary(&instance)
+                    && runtime_error_matches_exception(&err, "TypeError")
+                    && err.message.contains("invalid file object") =>
             {
                 let mut call_args = Vec::new();
                 if let Some(max_len) = limit {
@@ -5455,7 +5434,9 @@ impl Vm {
                     .map_err(|err| RuntimeError::new(format!("flush failed: {err}")))?;
             }
             Err(err)
-                if !Self::io_file_is_binary(&instance) && err.message == "invalid file object" =>
+                if !Self::io_file_is_binary(&instance)
+                    && runtime_error_matches_exception(&err, "TypeError")
+                    && err.message.contains("invalid file object") =>
             {
                 let _ = self.io_file_delegate_buffer_method(
                     &instance,
@@ -6548,7 +6529,7 @@ impl Vm {
             }
             consumed += text.chars().count() as i64;
             lines.push(Value::Str(text));
-            if hint > 0 && consumed >= hint {
+            if hint > 0 && consumed > hint {
                 break;
             }
         }
@@ -7454,7 +7435,7 @@ impl Vm {
             }
             consumed += line_len as i64;
             lines.push(Value::Bytes(bytes_obj));
-            if hint > 0 && consumed >= hint {
+            if hint > 0 && consumed > hint {
                 break;
             }
         }

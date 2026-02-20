@@ -4332,7 +4332,9 @@ impl BuiltinFunction {
                             })
                             .collect::<Result<Vec<_>, _>>()?,
                         _ => {
-                            return Err(RuntimeError::type_error("type() bases must be tuple/list"));
+                            return Err(RuntimeError::type_error(
+                                "type() bases must be tuple/list",
+                            ));
                         }
                     },
                     _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
@@ -7888,8 +7890,12 @@ fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject
         return None;
     }
     let extracted_exception = extract_runtime_error_exception_name(trimmed);
-    let exception_type =
-        extracted_exception.unwrap_or_else(|| classify_runtime_error_message(trimmed).to_string());
+    let mut exception_type = extracted_exception
+        .clone()
+        .unwrap_or_else(|| classify_runtime_error_message(trimmed).to_string());
+    if exception_type == "OSError" && should_refine_os_error(trimmed) {
+        exception_type = classify_runtime_error_message(trimmed).to_string();
+    }
     if exception_type == "RuntimeError"
         && extract_runtime_error_final_message(trimmed, "RuntimeError").is_none()
         && extract_prefixed_exception_message(trimmed, "RuntimeError").is_none()
@@ -7899,6 +7905,15 @@ fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject
 
     let exception_message = extract_runtime_error_final_message(trimmed, &exception_type)
         .or_else(|| extract_prefixed_exception_message(trimmed, &exception_type))
+        .or_else(|| {
+            extracted_exception
+                .as_ref()
+                .filter(|source| source.as_str() != exception_type)
+                .and_then(|source| {
+                    extract_runtime_error_final_message(trimmed, source)
+                        .or_else(|| extract_prefixed_exception_message(trimmed, source))
+                })
+        })
         .unwrap_or_else(|| {
             if trimmed == exception_type {
                 None

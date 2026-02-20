@@ -8278,16 +8278,8 @@ fn call_builtin_with_kwargs(
             Ok(Value::None)
         }
         BuiltinFunction::Len => {
-            if let Some(value) = kwargs.remove("obj") {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("len() got multiple values"));
-                }
-                args.push(value);
-            }
             if !kwargs.is_empty() {
-                return Err(RuntimeError::new(
-                    "len() got an unexpected keyword argument",
-                ));
+                return Err(RuntimeError::type_error("len() takes no keyword arguments"));
             }
             builtin.call(heap, args)
         }

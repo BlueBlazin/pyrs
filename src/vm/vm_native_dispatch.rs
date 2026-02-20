@@ -1820,23 +1820,13 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Bool(matches)))
             }
             NativeMethodKind::BytesCount => {
-                let start_kw = kwargs.remove("start");
-                let end_kw = kwargs.remove("end");
                 if !kwargs.is_empty() {
-                    return Err(RuntimeError::new(
-                        "count() got an unexpected keyword argument",
-                    ));
+                    return Err(RuntimeError::type_error("count() takes no keyword arguments"));
                 }
                 if args.is_empty() || args.len() > 3 {
                     return Err(RuntimeError::new(
                         "count() expects sub, optional start, optional end",
                     ));
-                }
-                if start_kw.is_some() && args.len() > 1 {
-                    return Err(RuntimeError::new("count() got multiple values for start"));
-                }
-                if end_kw.is_some() && args.len() > 2 {
-                    return Err(RuntimeError::new("count() got multiple values for end"));
                 }
                 let bytes = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
@@ -1865,16 +1855,12 @@ impl Vm {
                     other => bytes_like_from_value(other)?,
                 };
                 let len = bytes.len() as i64;
-                let mut start = if let Some(value) = start_kw {
-                    value_to_int(value)?
-                } else if let Some(value) = args.first() {
+                let mut start = if let Some(value) = args.first() {
                     value_to_int(value.clone())?
                 } else {
                     0
                 };
-                let mut end = if let Some(value) = end_kw {
-                    value_to_int(value)?
-                } else if let Some(value) = args.get(1) {
+                let mut end = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
                     len
@@ -3489,12 +3475,8 @@ impl Vm {
                 Ok(NativeCallResult::Value(self.heap.alloc_tuple(parts)))
             }
             NativeMethodKind::StrCount => {
-                let start_kw = kwargs.remove("start");
-                let end_kw = kwargs.remove("end");
                 if !kwargs.is_empty() {
-                    return Err(RuntimeError::new(
-                        "count() got an unexpected keyword argument",
-                    ));
+                    return Err(RuntimeError::type_error("count() takes no keyword arguments"));
                 }
                 let text = match &*receiver.kind() {
                     Object::Module(module_data) => {
@@ -3514,7 +3496,9 @@ impl Vm {
                                     })?
                                 }
                                 _ => {
-                                    return Err(RuntimeError::type_error("str receiver is invalid"));
+                                    return Err(RuntimeError::type_error(
+                                        "str receiver is invalid",
+                                    ));
                                 }
                             }
                         }
@@ -3526,27 +3510,17 @@ impl Vm {
                         "count() expects sub, optional start, optional end",
                     ));
                 }
-                if start_kw.is_some() && args.len() > 1 {
-                    return Err(RuntimeError::new("count() got multiple values for start"));
-                }
-                if end_kw.is_some() && args.len() > 2 {
-                    return Err(RuntimeError::new("count() got multiple values for end"));
-                }
                 let needle = match &args[0] {
                     Value::Str(value) => value.clone(),
                     _ => return Err(RuntimeError::new("count() substring must be str")),
                 };
                 let len = text.len() as i64;
-                let mut start = if let Some(value) = start_kw {
-                    value_to_int(value)?
-                } else if let Some(value) = args.get(1) {
+                let mut start = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
                     0
                 };
-                let mut end = if let Some(value) = end_kw {
-                    value_to_int(value)?
-                } else if let Some(value) = args.get(2) {
+                let mut end = if let Some(value) = args.get(2) {
                     value_to_int(value.clone())?
                 } else {
                     len
@@ -3587,11 +3561,9 @@ impl Vm {
                     NativeMethodKind::StrRFind => "rfind",
                     _ => unreachable!(),
                 };
-                let start_kw = kwargs.remove("start");
-                let end_kw = kwargs.remove("end");
                 if !kwargs.is_empty() {
-                    return Err(RuntimeError::new(format!(
-                        "{}() got an unexpected keyword argument",
+                    return Err(RuntimeError::type_error(format!(
+                        "{}() takes no keyword arguments",
                         method_name
                     )));
                 }
@@ -3609,7 +3581,9 @@ impl Vm {
                             match args.remove(0) {
                                 Value::Str(value) => value,
                                 _ => {
-                                    return Err(RuntimeError::type_error("str receiver is invalid"));
+                                    return Err(RuntimeError::type_error(
+                                        "str receiver is invalid",
+                                    ));
                                 }
                             }
                         }
@@ -3631,29 +3605,13 @@ impl Vm {
                         )));
                     }
                 };
-                if start_kw.is_some() && args.len() > 1 {
-                    return Err(RuntimeError::new(format!(
-                        "{}() got multiple values for start",
-                        method_name
-                    )));
-                }
-                if end_kw.is_some() && args.len() > 2 {
-                    return Err(RuntimeError::new(format!(
-                        "{}() got multiple values for end",
-                        method_name
-                    )));
-                }
                 let len = text.len() as i64;
-                let mut start = if let Some(value) = start_kw {
-                    value_to_int(value)?
-                } else if let Some(value) = args.get(1) {
+                let mut start = if let Some(value) = args.get(1) {
                     value_to_int(value.clone())?
                 } else {
                     0
                 };
-                let mut end = if let Some(value) = end_kw {
-                    value_to_int(value)?
-                } else if let Some(value) = args.get(2) {
+                let mut end = if let Some(value) = args.get(2) {
                     value_to_int(value.clone())?
                 } else {
                     len

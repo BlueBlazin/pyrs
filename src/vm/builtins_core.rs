@@ -1314,19 +1314,11 @@ impl Vm {
 
     pub(super) fn builtin_len(
         &mut self,
-        mut args: Vec<Value>,
-        mut kwargs: HashMap<String, Value>,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if let Some(value) = kwargs.remove("obj") {
-            if !args.is_empty() {
-                return Err(RuntimeError::new("len() got multiple values"));
-            }
-            args.push(value);
-        }
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "len() got an unexpected keyword argument",
-            ));
+            return Err(RuntimeError::type_error("len() takes no keyword arguments"));
         }
         if args.len() != 1 {
             return Err(RuntimeError::type_error("len() expects one argument"));
@@ -2347,7 +2339,10 @@ impl Vm {
                 }
                 match BuiltinFunction::Int.call(&self.heap, args) {
                     Ok(value) => return Ok(value),
-                    Err(err) if err.message == "int() unsupported type" => {
+                    Err(err)
+                        if runtime_error_matches_exception(&err, "TypeError")
+                            && err.message.contains("int() unsupported type") =>
+                    {
                         if let Some(method) = self.lookup_bound_special_method(&arg, "__int__")? {
                             return match self.call_internal(method, Vec::new(), HashMap::new())? {
                                 InternalCallOutcome::Value(value) => match value {
@@ -6053,9 +6048,16 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match compare_lt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
-                Value::Bool(self.compare_order_with_fallback(left, right)? == Ordering::Less),
-            ),
+            Err(err)
+                if runtime_error_matches_exception(&err, "TypeError")
+                    && err
+                        .message
+                        .contains("unsupported operand type for comparison") =>
+            {
+                Ok(Value::Bool(
+                    self.compare_order_with_fallback(left, right)? == Ordering::Less,
+                ))
+            }
             Err(err) => Err(err),
         }
     }
@@ -6939,9 +6941,16 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match compare_le(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
-                Value::Bool(self.compare_order_with_fallback(left, right)? != Ordering::Greater),
-            ),
+            Err(err)
+                if runtime_error_matches_exception(&err, "TypeError")
+                    && err
+                        .message
+                        .contains("unsupported operand type for comparison") =>
+            {
+                Ok(Value::Bool(
+                    self.compare_order_with_fallback(left, right)? != Ordering::Greater,
+                ))
+            }
             Err(err) => Err(err),
         }
     }
@@ -6953,9 +6962,16 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match compare_gt(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
-                Value::Bool(self.compare_order_with_fallback(left, right)? == Ordering::Greater),
-            ),
+            Err(err)
+                if runtime_error_matches_exception(&err, "TypeError")
+                    && err
+                        .message
+                        .contains("unsupported operand type for comparison") =>
+            {
+                Ok(Value::Bool(
+                    self.compare_order_with_fallback(left, right)? == Ordering::Greater,
+                ))
+            }
             Err(err) => Err(err),
         }
     }
@@ -6967,9 +6983,16 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         match compare_ge(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
-            Err(err) if err.message == "unsupported operand type for comparison" => Ok(
-                Value::Bool(self.compare_order_with_fallback(left, right)? != Ordering::Less),
-            ),
+            Err(err)
+                if runtime_error_matches_exception(&err, "TypeError")
+                    && err
+                        .message
+                        .contains("unsupported operand type for comparison") =>
+            {
+                Ok(Value::Bool(
+                    self.compare_order_with_fallback(left, right)? != Ordering::Less,
+                ))
+            }
             Err(err) => Err(err),
         }
     }

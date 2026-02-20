@@ -2494,17 +2494,19 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("getdoc() expects one argument"));
         }
-        let mut doc_value = args.remove(0);
-        if !matches!(doc_value, Value::Str(_) | Value::None) {
-            doc_value = match self.builtin_getattr(
-                vec![doc_value, Value::Str("__doc__".to_string()), Value::None],
+        let target = args.remove(0);
+        let doc_value = if matches!(target, Value::Str(_)) {
+            target
+        } else {
+            match self.builtin_getattr(
+                vec![target, Value::Str("__doc__".to_string()), Value::None],
                 HashMap::new(),
             ) {
                 Ok(value) => value,
                 Err(err) if is_missing_attribute_error(&err) => Value::None,
                 Err(err) => return Err(err),
-            };
-        }
+            }
+        };
         match doc_value {
             Value::None => Ok(Value::None),
             Value::Str(doc) => Ok(Value::Str(Self::inspect_cleandoc_text(&doc))),

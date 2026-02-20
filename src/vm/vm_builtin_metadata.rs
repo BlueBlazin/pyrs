@@ -113,6 +113,21 @@ fn memoryview_contiguity(
     (contiguous, c_contiguous, f_contiguous)
 }
 
+fn function_docstring_from_code(code: &CodeObject) -> Option<Value> {
+    let first = code.instructions.first()?;
+    let second = code.instructions.get(1)?;
+    if first.opcode != crate::bytecode::Opcode::LoadConst
+        || second.opcode != crate::bytecode::Opcode::PopTop
+    {
+        return None;
+    }
+    let const_idx = first.arg? as usize;
+    match code.constants.get(const_idx) {
+        Some(Value::Str(doc)) => Some(Value::Str(doc.clone())),
+        _ => None,
+    }
+}
+
 impl Vm {
     fn builtin_module_binding(&self, builtin: BuiltinFunction) -> Option<(String, String)> {
         for (module_name, module) in &self.modules {
@@ -2061,7 +2076,18 @@ impl Vm {
                     Ok(self.heap.alloc_dict(Vec::new()))
                 }
             }
-            "__doc__" => Ok(Value::None),
+            "__doc__" => {
+                let doc = {
+                    let func_ref = func.kind();
+                    let Object::Function(func_data) = &*func_ref else {
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
+                    };
+                    function_docstring_from_code(&func_data.code)
+                };
+                Ok(doc.unwrap_or(Value::None))
+            }
             "__call__" => Ok(Value::Function(func.clone())),
             "__func__" => Ok(Value::Function(func.clone())),
             "__get__" => Ok(self

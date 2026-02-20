@@ -22,13 +22,35 @@ const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
 const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
 
 impl Vm {
+    fn os_error_exception_name(err: &std::io::Error) -> &'static str {
+        match err.kind() {
+            std::io::ErrorKind::NotFound => "FileNotFoundError",
+            std::io::ErrorKind::PermissionDenied => "PermissionError",
+            std::io::ErrorKind::AlreadyExists => "FileExistsError",
+            std::io::ErrorKind::WouldBlock => "BlockingIOError",
+            std::io::ErrorKind::Interrupted => "InterruptedError",
+            std::io::ErrorKind::TimedOut => "TimeoutError",
+            std::io::ErrorKind::BrokenPipe => "BrokenPipeError",
+            std::io::ErrorKind::ConnectionRefused => "ConnectionRefusedError",
+            std::io::ErrorKind::ConnectionAborted => "ConnectionAbortedError",
+            std::io::ErrorKind::ConnectionReset => "ConnectionResetError",
+            _ => "OSError",
+        }
+    }
+
     fn os_error_from_io(context: &str, err: std::io::Error) -> RuntimeError {
         let message = format!("{context}: {err}");
-        if let Some(errno) = err.raw_os_error() {
-            RuntimeError::os_error_with_errno(errno as i64, message)
-        } else {
-            RuntimeError::os_error(message)
+        let exception = ExceptionObject::new(Self::os_error_exception_name(&err), Some(message));
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            if let Some(errno) = err.raw_os_error() {
+                attrs.insert("errno".to_string(), Value::Int(errno as i64));
+            }
+            if let Some(message) = &exception.message {
+                attrs.insert("strerror".to_string(), Value::Str(message.clone()));
+            }
         }
+        RuntimeError::from_exception(exception)
     }
 
     pub(super) fn builtin_os_uname(

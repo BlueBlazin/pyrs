@@ -6183,7 +6183,10 @@ impl Vm {
                 .and_then(|frame| frame.active_exception.clone())
                 .map(|current| self.normalize_exception_value(current))
                 .transpose()?;
-            if let Some(Value::Exception(context_data)) = implicit_context {
+            if let Some(Value::Exception(context_data)) = implicit_context
+                && exc_data.context.is_none()
+                && context_data.object_id != exc_data.object_id
+            {
                 exc_data.context = Some(context_data);
             }
             if let Some(cause_value) = explicit_cause {
