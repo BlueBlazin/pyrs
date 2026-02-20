@@ -355,7 +355,7 @@ impl Vm {
         let module = self
             .modules
             .get("ssl")
-            .ok_or_else(|| RuntimeError::new("module 'ssl' not found"))?
+            .ok_or_else(|| RuntimeError::module_not_found_error("module 'ssl' not found"))?
             .clone();
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("invalid ssl module object"));

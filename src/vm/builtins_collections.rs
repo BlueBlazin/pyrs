@@ -2180,7 +2180,7 @@ impl Vm {
                 return Ok(value.clone());
             }
         }
-        Err(RuntimeError::new("key not found"))
+        Err(RuntimeError::key_error("key not found"))
     }
 
     pub(super) fn builtin_collections_chainmap_setitem(
@@ -2269,7 +2269,7 @@ impl Vm {
             ));
         };
         if dict_remove_value(&dict, &key).is_none() {
-            return Err(RuntimeError::new("key not found"));
+            return Err(RuntimeError::key_error("key not found"));
         }
         Ok(Value::None)
     }

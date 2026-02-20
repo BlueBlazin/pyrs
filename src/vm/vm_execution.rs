@@ -3533,7 +3533,7 @@ impl Vm {
                             {
                                 ensure_hashable(&index)?;
                                 if dict_remove_value(&backing_dict, &index).is_none() {
-                                    return Err(RuntimeError::new("key not found"));
+                                    return Err(RuntimeError::key_error("key not found"));
                                 }
                             } else {
                                 return Err(RuntimeError::new("delete subscript unsupported type"));
@@ -3549,7 +3549,7 @@ impl Vm {
                                 let sync_key = index.clone();
                                 ensure_hashable(&index)?;
                                 if dict_remove_value(&obj, &index).is_none() {
-                                    return Err(RuntimeError::new("key not found"));
+                                    return Err(RuntimeError::key_error("key not found"));
                                 }
                                 self.sync_module_global_from_locals_dict_write(
                                     &obj, &sync_key, None,
@@ -4835,7 +4835,7 @@ impl Vm {
                         let method_data = match &*method.kind() {
                             Object::BoundMethod(data) => data.clone(),
                             _ => {
-                                return Err(RuntimeError::new("attempted to call non-function"));
+                                return Err(RuntimeError::type_error("attempted to call non-function"));
                             }
                         };
                         match &*method_data.function.kind() {
@@ -4870,7 +4870,7 @@ impl Vm {
                                 )?;
                             }
                             _ => {
-                                return Err(RuntimeError::new("attempted to call non-function"));
+                                return Err(RuntimeError::type_error("attempted to call non-function"));
                             }
                         }
                     }
@@ -8404,7 +8404,7 @@ impl Vm {
             Value::BoundMethod(method) => {
                 let (function, receiver) = match &*method.kind() {
                     Object::BoundMethod(data) => (data.function.clone(), data.receiver.clone()),
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 };
                 match &*function.kind() {
                     Object::Function(_) => {
@@ -8425,7 +8425,7 @@ impl Vm {
                             self.call_native_method(native.kind, receiver, args, HashMap::new());
                         self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)?;
                     }
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 }
             }
             Value::Class(class) => {
@@ -8459,7 +8459,7 @@ impl Vm {
                 let value = self.instantiate_exception_type(&name, &args, &HashMap::new())?;
                 self.push_value(value);
             }
-            _ => return Err(RuntimeError::new("attempted to call non-function")),
+            _ => return Err(RuntimeError::type_error("attempted to call non-function")),
         }
         Ok(())
     }
@@ -8635,7 +8635,7 @@ impl Vm {
             let method_kind = method.kind();
             let method_data = match &*method_kind {
                 Object::BoundMethod(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
@@ -8656,7 +8656,7 @@ impl Vm {
                     self.call_native_method(native.kind, receiver, Vec::new(), HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::new("attempted to call non-function")),
+            _ => Err(RuntimeError::type_error("attempted to call non-function")),
         }
     }
 
@@ -8670,7 +8670,7 @@ impl Vm {
             let method_kind = method.kind();
             let method_data = match &*method_kind {
                 Object::BoundMethod(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
@@ -8691,7 +8691,7 @@ impl Vm {
                     self.call_native_method(native.kind, receiver, vec![arg0], HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::new("attempted to call non-function")),
+            _ => Err(RuntimeError::type_error("attempted to call non-function")),
         }
     }
 
@@ -8706,7 +8706,7 @@ impl Vm {
             let method_kind = method.kind();
             let method_data = match &*method_kind {
                 Object::BoundMethod(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
@@ -8731,7 +8731,7 @@ impl Vm {
                 );
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::new("attempted to call non-function")),
+            _ => Err(RuntimeError::type_error("attempted to call non-function")),
         }
     }
 
@@ -8747,7 +8747,7 @@ impl Vm {
             let method_kind = method.kind();
             let method_data = match &*method_kind {
                 Object::BoundMethod(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
@@ -8776,7 +8776,7 @@ impl Vm {
                 );
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::new("attempted to call non-function")),
+            _ => Err(RuntimeError::type_error("attempted to call non-function")),
         }
     }
 
@@ -8915,7 +8915,7 @@ impl Vm {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             let code = func_data.code.clone();
             let simple_positional_path = func_data.plain_positional_call_arity == Some(1);
@@ -8941,7 +8941,7 @@ impl Vm {
                 let func_kind = func.kind();
                 let func_data = match &*func_kind {
                     Object::Function(data) => data,
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 };
                 Some(func_data.closure.clone())
             };
@@ -9003,7 +9003,7 @@ impl Vm {
         let func_kind = func.kind();
         let func_data = match &*func_kind {
             Object::Function(data) => data,
-            _ => return Err(RuntimeError::new("attempted to call non-function")),
+            _ => return Err(RuntimeError::type_error("attempted to call non-function")),
         };
         if func_data.code.fast_local_count == 1
             && func_data.code.plain_positional_arg0_slot == Some(0)
@@ -9034,7 +9034,7 @@ impl Vm {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             (
                 func_data.code.clone(),
@@ -9173,7 +9173,7 @@ impl Vm {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             let code = &func_data.code;
             let simple_positional_path = func_data.plain_positional_call_arity == Some(2);
@@ -9196,7 +9196,7 @@ impl Vm {
                 let func_kind = func.kind();
                 let func_data = match &*func_kind {
                     Object::Function(data) => data,
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 };
                 (
                     func_data.code.clone(),
@@ -9228,7 +9228,7 @@ impl Vm {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             let code = &func_data.code;
             let simple_positional_path = func_data.plain_positional_call_arity == Some(3);
@@ -9252,7 +9252,7 @@ impl Vm {
                 let func_kind = func.kind();
                 let func_data = match &*func_kind {
                     Object::Function(data) => data,
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 };
                 (
                     func_data.code.clone(),
@@ -9284,7 +9284,7 @@ impl Vm {
         let func_kind = func.kind();
         let func_data = match &*func_kind {
             Object::Function(data) => data,
-            _ => return Err(RuntimeError::new("attempted to call non-function")),
+            _ => return Err(RuntimeError::type_error("attempted to call non-function")),
         };
         self.push_simple_positional_function_frame_two_args_no_cells_ref(
             &func_data.code,
@@ -9306,7 +9306,7 @@ impl Vm {
         let func_kind = func.kind();
         let func_data = match &*func_kind {
             Object::Function(data) => data,
-            _ => return Err(RuntimeError::new("attempted to call non-function")),
+            _ => return Err(RuntimeError::type_error("attempted to call non-function")),
         };
         self.push_simple_positional_function_frame_three_args_no_cells_ref(
             &func_data.code,
@@ -9583,7 +9583,7 @@ impl Vm {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             let code = func_data.code.clone();
             let simple_positional_path =
@@ -9609,7 +9609,7 @@ impl Vm {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
                 Object::Function(data) => data,
-                _ => return Err(RuntimeError::new("attempted to call non-function")),
+                _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
             bind_arguments(func_data, &self.heap, args, kwargs)?
         };

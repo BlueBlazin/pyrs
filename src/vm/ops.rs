@@ -331,7 +331,7 @@ pub(super) fn div_values(left: Value, right: Value) -> Result<Value, RuntimeErro
         .ok_or_else(|| RuntimeError::new("unsupported operand type for /"))?;
     let right_value = numeric_as_f64(right);
     if right_value == 0.0 {
-        return Err(RuntimeError::new("division by zero"));
+        return Err(RuntimeError::zero_division_error("division by zero"));
     }
     Ok(Value::Float(numeric_as_f64(left) / right_value))
 }
@@ -343,7 +343,7 @@ pub(super) fn floor_div_values(left: Value, right: Value) -> Result<Value, Runti
     if let Some((left, right)) = integer_pair(&left, &right) {
         let (quotient, _) = left
             .div_mod_floor(&right)
-            .ok_or_else(|| RuntimeError::new("division by zero"))?;
+            .ok_or_else(|| RuntimeError::zero_division_error("division by zero"))?;
         return Ok(bigint_to_value(quotient));
     }
     let (left, right) = numeric_pair(&left, &right)
@@ -355,7 +355,7 @@ pub(super) fn floor_div_values(left: Value, right: Value) -> Result<Value, Runti
         (left, right) => {
             let right_value = numeric_as_f64(right);
             if right_value == 0.0 {
-                return Err(RuntimeError::new("division by zero"));
+                return Err(RuntimeError::zero_division_error("division by zero"));
             }
             Ok(Value::Float((numeric_as_f64(left) / right_value).floor()))
         }
@@ -390,7 +390,7 @@ pub(super) fn mod_values(left: Value, right: Value, heap: &Heap) -> Result<Value
     if let Some((left, right)) = integer_pair(&left, &right) {
         let (_, remainder) = left
             .div_mod_floor(&right)
-            .ok_or_else(|| RuntimeError::new("modulo by zero"))?;
+            .ok_or_else(|| RuntimeError::zero_division_error("modulo by zero"))?;
         return Ok(bigint_to_value(remainder));
     }
     let (left, right) = numeric_pair(&left, &right)
@@ -896,7 +896,7 @@ pub(super) fn pow_values(left: Value, right: Value) -> Result<Value, RuntimeErro
             let left = left_big.to_f64();
             let right = right_big.to_f64();
             if left == 0.0 {
-                return Err(RuntimeError::new("division by zero"));
+                return Err(RuntimeError::zero_division_error("division by zero"));
             }
             return Ok(Value::Float(left.powf(right)));
         }
@@ -920,7 +920,7 @@ pub(super) fn pow_values(left: Value, right: Value) -> Result<Value, RuntimeErro
             let left = numeric_as_f64(left);
             let right = numeric_as_f64(right);
             if left == 0.0 && right < 0.0 {
-                return Err(RuntimeError::new("division by zero"));
+                return Err(RuntimeError::zero_division_error("division by zero"));
             }
             Ok(Value::Float(left.powf(right)))
         }

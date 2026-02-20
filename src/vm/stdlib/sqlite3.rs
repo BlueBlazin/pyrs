@@ -1405,7 +1405,7 @@ impl Vm {
         let module = self
             .modules
             .get("_sqlite3")
-            .ok_or_else(|| RuntimeError::new("module '_sqlite3' not found"))?;
+            .ok_or_else(|| RuntimeError::module_not_found_error("module '_sqlite3' not found"))?;
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("invalid _sqlite3 module object"));
         };

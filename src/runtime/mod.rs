@@ -4425,7 +4425,7 @@ impl BuiltinFunction {
                     Ok(default)
                 } else {
                     // KeyError is a LookupError subclass and matches contextvars expectations.
-                    Err(RuntimeError::new("key not found"))
+                    Err(RuntimeError::key_error("key not found"))
                 }
             }
             BuiltinFunction::ContextVarSet => {
@@ -6745,7 +6745,7 @@ fn pow_numeric_values(base: Value, exponent: Value) -> Result<Value, RuntimeErro
                 NumericValue::Float(value) => value,
             };
             if base == 0.0 && exponent < 0.0 {
-                return Err(RuntimeError::new("division by zero"));
+                return Err(RuntimeError::zero_division_error("division by zero"));
             }
             Ok(Value::Float(base.powf(exponent)))
         }

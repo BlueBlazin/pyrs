@@ -4210,7 +4210,7 @@ fn python_floor_div(left: i64, right: i64) -> Result<i64, RuntimeError> {
 
 fn python_mod(left: i64, right: i64) -> Result<i64, RuntimeError> {
     if right == 0 {
-        return Err(RuntimeError::new("modulo by zero"));
+        return Err(RuntimeError::zero_division_error("modulo by zero"));
     }
     let a = left as i128;
     let b = right as i128;

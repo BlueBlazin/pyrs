@@ -741,7 +741,7 @@ impl Vm {
                         }
                     };
                 }
-                Err(RuntimeError::new("key not found"))
+                Err(RuntimeError::key_error("key not found"))
             }
             NativeMethodKind::DictSetItem => {
                 if args.len() != 2 || !kwargs.is_empty() {
@@ -798,7 +798,7 @@ impl Vm {
                     }
                 };
                 if dict_remove_value(&dict_receiver, &key).is_none() {
-                    return Err(RuntimeError::new("key not found"));
+                    return Err(RuntimeError::key_error("key not found"));
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -818,7 +818,7 @@ impl Vm {
                 if let Some(default) = default {
                     return Ok(NativeCallResult::Value(default));
                 }
-                Err(RuntimeError::new("key not found"))
+                Err(RuntimeError::key_error("key not found"))
             }
             NativeMethodKind::ListAppend => {
                 if args.len() != 1 {
@@ -898,7 +898,7 @@ impl Vm {
                     return Err(RuntimeError::new("list.remove() receiver must be list"));
                 };
                 let Some(index) = values.iter().position(|value| *value == target) else {
-                    return Err(RuntimeError::new("list.remove(x): x not in list"));
+                    return Err(RuntimeError::value_error("list.remove(x): x not in list"));
                 };
                 values.remove(index);
                 Ok(NativeCallResult::Value(Value::None))
@@ -1204,7 +1204,7 @@ impl Vm {
                         if let Some(index) = find_index(values, &mut remaining_args)? {
                             Ok(NativeCallResult::Value(Value::Int(index)))
                         } else {
-                            Err(RuntimeError::new("tuple.index(x): x not in tuple"))
+                            Err(RuntimeError::value_error("tuple.index(x): x not in tuple"))
                         }
                     }
                     Object::Module(module_data) => {
@@ -1240,7 +1240,7 @@ impl Vm {
                         if let Some(index) = find_index(values, &mut remaining_args)? {
                             Ok(NativeCallResult::Value(Value::Int(index)))
                         } else {
-                            Err(RuntimeError::new("tuple.index(x): x not in tuple"))
+                            Err(RuntimeError::value_error("tuple.index(x): x not in tuple"))
                         }
                     }
                     _ => Err(RuntimeError::new("tuple.index() receiver must be tuple")),
@@ -3636,7 +3636,7 @@ impl Vm {
                 };
                 let found = found.map(|idx| (idx + start_idx) as i64).unwrap_or(-1);
                 if matches!(kind, NativeMethodKind::StrIndex) && found < 0 {
-                    return Err(RuntimeError::new("substring not found"));
+                    return Err(RuntimeError::value_error("substring not found"));
                 }
                 Ok(NativeCallResult::Value(Value::Int(found)))
             }
@@ -4493,7 +4493,7 @@ impl Vm {
                 if values.remove_value(&item) {
                     Ok(NativeCallResult::Value(Value::None))
                 } else {
-                    Err(RuntimeError::new("key not found"))
+                    Err(RuntimeError::key_error("key not found"))
                 }
             }
             NativeMethodKind::SetPop => {
@@ -4505,7 +4505,7 @@ impl Vm {
                     return Err(RuntimeError::new("pop() receiver must be set"));
                 };
                 if values.is_empty() {
-                    return Err(RuntimeError::new("pop from an empty set"));
+                    return Err(RuntimeError::key_error("pop from an empty set"));
                 }
                 let item = values.remove(values.len() - 1);
                 Ok(NativeCallResult::Value(item))

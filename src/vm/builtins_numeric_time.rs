@@ -540,7 +540,7 @@ impl Vm {
         }
         let value = value_to_f64(args[0].clone())?;
         if value < 0.0 {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         Ok(Value::Float(value.sqrt()))
     }
@@ -797,14 +797,14 @@ impl Vm {
         }
         let x = value_to_f64(args[0].clone())?;
         if x <= 0.0 {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         if args.len() == 1 {
             return Ok(Value::Float(x.ln()));
         }
         let base = value_to_f64(args[1].clone())?;
         if base <= 0.0 || base == 1.0 {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         Ok(Value::Float(x.ln() / base.ln()))
     }
@@ -819,11 +819,11 @@ impl Vm {
         }
         let x = value_to_f64(args[0].clone())?;
         if x.is_finite() && x <= 0.0 && x.fract() == 0.0 {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         let value = native_lgamma(x);
         if !x.is_nan() && value.is_nan() {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         Ok(Value::Float(value))
     }
@@ -838,7 +838,7 @@ impl Vm {
         }
         let x = value_to_f64(args[0].clone())?;
         if x <= 0.0 {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         Ok(Value::Float(x.log2()))
     }
@@ -946,7 +946,7 @@ impl Vm {
         }
         let x = value_to_f64(args[0].clone())?;
         if !(-1.0..=1.0).contains(&x) {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         Ok(Value::Float(x.asin()))
     }
@@ -972,7 +972,7 @@ impl Vm {
         }
         let x = value_to_f64(args[0].clone())?;
         if !(-1.0..=1.0).contains(&x) {
-            return Err(RuntimeError::new("math domain error"));
+            return Err(RuntimeError::value_error("math domain error"));
         }
         Ok(Value::Float(x.acos()))
     }

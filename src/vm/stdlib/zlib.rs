@@ -319,7 +319,7 @@ impl Vm {
         let module = self
             .modules
             .get("zlib")
-            .ok_or_else(|| RuntimeError::new("module 'zlib' not found"))?;
+            .ok_or_else(|| RuntimeError::module_not_found_error("module 'zlib' not found"))?;
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("invalid zlib module object"));
         };
@@ -333,7 +333,7 @@ impl Vm {
         let module = self
             .modules
             .get("zlib")
-            .ok_or_else(|| RuntimeError::new("module 'zlib' not found"))?;
+            .ok_or_else(|| RuntimeError::module_not_found_error("module 'zlib' not found"))?;
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("invalid zlib module object"));
         };

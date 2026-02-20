@@ -1979,7 +1979,7 @@ impl Vm {
 
     fn subprocess_pipe_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("subprocess").cloned() else {
-            return Err(RuntimeError::new("module 'subprocess' not found"));
+            return Err(RuntimeError::module_not_found_error("module 'subprocess' not found"));
         };
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module 'subprocess' is invalid"));

@@ -1282,7 +1282,7 @@ impl Vm {
             .modules
             .get("_io")
             .cloned()
-            .ok_or_else(|| RuntimeError::new("module '_io' not found"))?;
+            .ok_or_else(|| RuntimeError::module_not_found_error("module '_io' not found"))?;
         let Object::Module(module_data) = &*module.kind() else {
             return Err(RuntimeError::new("module '_io' is invalid"));
         };

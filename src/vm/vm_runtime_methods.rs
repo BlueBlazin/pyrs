@@ -159,7 +159,7 @@ impl Vm {
                         }
                     };
                 }
-                return Err(RuntimeError::new("key not found"));
+                return Err(RuntimeError::key_error("key not found"));
             }
         }
         match index {
@@ -552,7 +552,7 @@ impl Vm {
                     let default_factory = self.defaultdict_factories.get(&obj.id()).cloned();
                     if let Some(default_factory) = default_factory {
                         if matches!(default_factory, Value::None) {
-                            return Err(RuntimeError::new("key not found"));
+                            return Err(RuntimeError::key_error("key not found"));
                         }
                         let generated = match self.call_internal(
                             default_factory,
@@ -567,7 +567,7 @@ impl Vm {
                         dict_set_value_checked(&obj, index, generated.clone())?;
                         Ok(generated)
                     } else {
-                        Err(RuntimeError::new("key not found"))
+                        Err(RuntimeError::key_error("key not found"))
                     }
                 }
                 Value::Module(obj) => {
@@ -584,7 +584,7 @@ impl Vm {
                             .globals
                             .get(&key)
                             .cloned()
-                            .ok_or_else(|| RuntimeError::new("key not found"));
+                            .ok_or_else(|| RuntimeError::key_error("key not found"));
                     }
                     if module_data.name == "__re_match__" {
                         let getitem = self

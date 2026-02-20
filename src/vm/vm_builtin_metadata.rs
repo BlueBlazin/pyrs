@@ -2919,7 +2919,7 @@ impl Vm {
             Value::BoundMethod(method) => {
                 let method_data = match &*method.kind() {
                     Object::BoundMethod(data) => data.clone(),
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 };
                 match &*method_data.function.kind() {
                     Object::Function(_) => {
@@ -2993,7 +2993,7 @@ impl Vm {
                             }
                         }
                     }
-                    _ => return Err(RuntimeError::new("attempted to call non-function")),
+                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 }
             }
             Value::Builtin(builtin) => {
@@ -3025,7 +3025,7 @@ impl Vm {
                 {
                     return self.call_internal(call_target, args, kwargs);
                 }
-                return Err(RuntimeError::new("attempted to call non-function"));
+                return Err(RuntimeError::type_error("attempted to call non-function"));
             }
             Value::Class(class) => {
                 let (class_name, metaclass_name) = match &*class.kind() {
@@ -3575,7 +3575,7 @@ impl Vm {
                         eprintln!("[call-non-function] value={}", format_repr(&other));
                     }
                 }
-                return Err(RuntimeError::new("attempted to call non-function"));
+                return Err(RuntimeError::type_error("attempted to call non-function"));
             }
         };
 
