@@ -6,6 +6,10 @@ Status: active (Milestone 15 execution strategy).
 
 This is the active workstream. If context is compacted, resume from this section first.
 
+- [ ] P0 lifetime-model closure is active (`docs/CAPI_LIFETIME_MODEL.md`):
+  - no per-context frees for escaped/shared CPython wrappers,
+  - ownership must move to VM-global registry + explicit borrowed/new/stolen semantics,
+  - temporary pinning is crash containment only and must be retired after registry migration.
 - [x] Two-lane strategy + acceptance criteria documented (`docs/CAPI_PLAN.md`).
 - [x] CPython 3.14 abi3 manifest generation is in place (`scripts/generate_abi3_manifest.py`, `perf/abi3_manifest_latest.json`).
 - [x] Conformance tests expanded with behavior-level abi3 semantics across batch probes (`tests/extension_smoke.rs`).

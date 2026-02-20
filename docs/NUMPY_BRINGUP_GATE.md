@@ -103,6 +103,16 @@ If a probed local module is not installed, its dependent cases are recorded as `
 
 ## Current Expected State
 
+- 2026-02-20 lifetime-model checkpoint (P0):
+  - scientific-stack direct mode now has an explicit lifetime-safety lock tracked in
+    `docs/CAPI_LIFETIME_MODEL.md`.
+  - root issue: CPython-compat wrapper lifetime currently mixes context-scoped frees with
+    refcount-scoped extension usage, which can produce use-after-free class failures in repeated
+    NumPy call paths.
+  - immediate policy:
+    - treat temporary wrapper pinning as crash containment only,
+    - migrate to VM-global CAPI object registry + explicit borrowed/new/stolen ownership,
+    - do not close scientific-stack milestones until lifetime-model closure criteria are green.
 - 2026-02-19 import-state checkpoint:
   - fixed source-module failure cleanup so failed imports no longer leave partial modules in `sys.modules` (tracked via internal module-initializing marker + unwind cleanup).
   - concrete closure: after `import numpy`, attempting `import ctypes` now raises `ModuleNotFoundError: module '_ctypes' not found` (no stale partial `ctypes` module with missing `CFUNCTYPE`).

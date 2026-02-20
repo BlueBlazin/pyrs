@@ -28,8 +28,13 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Use two-lane execution:
   - Lane A: CPython 3.14 Stable ABI (`abi3`) closure.
   - Lane B: explicit non-abi3 surfaces required by NumPy/scientific stack.
+- P0 safety lock:
+  - treat C-API wrapper lifetime as a first-class blocker (`docs/CAPI_LIFETIME_MODEL.md`);
+  - no patch-only pinning strategy as final state;
+  - migrate to VM-global registry + explicit borrowed/new/stolen ownership semantics.
 - Before starting a new coding round, re-check:
   - `docs/CAPI_PLAN.md` (execution lock + abi3 status),
+  - `docs/CAPI_LIFETIME_MODEL.md` (lifetime invariants + migration phase),
   - `docs/NUMPY_BRINGUP_GATE.md` (current blocker + gate state),
   - `perf/abi3_manifest_latest.json` (coverage baseline).
 - Required cadence for each ABI batch:
