@@ -704,20 +704,20 @@ impl Vm {
         let seek_from = match whence {
             0 => {
                 if position < 0 {
-                    return Err(RuntimeError::new("OSError: [Errno 22] Invalid argument"));
+                    return Err(RuntimeError::os_error("[Errno 22] Invalid argument"));
                 }
                 SeekFrom::Start(position as u64)
             }
             1 => SeekFrom::Current(position),
             2 => SeekFrom::End(position),
-            _ => return Err(RuntimeError::new("OSError: [Errno 22] Invalid argument")),
+            _ => return Err(RuntimeError::os_error("[Errno 22] Invalid argument")),
         };
         let file = self
             .find_open_file_mut(fd)
             .ok_or_else(|| RuntimeError::new("bad file descriptor"))?;
         let offset = file
             .seek(seek_from)
-            .map_err(|_| RuntimeError::new("OSError: [Errno 22] Invalid argument"))?;
+            .map_err(|_| RuntimeError::os_error("[Errno 22] Invalid argument"))?;
         Ok(Value::Int(offset as i64))
     }
 
@@ -732,7 +732,7 @@ impl Vm {
         let fd = value_to_int(args[0].clone())?;
         let length = value_to_int(args[1].clone())?;
         if length < 0 {
-            return Err(RuntimeError::new("OSError: [Errno 22] Invalid argument"));
+            return Err(RuntimeError::os_error("[Errno 22] Invalid argument"));
         }
         let file = self
             .find_open_file_mut(fd)

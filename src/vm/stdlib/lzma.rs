@@ -301,7 +301,7 @@ impl Vm {
             }
         };
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         let Some(state) = self.lzma_compressors.get_mut(&receiver.id()) else {
             return Err(RuntimeError::new(
                 "TypeError: invalid LZMACompressor object",
@@ -463,7 +463,7 @@ impl Vm {
             }
         };
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         let max_length_arg = if !args.is_empty() {
             Some(args.remove(0))
         } else {

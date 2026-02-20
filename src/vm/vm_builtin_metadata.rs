@@ -5146,11 +5146,11 @@ impl Vm {
                 Value::BigInt(index) => index.is_negative(),
                 Value::Bool(_) => false,
                 _ => {
-                    return Err(RuntimeError::new("TypeError: memo keys must be integers"));
+                    return Err(RuntimeError::type_error("memo keys must be integers"));
                 }
             };
             if is_negative_index {
-                return Err(RuntimeError::new("ValueError: memo key out of range"));
+                return Err(RuntimeError::value_error("memo key out of range"));
             }
         }
         Ok(())
@@ -5180,7 +5180,7 @@ impl Vm {
         let buffer_is_readonly =
             attr_name == "buffer" && mro_class_names.iter().any(|name| name == "TextIOWrapper");
         if raw_is_readonly || buffer_is_readonly {
-            return Err(RuntimeError::new("AttributeError: readonly attribute"));
+            return Err(RuntimeError::attribute_error("readonly attribute"));
         }
         if matches!(
             &*class_ref.kind(),
@@ -5284,7 +5284,7 @@ impl Vm {
                 Object::Class(class_data) if class_data.name == "TextIOWrapper"
             )
         {
-            return Err(RuntimeError::new("AttributeError: cannot delete attribute"));
+            return Err(RuntimeError::attribute_error("cannot delete attribute"));
         }
         if matches!(
             &*class_ref.kind(),

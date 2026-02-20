@@ -9705,7 +9705,7 @@ fn slice_indices(
     let len_isize = len as isize;
     let step = step.unwrap_or(1);
     if step == 0 {
-        return Err(RuntimeError::new("ValueError: slice step cannot be zero"));
+        return Err(RuntimeError::value_error("slice step cannot be zero"));
     }
     let step = step as isize;
 

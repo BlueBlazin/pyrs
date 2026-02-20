@@ -1768,7 +1768,7 @@ impl Vm {
         };
         values
             .pop()
-            .ok_or_else(|| RuntimeError::new("IndexError: pop from an empty deque"))
+            .ok_or_else(|| RuntimeError::index_error("pop from an empty deque"))
     }
 
     pub(super) fn builtin_collections_deque_popleft(
@@ -1785,7 +1785,7 @@ impl Vm {
             return Err(RuntimeError::new("deque.popleft() expected deque instance"));
         };
         if values.is_empty() {
-            return Err(RuntimeError::new("IndexError: pop from an empty deque"));
+            return Err(RuntimeError::index_error("pop from an empty deque"));
         }
         Ok(values.remove(0))
     }

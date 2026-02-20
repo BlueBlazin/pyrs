@@ -70,6 +70,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - VM runtime-error conversion is centralized via `runtime_error_to_exception_object(...)` + `ensure_exception_default_attrs(...)`.
   - `runtime_error_from_active_exception(...)` now preserves the original `ExceptionObject` while keeping traceback text compatibility.
   - explicit `raise ... from ...` now preserves `__context__` in addition to `__cause__` + `__suppress_context__`.
+  - prefixed `RuntimeError::new("XError: ...")` callsites were bulk-migrated to typed constructors (136 sites); fallback classifier is now a compatibility lane, not the primary path.
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

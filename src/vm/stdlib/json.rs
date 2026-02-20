@@ -346,7 +346,7 @@ impl Vm {
         };
         let idx = value_to_int(args[1].clone())?;
         if idx < 0 {
-            return Err(RuntimeError::new("StopIteration: 0"));
+            return Err(RuntimeError::stop_iteration("0"));
         }
         let idx = idx as usize;
         let (node, end) = parse_json_node_from_index(&source, idx)

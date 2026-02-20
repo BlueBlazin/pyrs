@@ -7759,6 +7759,46 @@ impl RuntimeError {
     pub fn key_error(message: impl Into<String>) -> Self {
         Self::with_exception("KeyError", Some(message.into()))
     }
+
+    pub fn runtime_error(message: impl Into<String>) -> Self {
+        Self::with_exception("RuntimeError", Some(message.into()))
+    }
+
+    pub fn overflow_error(message: impl Into<String>) -> Self {
+        Self::with_exception("OverflowError", Some(message.into()))
+    }
+
+    pub fn os_error(message: impl Into<String>) -> Self {
+        Self::with_exception("OSError", Some(message.into()))
+    }
+
+    pub fn import_error(message: impl Into<String>) -> Self {
+        Self::with_exception("ImportError", Some(message.into()))
+    }
+
+    pub fn module_not_found_error(message: impl Into<String>) -> Self {
+        Self::with_exception("ModuleNotFoundError", Some(message.into()))
+    }
+
+    pub fn stop_iteration(message: impl Into<String>) -> Self {
+        Self::with_exception("StopIteration", Some(message.into()))
+    }
+
+    pub fn unsupported_operation(message: impl Into<String>) -> Self {
+        Self::with_exception("UnsupportedOperation", Some(message.into()))
+    }
+
+    pub fn unicode_decode_error(message: impl Into<String>) -> Self {
+        Self::with_exception("UnicodeDecodeError", Some(message.into()))
+    }
+
+    pub fn unicode_encode_error(message: impl Into<String>) -> Self {
+        Self::with_exception("UnicodeEncodeError", Some(message.into()))
+    }
+
+    pub fn zero_division_error(message: impl Into<String>) -> Self {
+        Self::with_exception("ZeroDivisionError", Some(message.into()))
+    }
 }
 
 fn runtime_error_exception_from_message(message: &str) -> Option<ExceptionObject> {

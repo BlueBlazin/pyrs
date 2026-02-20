@@ -142,7 +142,7 @@ impl Vm {
         let wbits =
             Self::zlib_parse_optional_int(wbits_arg, Z_DEFAULT_WINDOW_BITS as i64, "wbits")?;
         let payload = bytes_like_from_value(data_arg)
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         Ok((payload, level as c_int, wbits as c_int))
     }
 
@@ -155,7 +155,7 @@ impl Vm {
         strategy: c_int,
     ) -> Result<Vec<u8>, RuntimeError> {
         if payload.len() > c_uint::MAX as usize {
-            return Err(RuntimeError::new("OverflowError: input is too large"));
+            return Err(RuntimeError::overflow_error("input is too large"));
         }
 
         let mut stream: ZStream = unsafe { mem::zeroed() };
@@ -223,7 +223,7 @@ impl Vm {
         require_eof: bool,
     ) -> Result<(Vec<u8>, bool, Vec<u8>), RuntimeError> {
         if payload.len() > c_uint::MAX as usize {
-            return Err(RuntimeError::new("OverflowError: input is too large"));
+            return Err(RuntimeError::overflow_error("input is too large"));
         }
 
         let mut stream: ZStream = unsafe { mem::zeroed() };
@@ -395,7 +395,7 @@ impl Vm {
             )));
         }
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
 
         let wbits_arg = if !args.is_empty() {
             Some(args.remove(0))
@@ -436,7 +436,7 @@ impl Vm {
             )));
         }
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         let value_arg = if !args.is_empty() {
             Some(args.remove(0))
         } else {
@@ -450,7 +450,7 @@ impl Vm {
         }
         let seed = Self::zlib_parse_optional_int(value_arg, 0, "value")? as u32;
         if payload.len() > c_uint::MAX as usize {
-            return Err(RuntimeError::new("OverflowError: input is too large"));
+            return Err(RuntimeError::overflow_error("input is too large"));
         }
         let crc = unsafe {
             crc32(
@@ -628,12 +628,12 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid Compress object")),
+            _ => return Err(RuntimeError::type_error("invalid Compress object")),
         };
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         let Some(state) = self.zlib_compress_objects.get_mut(&receiver.id()) else {
-            return Err(RuntimeError::new("TypeError: invalid Compress object"));
+            return Err(RuntimeError::type_error("invalid Compress object"));
         };
         if state.finished {
             return Err(RuntimeError::new("zlib.error: inconsistent stream state"));
@@ -654,7 +654,7 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid Compress object")),
+            _ => return Err(RuntimeError::type_error("invalid Compress object")),
         };
         let mode_arg = if !args.is_empty() {
             Some(args.remove(0))
@@ -678,7 +678,7 @@ impl Vm {
 
         let (buffer, level, wbits, mem_level, strategy, already_finished) = {
             let Some(state) = self.zlib_compress_objects.get_mut(&receiver.id()) else {
-                return Err(RuntimeError::new("TypeError: invalid Compress object"));
+                return Err(RuntimeError::type_error("invalid Compress object"));
             };
             (
                 state.buffer.clone(),
@@ -694,7 +694,7 @@ impl Vm {
         }
         let out = self.zlib_deflate_bytes(&buffer, level, wbits, mem_level, strategy)?;
         let Some(state) = self.zlib_compress_objects.get_mut(&receiver.id()) else {
-            return Err(RuntimeError::new("TypeError: invalid Compress object"));
+            return Err(RuntimeError::type_error("invalid Compress object"));
         };
         state.buffer.clear();
         state.finished = true;
@@ -713,10 +713,10 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid Decompress object")),
+            _ => return Err(RuntimeError::type_error("invalid Decompress object")),
         };
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
 
         let max_length_arg = if !args.is_empty() {
             Some(args.remove(0))
@@ -733,7 +733,7 @@ impl Vm {
         let state_wbits;
         {
             let Some(state) = self.zlib_decompress_objects.get_mut(&receiver.id()) else {
-                return Err(RuntimeError::new("TypeError: invalid Decompress object"));
+                return Err(RuntimeError::type_error("invalid Decompress object"));
             };
             state_wbits = state.wbits;
             if state.eof {
@@ -775,10 +775,10 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid Decompress object")),
+            _ => return Err(RuntimeError::type_error("invalid Decompress object")),
         };
         if !self.zlib_decompress_objects.contains_key(&receiver.id()) {
-            return Err(RuntimeError::new("TypeError: invalid Decompress object"));
+            return Err(RuntimeError::type_error("invalid Decompress object"));
         }
         Ok(self.heap.alloc_bytes(Vec::new()))
     }

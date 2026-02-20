@@ -1952,7 +1952,7 @@ impl Vm {
                     let index = found as i64 + start;
                     Ok(NativeCallResult::Value(Value::Int(index)))
                 } else if matches!(kind, NativeMethodKind::BytesIndex) {
-                    Err(RuntimeError::new("ValueError: subsection not found"))
+                    Err(RuntimeError::value_error("subsection not found"))
                 } else {
                     Ok(NativeCallResult::Value(Value::Int(-1)))
                 }

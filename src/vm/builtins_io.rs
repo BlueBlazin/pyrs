@@ -664,7 +664,7 @@ impl Vm {
     }
 
     fn io_incremental_newline_uninitialized_error() -> RuntimeError {
-        RuntimeError::new("ValueError: I/O operation on uninitialized object")
+        RuntimeError::value_error("I/O operation on uninitialized object")
     }
 
     fn io_incremental_newline_attr(instance: &ObjRef, name: &str) -> Result<Value, RuntimeError> {
@@ -748,7 +748,7 @@ impl Vm {
         })?;
         let errors = errors.take().unwrap_or(Value::Str("strict".to_string()));
         if !matches!(errors, Value::Str(_)) {
-            return Err(RuntimeError::new("TypeError: errors must be str"));
+            return Err(RuntimeError::type_error("errors must be str"));
         }
         Self::instance_attr_set(&instance, "decoder", decoder)?;
         Self::instance_attr_set(&instance, "translate", Value::Bool(is_truthy(&translate)))?;
@@ -905,16 +905,16 @@ impl Vm {
                     }
                 };
             let Value::Tuple(tuple_obj) = value else {
-                return Err(RuntimeError::new("TypeError: illegal decoder state"));
+                return Err(RuntimeError::type_error("illegal decoder state"));
             };
             let Object::Tuple(items) = &*tuple_obj.kind() else {
-                return Err(RuntimeError::new("TypeError: illegal decoder state"));
+                return Err(RuntimeError::type_error("illegal decoder state"));
             };
             if items.len() != 2 {
-                return Err(RuntimeError::new("TypeError: illegal decoder state"));
+                return Err(RuntimeError::type_error("illegal decoder state"));
             }
             let flag = value_to_int(items[1].clone())
-                .map_err(|_| RuntimeError::new("TypeError: illegal decoder state"))?;
+                .map_err(|_| RuntimeError::type_error("illegal decoder state"))?;
             (items[0].clone(), flag)
         };
         flag <<= 1;
@@ -938,17 +938,17 @@ impl Vm {
             self.take_bound_instance_arg(&mut args, "IncrementalNewlineDecoder.setstate")?;
         let state = args.remove(0);
         let Value::Tuple(tuple_obj) = state else {
-            return Err(RuntimeError::new("TypeError: state must be a tuple"));
+            return Err(RuntimeError::type_error("state must be a tuple"));
         };
         let Object::Tuple(items) = &*tuple_obj.kind() else {
-            return Err(RuntimeError::new("TypeError: state must be a tuple"));
+            return Err(RuntimeError::type_error("state must be a tuple"));
         };
         if items.len() != 2 {
-            return Err(RuntimeError::new("TypeError: state must be a tuple"));
+            return Err(RuntimeError::type_error("state must be a tuple"));
         }
         let buf = items[0].clone();
         let flag = value_to_int(items[1].clone())
-            .map_err(|_| RuntimeError::new("TypeError: state flag must be int"))?;
+            .map_err(|_| RuntimeError::type_error("state flag must be int"))?;
         let pendingcr = (flag & 1) != 0;
         Self::instance_attr_set(&instance, "pendingcr", Value::Bool(pendingcr))?;
         let decoder = Self::io_incremental_newline_attr(&instance, "decoder")?;
@@ -1923,7 +1923,7 @@ impl Vm {
             return Ok(Vec::new());
         };
         bytes_like_from_value(value)
-            .map_err(|_| RuntimeError::new("TypeError: internal text buffer must be bytes-like"))
+            .map_err(|_| RuntimeError::type_error("internal text buffer must be bytes-like"))
     }
 
     fn io_text_store_write_buffer(
@@ -1943,7 +1943,7 @@ impl Vm {
             return Ok(Vec::new());
         };
         bytes_like_from_value(value)
-            .map_err(|_| RuntimeError::new("TypeError: internal buffered data must be bytes-like"))
+            .map_err(|_| RuntimeError::type_error("internal buffered data must be bytes-like"))
     }
 
     fn io_buffered_store_read_buffer(
@@ -1963,7 +1963,7 @@ impl Vm {
             return Ok(Vec::new());
         };
         bytes_like_from_value(value)
-            .map_err(|_| RuntimeError::new("TypeError: internal buffered data must be bytes-like"))
+            .map_err(|_| RuntimeError::type_error("internal buffered data must be bytes-like"))
     }
 
     fn io_buffered_store_write_buffer(
@@ -2000,7 +2000,7 @@ impl Vm {
             Value::Bool(value) => i64::from(value),
             Value::BigInt(value) => value
                 .to_i64()
-                .ok_or_else(|| RuntimeError::new("OSError: raw write() returned invalid length"))?,
+                .ok_or_else(|| RuntimeError::os_error("raw write() returned invalid length"))?,
             Value::None => return Ok(None),
             _ => {
                 return Err(RuntimeError::new(
@@ -2118,7 +2118,7 @@ impl Vm {
             Value::Int(value) => value,
             Value::Bool(value) => i64::from(value),
             Value::BigInt(value) => value.to_i64().ok_or_else(|| {
-                RuntimeError::new("OSError: raw readinto() returned invalid length")
+                RuntimeError::os_error("raw readinto() returned invalid length")
             })?,
             other => {
                 return Err(RuntimeError::new(format!(
@@ -2151,7 +2151,7 @@ impl Vm {
 
     fn io_buffered_rwpair_endpoint(instance: &ObjRef, attr: &str) -> Result<Value, RuntimeError> {
         Self::instance_attr_get(instance, attr)
-            .ok_or_else(|| RuntimeError::new("ValueError: I/O operation on uninitialized object"))
+            .ok_or_else(|| RuntimeError::value_error("I/O operation on uninitialized object"))
     }
 
     fn io_buffered_delegate_method(
@@ -2240,7 +2240,7 @@ impl Vm {
             }
             Value::BigInt(value) => {
                 let read_count = value.to_i64().ok_or_else(|| {
-                    RuntimeError::new("ValueError: readinto returned value outside buffer size")
+                    RuntimeError::value_error("readinto returned value outside buffer size")
                 })?;
                 if read_count == 0 {
                     Ok(())
@@ -2424,14 +2424,14 @@ impl Vm {
             ));
         }
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: read of closed file"));
+            return Err(RuntimeError::value_error("read of closed file"));
         }
         let readable = self.builtin_io_buffered_readable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
         )?;
         if !is_truthy(&readable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+            return Err(RuntimeError::unsupported_operation("not readable"));
         }
         let writable = self.builtin_io_buffered_writable(
             vec![Value::Instance(instance.clone())],
@@ -2475,7 +2475,7 @@ impl Vm {
                     break;
                 }
                 let chunk = bytes_like_from_value(value)
-                    .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                    .map_err(|_| RuntimeError::type_error("read() should return bytes"))?;
                 if chunk.is_empty() {
                     break;
                 }
@@ -2540,7 +2540,7 @@ impl Vm {
                 break;
             }
             let chunk = bytes_like_from_value(value)
-                .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                .map_err(|_| RuntimeError::type_error("read() should return bytes"))?;
             if chunk.len() > read_size {
                 return Err(RuntimeError::new(
                     "OSError: raw read() returned invalid length",
@@ -2578,14 +2578,14 @@ impl Vm {
             ));
         }
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: read of closed file"));
+            return Err(RuntimeError::value_error("read of closed file"));
         }
         let readable = self.builtin_io_buffered_readable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
         )?;
         if !is_truthy(&readable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+            return Err(RuntimeError::unsupported_operation("not readable"));
         }
         let writable = self.builtin_io_buffered_writable(
             vec![Value::Instance(instance.clone())],
@@ -2644,7 +2644,7 @@ impl Vm {
                 return Ok(self.heap.alloc_bytes(Vec::new()));
             }
             let chunk = bytes_like_from_value(value)
-                .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                .map_err(|_| RuntimeError::type_error("read() should return bytes"))?;
             if chunk.len() > read_size {
                 return Err(RuntimeError::new(
                     "OSError: raw read() returned invalid length",
@@ -2683,14 +2683,14 @@ impl Vm {
             ));
         }
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: peek of closed file"));
+            return Err(RuntimeError::value_error("peek of closed file"));
         }
         let readable = self.builtin_io_buffered_readable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
         )?;
         if !is_truthy(&readable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+            return Err(RuntimeError::unsupported_operation("not readable"));
         }
         let writable = self.builtin_io_buffered_writable(
             vec![Value::Instance(instance.clone())],
@@ -2726,7 +2726,7 @@ impl Vm {
                     None
                 } else {
                     let chunk = bytes_like_from_value(value)
-                        .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                        .map_err(|_| RuntimeError::type_error("read() should return bytes"))?;
                     if chunk.len() > read_size {
                         return Err(RuntimeError::new(
                             "OSError: raw read() returned invalid length",
@@ -2754,7 +2754,7 @@ impl Vm {
             HashMap::new(),
         )?;
         if !is_truthy(&readable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+            return Err(RuntimeError::unsupported_operation("not readable"));
         }
         let writable = self.builtin_io_buffered_writable(
             vec![Value::Instance(instance.clone())],
@@ -2812,18 +2812,18 @@ impl Vm {
             ));
         }
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("ValueError: write to closed file"));
+            return Err(RuntimeError::value_error("write to closed file"));
         }
         let writable = self.builtin_io_buffered_writable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
         )?;
         if !is_truthy(&writable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not writable"));
+            return Err(RuntimeError::unsupported_operation("not writable"));
         }
         self.io_buffered_rewind_raw_after_readahead(&instance)?;
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         let buffer_size = Self::io_buffered_buffer_size(&instance).max(1);
         let mut buffered = Self::io_buffered_write_buffer(&instance)?;
         let available = buffer_size.saturating_sub(buffered.len());
@@ -3023,7 +3023,7 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.detach")?;
         let raw = match Self::instance_attr_get(&instance, "raw") {
             Some(Value::None) => {
-                return Err(RuntimeError::new("ValueError: raw stream already detached"));
+                return Err(RuntimeError::value_error("raw stream already detached"));
             }
             Some(value) => value,
             None => return Err(RuntimeError::new("buffered stream is uninitialized")),
@@ -3067,7 +3067,7 @@ impl Vm {
             "buffered fileno failed",
         ) {
             Ok(value) => Ok(value),
-            Err(_) => Err(RuntimeError::new("OSError: fileno")),
+            Err(_) => Err(RuntimeError::os_error("fileno")),
         }
     }
 
@@ -3087,7 +3087,7 @@ impl Vm {
             HashMap::new(),
         )?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
+            return Err(RuntimeError::unsupported_operation("not seekable"));
         }
         self.io_buffered_drain_write_buffer(&instance)?;
         if args.is_empty() {
@@ -3100,7 +3100,7 @@ impl Vm {
         }
         let whence = value_to_int(args[1].clone())?;
         if !matches!(whence, 0..=2) {
-            return Err(RuntimeError::new("ValueError: invalid whence"));
+            return Err(RuntimeError::value_error("invalid whence"));
         }
         if whence == 1 {
             let offset = value_to_int(args[0].clone())?;
@@ -3115,7 +3115,7 @@ impl Vm {
             "buffered seek failed",
         )?;
         let position = value_to_int(value)
-            .map_err(|_| RuntimeError::new("OSError: seek() returned an invalid position"))?;
+            .map_err(|_| RuntimeError::os_error("seek() returned an invalid position"))?;
         if position < 0 {
             return Err(RuntimeError::new(
                 "OSError: seek() returned an invalid position",
@@ -3141,7 +3141,7 @@ impl Vm {
             HashMap::new(),
         )?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
+            return Err(RuntimeError::unsupported_operation("not seekable"));
         }
         self.io_buffered_drain_write_buffer(&instance)?;
         let raw_position = self.io_buffered_delegate_method(
@@ -3152,7 +3152,7 @@ impl Vm {
             "buffered tell failed",
         )?;
         let raw_pos = value_to_int(raw_position)
-            .map_err(|_| RuntimeError::new("OSError: tell() returned an invalid position"))?;
+            .map_err(|_| RuntimeError::os_error("tell() returned an invalid position"))?;
         if raw_pos < 0 {
             return Err(RuntimeError::new(
                 "OSError: tell() returned an invalid position",
@@ -3179,14 +3179,14 @@ impl Vm {
             HashMap::new(),
         )?;
         if !is_truthy(&writable) {
-            return Err(RuntimeError::new("UnsupportedOperation: truncate"));
+            return Err(RuntimeError::unsupported_operation("truncate"));
         }
         let seekable = self.builtin_io_buffered_seekable(
             vec![Value::Instance(instance.clone())],
             HashMap::new(),
         )?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("UnsupportedOperation: not seekable"));
+            return Err(RuntimeError::unsupported_operation("not seekable"));
         }
         self.io_buffered_drain_write_buffer(&instance)?;
         let mut restore_position: Option<i64> = None;
@@ -3199,7 +3199,7 @@ impl Vm {
                 "buffered truncate failed",
             )?;
             let raw_pos = value_to_int(raw_position)
-                .map_err(|_| RuntimeError::new("OSError: tell() returned an invalid position"))?;
+                .map_err(|_| RuntimeError::os_error("tell() returned an invalid position"))?;
             if raw_pos < 0 {
                 return Err(RuntimeError::new(
                     "OSError: tell() returned an invalid position",
@@ -3368,7 +3368,7 @@ impl Vm {
                 }
             };
         if !is_truthy(&reader_readable) {
-            return Err(RuntimeError::new("OSError: readable stream expected"));
+            return Err(RuntimeError::os_error("readable stream expected"));
         }
         let writer_writable = self.builtin_getattr(
             vec![writer.clone(), Value::Str("writable".to_string())],
@@ -3384,7 +3384,7 @@ impl Vm {
                 }
             };
         if !is_truthy(&writer_writable) {
-            return Err(RuntimeError::new("OSError: writable stream expected"));
+            return Err(RuntimeError::os_error("writable stream expected"));
         }
         Self::instance_attr_set(&instance, "__pyrs_rwpair_reader", reader)?;
         Self::instance_attr_set(&instance, "__pyrs_rwpair_writer", writer)?;
@@ -3695,7 +3695,7 @@ impl Vm {
                 "BufferedRWPair.detach expects no arguments",
             ));
         }
-        Err(RuntimeError::new("UnsupportedOperation: detach"))
+        Err(RuntimeError::unsupported_operation("detach"))
     }
 
     pub(super) fn builtin_io_buffered_rwpair_peek(
@@ -3948,7 +3948,7 @@ impl Vm {
             }
         };
         let payload = bytes_like_from_value(payload_value)
-            .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+            .map_err(|_| RuntimeError::type_error("read() should return bytes"))?;
         let copied = self.io_copy_into_writable_buffer(target, &payload)?;
         Ok(Value::Int(copied as i64))
     }
@@ -3996,7 +3996,7 @@ impl Vm {
                     return Ok(None);
                 }
                 let chunk = bytes_like_from_value(value)
-                    .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                    .map_err(|_| RuntimeError::type_error("read() should return bytes"))?;
                 if chunk.len() > read_size {
                     return Err(RuntimeError::new(
                         "OSError: raw read() returned invalid length",
@@ -4078,7 +4078,7 @@ impl Vm {
             Value::Int(value) => Some(value),
             Value::Bool(value) => Some(i64::from(value)),
             Value::BigInt(value) => Some(value.to_i64().ok_or_else(|| {
-                RuntimeError::new("ValueError: readinto returned value outside buffer size")
+                RuntimeError::value_error("readinto returned value outside buffer size")
             })?),
             other => {
                 return Err(RuntimeError::new(format!(
@@ -4171,7 +4171,7 @@ impl Vm {
                 }
                 Value::ByteArray(_) | Value::MemoryView(_) => {
                     let values = bytes_like_from_value(chunk_value)
-                        .map_err(|_| RuntimeError::new("TypeError: read() should return bytes"))?;
+                        .map_err(|_| RuntimeError::type_error("read() should return bytes"))?;
                     if values.is_empty() {
                         break;
                     }
@@ -4400,7 +4400,7 @@ impl Vm {
         };
         let first = self.io_codec_result_first_value(encoded, "encode")?;
         bytes_like_from_value(first)
-            .map_err(|_| RuntimeError::new("TypeError: encoder should return a bytes object"))
+            .map_err(|_| RuntimeError::type_error("encoder should return a bytes object"))
     }
 
     fn io_decode_text_via_codec_lookup(
@@ -4670,7 +4670,7 @@ impl Vm {
         }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('r') || mode.contains('+')) {
-            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+            return Err(RuntimeError::unsupported_operation("not readable"));
         }
         let size = if let Some(value) = args.pop() {
             if matches!(value, Value::None) {
@@ -4752,7 +4752,7 @@ impl Vm {
         }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('r') || mode.contains('+')) {
-            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+            return Err(RuntimeError::unsupported_operation("not readable"));
         }
         let target = args.remove(0);
         let request = self.io_writable_buffer_len(&target)?;
@@ -4789,7 +4789,7 @@ impl Vm {
         }
         let mode = Self::io_file_mode(&instance).unwrap_or_else(|| "r".to_string());
         if !(mode.starts_with('r') || mode.contains('+')) {
-            return Err(RuntimeError::new("UnsupportedOperation: not readable"));
+            return Err(RuntimeError::unsupported_operation("not readable"));
         }
         let limit = if let Some(value) = args.pop() {
             if matches!(value, Value::None) {
@@ -5004,7 +5004,7 @@ impl Vm {
             || mode.starts_with('x')
             || mode.contains('+'))
         {
-            return Err(RuntimeError::new("UnsupportedOperation: not writable"));
+            return Err(RuntimeError::unsupported_operation("not writable"));
         }
         let (payload, write_result) = if Self::io_file_is_binary(&instance) {
             let payload = self.value_to_bytes_payload(args.remove(0))?;
@@ -5079,7 +5079,7 @@ impl Vm {
             || mode.starts_with('x')
             || mode.contains('+'))
         {
-            return Err(RuntimeError::new("UnsupportedOperation: not writable"));
+            return Err(RuntimeError::unsupported_operation("not writable"));
         }
         let values = self.collect_iterable_values(args.remove(0))?;
         for value in values {
@@ -5110,12 +5110,12 @@ impl Vm {
             || mode.starts_with('x')
             || mode.contains('+'))
         {
-            return Err(RuntimeError::new("UnsupportedOperation: not writable"));
+            return Err(RuntimeError::unsupported_operation("not writable"));
         }
         let seekable =
             self.builtin_io_file_seekable(vec![Value::Instance(instance.clone())], HashMap::new())?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("OSError: not seekable"));
+            return Err(RuntimeError::os_error("not seekable"));
         }
         if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
             let mut truncate_args = vec![Value::Instance(buffer)];
@@ -5170,7 +5170,7 @@ impl Vm {
         let seekable =
             self.builtin_io_file_seekable(vec![Value::Instance(instance.clone())], HashMap::new())?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("OSError: not seekable"));
+            return Err(RuntimeError::os_error("not seekable"));
         }
         if !Self::io_file_is_binary(&instance) && whence != 0 && offset != 0 {
             return Err(RuntimeError::new(
@@ -5231,7 +5231,7 @@ impl Vm {
         let seekable =
             self.builtin_io_file_seekable(vec![Value::Instance(instance.clone())], HashMap::new())?;
         if !is_truthy(&seekable) {
-            return Err(RuntimeError::new("OSError: not seekable"));
+            return Err(RuntimeError::os_error("not seekable"));
         }
         if let Some(buffer) = Self::io_file_text_buffer_bytesio(&instance) {
             return self.builtin_bytesio_tell(vec![Value::Instance(buffer)], HashMap::new());
@@ -5479,7 +5479,7 @@ impl Vm {
         let instance = self.take_bound_instance_arg(&mut args, "fileno")?;
         Self::io_ensure_text_initialized(&instance)?;
         if Self::io_file_text_buffer_bytesio(&instance).is_some() {
-            return Err(RuntimeError::new("OSError: fileno"));
+            return Err(RuntimeError::os_error("fileno"));
         }
         let fd = self.io_file_fd_from_instance(&instance)?;
         #[cfg(unix)]
@@ -5738,7 +5738,7 @@ impl Vm {
             let line_len =
                 match self.call_builtin(BuiltinFunction::Len, vec![line.clone()], HashMap::new()) {
                     Ok(value) => value_to_int(value)?,
-                    Err(_) => return Err(RuntimeError::new("TypeError: object has no len()")),
+                    Err(_) => return Err(RuntimeError::type_error("object has no len()")),
                 };
             lines.push(line);
             total_size = total_size.saturating_add(line_len);
@@ -6165,7 +6165,7 @@ impl Vm {
                 };
                 match indexed {
                     Value::Int(_) | Value::Bool(_) | Value::BigInt(_) => value_to_int(indexed),
-                    _ => Err(RuntimeError::new("TypeError: __index__ returned non-int")),
+                    _ => Err(RuntimeError::type_error("__index__ returned non-int")),
                 }
             }
         }
@@ -6597,7 +6597,7 @@ impl Vm {
             Value::Int(value) => *value,
             Value::Bool(value) => i64::from(*value),
             Value::BigInt(value) => value.to_i64().ok_or_else(|| {
-                RuntimeError::new("OverflowError: position out of range for this platform")
+                RuntimeError::overflow_error("position out of range for this platform")
             })?,
             other => {
                 return Err(RuntimeError::new(format!(
@@ -6750,7 +6750,7 @@ impl Vm {
             Some(value) => self.io_index_arg_to_int(value)?,
         };
         if size < 0 {
-            return Err(RuntimeError::new("ValueError: negative size value"));
+            return Err(RuntimeError::value_error("negative size value"));
         }
         let size = size as usize;
         if buffer.len() > size {
@@ -6768,7 +6768,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("StringIO.detach expects no arguments"));
         }
-        Err(RuntimeError::new("UnsupportedOperation: detach"))
+        Err(RuntimeError::unsupported_operation("detach"))
     }
 
     pub(super) fn builtin_stringio_flush(
@@ -6805,7 +6805,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         Self::stringio_ensure_open(&receiver)?;
-        Err(RuntimeError::new("OSError: fileno"))
+        Err(RuntimeError::os_error("fileno"))
     }
 
     pub(super) fn builtin_stringio_iter(
@@ -7213,7 +7213,7 @@ impl Vm {
             Some(value) => self.io_index_arg_to_int(value)?,
         };
         if target_size < 0 {
-            return Err(RuntimeError::new("ValueError: negative size value"));
+            return Err(RuntimeError::value_error("negative size value"));
         }
         let current_len = {
             let Object::ByteArray(buffer) = &*value_obj.kind() else {
@@ -7574,14 +7574,14 @@ impl Vm {
         let payload = self
             .bytesio_payload_from_value(items[0].clone())
             .map_err(|_| {
-                RuntimeError::new("TypeError: first item of state should be a bytes-like object")
+                RuntimeError::type_error("first item of state should be a bytes-like object")
             })?;
         let position_value = items[1].clone();
         let position = match position_value {
             Value::Int(value) => value,
             Value::Bool(value) => i64::from(value),
             Value::BigInt(ref value) => value.to_i64().ok_or_else(|| {
-                RuntimeError::new("OverflowError: position out of range for this platform")
+                RuntimeError::overflow_error("position out of range for this platform")
             })?,
             other => {
                 return Err(RuntimeError::new(format!(
@@ -7645,7 +7645,7 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("BytesIO.detach expects no arguments"));
         }
-        Err(RuntimeError::new("UnsupportedOperation: detach"))
+        Err(RuntimeError::unsupported_operation("detach"))
     }
 
     pub(super) fn builtin_bytesio_seek(
@@ -7672,13 +7672,13 @@ impl Vm {
             let new_pos = match whence {
                 0 => {
                     if offset < 0 {
-                        return Err(RuntimeError::new("ValueError: negative seek value"));
+                        return Err(RuntimeError::value_error("negative seek value"));
                     }
                     offset
                 }
                 1 => (pos as i64 + offset).max(0),
                 2 => (buffer.len() as i64 + offset).max(0),
-                _ => return Err(RuntimeError::new("ValueError: invalid whence")),
+                _ => return Err(RuntimeError::value_error("invalid whence")),
             };
             new_pos as usize
         };
@@ -7736,7 +7736,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         self.bytesio_ensure_open(&receiver)?;
-        Err(RuntimeError::new("OSError: fileno"))
+        Err(RuntimeError::os_error("fileno"))
     }
 
     pub(super) fn builtin_bytesio_iter(

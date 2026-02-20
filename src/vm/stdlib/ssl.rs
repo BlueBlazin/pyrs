@@ -159,7 +159,7 @@ impl Vm {
                 "TLS Web Client Authentication",
                 "1.3.6.1.5.5.7.3.2",
             ),
-            _ => return Err(RuntimeError::new("ValueError: unknown NID")),
+            _ => return Err(RuntimeError::value_error("unknown NID")),
         };
         Ok(self.heap.alloc_tuple(vec![
             Value::Int(nid),
@@ -198,7 +198,7 @@ impl Vm {
             ));
         }
         let _ = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         match args.remove(0) {
             Value::Int(_) | Value::Float(_) | Value::Bool(_) => Ok(Value::None),
             _ => Err(RuntimeError::new(
@@ -238,7 +238,7 @@ impl Vm {
             }
         };
         if n < 0 {
-            return Err(RuntimeError::new("ValueError: num must be non-negative"));
+            return Err(RuntimeError::value_error("num must be non-negative"));
         }
         let mut out = vec![0u8; n as usize];
         for byte in &mut out {
@@ -303,7 +303,7 @@ impl Vm {
                 }
             }
             Some(_) => {
-                return Err(RuntimeError::new("TypeError: protocol must be int"));
+                return Err(RuntimeError::type_error("protocol must be int"));
             }
             None => 2,
         };
@@ -329,7 +329,7 @@ impl Vm {
         }
         let instance = match args.remove(0) {
             Value::Instance(obj) => obj,
-            _ => return Err(RuntimeError::new("TypeError: invalid SSLContext object")),
+            _ => return Err(RuntimeError::type_error("invalid SSLContext object")),
         };
         let protocol = match args.first() {
             Some(Value::Int(v)) => *v,
@@ -340,7 +340,7 @@ impl Vm {
                     0
                 }
             }
-            Some(_) => return Err(RuntimeError::new("TypeError: protocol must be int")),
+            Some(_) => return Err(RuntimeError::type_error("protocol must be int")),
             None => 2,
         };
         self.ssl_init_context_attrs(&instance, protocol, 0, false, 0);

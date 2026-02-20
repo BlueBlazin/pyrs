@@ -21,6 +21,8 @@ Status: in progress (phase 1 + initial phase 2 landed).
 7. `runtime_error_from_active_exception(...)` now preserves the original `ExceptionObject` in `RuntimeError.exception` while retaining traceback text for compatibility.
 8. Explicit `raise ... from ...` now preserves `__context__` (in addition to `__cause__` + `__suppress_context__`) in VM raise plumbing.
 9. VM execution error handling no longer builds exceptions from string parsing directly; it now uses centralized `runtime_error_to_exception_object(...)`.
+10. Replaced prefixed `RuntimeError::new(\"XError: ...\")` callsites with typed constructors across VM/stdlib surfaces (136 callsites), reducing fallback classifier pressure.
+11. `runtime_error_to_exception_object(...)` and `runtime_error_matches_exception(...)` now prefer extracted/typed exception names before invoking legacy classifier heuristics.
 
 ## Why This Exists
 

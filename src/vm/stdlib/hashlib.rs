@@ -139,7 +139,7 @@ impl Vm {
                 "TypeError: Strings must be encoded before hashing",
             )),
             other => bytes_like_from_value(other).map_err(|_| {
-                RuntimeError::new("TypeError: object supporting the buffer API required")
+                RuntimeError::type_error("object supporting the buffer API required")
             }),
         }
     }
@@ -359,7 +359,7 @@ impl Vm {
         let digest = self
             .hash_states
             .get(&receiver.id())
-            .ok_or_else(|| RuntimeError::new("TypeError: digest() requires a hash object"))?
+            .ok_or_else(|| RuntimeError::type_error("digest() requires a hash object"))?
             .digest_bytes();
         Ok(self.heap.alloc_bytes(digest))
     }
@@ -384,7 +384,7 @@ impl Vm {
         let digest = self
             .hash_states
             .get(&receiver.id())
-            .ok_or_else(|| RuntimeError::new("TypeError: hexdigest() requires a hash object"))?
+            .ok_or_else(|| RuntimeError::type_error("hexdigest() requires a hash object"))?
             .digest_bytes();
         let mut out = String::with_capacity(digest.len() * 2);
         for byte in digest {
@@ -405,12 +405,12 @@ impl Vm {
             ));
         }
         if args.len() != 1 {
-            return Err(RuntimeError::new("TypeError: copy() takes no arguments"));
+            return Err(RuntimeError::type_error("copy() takes no arguments"));
         }
         let state = self
             .hash_states
             .get(&receiver.id())
-            .ok_or_else(|| RuntimeError::new("TypeError: copy() requires a hash object"))?
+            .ok_or_else(|| RuntimeError::type_error("copy() requires a hash object"))?
             .clone();
         let kind = state.kind();
         let class = self.hash_class_from_kind(kind).ok_or_else(|| {

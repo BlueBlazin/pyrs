@@ -29,7 +29,7 @@ impl Vm {
     ) -> Result<&mut ExpatParserState, RuntimeError> {
         self.expat_parsers
             .get_mut(&parser.id())
-            .ok_or_else(|| RuntimeError::new("TypeError: invalid pyexpat parser"))
+            .ok_or_else(|| RuntimeError::type_error("invalid pyexpat parser"))
     }
 
     fn pyexpat_set_error_position(&mut self, parser: &ObjRef, lineno: i64, offset: i64) {
@@ -498,7 +498,7 @@ impl Vm {
 
         let class = self
             .pyexpat_parser_class()
-            .ok_or_else(|| RuntimeError::new("TypeError: pyexpat parser class unavailable"))?;
+            .ok_or_else(|| RuntimeError::type_error("pyexpat parser class unavailable"))?;
         let instance = match self.heap.alloc_instance(InstanceObject::new(class)) {
             Value::Instance(instance) => instance,
             _ => unreachable!(),
@@ -506,7 +506,7 @@ impl Vm {
         let encoding_value = match encoding {
             Some(Value::Str(value)) => Value::Str(value),
             Some(Value::None) | None => Value::None,
-            Some(_) => return Err(RuntimeError::new("TypeError: encoding must be str or None")),
+            Some(_) => return Err(RuntimeError::type_error("encoding must be str or None")),
         };
         let ns_value = match namespace_separator {
             Some(Value::Str(value)) => Value::Str(value),
@@ -577,7 +577,7 @@ impl Vm {
         } else {
             kwargs
                 .remove("data")
-                .ok_or_else(|| RuntimeError::new("TypeError: Parse() missing data argument"))?
+                .ok_or_else(|| RuntimeError::type_error("Parse() missing data argument"))?
         };
         let isfinal = if !args.is_empty() {
             is_truthy(&args.remove(0))
@@ -597,13 +597,13 @@ impl Vm {
             Value::Str(text) => text,
             Value::Bytes(bytes) => match &*bytes.kind() {
                 Object::Bytes(payload) => String::from_utf8(payload.clone())
-                    .map_err(|_| RuntimeError::new("UnicodeDecodeError: invalid UTF-8"))?,
-                _ => return Err(RuntimeError::new("TypeError: invalid bytes value")),
+                    .map_err(|_| RuntimeError::unicode_decode_error("invalid UTF-8"))?,
+                _ => return Err(RuntimeError::type_error("invalid bytes value")),
             },
             Value::ByteArray(bytes) => match &*bytes.kind() {
                 Object::ByteArray(payload) => String::from_utf8(payload.clone())
-                    .map_err(|_| RuntimeError::new("UnicodeDecodeError: invalid UTF-8"))?,
-                _ => return Err(RuntimeError::new("TypeError: invalid bytearray value")),
+                    .map_err(|_| RuntimeError::unicode_decode_error("invalid UTF-8"))?,
+                _ => return Err(RuntimeError::type_error("invalid bytearray value")),
             },
             _ => {
                 return Err(RuntimeError::new(

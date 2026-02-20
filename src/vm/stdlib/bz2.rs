@@ -61,7 +61,7 @@ impl Vm {
 
     fn bz2_compress_bytes(&self, payload: &[u8], level: c_int) -> Result<Vec<u8>, RuntimeError> {
         if payload.len() > c_uint::MAX as usize {
-            return Err(RuntimeError::new("OverflowError: input is too large"));
+            return Err(RuntimeError::overflow_error("input is too large"));
         }
         let mut out_cap = payload
             .len()
@@ -70,7 +70,7 @@ impl Vm {
             .max(64);
         loop {
             if out_cap > c_uint::MAX as usize {
-                return Err(RuntimeError::new("OverflowError: output buffer too large"));
+                return Err(RuntimeError::overflow_error("output buffer too large"));
             }
             let mut out = vec![0u8; out_cap];
             let mut out_len = out_cap as c_uint;
@@ -103,12 +103,12 @@ impl Vm {
 
     fn bz2_decompress_bytes(&self, payload: &[u8]) -> Result<Vec<u8>, RuntimeError> {
         if payload.len() > c_uint::MAX as usize {
-            return Err(RuntimeError::new("OverflowError: input is too large"));
+            return Err(RuntimeError::overflow_error("input is too large"));
         }
         let mut out_cap = payload.len().saturating_mul(6).saturating_add(1024).max(64);
         loop {
             if out_cap > c_uint::MAX as usize {
-                return Err(RuntimeError::new("OverflowError: output buffer too large"));
+                return Err(RuntimeError::overflow_error("output buffer too large"));
             }
             let mut out = vec![0u8; out_cap];
             let mut out_len = out_cap as c_uint;
@@ -168,7 +168,7 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid BZ2Compressor object")),
+            _ => return Err(RuntimeError::type_error("invalid BZ2Compressor object")),
         };
         if args.len() > 1 {
             return Err(RuntimeError::new(format!(
@@ -221,12 +221,12 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid BZ2Compressor object")),
+            _ => return Err(RuntimeError::type_error("invalid BZ2Compressor object")),
         };
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         let Some(state) = self.bz2_compressors.get_mut(&receiver.id()) else {
-            return Err(RuntimeError::new("TypeError: invalid BZ2Compressor object"));
+            return Err(RuntimeError::type_error("invalid BZ2Compressor object"));
         };
         if state.finished {
             return Err(RuntimeError::new(
@@ -254,12 +254,12 @@ impl Vm {
         }
         let receiver = match args.remove(0) {
             Value::Instance(instance) => instance,
-            _ => return Err(RuntimeError::new("TypeError: invalid BZ2Compressor object")),
+            _ => return Err(RuntimeError::type_error("invalid BZ2Compressor object")),
         };
 
         let (already_finished, level, payload) = {
             let Some(state) = self.bz2_compressors.get(&receiver.id()) else {
-                return Err(RuntimeError::new("TypeError: invalid BZ2Compressor object"));
+                return Err(RuntimeError::type_error("invalid BZ2Compressor object"));
             };
             (state.finished, state.level, state.buffer.clone())
         };
@@ -328,7 +328,7 @@ impl Vm {
             }
         };
         let payload = bytes_like_from_value(args.remove(0))
-            .map_err(|_| RuntimeError::new("TypeError: a bytes-like object is required"))?;
+            .map_err(|_| RuntimeError::type_error("a bytes-like object is required"))?;
         let max_length_arg = if !args.is_empty() {
             Some(args.remove(0))
         } else {

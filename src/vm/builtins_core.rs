@@ -764,7 +764,7 @@ impl Vm {
             ));
         }
         if args.len() != 1 {
-            return Err(RuntimeError::new("TypeError: hash() expects one argument"));
+            return Err(RuntimeError::type_error("hash() expects one argument"));
         }
         let target = args.remove(0);
         let hash_value = match target {
