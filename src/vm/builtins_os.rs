@@ -1212,7 +1212,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("__iter__() expects no arguments"));
+            return Err(RuntimeError::type_error("__iter__() expects no arguments"));
         }
         Ok(args[0].clone())
     }
@@ -1223,7 +1223,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("__next__() expects no arguments"));
+            return Err(RuntimeError::type_error("__next__() expects no arguments"));
         }
         let Value::Instance(instance) = &args[0] else {
             return Err(RuntimeError::new("__next__() expects scandir iterator"));
@@ -1285,7 +1285,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("close() expects no arguments"));
+            return Err(RuntimeError::type_error("close() expects no arguments"));
         }
         let Value::Instance(instance) = &args[0] else {
             return Err(RuntimeError::new("close() expects scandir iterator"));

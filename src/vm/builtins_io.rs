@@ -2919,7 +2919,7 @@ impl Vm {
         }
         let instance = self.take_bound_instance_arg(&mut args, "BufferedIOBase.flush")?;
         if Self::iobase_is_closed(&instance) {
-            return Err(RuntimeError::new("I/O operation on closed file."));
+            return Err(RuntimeError::value_error("I/O operation on closed file."));
         }
         self.io_buffered_drain_write_buffer(&instance)?;
         self.io_buffered_delegate_method(
@@ -4994,7 +4994,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("write() expects one argument"));
+            return Err(RuntimeError::type_error("write() expects one argument"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "write")?;
         Self::io_ensure_text_initialized(&instance)?;
@@ -5253,7 +5253,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("close() expects no arguments"));
+            return Err(RuntimeError::type_error("close() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "close")?;
         Self::io_ensure_text_initialized(&instance)?;
@@ -5401,7 +5401,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("__iter__() expects no arguments"));
+            return Err(RuntimeError::type_error("__iter__() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "__iter__")?;
         Ok(Value::Instance(instance))
@@ -5413,7 +5413,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("__next__() expects no arguments"));
+            return Err(RuntimeError::type_error("__next__() expects no arguments"));
         }
         let instance = self.take_bound_instance_arg(&mut args, "__next__")?;
         let line =
@@ -5599,7 +5599,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("__iter__() expects no arguments"));
+            return Err(RuntimeError::type_error("__iter__() expects no arguments"));
         }
         Ok(args.remove(0))
     }
@@ -5615,7 +5615,7 @@ impl Vm {
         let receiver_value = args.remove(0);
         let receiver = self.receiver_from_value(&receiver_value)?;
         if Self::iobase_is_closed(&receiver) {
-            return Err(RuntimeError::new("I/O operation on closed file."));
+            return Err(RuntimeError::value_error("I/O operation on closed file."));
         }
         let size = if args.is_empty() || matches!(args[0], Value::None) {
             -1
@@ -5760,7 +5760,7 @@ impl Vm {
         let receiver_value = args.remove(0);
         let receiver = self.receiver_from_value(&receiver_value)?;
         if Self::iobase_is_closed(&receiver) {
-            return Err(RuntimeError::new("I/O operation on closed file."));
+            return Err(RuntimeError::value_error("I/O operation on closed file."));
         }
         let lines = self.collect_iterable_values(args.remove(0))?;
         let write = self.builtin_getattr(
@@ -5788,7 +5788,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args[0])?;
         if Self::iobase_is_closed(&receiver) {
-            return Err(RuntimeError::new("I/O operation on closed file."));
+            return Err(RuntimeError::value_error("I/O operation on closed file."));
         }
         Ok(args.remove(0))
     }
@@ -5878,7 +5878,7 @@ impl Vm {
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         if Self::iobase_is_closed(&receiver) {
-            return Err(RuntimeError::new("I/O operation on closed file."));
+            return Err(RuntimeError::value_error("I/O operation on closed file."));
         }
         Ok(Value::None)
     }
@@ -5889,7 +5889,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("close() expects no arguments"));
+            return Err(RuntimeError::type_error("close() expects no arguments"));
         }
         let receiver = self.receiver_from_value(&args.remove(0))?;
         if Self::iobase_is_closed(&receiver) {
@@ -5955,7 +5955,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("__next__() expects no arguments"));
+            return Err(RuntimeError::type_error("__next__() expects no arguments"));
         }
         let receiver = args.remove(0);
         let readline = self.builtin_getattr(
@@ -5989,7 +5989,7 @@ impl Vm {
         instance: &ObjRef,
     ) -> Result<(Vec<char>, usize), RuntimeError> {
         let Object::Instance(instance_data) = &*instance.kind() else {
-            return Err(RuntimeError::new("StringIO receiver must be instance"));
+            return Err(RuntimeError::type_error("StringIO receiver must be instance"));
         };
         let text = match instance_data.attrs.get("_value") {
             Some(Value::Str(value)) => value.chars().collect::<Vec<_>>(),
@@ -6178,7 +6178,7 @@ impl Vm {
         pos: usize,
     ) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
-            return Err(RuntimeError::new("StringIO receiver must be instance"));
+            return Err(RuntimeError::type_error("StringIO receiver must be instance"));
         };
         instance_data
             .attrs
@@ -6531,7 +6531,7 @@ impl Vm {
                     self.heap.alloc_dict(entries)
                 }
             }
-            _ => return Err(RuntimeError::new("StringIO receiver must be instance")),
+            _ => return Err(RuntimeError::type_error("StringIO receiver must be instance")),
         };
         Ok(self.heap.alloc_tuple(vec![
             Value::Str(text),
@@ -6622,7 +6622,7 @@ impl Vm {
                     _ => return Err(RuntimeError::new("fourth item of state should be a dict")),
                 };
                 let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
-                    return Err(RuntimeError::new("StringIO receiver must be instance"));
+                    return Err(RuntimeError::type_error("StringIO receiver must be instance"));
                 };
                 for (key, value) in updates {
                     let Value::Str(name) = key else {
@@ -6935,7 +6935,7 @@ impl Vm {
         instance: &ObjRef,
     ) -> Result<(ObjRef, usize, bool), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
-            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+            return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
         };
         let pos = match instance_data.attrs.get("_pos") {
             Some(Value::Int(value)) if *value >= 0 => *value as usize,
@@ -6989,7 +6989,7 @@ impl Vm {
         closed: bool,
     ) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
-            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+            return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
         };
         if let Some(slot) = instance_data.attrs.get_mut("_value") {
             *slot = Value::ByteArray(value_obj);
@@ -7024,10 +7024,10 @@ impl Vm {
 
     pub(super) fn bytesio_ensure_open(&self, instance: &ObjRef) -> Result<(), RuntimeError> {
         let Object::Instance(instance_data) = &*instance.kind() else {
-            return Err(RuntimeError::new("BytesIO receiver must be instance"));
+            return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
         };
         if matches!(instance_data.attrs.get("_closed"), Some(Value::Bool(true))) {
-            Err(RuntimeError::new("I/O operation on closed file."))
+            Err(RuntimeError::value_error("I/O operation on closed file."))
         } else {
             Ok(())
         }
@@ -7528,7 +7528,7 @@ impl Vm {
                     self.heap.alloc_dict(entries)
                 }
             }
-            _ => return Err(RuntimeError::new("BytesIO receiver must be instance")),
+            _ => return Err(RuntimeError::type_error("BytesIO receiver must be instance")),
         };
         Ok(self.heap.alloc_tuple(vec![
             self.heap.alloc_bytes(payload),
@@ -7613,7 +7613,7 @@ impl Vm {
                     _ => return Err(RuntimeError::new("third item of state should be a dict")),
                 };
                 let Object::Instance(instance_data) = &mut *receiver.kind_mut() else {
-                    return Err(RuntimeError::new("BytesIO receiver must be instance"));
+                    return Err(RuntimeError::type_error("BytesIO receiver must be instance"));
                 };
                 for (key, value) in updates {
                     let Value::Str(name) = key else {

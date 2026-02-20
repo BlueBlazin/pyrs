@@ -209,7 +209,7 @@ impl Vm {
             }
             NativeMethodKind::GeneratorIter => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new("__iter__() expects no arguments"));
+                    return Err(RuntimeError::type_error("__iter__() expects no arguments"));
                 }
                 Ok(NativeCallResult::Value(Value::Generator(receiver)))
             }
@@ -249,7 +249,7 @@ impl Vm {
             }
             NativeMethodKind::GeneratorNext => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new("__next__() expects no arguments"));
+                    return Err(RuntimeError::type_error("__next__() expects no arguments"));
                 }
                 match self.resume_generator(&receiver, None, None, GeneratorResumeKind::Next)? {
                     GeneratorResumeOutcome::Yield(value) => Ok(NativeCallResult::Value(value)),
@@ -304,7 +304,7 @@ impl Vm {
             }
             NativeMethodKind::GeneratorClose => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new("close() expects no arguments"));
+                    return Err(RuntimeError::type_error("close() expects no arguments"));
                 }
                 match &*receiver.kind() {
                     Object::Generator(state) if state.closed => {
@@ -357,7 +357,7 @@ impl Vm {
             }
             NativeMethodKind::IteratorIter => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new("__iter__() expects no arguments"));
+                    return Err(RuntimeError::type_error("__iter__() expects no arguments"));
                 }
                 let receiver_value = Value::Iterator(receiver.clone());
                 let iter_value = self.to_iterator_value(receiver_value)?;
@@ -365,7 +365,7 @@ impl Vm {
             }
             NativeMethodKind::IteratorNext => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new("__next__() expects no arguments"));
+                    return Err(RuntimeError::type_error("__next__() expects no arguments"));
                 }
                 if !matches!(&*receiver.kind(), Object::Iterator(_)) {
                     return Err(RuntimeError::new("__next__() expects iterator"));

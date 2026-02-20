@@ -1981,21 +1981,21 @@ impl Vm {
             Value::Bytes(obj) | Value::ByteArray(obj) => obj,
             Value::MemoryView(obj) => match &*obj.kind() {
                 Object::MemoryView(view_data) => view_data.source.clone(),
-                _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+                _ => return Err(RuntimeError::type_error("memoryview() expects bytes-like object")),
             },
             Value::Module(obj) => {
                 let is_array = matches!(&*obj.kind(), Object::Module(module_data) if module_data.name == "__array__");
                 if is_array {
                     obj
                 } else {
-                    return Err(RuntimeError::new("memoryview() expects bytes-like object"));
+                    return Err(RuntimeError::type_error("memoryview() expects bytes-like object"));
                 }
             }
             Value::Instance(obj) => {
                 {
                     let kind = obj.kind();
                     let Object::Instance(instance_data) = &*kind else {
-                        return Err(RuntimeError::new("memoryview() expects bytes-like object"));
+                        return Err(RuntimeError::type_error("memoryview() expects bytes-like object"));
                     };
                     let is_picklebuffer = matches!(
                         &*instance_data.class.kind(),
@@ -2016,7 +2016,7 @@ impl Vm {
                             .or_else(|| instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR))
                             .cloned()
                             .ok_or_else(|| {
-                                RuntimeError::new("memoryview() expects bytes-like object")
+                                RuntimeError::type_error("memoryview() expects bytes-like object")
                             })?;
                         let source = match source {
                             Value::Bytes(source)
@@ -2092,7 +2092,7 @@ impl Vm {
                 ) {
                     obj
                 } else {
-                    return Err(RuntimeError::new("memoryview() expects bytes-like object"));
+                    return Err(RuntimeError::type_error("memoryview() expects bytes-like object"));
                 }
             }
             other => {
@@ -2112,7 +2112,7 @@ impl Vm {
         stderr: bool,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("write() expects one argument"));
+            return Err(RuntimeError::type_error("write() expects one argument"));
         }
         let text = format_value(&args[0]);
         if stderr {
@@ -2131,7 +2131,7 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         use std::io::Write;
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("write() expects one argument"));
+            return Err(RuntimeError::type_error("write() expects one argument"));
         }
         let payload = bytes_like_from_value(args[0].clone())?;
         if stderr {
@@ -2163,7 +2163,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("write() expects one argument"));
+            return Err(RuntimeError::type_error("write() expects one argument"));
         }
         Err(RuntimeError::new("stdin is read-only"))
     }
@@ -3339,13 +3339,13 @@ impl Vm {
             let base_values = match &args[name_index + 1] {
                 Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                     Object::Tuple(values) => values.clone(),
-                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
                 },
                 Value::List(list_obj) => match &*list_obj.kind() {
                     Object::List(values) => values.clone(),
-                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
                 },
-                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
             };
             let mut base_classes = Vec::with_capacity(base_values.len());
             for base in base_values {
@@ -3378,13 +3378,13 @@ impl Vm {
             let base_values = match &args[1] {
                 Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                     Object::Tuple(values) => values.clone(),
-                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
                 },
                 Value::List(list_obj) => match &*list_obj.kind() {
                     Object::List(values) => values.clone(),
-                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
                 },
-                _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
             };
             let mut base_classes = Vec::with_capacity(base_values.len());
             for base in base_values {
@@ -4949,7 +4949,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() > 2 {
-            return Err(RuntimeError::new("set() expects at most one argument"));
+            return Err(RuntimeError::type_error("set() expects at most one argument"));
         }
         if args.len() == 2 {
             let cls = args.remove(0);
@@ -4967,7 +4967,7 @@ impl Vm {
                         )));
                     }
                 }
-                _ => return Err(RuntimeError::new("set() expects at most one argument")),
+                _ => return Err(RuntimeError::type_error("set() expects at most one argument")),
             }
         }
         let values = if args.is_empty() {
@@ -4987,7 +4987,7 @@ impl Vm {
                 _ => self.collect_iterable_values(args.remove(0))?,
             }
         } else {
-            return Err(RuntimeError::new("set() expects at most one argument"));
+            return Err(RuntimeError::type_error("set() expects at most one argument"));
         };
         Ok(self.heap.alloc_set(dedup_hashable_values(values)?))
     }

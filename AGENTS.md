@@ -79,6 +79,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - added focused typed-exception regressions for constructor contract failures, membership/index contract errors, and bytes/bytearray range validation.
   - codec unknown-error-handler paths now raise typed `LookupError` with CPython-style message (`unknown error handler name '<name>'`) across normalize/encode/decode flows.
   - bad-fd paths now use typed `OSError` with structured `errno`/`strerror` attrs via `RuntimeError::os_error_with_errno(...)` and `RuntimeError::bad_file_descriptor()`.
+  - additional typed-constructor closure landed for core contract errors:
+    - `memoryview()` bytes-like contract, `type()` base-shape/base-class validation, and `set()` arity now raise typed `TypeError`.
+    - IO/iterator method arity (`__iter__`/`__next__`/`close`/`write`) now raises typed `TypeError`.
+    - closed-file IO paths now raise typed `ValueError` (`I/O operation on closed file.`).
+  - new regressions cover these contracts (`constructor_contract_errors_for_memoryview_type_and_set_are_typed`, `io_method_arity_and_closed_file_contracts_are_typed`).
 - Scientific-stack closure checkpoint (2026-02-19):
   - import-state root-cause fix:
     - source/pyc module execution now sets an internal module-initializing marker and clears it on successful frame completion.

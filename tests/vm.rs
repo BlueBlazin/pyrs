@@ -7962,6 +7962,72 @@ ok = caught and errno_ok and strerror_ok and args_ok
 }
 
 #[test]
+fn constructor_contract_errors_for_memoryview_type_and_set_are_typed() {
+    let source = r#"memoryview_ok = False
+type_ok = False
+set_ok = False
+try:
+    memoryview(1)
+except Exception as exc:
+    memoryview_ok = (type(exc).__name__ == "TypeError")
+try:
+    type("X", (1,), {})
+except Exception as exc:
+    type_ok = (type(exc).__name__ == "TypeError")
+try:
+    set(1, 2)
+except Exception as exc:
+    set_ok = (type(exc).__name__ == "TypeError")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("memoryview_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("type_ok"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("set_ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn io_method_arity_and_closed_file_contracts_are_typed() {
+    let source = r#"import io
+iter_ok = False
+next_ok = False
+write_ok = False
+close_ok = False
+closed_ok = False
+b = io.BytesIO(b"abc")
+try:
+    b.__iter__(1)
+except Exception as exc:
+    iter_ok = (type(exc).__name__ == "TypeError")
+try:
+    b.__next__(1)
+except Exception as exc:
+    next_ok = (type(exc).__name__ == "TypeError")
+try:
+    b.write()
+except Exception as exc:
+    write_ok = (type(exc).__name__ == "TypeError")
+try:
+    b.close(1)
+except Exception as exc:
+    close_ok = (type(exc).__name__ == "TypeError")
+b.close()
+try:
+    b.read(1)
+except Exception as exc:
+    closed_ok = (type(exc).__name__ == "ValueError") and ("closed file" in str(exc))
+ok = iter_ok and next_ok and write_ok and close_ok and closed_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_tuple_and_dict() {
     let source = "t = (1, 2)\nfirst = t[0]\nd = {'a': 1, 'b': 2}\nval = d['b']\n";
     let module = parser::parse_module(source).expect("parse should succeed");

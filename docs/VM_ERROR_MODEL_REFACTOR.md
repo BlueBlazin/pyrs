@@ -57,6 +57,15 @@ Status: in progress (phase 1 + initial phase 2 landed).
    - added `RuntimeError::os_error_with_errno(...)` + `RuntimeError::bad_file_descriptor()`
    - migrated fd lookup/mutation paths in `/Users/$USER/pyrs/src/vm/builtins_os.rs` and `/Users/$USER/pyrs/src/vm/builtins_io.rs`.
 23. Remaining `RuntimeError::new(\"...\")` inventory was reduced again; the highest-frequency leftovers are now dominated by narrower domain-specific payload/format/VM-internal diagnostics instead of core protocol/type contracts.
+24. Converted additional constructor/protocol contract failures to typed `TypeError`:
+   - `memoryview() expects bytes-like object`
+   - `type() bases must be tuple/list` and class-base resolution failures (`class base must be a class object`)
+   - `set() expects at most one argument`
+   - `__iter__()` / `__next__()` / `close()` / `write()` argument-count failures in IO/dispatch paths.
+25. Converted closed-file operations to typed `ValueError` (`I/O operation on closed file.`) across IO surfaces.
+26. Added conformance regressions for this batch in `/Users/$USER/pyrs/tests/vm.rs`:
+   - `constructor_contract_errors_for_memoryview_type_and_set_are_typed`
+   - `io_method_arity_and_closed_file_contracts_are_typed`
 
 ## Why This Exists
 

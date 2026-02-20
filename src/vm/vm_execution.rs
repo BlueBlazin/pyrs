@@ -3782,7 +3782,7 @@ impl Vm {
                         Ok(class) => base_classes.push(class),
                         Err(err) => {
                             if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some()
-                                && err.message == "class base must be a class object"
+                                && runtime_error_matches_exception(&err, "TypeError")
                                 && let Some(frame) = self.frames.last()
                             {
                                 let location = frame.code.locations.get(frame.last_ip);

@@ -4101,7 +4101,7 @@ impl BuiltinFunction {
             }
             BuiltinFunction::Set => {
                 if args.len() > 1 {
-                    return Err(RuntimeError::new("set() expects at most one argument"));
+                    return Err(RuntimeError::type_error("set() expects at most one argument"));
                 }
                 let values = if let Some(source) = args.into_iter().next() {
                     iterable_values(source)?
@@ -4246,7 +4246,7 @@ impl BuiltinFunction {
                             ));
                         }
                     },
-                    _ => return Err(RuntimeError::new("memoryview() expects bytes-like object")),
+                    _ => return Err(RuntimeError::type_error("memoryview() expects bytes-like object")),
                 };
                 Ok(heap.alloc_memoryview(source))
             }
@@ -4295,9 +4295,9 @@ impl BuiltinFunction {
                                 _ => Err(RuntimeError::new("type() bases must be classes")),
                             })
                             .collect::<Result<Vec<_>, _>>()?,
-                        _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                        _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
                     },
-                    _ => return Err(RuntimeError::new("type() bases must be tuple/list")),
+                    _ => return Err(RuntimeError::type_error("type() bases must be tuple/list")),
                 };
                 let attrs = match &args[2] {
                     Value::Dict(obj) => match &*obj.kind() {

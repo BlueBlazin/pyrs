@@ -1707,7 +1707,7 @@ impl Vm {
                 Ok(class) => base_classes.push(class),
                 Err(err) => {
                     if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some()
-                        && err.message == "class base must be a class object"
+                        && runtime_error_matches_exception(&err, "TypeError")
                     {
                         eprintln!("[class-base] __build_class__ base={}", format_repr(&base));
                     }
@@ -1863,7 +1863,7 @@ impl Vm {
                         return self.class_from_base_value(origin);
                     }
                 }
-                Err(RuntimeError::new("class base must be a class object"))
+                Err(RuntimeError::type_error("class base must be a class object"))
             }
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_exception_class(&name)),
             Value::Builtin(BuiltinFunction::Type) => Ok(self
@@ -1959,10 +1959,10 @@ impl Vm {
                     );
                 }
                 let _ = other;
-                Err(RuntimeError::new("class base must be a class object"))
-            }
+                Err(RuntimeError::type_error("class base must be a class object"))
         }
     }
+}
 }
 
 fn tuple_is_typing_alias_shape(values: &[Value]) -> bool {

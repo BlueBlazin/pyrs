@@ -6861,25 +6861,25 @@ fn re_match_details(
             let text = match text {
                 Value::Bytes(obj) => match &*obj.kind() {
                     Object::Bytes(values) => values.clone(),
-                    _ => return Err(RuntimeError::new("string must be bytes-like")),
+                    _ => return Err(RuntimeError::type_error("string must be bytes-like")),
                 },
                 Value::ByteArray(obj) => match &*obj.kind() {
                     Object::ByteArray(values) => values.clone(),
-                    _ => return Err(RuntimeError::new("string must be bytes-like")),
+                    _ => return Err(RuntimeError::type_error("string must be bytes-like")),
                 },
                 Value::MemoryView(obj) => match &*obj.kind() {
                     Object::MemoryView(view) => {
                         with_bytes_like_source(&view.source, |values| values.to_vec())
-                            .ok_or_else(|| RuntimeError::new("string must be bytes-like"))?
+                            .ok_or_else(|| RuntimeError::type_error("string must be bytes-like"))?
                     }
-                    _ => return Err(RuntimeError::new("string must be bytes-like")),
+                    _ => return Err(RuntimeError::type_error("string must be bytes-like")),
                 },
                 Value::Str(_) => {
                     return Err(RuntimeError::new(
                         "cannot use a bytes pattern on a string-like object",
                     ));
                 }
-                _ => return Err(RuntimeError::new("string must be bytes-like")),
+                _ => return Err(RuntimeError::type_error("string must be bytes-like")),
             };
             let regex_found = match (
                 std::str::from_utf8(pattern_bytes.as_slice()),
