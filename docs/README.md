@@ -22,6 +22,7 @@ Use this file to find canonical ownership quickly.
 
 ## Runtime and Architecture
 - `docs/VM_ARCHITECTURE_MAP.md`: VM module ownership and placement rules.
+- `docs/VM_ERROR_MODEL_REFACTOR.md`: plan to replace string-based runtime error classification with typed exception transport.
 - `docs/STDLIB_MIGRATION_PLAN.md`: pure-stdlib-first migration policy.
 - `docs/ENGINEERING_GATES.md`: mandatory process and quality gates.
 
