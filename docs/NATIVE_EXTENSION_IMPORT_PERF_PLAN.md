@@ -7,7 +7,7 @@ Primary user-facing gate:
 - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
 
 ## Current Baseline (2026-02-21, latest local)
-- `pyrs` (default pyc policy): ~`0.77-0.79s` user
+- `pyrs` (default pyc policy): ~`0.73-0.74s` user
 - `pyrs` with `PYRS_IMPORT_PREFER_PYC=0`: ~`0.64s` user
 - CPython 3.14: ~`0.05s` user
 
@@ -80,8 +80,8 @@ For each optimization slice:
   - pyc-only import closure for `typing` + `annotationlib` path (direct execution now succeeds without source fallback when pyc is present).
 - NumPy import graph pyc fallback counters improved from:
   - `source_compiles=30`, `pyc_fallbacks=29`
-  - to `source_compiles=7`, `pyc_fallbacks=6`.
-  - remaining pyc runtime-fallback modules in the NumPy import path:
-    - `re._constants`, `re._parser`, `re._compiler`, `re`
-    - `textwrap`
-    - `numpy._core._add_newdocs`
+  - to `source_compiles=1`, `pyc_fallbacks=0`.
+  - `BUILD_SLICE` runtime now respects CPython operand arity (`arg=2` vs `arg=3`) and no longer corrupts stack state in pyc execution.
+  - new pyc regressions:
+    - `tests/pyc_exec.rs::executes_cpython_pyc_build_slice_with_two_and_three_operands`
+    - `tests/pyc_translate.rs::translates_build_slice_with_two_operands`

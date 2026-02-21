@@ -141,13 +141,15 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       - coroutine/async-generator code objects now allocate generator/coroutine state on call (not only `code.is_generator`),
       - fixes `_collections_abc` pyc path failure (`_coro.close()` on `None`),
       - new regression: `tests/pyc_exec.rs::executes_cpython_pyc_async_def_returns_coroutine_object`.
+    - `BUILD_SLICE` parity fix landed for translated pyc execution:
+      - runtime now honors operand arity (`arg=2` vs `arg=3`) and no longer pops a bogus step value on two-operand slices,
+      - fixes pyc failure on `del x[-2:]`/slice-delete paths used by `re` imports,
+      - new regressions:
+        - `tests/pyc_exec.rs::executes_cpython_pyc_build_slice_with_two_and_three_operands`
+        - `tests/pyc_translate.rs::translates_build_slice_with_two_operands`
     - pyc-only import check for `typing` + `annotationlib` now succeeds (manual direct run from cache-only path).
     - NumPy import graph counters improved to:
-      - `source_compiles=7`, `pyc_attempts=111`, `pyc_fallbacks=6` (was `30/111/29`).
-    - remaining runtime pyc fallback on the import path is currently:
-      - `re.*`,
-      - `textwrap`,
-      - `numpy._core._add_newdocs`.
+      - `source_compiles=1`, `pyc_attempts=111`, `pyc_fallbacks=0` (was `30/111/29`).
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,

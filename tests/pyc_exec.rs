@@ -346,3 +346,27 @@ coro.close()
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn executes_cpython_pyc_build_slice_with_two_and_three_operands() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+x = [1, 2, 3, 4]
+del x[-2:]
+
+y = [0, 1, 2, 3, 4]
+del y[1:4:2]
+
+ok = x == [1, 2] and y == [0, 2, 4]
+"#;
+
+    let pyc_path = compile_pyc(source, "build_slice_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

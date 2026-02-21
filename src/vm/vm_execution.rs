@@ -3322,9 +3322,26 @@ impl Vm {
                 self.apply_dict_stack_merge(oparg, update, true, "DICT_MERGE")?;
             }
             Opcode::BuildSlice => {
-                let step = self.pop_value()?;
-                let upper = self.pop_value()?;
-                let lower = self.pop_value()?;
+                let count = instr.arg.unwrap_or(3);
+                let (lower, upper, step) = match count {
+                    2 => {
+                        let upper = self.pop_value()?;
+                        let lower = self.pop_value()?;
+                        (lower, upper, Value::None)
+                    }
+                    3 => {
+                        let step = self.pop_value()?;
+                        let upper = self.pop_value()?;
+                        let lower = self.pop_value()?;
+                        (lower, upper, step)
+                    }
+                    _ => {
+                        return Err(RuntimeError::new(format!(
+                            "invalid BUILD_SLICE arg {}",
+                            count
+                        )));
+                    }
+                };
                 let lower = value_to_optional_index(lower)?;
                 let upper = value_to_optional_index(upper)?;
                 let step = value_to_optional_index(step)?;
