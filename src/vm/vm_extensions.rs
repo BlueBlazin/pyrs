@@ -4143,11 +4143,36 @@ impl ModuleCapiContext {
             return;
         }
 
-        let ptype = cpython_exception_type_ptr(current_exception);
-        let ptraceback = self
-            .cpython_value_from_ptr_or_proxy(current_exception)
-            .and_then(|value| cpython_exception_traceback_ptr_for_value(self, &value))
-            .unwrap_or(std::ptr::null_mut());
+        let registry_known_live = if self.vm.is_null() {
+            false
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &*self.vm };
+            vm.capi_registry_contains_live_or_pending(current_exception as usize)
+        };
+        if !registry_known_live
+            && !self.owns_cpython_allocation_ptr(current_exception)
+            && !Self::is_probable_external_cpython_object_ptr(current_exception)
+        {
+            return;
+        }
+
+        let Some(exception_value) = self.cpython_value_from_ptr_or_proxy(current_exception) else {
+            return;
+        };
+        let value_is_exception = match &exception_value {
+            Value::Exception(_) | Value::ExceptionType(_) => true,
+            Value::Instance(instance_obj) => cpython_is_exception_instance(self, instance_obj),
+            _ => false,
+        };
+        if !value_is_exception {
+            return;
+        }
+
+        let ptype = cpython_exception_type_ptr_for_value(self, &exception_value)
+            .unwrap_or_else(|| cpython_exception_type_ptr(current_exception));
+        let ptraceback =
+            cpython_exception_traceback_ptr_for_value(self, &exception_value).unwrap_or(std::ptr::null_mut());
         let next_state = CpythonErrorState {
             ptype,
             pvalue: current_exception,
