@@ -9,6 +9,7 @@ Status: `IN_PROGRESS` (execution lock, Phase 1/2 in progress).
   - owned-pointer checks now resolve through VM-global registry authority (`Vm::capi_ptr_is_owned_compat`) with context-local allocation lists only as fallback discovery, not ownership source-of-truth.
   - owned registration is now explicit for additional compat allocations (frame/cfunction/descriptor/list-buffer resize paths), reducing stale ownership divergence between context and registry.
   - proxy materialization is now registry-first for known live/pending pointers (`capi_registry_contains_live_or_pending`) so pointer-probability heuristics are no longer a correctness gate once a pointer is registered.
+  - owned-pointer deallocation now routes through shared context helpers (`capi_owned_ptr_prepare_for_free`, `capi_owned_ptr_mark_freed`) across context teardown and frame-release paths, centralizing pending/free transitions and VM pin-state updates.
   - this closes a core migration gap where context-local ownership bookkeeping could drift from registry state.
 
 - teardown-safety closure (latest):

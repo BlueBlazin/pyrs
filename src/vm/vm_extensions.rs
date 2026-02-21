@@ -3535,15 +3535,7 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
-            self.capi_registry_mark_pending_free_ptr(raw.cast());
-            if !self.capi_registry_should_free_now_ptr(raw.cast()) {
-                if !self.vm.is_null() {
-                    // SAFETY: VM pointer is valid for context lifetime.
-                    let vm = unsafe { &mut *self.vm };
-                    if vm.capi_pin_owned_ptr(raw as usize) {
-                        vm.capi_registry_mark_alive(raw as usize);
-                    }
-                }
+            if !self.capi_owned_ptr_prepare_for_free(raw.cast()) {
                 continue;
             }
             if !self.vm.is_null() {
@@ -3563,27 +3555,13 @@ impl Drop for ModuleCapiContext {
             CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| {
                 registry.borrow_mut().remove(&(raw as usize));
             });
-            if !self.vm.is_null() {
-                // SAFETY: VM pointer is valid for context lifetime.
-                let vm = unsafe { &mut *self.vm };
-                let was_pinned = vm.capi_unpin_owned_ptr(raw as usize);
-                vm.extension_pinned_capsule_names.remove(&(raw as usize));
-                vm.capi_registry_mark_freed(raw as usize);
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
-                    eprintln!(
-                        "[pin-free] context-free compat ptr={:p} was_pinned={}",
-                        raw.cast::<c_void>(),
-                        was_pinned
-                    );
-                }
-            }
             self.cpython_known_type_ptrs.remove(&(raw as usize));
             self.cpython_descriptors.remove(&(raw as usize));
             // SAFETY: pointers were allocated via C allocator in this context.
             unsafe {
                 free(raw.cast());
             }
-            self.capi_registry_mark_freed_ptr(raw.cast());
+            self.capi_owned_ptr_mark_freed(raw.cast(), "context-free compat");
         }
         let drained_list_buffers: Vec<(PyrsObjectHandle, (*mut *mut c_void, usize))> =
             self.cpython_list_buffers.drain().collect();
@@ -3628,36 +3606,14 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
-            self.capi_registry_mark_pending_free_ptr(buffer.cast());
-            if !self.capi_registry_should_free_now_ptr(buffer.cast()) {
-                if !self.vm.is_null() {
-                    // SAFETY: VM pointer is valid for context lifetime.
-                    let vm = unsafe { &mut *self.vm };
-                    if vm.capi_pin_owned_ptr(buffer as usize) {
-                        vm.capi_registry_mark_alive(buffer as usize);
-                    }
-                }
+            if !self.capi_owned_ptr_prepare_for_free(buffer.cast()) {
                 continue;
-            }
-            if !self.vm.is_null() {
-                // SAFETY: VM pointer is valid for context lifetime.
-                let vm = unsafe { &mut *self.vm };
-                let was_pinned = vm.capi_unpin_owned_ptr(buffer as usize);
-                vm.extension_pinned_capsule_names.remove(&(buffer as usize));
-                vm.capi_registry_mark_freed(buffer as usize);
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
-                    eprintln!(
-                        "[pin-free] context-free list-buffer ptr={:p} was_pinned={}",
-                        buffer.cast::<c_void>(),
-                        was_pinned
-                    );
-                }
             }
             // SAFETY: list item buffers were allocated through C allocator in this context.
             unsafe {
                 free(buffer.cast());
             }
-            self.capi_registry_mark_freed_ptr(buffer.cast());
+            self.capi_owned_ptr_mark_freed(buffer.cast(), "context-free list-buffer");
         }
         let drained_aux_allocations: Vec<*mut c_void> =
             self.cpython_aux_allocations.drain(..).collect();
@@ -3695,35 +3651,14 @@ impl Drop for ModuleCapiContext {
                 }
                 continue;
             }
-            self.capi_registry_mark_pending_free_ptr(raw);
-            if !self.capi_registry_should_free_now_ptr(raw) {
-                if !self.vm.is_null() {
-                    // SAFETY: VM pointer is valid for context lifetime.
-                    let vm = unsafe { &mut *self.vm };
-                    if vm.capi_pin_owned_ptr(raw as usize) {
-                        vm.capi_registry_mark_alive(raw as usize);
-                    }
-                }
+            if !self.capi_owned_ptr_prepare_for_free(raw) {
                 continue;
-            }
-            if !self.vm.is_null() {
-                // SAFETY: VM pointer is valid for context lifetime.
-                let vm = unsafe { &mut *self.vm };
-                let was_pinned = vm.capi_unpin_owned_ptr(raw as usize);
-                vm.extension_pinned_capsule_names.remove(&(raw as usize));
-                vm.capi_registry_mark_freed(raw as usize);
-                if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
-                    eprintln!(
-                        "[pin-free] context-free aux ptr={:p} was_pinned={}",
-                        raw, was_pinned
-                    );
-                }
             }
             // SAFETY: auxiliary raw buffers were allocated via C allocator in this context.
             unsafe {
                 free(raw);
             }
-            self.capi_registry_mark_freed_ptr(raw);
+            self.capi_owned_ptr_mark_freed(raw, "context-free aux");
         }
     }
 }
@@ -4536,6 +4471,44 @@ impl ModuleCapiContext {
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *self.vm };
         vm.capi_registry_mark_freed(ptr as usize);
+    }
+
+    fn capi_owned_ptr_prepare_for_free(&mut self, ptr: *mut c_void) -> bool {
+        if ptr.is_null() {
+            return false;
+        }
+        self.capi_registry_mark_pending_free_ptr(ptr);
+        if self.capi_registry_should_free_now_ptr(ptr) {
+            return true;
+        }
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            if vm.capi_pin_owned_ptr(ptr as usize) {
+                vm.capi_registry_mark_alive(ptr as usize);
+            }
+        }
+        false
+    }
+
+    fn capi_owned_ptr_mark_freed(&mut self, ptr: *mut c_void, trace_label: &str) {
+        if ptr.is_null() {
+            return;
+        }
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            let was_pinned = vm.capi_unpin_owned_ptr(ptr as usize);
+            vm.extension_pinned_capsule_names.remove(&(ptr as usize));
+            vm.capi_registry_mark_freed(ptr as usize);
+            if std::env::var_os("PYRS_TRACE_PIN_FREE").is_some() {
+                eprintln!(
+                    "[pin-free] {} ptr={:p} was_pinned={}",
+                    trace_label, ptr, was_pinned
+                );
+            }
+        }
+        self.capi_registry_mark_freed_ptr(ptr);
     }
 
     fn capi_registry_pin_external_once_ptr(&mut self, ptr: *mut c_void) -> bool {
@@ -6079,12 +6052,34 @@ impl ModuleCapiContext {
         if object.is_null() || self.vm.is_null() {
             return None;
         }
-        let owns_allocation = self.owns_cpython_allocation_ptr(object);
-        let registry_known_live = {
+        let mut owns_allocation = self.owns_cpython_allocation_ptr(object);
+        let mut registry_known_live = {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &*self.vm };
             vm.capi_registry_contains_live_or_pending(object as usize)
         };
+        if !registry_known_live {
+            let discovered_owned = self
+                .cpython_allocations
+                .iter()
+                .any(|allocation| allocation.cast::<c_void>() == object)
+                || self.cpython_aux_allocations.contains(&object)
+                || self
+                    .cpython_list_buffers
+                    .values()
+                    .any(|(buffer, _)| buffer.cast::<c_void>() == object);
+            if discovered_owned {
+                self.capi_registry_register_owned_ptr(object, None);
+                registry_known_live = true;
+                owns_allocation = true;
+                if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+                    eprintln!(
+                        "[cpy-proxy-registry-heal] ptr={:p} discovered_owned=true",
+                        object
+                    );
+                }
+            }
+        }
         let probable_external = Self::is_probable_external_cpython_object_ptr(object);
         if !probable_external && !registry_known_live {
             // Some extension-created heap metatypes can fail the conservative
@@ -8601,15 +8596,17 @@ impl ModuleCapiContext {
             if let Some((buffer, _)) = self.cpython_list_buffers.remove(&handle)
                 && !buffer.is_null()
             {
-                self.capi_registry_mark_pending_free_ptr(buffer.cast());
-                // SAFETY: list buffer pointer was allocated through C allocator.
-                unsafe {
-                    free(buffer.cast());
+                if self.capi_owned_ptr_prepare_for_free(buffer.cast()) {
+                    // SAFETY: list buffer pointer was allocated through C allocator.
+                    unsafe {
+                        free(buffer.cast());
+                    }
+                    self.capi_owned_ptr_mark_freed(buffer.cast(), "frame-release list-buffer");
                 }
-                self.capi_registry_mark_freed_ptr(buffer.cast());
             }
             // SAFETY: frame pointer was created by PyFrame_New and points to frame-compatible
             // storage with referenced object pointers that need balanced decref.
+            let mut frame_freed = false;
             unsafe {
                 let raw_frame = ptr.cast::<CpythonFrameCompatObject>();
                 let back = (*raw_frame).f_back;
@@ -8627,11 +8624,13 @@ impl ModuleCapiContext {
                 Py_XDecRef(code);
                 Py_XDecRef(globals);
                 Py_XDecRef(locals);
-                self.capi_registry_mark_pending_free_ptr(ptr);
-                free(ptr);
+                if self.capi_owned_ptr_prepare_for_free(ptr) {
+                    free(ptr);
+                    self.capi_owned_ptr_mark_freed(ptr, "frame-release frame");
+                    frame_freed = true;
+                }
             }
-            self.capi_registry_mark_freed_ptr(ptr);
-            if !self.vm.is_null() {
+            if frame_freed && !self.vm.is_null() {
                 // SAFETY: VM pointer is valid for active C-API context lifetime.
                 let vm = unsafe { &mut *self.vm };
                 vm.extension_cpython_ptr_values.remove(&ptr_addr);
@@ -8644,9 +8643,6 @@ impl ModuleCapiContext {
                 {
                     vm.extension_cpython_ptr_by_object_id.remove(&object_id);
                 }
-                vm.capi_unpin_owned_ptr(ptr_addr);
-                vm.extension_pinned_capsule_names.remove(&ptr_addr);
-                vm.capi_registry_mark_freed(ptr_addr);
             }
         }
     }
@@ -9281,9 +9277,7 @@ impl ModuleCapiContext {
         if !self.vm.is_null() {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &*self.vm };
-            if vm.capi_ptr_is_owned_compat(ptr as usize) {
-                return true;
-            }
+            return vm.capi_ptr_is_owned_compat(ptr as usize);
         }
         self.cpython_allocations
             .iter()
