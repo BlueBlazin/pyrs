@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::{Mutex, OnceLock};
 
 use crate::runtime::{BuiltinFunction, Object, Value};
 
@@ -104,7 +105,22 @@ impl Drop for ActiveCpythonContextGuard {
 }
 
 pub(in crate::vm::vm_extensions) fn cpython_trace_numpy_reduce_enabled() -> bool {
-    std::env::var_os("PYRS_TRACE_NUMPY_REDUCE").is_some()
+    cpython_trace_flag_enabled("PYRS_TRACE_NUMPY_REDUCE")
+}
+
+pub(in crate::vm::vm_extensions) fn cpython_trace_flag_enabled(name: &'static str) -> bool {
+    static CACHE: OnceLock<Mutex<HashMap<&'static str, bool>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some(value) = guard.get(name)
+    {
+        return *value;
+    }
+    let enabled = std::env::var_os(name).is_some();
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(name, enabled);
+    }
+    enabled
 }
 
 pub(in crate::vm::vm_extensions) fn cpython_is_reduce_probe_name(name: &str) -> bool {
@@ -134,7 +150,7 @@ pub(in crate::vm::vm_extensions) fn cpython_error_message_indicates_missing_attr
 #[track_caller]
 pub(in crate::vm::vm_extensions) fn cpython_set_error(message: impl Into<String>) {
     let message = message.into();
-    if std::env::var_os("PYRS_TRACE_UNKNOWN_PTR").is_some()
+    if cpython_trace_flag_enabled("PYRS_TRACE_UNKNOWN_PTR")
         && message.contains("unknown PyObject pointer")
     {
         let caller = std::panic::Location::caller();
@@ -145,7 +161,7 @@ pub(in crate::vm::vm_extensions) fn cpython_set_error(message: impl Into<String>
             caller.line()
         );
     }
-    if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() {
+    if cpython_trace_flag_enabled("PYRS_TRACE_CPY_ERRORS") {
         let caller = std::panic::Location::caller();
         eprintln!(
             "[cpy-err] {} (at {}:{})",

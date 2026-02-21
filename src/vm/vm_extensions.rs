@@ -143,6 +143,7 @@ use self::cpython_codec_runtime::{
 };
 use self::cpython_context_runtime::{
     cpython_builtin_cfunction_varargs_kwargs, cpython_call_builtin,
+    cpython_trace_flag_enabled,
     cpython_error_message_indicates_missing_attribute, cpython_is_reduce_probe_name,
     cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
     cpython_trace_numpy_reduce_enabled, cpython_value_from_ptr, cpython_value_from_ptr_or_proxy,

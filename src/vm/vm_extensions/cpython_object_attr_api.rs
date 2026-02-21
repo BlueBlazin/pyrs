@@ -10,8 +10,8 @@ use super::{
     PyObject_DelItem, PyObject_IsInstance, c_name_to_string, cpython_call_builtin,
     cpython_error_message_indicates_missing_attribute, cpython_is_reduce_probe_name,
     cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
-    cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag, cpython_value_from_ptr,
-    cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
+    cpython_trace_flag_enabled, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
+    cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -29,7 +29,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     let trace_reduce_attr =
         cpython_trace_numpy_reduce_enabled() && cpython_is_reduce_probe_name(&name);
     let trace_numpy_dtype_attr =
-        std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_ATTR").is_some() && name == "dtype";
+        cpython_trace_flag_enabled("PYRS_TRACE_NUMPY_DTYPE_ATTR") && name == "dtype";
     if trace_numpy_dtype_attr {
         eprintln!(
             "[numpy-dtype-attr] PyObject_GetAttrString object={:p}",
@@ -42,14 +42,14 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             object, name
         );
     }
-    let trace_numpy_attr = std::env::var_os("PYRS_TRACE_NUMPY_INIT").is_some()
+    let trace_numpy_attr = cpython_trace_flag_enabled("PYRS_TRACE_NUMPY_INIT")
         && matches!(
             name.as_str(),
             "__array_finalize__" | "__array_ufunc__" | "__array_function__" | "base" | "BoolDType"
         );
     let trace_exit_lookup =
-        std::env::var_os("PYRS_TRACE_ATTR_EXIT_LOOKUP").is_some() && name == "__exit__";
-    let trace_seed_attrs = std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some()
+        cpython_trace_flag_enabled("PYRS_TRACE_ATTR_EXIT_LOOKUP") && name == "__exit__";
+    let trace_seed_attrs = cpython_trace_flag_enabled("PYRS_TRACE_NUMPY_SEED_ATTRS")
         && matches!(
             name.as_str(),
             "BitGenerator"
@@ -65,13 +65,13 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             object, name
         );
     }
-    let trace_getattr_slots = std::env::var_os("PYRS_TRACE_GETATTR_SLOTS").is_some();
-    let trace_proxy_getattr = std::env::var_os("PYRS_TRACE_PROXY_GETATTR").is_some()
+    let trace_getattr_slots = cpython_trace_flag_enabled("PYRS_TRACE_GETATTR_SLOTS");
+    let trace_proxy_getattr = cpython_trace_flag_enabled("PYRS_TRACE_PROXY_GETATTR")
         && matches!(name.as_str(), "__repr__" | "__str__");
     let trace_dot_getattr =
-        std::env::var_os("PYRS_TRACE_PROXY_GETATTR_DOT").is_some() && name == "dot";
+        cpython_trace_flag_enabled("PYRS_TRACE_PROXY_GETATTR_DOT") && name == "dot";
     let trace_generate_state =
-        std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some() && name == "generate_state";
+        cpython_trace_flag_enabled("PYRS_TRACE_GETATTR_GENERATE_STATE") && name == "generate_state";
     if trace_generate_state {
         let none_ptr = (&raw mut _Py_NoneStruct).cast::<c_void>();
         let target_kind = with_active_cpython_context_mut(|context| {
@@ -104,7 +104,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 return None;
             }
             let is_proxy_trace = name == "__array_finalize__"
-                && std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some();
+                && cpython_trace_flag_enabled("PYRS_TRACE_CPY_PROXY_PTRS");
             if (object as usize) % std::mem::align_of::<CpythonObjectHead>() != 0 {
                 if is_proxy_trace {
                     eprintln!(
