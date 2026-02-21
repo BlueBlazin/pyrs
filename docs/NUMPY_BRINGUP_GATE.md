@@ -107,11 +107,15 @@ If a probed local module is not installed, its dependent cases are recorded as `
   - `import numpy.random` now succeeds in direct mode.
   - direct `numpy.random.MT19937()` construction now succeeds (new regression:
     `tests/vm.rs::numpy_random_mt19937_initializer_runs_without_seedsequence_failures`).
+  - `numpy.random.default_rng()` is currently blocked again (direct mode):
+    - `TypeError: raise: exception class must be a subclass of BaseException`
+    - active root-cause lane is CPython 3.14 fast-thread-state exception-indicator synchronization (`PyThreadState.current_exception` vs C-API error APIs).
   - root-cause closures in C-API substrate:
     - `PyType_Ready` now installs a class-level `__init__` slot wrapper when `tp_init` exists and the type dict does not already define `__init__`.
     - method-descriptor `tp_call` now handles unbound `METH_METHOD` receiver shapes where the defining class is passed before the explicit instance argument.
   - remaining `numpy.random` long-tail blocker:
-    - `numpy.random.default_rng()` currently fails with `TypeError: attempted to call non-function`.
+    - generator method calls (for example `rng.integers(...)` / `rng.random()`) currently fail in direct mode with
+      `TypeError: unsupported format string passed to Int64DType.__format__` / `Float64DType.__format__`.
 - 2026-02-21 lifetime-model hardening checkpoint (P0):
   - fixed deterministic post-NumPy teardown aborts (`SIGABRT` / pointer-not-allocated in `Vm::drop`) by closing stale-owned-pointer paths:
     - list-buffer `realloc` now migrates registry/pin state when buffer addresses move,

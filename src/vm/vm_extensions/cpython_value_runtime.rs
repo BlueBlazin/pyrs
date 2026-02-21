@@ -9,7 +9,7 @@ use super::{
     PyListIter_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type,
     PyNone_Type, PyRange_Type, PyRangeIter_Type, PySeqIter_Type, PySet_Type, PySetIter_Type,
     PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type,
-    PyUnicodeIter_Type,
+    PyUnicodeIter_Type, cpython_exception_ptr_for_name,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -56,6 +56,8 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
         Value::Super(_) => std::ptr::addr_of_mut!(PySuper_Type).cast(),
         Value::Function(_) => std::ptr::addr_of_mut!(PyFunction_Type).cast(),
         Value::BoundMethod(_) => std::ptr::addr_of_mut!(PyMethod_Type).cast(),
+        Value::Exception(exception_obj) => cpython_exception_ptr_for_name(&exception_obj.name)
+            .unwrap_or_else(|| std::ptr::addr_of_mut!(PyBaseObject_Type).cast()),
         Value::Class(_) => std::ptr::addr_of_mut!(PyType_Type).cast(),
         Value::Builtin(_) => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),
         _ => std::ptr::addr_of_mut!(PyBaseObject_Type).cast(),

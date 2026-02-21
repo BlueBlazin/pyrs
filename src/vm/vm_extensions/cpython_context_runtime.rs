@@ -6,8 +6,10 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 use super::{
     ACTIVE_CPYTHON_INIT_CONTEXT, InternalCallOutcome, ModuleCapiContext, PyExc_RuntimeError,
     cpython_call_internal_in_context, cpython_keyword_args_from_dict_object,
-    cpython_positional_args_from_tuple_object,
+    cpython_positional_args_from_tuple_object, cpython_exception_class_name_from_ptr,
+    cpython_exception_ptr_for_name,
 };
+use super::cpython_error_numeric_api::cpython_make_exception_instance_from_type_and_value;
 
 pub(in crate::vm::vm_extensions) fn with_active_cpython_context_mut<R>(
     f: impl FnOnce(&mut ModuleCapiContext) -> R,
@@ -51,13 +53,48 @@ impl Drop for ActiveCpythonContextGuard {
             unsafe {
                 let previous = &mut *self.previous;
                 let current = &mut *self.context;
-                if previous.current_error.is_none() && current.current_error.is_some() {
+                if previous.current_error.is_none()
+                    && let Some(state) = current.current_error
+                {
                     let message = current
                         .last_error
                         .clone()
                         .or_else(|| current.first_error.clone())
                         .unwrap_or_else(|| "nested CPython context raised an error".to_string());
-                    previous.set_error(message);
+                    let propagated_ptype = if state.ptype.is_null() {
+                        PyExc_RuntimeError
+                    } else if let Some(name) = cpython_exception_class_name_from_ptr(state.ptype) {
+                        cpython_exception_ptr_for_name(&name).unwrap_or(state.ptype)
+                    } else {
+                        state.ptype
+                    };
+                    let propagated_pvalue = if state.pvalue.is_null() {
+                        std::ptr::null_mut()
+                    } else if let Some(value) = current.cpython_value_from_ptr_or_proxy(state.pvalue)
+                    {
+                        previous.alloc_cpython_ptr_for_value(value)
+                    } else if !current.owns_cpython_allocation_ptr(state.pvalue) {
+                        state.pvalue
+                    } else {
+                        std::ptr::null_mut()
+                    };
+                    let propagated_ptraceback = if state.ptraceback.is_null() {
+                        std::ptr::null_mut()
+                    } else if let Some(value) =
+                        current.cpython_value_from_ptr_or_proxy(state.ptraceback)
+                    {
+                        previous.alloc_cpython_ptr_for_value(value)
+                    } else if !current.owns_cpython_allocation_ptr(state.ptraceback) {
+                        state.ptraceback
+                    } else {
+                        std::ptr::null_mut()
+                    };
+                    previous.set_error_state(
+                        propagated_ptype,
+                        propagated_pvalue,
+                        propagated_ptraceback,
+                        message,
+                    );
                 }
             }
         }
@@ -143,7 +180,13 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
         } else {
             ptype
         };
-        context.set_error_state(ty, std::ptr::null_mut(), std::ptr::null_mut(), message);
+        let fallback_value = Value::Str(message.clone());
+        // Mirror CPython's normalized error state when possible so consumers
+        // that read `tstate->current_exception` get an exception instance.
+        let pvalue =
+            cpython_make_exception_instance_from_type_and_value(context, ty, Some(fallback_value))
+                .unwrap_or_else(|| context.alloc_cpython_ptr_for_value(Value::Str(message.clone())));
+        context.set_error_state(ty, pvalue, std::ptr::null_mut(), message);
     });
 }
 

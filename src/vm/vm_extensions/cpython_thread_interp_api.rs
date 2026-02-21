@@ -8,7 +8,8 @@ use super::{
     CPY_FRAME_MODULE_NAME, CPYTHON_CONSTANT_EMPTY_BYTES_PTR, CPYTHON_CONSTANT_EMPTY_STR_PTR,
     CPYTHON_CONSTANT_EMPTY_TUPLE_PTR, CPYTHON_CONSTANT_ONE_PTR, CPYTHON_CONSTANT_ZERO_PTR,
     CPYTHON_IS_INITIALIZED, CPYTHON_THREAD_STATE_COMPAT_SIZE, CURRENT_THREAD_STATE_PTR,
-    CpythonFrameCompatObject, CpythonModuleDef, CpythonObjectHead, CpythonThreadStateCompat,
+    CapiPtrProvenance, CpythonFrameCompatObject, CpythonModuleDef, CpythonObjectHead,
+    CpythonThreadStateCompat,
     CpythonVarObjectHead, Object, Py_IncRef, PyBytes_FromStringAndSize, PyErr_BadInternalCall,
     PyExc_SystemError, PyFrame_Type, PyLong_FromLong, PyTuple_New, PyUnicode_FromStringAndSize,
     calloc, cpython_bind_module_def, cpython_current_thread_state_ptr,
@@ -253,7 +254,11 @@ pub unsafe extern "C" fn PyFrame_New(
         }
         let frame_ptr = raw.cast::<c_void>();
         context.cpython_allocations.push(raw.cast());
-        context.cpython_owned_ptrs.insert(frame_ptr as usize);
+        if !context.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            vm.capi_registry_register_ptr(frame_ptr as usize, CapiPtrProvenance::OwnedCompat, None);
+        }
         context.cpython_ptr_by_handle.insert(handle, frame_ptr);
         context
             .cpython_objects_by_ptr

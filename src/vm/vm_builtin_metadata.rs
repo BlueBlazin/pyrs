@@ -11,7 +11,8 @@ use super::{
     bind_arguments, bytes_like_source_is_readonly, class_attr_lookup, class_attr_lookup_direct,
     class_attr_walk, class_inherits_dynamic_instance_dict, class_name_for_instance,
     collect_slot_names, dict_get_value, dict_remove_value, dict_set_value, format_repr,
-    memoryview_bounds, runtime_error_matches_exception, value_from_bigint, with_bytes_like_source,
+    memoryview_bounds, runtime_error_matches_exception, value_from_bigint, value_from_object_ref,
+    with_bytes_like_source,
 };
 
 thread_local! {
@@ -3066,7 +3067,51 @@ impl Vm {
                             }
                         }
                     }
-                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
+                    _ => {
+                        let Some(callable) = value_from_object_ref(method_data.function.clone())
+                        else {
+                            return Err(RuntimeError::type_error("attempted to call non-function"));
+                        };
+                        let receiver_value = self.receiver_value(&method_data.receiver)?;
+                        let callable_is_proxy =
+                            Self::cpython_proxy_raw_ptr_from_value(&callable).is_some();
+                        let receiver_is_proxy =
+                            Self::cpython_proxy_raw_ptr_from_value(&receiver_value).is_some();
+                        let callable_type_name = self.value_type_name_for_error(&callable);
+                        if callable_is_proxy
+                            && receiver_is_proxy
+                            && callable_type_name == "cython_function_or_method"
+                            && let Some(getter) =
+                                self.lookup_bound_special_method(&callable, "__get__")?
+                        {
+                            let owner = self
+                                .class_of_value(&receiver_value)
+                                .map(Value::Class)
+                                .unwrap_or(Value::None);
+                            if let InternalCallOutcome::Value(bound_callable) = self.call_internal(
+                                getter,
+                                vec![receiver_value.clone(), owner],
+                                HashMap::new(),
+                            )? {
+                                return self.call_internal(bound_callable, args, kwargs);
+                            }
+                        }
+                        let proxy_callable_is_already_bound = callable_is_proxy
+                            && receiver_is_proxy
+                            && matches!(
+                                callable_type_name.as_str(),
+                                "builtin_function_or_method" | "method"
+                            );
+                        let call_args = if proxy_callable_is_already_bound {
+                            args
+                        } else {
+                            let mut bound_args = Vec::with_capacity(args.len() + 1);
+                            bound_args.push(receiver_value);
+                            bound_args.extend(args);
+                            bound_args
+                        };
+                        return self.call_internal(callable, call_args, kwargs);
+                    }
                 }
             }
             Value::Builtin(builtin) => {

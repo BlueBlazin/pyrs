@@ -800,6 +800,37 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     Backtrace::force_capture()
                 );
             }
+            if message.starts_with("raise: exception class must be a subclass of BaseException")
+                && std::env::var_os("PYRS_TRACE_RAISE_CONTRACT_CONTEXT").is_some()
+            {
+                let _ = with_active_cpython_context_mut(|context| {
+                    let current_type = context
+                        .current_error
+                        .as_ref()
+                        .and_then(|state| cpython_exception_class_name_from_ptr(state.ptype))
+                        .unwrap_or_else(|| "<none>".to_string());
+                    let handled_tag = context
+                        .handled_exception_get()
+                        .as_ref()
+                        .map(cpython_value_debug_tag)
+                        .unwrap_or_else(|| "<none>".to_string());
+                    let incoming_type = cpython_exception_class_name_from_ptr(_exception)
+                        .unwrap_or_else(|| cpython_type_name_for_object_ptr(_exception));
+                    let incoming_tag = context
+                        .cpython_value_from_ptr_or_proxy(_exception)
+                        .map(|value| cpython_value_debug_tag(&value))
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    eprintln!(
+                        "[raise-contract-context] incoming_exc={:p} incoming_type={} incoming_tag={} current_error_type={} handled={} bt={:?}",
+                        _exception,
+                        incoming_type,
+                        incoming_tag,
+                        current_type,
+                        handled_tag,
+                        Backtrace::force_capture()
+                    );
+                });
+            }
             let ptype = if _exception.is_null() {
                 unsafe { PyExc_RuntimeError }
             } else {
@@ -1034,6 +1065,7 @@ pub unsafe extern "C" fn PyExceptionClass_Name(exception_class: *mut c_void) -> 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_Occurred() -> *mut c_void {
     match with_active_cpython_context_mut(|context| {
+        context.sync_current_error_from_thread_state();
         let ptr = context
             .current_error
             .as_ref()
@@ -1141,22 +1173,22 @@ pub(in crate::vm::vm_extensions) fn cpython_exception_type_ptr(ptr: *mut c_void)
 pub(in crate::vm::vm_extensions) fn cpython_exception_class_name_from_ptr(
     ptr: *mut c_void,
 ) -> Option<String> {
+    let type_ptr = cpython_exception_type_ptr(ptr);
+    if !type_ptr.is_null() && cpython_ptr_is_type_object(type_ptr) {
+        let name = cpython_safe_type_name(type_ptr.cast::<CpythonTypeObject>())?;
+        if !name.is_empty() && name != "type" {
+            return Some(name);
+        }
+    }
+    // Fallback to the exception-symbol registry only when direct type-name probing
+    // is unavailable; this avoids stale pointer->exception aliasing on reused addresses.
     if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(ptr as usize) {
         return Some(name);
     }
-    let type_ptr = cpython_exception_type_ptr(ptr);
     if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(type_ptr as usize) {
         return Some(name);
     }
-    if type_ptr.is_null() || !cpython_ptr_is_type_object(type_ptr) {
-        return None;
-    }
-    let name = cpython_safe_type_name(type_ptr.cast::<CpythonTypeObject>())?;
-    if name.is_empty() || name == "type" {
-        None
-    } else {
-        Some(name)
-    }
+    None
 }
 
 fn cpython_exception_expected_name_from_ptr(ptr: *mut c_void) -> Option<String> {
@@ -1324,6 +1356,18 @@ pub unsafe extern "C" fn PyErr_Fetch(
             state.ptype, state.pvalue, state.ptraceback, type_name, type_tp_name
         );
     }
+    if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some()
+        && (!state.ptype.is_null() || !state.pvalue.is_null() || !state.ptraceback.is_null())
+    {
+        eprintln!(
+            "[pyerr-fetch] type={:p}({}) value={:p} tb={:p}",
+            state.ptype,
+            cpython_exception_class_name_from_ptr(state.ptype)
+                .unwrap_or_else(|| cpython_type_name_for_object_ptr(state.ptype)),
+            state.pvalue,
+            state.ptraceback
+        );
+    }
     if !ptype.is_null() {
         // SAFETY: caller provided writable error-type output pointer.
         unsafe { *ptype = state.ptype };
@@ -1344,6 +1388,18 @@ pub unsafe extern "C" fn PyErr_Restore(
     pvalue: *mut c_void,
     _ptraceback: *mut c_void,
 ) {
+    if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some()
+        && (!ptype.is_null() || !pvalue.is_null() || !_ptraceback.is_null())
+    {
+        eprintln!(
+            "[pyerr-restore] type={:p}({}) value={:p} tb={:p}",
+            ptype,
+            cpython_exception_class_name_from_ptr(ptype)
+                .unwrap_or_else(|| cpython_type_name_for_object_ptr(ptype)),
+            pvalue,
+            _ptraceback
+        );
+    }
     let _ = with_active_cpython_context_mut(|context| {
         context.restore_error_state(CpythonErrorState {
             ptype,
@@ -1487,17 +1543,26 @@ pub(in crate::vm::vm_extensions) fn cpython_make_exception_instance_from_type_an
     }
     // SAFETY: VM pointer is valid for active C-API context lifetime.
     let vm = unsafe { &mut *context.vm };
-    let callable = if let Some(Value::ExceptionType(name)) =
-        cpython_exception_value_from_ptr(ptype as usize)
-    {
-        Value::Class(vm.alloc_synthetic_exception_class(&name))
-    } else {
-        match context.cpython_value_from_ptr_or_proxy(ptype)? {
-            Value::Class(class) => Value::Class(class),
-            Value::ExceptionType(name) => Value::Class(vm.alloc_synthetic_exception_class(&name)),
-            _ => return None,
+    let callable = match context.cpython_value_from_ptr_or_proxy(ptype) {
+        Some(Value::Class(class)) => Value::Class(class),
+        Some(Value::ExceptionType(name)) => Value::Class(vm.alloc_synthetic_exception_class(&name)),
+        Some(_) | None => {
+            // Fall back to the exception-symbol registry only when direct pointer
+            // materialization is unavailable; this avoids stale pointer->exception
+            // aliasing on reused addresses.
+            match cpython_exception_value_from_ptr(ptype as usize) {
+                Some(Value::ExceptionType(name)) => {
+                    Value::Class(vm.alloc_synthetic_exception_class(&name))
+                }
+                _ => return None,
+            }
         }
     };
+    if let Value::Class(class) = &callable
+        && !vm.class_is_exception_class(class)
+    {
+        return None;
+    }
     let args = match pvalue {
         Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
             Object::Tuple(values) => values.clone(),
@@ -1537,11 +1602,8 @@ fn cpython_raised_exception_ptr_from_state(
     {
         return ptr;
     }
-    if let Some(value) = value {
-        return context.alloc_cpython_ptr_for_value(value);
-    }
     // PyErr_GetRaisedException returns an exception *instance* (or NULL), not an exception class.
-    // If normalization failed, preserve failure signal rather than returning `ptype`.
+    // If normalization failed, preserve failure signal rather than returning non-exception values.
     std::ptr::null_mut()
 }
 
@@ -1557,6 +1619,18 @@ fn cpython_is_exception_value(context: &ModuleCapiContext, value: &Value) -> boo
 pub unsafe extern "C" fn PyErr_GetRaisedException() -> *mut c_void {
     with_active_cpython_context_mut(|context| {
         let state = context.fetch_error_state();
+        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_RAISED_EXC").is_some()
+            && (!state.ptype.is_null() || !state.pvalue.is_null() || !state.ptraceback.is_null())
+        {
+            eprintln!(
+                "[pyerr-getraised] state_type={:p}({}) state_value={:p} state_tb={:p}",
+                state.ptype,
+                cpython_exception_class_name_from_ptr(state.ptype)
+                    .unwrap_or_else(|| cpython_type_name_for_object_ptr(state.ptype)),
+                state.pvalue,
+                state.ptraceback
+            );
+        }
         cpython_raised_exception_ptr_from_state(context, state)
     })
     .unwrap_or_else(|err| {
@@ -1568,8 +1642,24 @@ pub unsafe extern "C" fn PyErr_GetRaisedException() -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_SetRaisedException(exc: *mut c_void) {
     let _ = with_active_cpython_context_mut(|context| {
+        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_RAISED_EXC").is_some() {
+            eprintln!(
+                "[pyerr-setraised] exc={:p} type={}",
+                exc,
+                cpython_exception_class_name_from_ptr(cpython_exception_type_ptr(exc))
+                    .unwrap_or_else(|| cpython_type_name_for_object_ptr(exc))
+            );
+        }
         if exc.is_null() {
             context.clear_error();
+            return;
+        }
+        let Some(exc_value) = context.cpython_value_from_ptr_or_proxy(exc) else {
+            context.set_error("PyErr_SetRaisedException received unknown exception pointer");
+            return;
+        };
+        if !cpython_is_exception_value(context, &exc_value) {
+            context.set_error("PyErr_SetRaisedException expected exception object");
             return;
         }
         let message = context.error_message_from_ptr(exc);
@@ -1578,10 +1668,7 @@ pub unsafe extern "C" fn PyErr_SetRaisedException(exc: *mut c_void) {
             context.set_error("PyErr_SetRaisedException expected exception object");
             return;
         }
-        let ptraceback = context
-            .cpython_value_from_ptr_or_proxy(exc)
-            .as_ref()
-            .and_then(|value| cpython_exception_traceback_ptr_for_value(context, value))
+        let ptraceback = cpython_exception_traceback_ptr_for_value(context, &exc_value)
             .unwrap_or(std::ptr::null_mut());
         context.set_error_state(ptype, exc, ptraceback, message);
     })
@@ -1676,7 +1763,7 @@ pub unsafe extern "C" fn PyErr_GetExcInfo(
         }
         if !p_traceback.is_null() {
             let value = cpython_exception_traceback_ptr_for_value(context, &handled)
-                .unwrap_or(std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>());
+                .unwrap_or(std::ptr::null_mut());
             // SAFETY: caller provided writable output pointer.
             unsafe { *p_traceback = value };
         }
@@ -1690,7 +1777,97 @@ pub unsafe extern "C" fn PyErr_SetExcInfo(
     p_value: *mut c_void,
     p_traceback: *mut c_void,
 ) {
-    unsafe { PyErr_SetHandledException(p_value) };
+    let _ = with_active_cpython_context_mut(|context| {
+        let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+        let normalized_type = if p_type.is_null() || p_type == none_ptr {
+            std::ptr::null_mut()
+        } else {
+            p_type
+        };
+        let normalized_value = if p_value.is_null() || p_value == none_ptr {
+            std::ptr::null_mut()
+        } else {
+            p_value
+        };
+        let normalized_traceback = if p_traceback.is_null() || p_traceback == none_ptr {
+            std::ptr::null_mut()
+        } else {
+            p_traceback
+        };
+        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some() {
+            eprintln!(
+                "[pyerr-setexcinfo] raw_type={:p} raw_value={:p} raw_tb={:p} norm_type={:p}({}) norm_value={:p} norm_tb={:p}",
+                p_type,
+                p_value,
+                p_traceback,
+                normalized_type,
+                cpython_exception_class_name_from_ptr(normalized_type)
+                    .unwrap_or_else(|| cpython_type_name_for_object_ptr(normalized_type)),
+                normalized_value,
+                normalized_traceback
+            );
+        }
+
+        let mut handled = if normalized_value.is_null() {
+            None
+        } else {
+            context.cpython_value_from_ptr_or_proxy(normalized_value)
+        };
+
+        if handled.is_none() && !normalized_type.is_null() {
+            if let Some(instance_ptr) =
+                cpython_make_exception_instance_from_type_and_value(context, normalized_type, None)
+            {
+                handled = context.cpython_value_from_ptr_or_proxy(instance_ptr);
+            } else {
+                handled = context.cpython_value_from_ptr_or_proxy(normalized_type);
+            }
+        }
+
+        let Some(value) = handled else {
+            context.handled_exception_set(None);
+            return;
+        };
+
+        let mut normalized = if context.vm.is_null() {
+            value
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match vm.normalize_exception_value(value) {
+                Ok(value) => value,
+                Err(err) => {
+                    context.set_error(err.message);
+                    return;
+                }
+            }
+        };
+
+        if !normalized_traceback.is_null()
+            && let Some(traceback_value) = context.cpython_value_from_ptr_or_proxy(normalized_traceback)
+        {
+            match &mut normalized {
+                Value::Exception(exception_obj) => {
+                    exception_obj
+                        .attrs
+                        .borrow_mut()
+                        .insert("__traceback__".to_string(), traceback_value);
+                }
+                Value::Instance(instance_obj) => {
+                    if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
+                        instance_data
+                            .attrs
+                            .insert("__traceback__".to_string(), traceback_value);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        context.handled_exception_set(Some(normalized));
+    })
+    .map_err(cpython_set_error);
+
     // Keep CPython ownership semantics: arguments are stolen.
     unsafe {
         Py_XDecRef(p_value);
@@ -2314,8 +2491,34 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
                 );
             }
         }
-        if let Some(normalized) =
-            cpython_make_exception_instance_from_type_and_value(context, ptype, value_obj.clone())
+        let safe_to_normalize_ptype = if ptype.is_null() || context.vm.is_null() {
+            false
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            match context.cpython_value_from_ptr_or_proxy(ptype) {
+                Some(Value::Class(class_obj)) => {
+                    let proxy_ptr_matches =
+                        ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&Value::Class(
+                            class_obj.clone(),
+                        ))
+                        .is_none_or(|raw| raw == ptype);
+                    proxy_ptr_matches && vm.class_is_exception_class(&class_obj)
+                }
+                Some(Value::ExceptionType(name)) => vm.exception_inherits(&name, "BaseException"),
+                Some(_) => false,
+                None => matches!(
+                    cpython_exception_value_from_ptr(ptype as usize),
+                    Some(Value::ExceptionType(_))
+                ),
+            }
+        };
+        if safe_to_normalize_ptype
+            && let Some(normalized) = cpython_make_exception_instance_from_type_and_value(
+                context,
+                ptype,
+                value_obj.clone(),
+            )
         {
             let message = context.error_message_from_ptr(normalized);
             if message.contains("__exit__")

@@ -2,14 +2,14 @@ use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::runtime::{Object, Value};
-use crate::vm::{BuiltinFunction, dict_set_value_checked, value_to_int};
+use crate::vm::{BuiltinFunction, dict_set_value_checked, mod_values, value_to_int};
 
 use super::{
     _Py_NotImplementedStruct, CpythonBuffer, CpythonBufferProcs, CpythonObjectHead,
     CpythonTypeObject, Cwchar, ModuleCapiContext, Py_DecRef, Py_IncRef, Py_XDecRef,
     PyBytes_AsString, PyErr_BadArgument, PyErr_BadInternalCall, PyErr_Clear, PyErr_NoMemory,
     PyErr_Occurred, PyExc_IndexError, PyExc_RuntimeError, PyExc_SystemError, PyExc_TypeError,
-    PyExc_UnicodeEncodeError, PyExc_ValueError, PyMem_Malloc, PyOS_FSPath, PyObject_Format,
+    PyExc_UnicodeEncodeError, PyExc_ValueError, PyMem_Malloc, PyOS_FSPath,
     c_name_to_string, cpython_call_internal_in_context, cpython_call_method_for_capi,
     cpython_codec_error_name_optional, cpython_codec_module_in_context,
     cpython_codec_name_or_default, cpython_getattr_in_context, cpython_lookup_interned_unicode_ptr,
@@ -665,7 +665,74 @@ pub unsafe extern "C" fn PyUnicode_Contains(container: *mut c_void, element: *mu
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_Format(format: *mut c_void, arg: *mut c_void) -> *mut c_void {
-    unsafe { PyObject_Format(arg, format) }
+    with_active_cpython_context_mut(|context| {
+        if format.is_null() {
+            context.set_error("PyUnicode_Format received null format");
+            return std::ptr::null_mut();
+        }
+        let format_value = match context.cpython_value_from_ptr_or_proxy(format) {
+            Some(value @ Value::Str(_)) => value,
+            Some(other) => {
+                let got = if context.vm.is_null() {
+                    cpython_value_debug_tag(&other)
+                } else {
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    unsafe { (&mut *context.vm).value_type_name_for_error(&other) }
+                };
+                context.set_error(format!(
+                    "PyUnicode_Format expected str format, got {got}"
+                ));
+                return std::ptr::null_mut();
+            }
+            None => {
+                context.set_error("PyUnicode_Format received unknown format pointer");
+                return std::ptr::null_mut();
+            }
+        };
+        let arg_value = if arg.is_null() {
+            Value::None
+        } else {
+            match context.cpython_value_from_ptr_or_proxy(arg) {
+                Some(value) => value,
+                None => {
+                    context.set_error("PyUnicode_Format received unknown argument pointer");
+                    return std::ptr::null_mut();
+                }
+            }
+        };
+        if context.vm.is_null() {
+            context.set_error("missing VM context for PyUnicode_Format");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let rendered = match mod_values(format_value, arg_value, &vm.heap) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err.message);
+                return std::ptr::null_mut();
+            }
+        };
+        match rendered {
+            Value::Str(_) => context.alloc_cpython_ptr_for_value(rendered),
+            other => {
+                let got = if context.vm.is_null() {
+                    cpython_value_debug_tag(&other)
+                } else {
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    unsafe { (&mut *context.vm).value_type_name_for_error(&other) }
+                };
+                context.set_error(format!(
+                    "PyUnicode_Format expected str result, got {got}"
+                ));
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
 }
 
 #[unsafe(no_mangle)]

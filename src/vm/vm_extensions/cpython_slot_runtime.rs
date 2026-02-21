@@ -409,6 +409,24 @@ pub(super) fn cpython_call_object(
         // SAFETY: VM pointer is valid for active context lifetime.
         let vm = unsafe { &mut *context.vm };
         if let Value::ExceptionType(name) = callable {
+            if std::env::var_os("PYRS_TRACE_EXCEPTION_TYPE_FLAGS").is_some()
+                && (name == "TypeError" || name == "ValueError" || name == "IndexError")
+            {
+                // SAFETY: exception symbol pointers are process-global type objects.
+                unsafe {
+                    if let Some(sym) = super::cpython_exception_ptr_for_name(&name) {
+                        let ty = sym.cast::<CpythonTypeObject>();
+                        eprintln!(
+                            "[cpy-exc-flags] name={} sym={:p} ob_type={:p} tp_flags=0x{:x} tp_base={:p}",
+                            name,
+                            sym,
+                            (*ty).ob_type,
+                            (*ty).tp_flags,
+                            (*ty).tp_base
+                        );
+                    }
+                }
+            }
             callable = Value::Class(vm.alloc_synthetic_exception_class(&name));
         }
         let trace_ufunc_errors = std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some();

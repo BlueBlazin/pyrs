@@ -19,7 +19,8 @@ use super::{
     memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
     mod_values, module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, value_from_bigint, value_to_int, value_to_optional_index,
+    slot_names_from_value, value_from_bigint, value_from_object_ref, value_to_int,
+    value_to_optional_index,
 };
 use crate::runtime::SliceValue;
 
@@ -8409,14 +8410,27 @@ impl Vm {
                     Object::BoundMethod(data) => (data.function.clone(), data.receiver.clone()),
                     _ => return Err(RuntimeError::type_error("attempted to call non-function")),
                 };
-                match &*function.kind() {
-                    Object::Function(_) => {
+                enum BoundDispatchKind {
+                    Python,
+                    Native(NativeMethodKind),
+                    Generic,
+                }
+                let dispatch_kind = {
+                    let function_kind = function.kind();
+                    match &*function_kind {
+                        Object::Function(_) => BoundDispatchKind::Python,
+                        Object::NativeMethod(native) => BoundDispatchKind::Native(native.kind),
+                        _ => BoundDispatchKind::Generic,
+                    }
+                };
+                match dispatch_kind {
+                    BoundDispatchKind::Python => {
                         let mut bound_args = Vec::with_capacity(args.len() + 1);
                         bound_args.push(self.receiver_value(&receiver)?);
                         bound_args.extend(args);
                         self.push_function_call_from_obj(&function, bound_args, HashMap::new())?;
                     }
-                    Object::NativeMethod(native) => {
+                    BoundDispatchKind::Native(native_kind) => {
                         let caller_depth = self.frames.len();
                         let caller_idx = caller_depth.saturating_sub(1);
                         let caller_ip = self
@@ -8425,10 +8439,12 @@ impl Vm {
                             .map(|frame| frame.ip)
                             .unwrap_or(0);
                         let call_result =
-                            self.call_native_method(native.kind, receiver, args, HashMap::new());
+                            self.call_native_method(native_kind, receiver, args, HashMap::new());
                         self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)?;
                     }
-                    _ => return Err(RuntimeError::type_error("attempted to call non-function")),
+                    BoundDispatchKind::Generic => {
+                        self.call_bound_method_via_call_internal(function, receiver, args)?;
+                    }
                 }
             }
             Value::Class(class) => {
@@ -8630,6 +8646,61 @@ impl Vm {
     }
 
     #[inline]
+    fn call_bound_method_via_call_internal(
+        &mut self,
+        function: ObjRef,
+        receiver: ObjRef,
+        mut args: Vec<Value>,
+    ) -> Result<(), RuntimeError> {
+        let Some(callable) = value_from_object_ref(function) else {
+            return Err(RuntimeError::type_error("attempted to call non-function"));
+        };
+        let receiver_value = self.receiver_value(&receiver)?;
+        let callable_is_proxy = Self::cpython_proxy_raw_ptr_from_value(&callable).is_some();
+        let receiver_is_proxy = Self::cpython_proxy_raw_ptr_from_value(&receiver_value).is_some();
+        let callable_type_name = self.value_type_name_for_error(&callable);
+        if callable_is_proxy
+            && receiver_is_proxy
+            && callable_type_name == "cython_function_or_method"
+            && let Some(getter) = self.lookup_bound_special_method(&callable, "__get__")?
+        {
+            let owner = self
+                .class_of_value(&receiver_value)
+                .map(Value::Class)
+                .unwrap_or(Value::None);
+            if let InternalCallOutcome::Value(bound_callable) =
+                self.call_internal(getter, vec![receiver_value.clone(), owner], HashMap::new())?
+            {
+                match self.call_internal(bound_callable, args, HashMap::new())? {
+                    InternalCallOutcome::Value(value) => {
+                        self.push_value(value);
+                        return Ok(());
+                    }
+                    InternalCallOutcome::CallerExceptionHandled => return Ok(()),
+                }
+            }
+        }
+        let proxy_callable_is_already_bound = callable_is_proxy
+            && receiver_is_proxy
+            && matches!(callable_type_name.as_str(), "builtin_function_or_method" | "method");
+        let call_args = if proxy_callable_is_already_bound {
+            args
+        } else {
+            let mut bound_args = Vec::with_capacity(args.len() + 1);
+            bound_args.push(receiver_value);
+            bound_args.append(&mut args);
+            bound_args
+        };
+        match self.call_internal(callable, call_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => {
+                self.push_value(value);
+                Ok(())
+            }
+            InternalCallOutcome::CallerExceptionHandled => Ok(()),
+        }
+    }
+
+    #[inline]
     pub(super) fn push_bound_method_call_zero_args_from_obj(
         &mut self,
         method: &ObjRef,
@@ -8642,12 +8713,25 @@ impl Vm {
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
-        match &*function.kind() {
-            Object::Function(_) => {
+        enum BoundDispatchKind {
+            Python,
+            Native(NativeMethodKind),
+            Generic,
+        }
+        let dispatch_kind = {
+            let function_kind = function.kind();
+            match &*function_kind {
+                Object::Function(_) => BoundDispatchKind::Python,
+                Object::NativeMethod(native) => BoundDispatchKind::Native(native.kind),
+                _ => BoundDispatchKind::Generic,
+            }
+        };
+        match dispatch_kind {
+            BoundDispatchKind::Python => {
                 let receiver_value = self.receiver_value(&receiver)?;
                 self.push_function_call_one_arg_from_obj(&function, receiver_value)
             }
-            Object::NativeMethod(native) => {
+            BoundDispatchKind::Native(native_kind) => {
                 let caller_depth = self.frames.len();
                 let caller_idx = caller_depth.saturating_sub(1);
                 let caller_ip = self
@@ -8656,10 +8740,12 @@ impl Vm {
                     .map(|frame| frame.ip)
                     .unwrap_or(0);
                 let call_result =
-                    self.call_native_method(native.kind, receiver, Vec::new(), HashMap::new());
+                    self.call_native_method(native_kind, receiver, Vec::new(), HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::type_error("attempted to call non-function")),
+            BoundDispatchKind::Generic => {
+                self.call_bound_method_via_call_internal(function, receiver, Vec::new())
+            }
         }
     }
 
@@ -8677,12 +8763,25 @@ impl Vm {
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
-        match &*function.kind() {
-            Object::Function(_) => {
+        enum BoundDispatchKind {
+            Python,
+            Native(NativeMethodKind),
+            Generic,
+        }
+        let dispatch_kind = {
+            let function_kind = function.kind();
+            match &*function_kind {
+                Object::Function(_) => BoundDispatchKind::Python,
+                Object::NativeMethod(native) => BoundDispatchKind::Native(native.kind),
+                _ => BoundDispatchKind::Generic,
+            }
+        };
+        match dispatch_kind {
+            BoundDispatchKind::Python => {
                 let receiver_value = self.receiver_value(&receiver)?;
                 self.push_function_call_two_args_from_obj(&function, receiver_value, arg0)
             }
-            Object::NativeMethod(native) => {
+            BoundDispatchKind::Native(native_kind) => {
                 let caller_depth = self.frames.len();
                 let caller_idx = caller_depth.saturating_sub(1);
                 let caller_ip = self
@@ -8691,10 +8790,12 @@ impl Vm {
                     .map(|frame| frame.ip)
                     .unwrap_or(0);
                 let call_result =
-                    self.call_native_method(native.kind, receiver, vec![arg0], HashMap::new());
+                    self.call_native_method(native_kind, receiver, vec![arg0], HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::type_error("attempted to call non-function")),
+            BoundDispatchKind::Generic => {
+                self.call_bound_method_via_call_internal(function, receiver, vec![arg0])
+            }
         }
     }
 
@@ -8713,12 +8814,25 @@ impl Vm {
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
-        match &*function.kind() {
-            Object::Function(_) => {
+        enum BoundDispatchKind {
+            Python,
+            Native(NativeMethodKind),
+            Generic,
+        }
+        let dispatch_kind = {
+            let function_kind = function.kind();
+            match &*function_kind {
+                Object::Function(_) => BoundDispatchKind::Python,
+                Object::NativeMethod(native) => BoundDispatchKind::Native(native.kind),
+                _ => BoundDispatchKind::Generic,
+            }
+        };
+        match dispatch_kind {
+            BoundDispatchKind::Python => {
                 let receiver_value = self.receiver_value(&receiver)?;
                 self.push_function_call_three_args_from_obj(&function, receiver_value, arg0, arg1)
             }
-            Object::NativeMethod(native) => {
+            BoundDispatchKind::Native(native_kind) => {
                 let caller_depth = self.frames.len();
                 let caller_idx = caller_depth.saturating_sub(1);
                 let caller_ip = self
@@ -8727,14 +8841,16 @@ impl Vm {
                     .map(|frame| frame.ip)
                     .unwrap_or(0);
                 let call_result = self.call_native_method(
-                    native.kind,
+                    native_kind,
                     receiver,
                     vec![arg0, arg1],
                     HashMap::new(),
                 );
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::type_error("attempted to call non-function")),
+            BoundDispatchKind::Generic => {
+                self.call_bound_method_via_call_internal(function, receiver, vec![arg0, arg1])
+            }
         }
     }
 
@@ -8754,8 +8870,21 @@ impl Vm {
             };
             (method_data.function.clone(), method_data.receiver.clone())
         };
-        match &*function.kind() {
-            Object::Function(_) => {
+        enum BoundDispatchKind {
+            Python,
+            Native(NativeMethodKind),
+            Generic,
+        }
+        let dispatch_kind = {
+            let function_kind = function.kind();
+            match &*function_kind {
+                Object::Function(_) => BoundDispatchKind::Python,
+                Object::NativeMethod(native) => BoundDispatchKind::Native(native.kind),
+                _ => BoundDispatchKind::Generic,
+            }
+        };
+        match dispatch_kind {
+            BoundDispatchKind::Python => {
                 let receiver_value = self.receiver_value(&receiver)?;
                 self.push_function_call_from_obj(
                     &function,
@@ -8763,7 +8892,7 @@ impl Vm {
                     HashMap::new(),
                 )
             }
-            Object::NativeMethod(native) => {
+            BoundDispatchKind::Native(native_kind) => {
                 let caller_depth = self.frames.len();
                 let caller_idx = caller_depth.saturating_sub(1);
                 let caller_ip = self
@@ -8772,14 +8901,18 @@ impl Vm {
                     .map(|frame| frame.ip)
                     .unwrap_or(0);
                 let call_result = self.call_native_method(
-                    native.kind,
+                    native_kind,
                     receiver,
                     vec![arg0, arg1, arg2],
                     HashMap::new(),
                 );
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            _ => Err(RuntimeError::type_error("attempted to call non-function")),
+            BoundDispatchKind::Generic => self.call_bound_method_via_call_internal(
+                function,
+                receiver,
+                vec![arg0, arg1, arg2],
+            ),
         }
     }
 

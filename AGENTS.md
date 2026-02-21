@@ -81,6 +81,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - fixed deterministic post-NumPy teardown aborts (`SIGABRT` / pointer-not-allocated) rooted in stale owned-pointer state across realloc/free paths.
   - list-buffer `realloc` now migrates owned-pointer + registry pin state when the buffer address changes.
   - context-drop free paths now remove compat/list-buffer/aux pointers from owned-pointer sets before free to prevent stale ownership reuse on recycled addresses.
+  - removed `ModuleCapiContext` legacy owned-pointer shadow set (`cpython_owned_ptrs`); ownership authority now resolves through VM-global registry (`capi_ptr_is_owned_compat`) with context vectors used only for local pointer discovery.
   - owned-pointer checks are now provenance-specific (`OwnedCompat` only), so externally pinned proxy pointers are no longer misclassified as owned pointers in iterator paths.
   - NumPy proxy iterability + repr parity recovered:
     - `iter(np.arange(...))` works in direct mode again.
@@ -94,13 +95,17 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Scientific-stack checkpoint (2026-02-21, latest):
   - `import numpy.random` now succeeds in direct mode.
   - direct `numpy.random.MT19937()` construction now succeeds.
+  - `numpy.random.default_rng()` is currently regressed:
+    - `TypeError: raise: exception class must be a subclass of BaseException`.
+  - active blocker root-cause lane:
+    - CPython 3.14 fast-thread-state exception-indicator synchronization (`PyThreadState.current_exception` parity across `PyErr_*` flows).
   - root-cause closures landed:
     - `PyType_Ready` now installs a class-level `__init__` slot wrapper for extension types when `tp_init` exists and `__init__` is absent from `tp_dict`.
     - method-descriptor `tp_call` now handles unbound `METH_METHOD` receiver shapes where the defining class is passed before the explicit instance argument.
   - new regression coverage:
     - `tests/vm.rs::numpy_random_mt19937_initializer_runs_without_seedsequence_failures`.
   - remaining follow-up:
-    - `numpy.random.default_rng()` still fails with `TypeError: attempted to call non-function` (tracked in `docs/NUMPY_BRINGUP_GATE.md`).
+    - re-close `default_rng()` construction and then resume generator method long-tail.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,

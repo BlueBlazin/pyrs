@@ -14149,6 +14149,16 @@ print(ok)
 }
 
 #[test]
+fn numpy_random_default_rng_constructs_without_non_function_call_errors() {
+    let source = r#"import numpy as np
+rng = np.random.default_rng()
+ok = (type(rng).__name__ == "Generator" and callable(rng.integers))
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
 fn numpy_proxy_scalar_richcmp_dunders_cover_lt_le_gt_ge_across_types() {
     let source = r#"import numpy as np
 

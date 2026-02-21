@@ -1265,6 +1265,12 @@ pub(super) fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
     if object_type.is_null() {
         return ModuleCapiContext::is_probable_type_object_without_metatype(ptr);
     }
+    if (object_type as usize) < MIN_VALID_PTR {
+        return false;
+    }
+    if (object_type as usize) % std::mem::align_of::<CpythonObjectHead>() != 0 {
+        return false;
+    }
     let object_type_obj = object_type.cast::<CpythonTypeObject>();
     // SAFETY: object_type was loaded from a non-null object header above.
     let object_type_flags = unsafe {
