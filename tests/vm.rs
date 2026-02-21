@@ -5699,6 +5699,62 @@ fn startup_honors_virtual_env_prefix_for_site_packages() {
 }
 
 #[test]
+fn running_external_script_uses_virtualenv_site_packages_for_imports() {
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        eprintln!("skipping virtualenv external-script import test (pyrs binary not found)");
+        return;
+    };
+    let temp_venv = unique_temp_dir("pyrs_vm_venv_external_script");
+    let site_packages = temp_venv.join("lib/python3.14/site-packages");
+    let fake_numpy_dir = site_packages.join("numpy");
+    std::fs::create_dir_all(&fake_numpy_dir).expect("create fake numpy package dir");
+    std::fs::write(
+        fake_numpy_dir.join("__init__.py"),
+        "__pyrs_test_marker__ = 'venv-numpy-ok'\n",
+    )
+    .expect("write fake numpy package");
+
+    let external_script_root = unique_temp_dir("pyrs_vm_external_script_root");
+    std::fs::create_dir_all(&external_script_root).expect("create external script root");
+    let script_path = external_script_root.join("test.py");
+    std::fs::write(
+        &script_path,
+        "import numpy as np\nprint(np.__pyrs_test_marker__)\nprint(np.__file__)\n",
+    )
+    .expect("write external script");
+
+    let output = Command::new(pyrs_bin)
+        .env("VIRTUAL_ENV", &temp_venv)
+        .arg(&script_path)
+        .output()
+        .expect("spawn pyrs external-script virtualenv check");
+
+    if !output.status.success() {
+        panic!(
+            "external-script virtualenv check failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines();
+    assert_eq!(lines.next(), Some("venv-numpy-ok"));
+    let imported_file = lines.next().unwrap_or_default().replace('\\', "/");
+    let expected_root = std::fs::canonicalize(&site_packages)
+        .unwrap_or(site_packages.clone())
+        .to_string_lossy()
+        .replace('\\', "/");
+    assert!(
+        imported_file.starts_with(&expected_root),
+        "expected numpy import from venv site-packages, got {imported_file}"
+    );
+
+    let _ = std::fs::remove_dir_all(&external_script_root);
+    let _ = std::fs::remove_dir_all(&temp_venv);
+}
+
+#[test]
 fn prefers_cpython_pkgutil_and_resources_over_local_shims_when_stdlib_is_available() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
