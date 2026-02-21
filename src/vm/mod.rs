@@ -2520,7 +2520,13 @@ impl Vm {
         ]))
     }
 
+    pub(crate) fn clear_host_error_indicators(&mut self) {
+        self.clear_active_exception();
+        vm_extensions::cpython_clear_thread_error_indicator();
+    }
+
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {
+        self.clear_host_error_indicators();
         self.frames.clear();
         self.generator_states.clear();
         self.generator_returns.clear();
@@ -2540,7 +2546,11 @@ impl Vm {
             cells,
             None,
         )));
-        self.run()
+        let result = self.run();
+        if result.is_err() {
+            self.clear_host_error_indicators();
+        }
+        result
     }
 
     pub fn execute_pyc_bytes(&mut self, bytes: &[u8]) -> Result<Value, RuntimeError> {

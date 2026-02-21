@@ -14247,6 +14247,53 @@ print(ok)
 }
 
 #[test]
+fn numpy_axis_error_does_not_poison_followup_top_level_execute() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(site_packages) = numpy_site_packages_path() else {
+        return;
+    };
+    run_with_large_stack("vm-numpy-axis-error-followup", move || {
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path);
+        vm.add_module_path(site_packages);
+
+        let warm_source = r#"import numpy as np
+_warm = np.array([0, 1, 2, 3]).reshape((2, 2)).sum(axis=0)
+"#;
+        let warm_module = parser::parse_module(warm_source).expect("parse should succeed");
+        let warm_code = compiler::compile_module(&warm_module).expect("compile should succeed");
+        vm.execute(&warm_code).expect("warmup should succeed");
+
+        let failing_source = r#"import numpy as np
+np.array([0, 1, 2, 3]).reshape((2, 2)).sum(axis=11)
+"#;
+        let failing_module = parser::parse_module(failing_source).expect("parse should succeed");
+        let failing_code =
+            compiler::compile_module(&failing_module).expect("compile should succeed");
+        let err = vm
+            .execute(&failing_code)
+            .expect_err("axis error should propagate");
+        assert!(
+            err.message.contains("AxisError"),
+            "expected AxisError, got: {}",
+            err.message
+        );
+
+        let followup_source = r#"import numpy as np
+ok = (np.array([0, 1, 2, 3]).reshape((2, 2)).sum(axis=1).tolist() == [1, 5])
+"#;
+        let followup_module = parser::parse_module(followup_source).expect("parse should succeed");
+        let followup_code =
+            compiler::compile_module(&followup_module).expect("compile should succeed");
+        vm.execute(&followup_code)
+            .expect("followup execute should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn numpy_axis_sum_and_repr_stress_stays_stable() {
     let source = r#"import numpy as np
 ok = True

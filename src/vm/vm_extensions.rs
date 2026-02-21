@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, c_void};
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, Once, OnceLock};
 
 use super::capi_registry::{BorrowedRef, CapiPtrProvenance, CapiRefKind, OwnedRef, StolenRef};
@@ -3158,6 +3158,23 @@ thread_local! {
 
 pub(super) fn cpython_active_context_is_set() -> bool {
     ACTIVE_CPYTHON_INIT_CONTEXT.with(|cell| !cell.get().is_null())
+}
+
+pub(super) fn cpython_clear_thread_error_indicator() {
+    let state_ptr =
+        CURRENT_THREAD_STATE_PTR.load(Ordering::SeqCst) as *mut CpythonThreadStateCompat;
+    if state_ptr.is_null() {
+        return;
+    }
+    // SAFETY: thread-state pointer comes from the runtime registry and is writable for the active
+    // thread.
+    unsafe {
+        let state = &mut *state_ptr;
+        state.exc_info = std::ptr::addr_of_mut!(state.exc_state);
+        state.current_exception = std::ptr::null_mut();
+        state.exc_state.exc_value = std::ptr::null_mut();
+        state.exc_state.previous_item = std::ptr::null_mut();
+    }
 }
 
 const CPYTHON_THREAD_STATE_COMPAT_SIZE: usize = 4096;
