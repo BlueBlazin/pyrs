@@ -5,7 +5,7 @@
 This is the permanent, canonical optimization checklist for `pyrs`.
 Every optimization item must be tracked here with explicit status.
 
-Last updated: 2026-02-14
+Last updated: 2026-02-21
 
 ## Status Legend
 
@@ -78,6 +78,8 @@ Do not rely on stale point-in-time numbers in this document.
 | `OPT-028` | P0 | dispatch correctness | Restore release-path list comprehension/iterator correctness (`FOR_ITER` and list-comp call lanes) so `fib(29)x5` gate is runnable and trustworthy | `ceval.c`, `generated_cases.c.h` | `[x]` |
 | `OPT-029` | P0 | builtins/calls | Heat-classed builtin call optimization closure (HOT/WARM/COLD policy) with parity-gated fast paths for HOT builtins | `bltinmodule.c`, `call.c`, `ceval.c` | `[~]` |
 | `OPT-030` | P1 | gc | Threshold-based automatic cycle collection policy with explicit controls (`gc.set_threshold/get_threshold/get_count`) and parity-safe trigger strategy | `gcmodule.c` | `[~]` |
+| `OPT-031` | P0 | C-API runtime | Remove linear-scan ownership/refcount-header synchronization from `ModuleCapiContext` hot paths used during native extension init | `Objects/object.c`, C-API refcount contracts | `[~]` |
+| `OPT-032` | P0 | C-API compare | Reduce `PyObject_RichCompare*` overhead for extension-heavy init (direct compare fast paths before slot fallbacks) | `Objects/object.c` | `[~]` |
 
 ## Rules For This Backlog
 
@@ -115,3 +117,10 @@ Do not rely on stale point-in-time numbers in this document.
     - `pass(-S)`: `0.0055s`
     - `import-bundle`: `0.0663s`
     - reference `python3.10 import-bundle`: `0.0282s` (current pyrs gap ~`2.35x`, primarily import/compile-path work).
+- 2026-02-21 wave (native scientific-stack import perf):
+  - removed linear scans from C-API owned-pointer/refcount-header sync paths in `ModuleCapiContext` (`sync_cpython_header_refcount`, `sync_cpython_storage_inner`) by using VM registry ownership checks directly.
+  - reduced module attribute-load churn in `load_attr_module` by removing unconditional globals snapshot cloning on every access.
+  - moved `PyObject_RichCompare` to do direct scalar compare fast-paths before slot dispatch and reduced repeated context remapping.
+  - measured release baseline improvement for:
+    - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
+    - from ~`0.88s` user to ~`0.62-0.65s` user on repeated local runs.

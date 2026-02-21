@@ -118,11 +118,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `sync_value_from_cpython_storage` now avoids full list/tuple cloning unless fallback slots are actually needed (`src/vm/vm_extensions.rs`),
     - interned-unicode pointer checks now avoid unnecessary string clone lookups in rich-compare pointer gating (`src/vm/vm_extensions/cpython_object_item_compare_api.rs`).
   - VM env-flag checks in `vm_execution` now use a cached lookup helper (`env_var_present_cached`) instead of repeated raw environment probes on hot paths (`src/vm/mod.rs`, `src/vm/vm_execution.rs`).
-  - measured release import baseline improved from ~`1.65s` to ~`0.93-0.96s` for:
+  - measured release import baseline improved from ~`1.65s` to ~`0.62-0.65s` user-time for:
     - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
-  - remaining blocker for full pyc-first closure:
-    - `PYRS_IMPORT_PREFER_PYC=1` still fails on NumPy import with `AttributeError: str has no attribute 'value'`.
-    - runtime sourceless->source fallback hooks now fire, but root-cause CPython bytecode semantic mismatch remains and must be closed in translator/runtime semantics (not shimmed).
+  - pyc-first status:
+    - the previously observed `AttributeError: str has no attribute 'value'` repro was caused by a stale local cache-only `__pycache__/enum.cpython-314.pyc` shadowing stdlib enum in the workspace root.
+    - with that stale local cache removed, the minimal enum pyc repro now follows CPython behavior; remaining pyc work is long-tail parity/perf closure.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,
