@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <limits.h>
 #include <dlfcn.h>
+#include <wchar.h>
 
 typedef intptr_t Py_ssize_t;
 typedef void (*PyOS_sighandler_t)(int);
@@ -42,6 +43,7 @@ extern long PyLong_AsLong(void *value);
 extern void *PyFloat_FromDouble(double value);
 extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
+extern void *PyUnicode_FromWideChar(const wchar_t *value, Py_ssize_t len);
 extern int PyBytes_AsStringAndSize(void *obj, char **buffer, Py_ssize_t *len);
 extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyObject_Call(void *callable, void *args, void *kwargs);
@@ -179,18 +181,52 @@ static int pyrs_format_buffer_append_cstr(PyrsFormatBuffer *buf, const char *tex
     return pyrs_format_buffer_append_bytes(buf, text, strlen(text));
 }
 
-static int pyrs_format_buffer_append_object_str(PyrsFormatBuffer *buf, void *object)
+static int pyrs_format_buffer_append_object_text(PyrsFormatBuffer *buf, void *object, char format_code)
 {
     if (object == NULL) {
-        return pyrs_format_buffer_append_cstr(buf, "<NULL>");
+        return pyrs_format_buffer_append_cstr(buf, "(null)");
     }
-    void *rendered = PyObject_Str(object);
+    void *rendered = NULL;
+    if (format_code == 'R') {
+        rendered = PyObject_Repr(object);
+    } else if (format_code == 'A') {
+        rendered = PyObject_ASCII(object);
+    } else {
+        rendered = PyObject_Str(object);
+    }
     if (rendered == NULL) {
         return pyrs_format_buffer_append_cstr(buf, "<object>");
     }
     const char *utf8 = PyUnicode_AsUTF8(rendered);
     int ok = pyrs_format_buffer_append_cstr(buf, utf8 != NULL ? utf8 : "<object>");
     Py_DecRef(rendered);
+    return ok;
+}
+
+static int pyrs_format_buffer_append_unicode_text(PyrsFormatBuffer *buf, void *unicode_obj)
+{
+    if (unicode_obj == NULL) {
+        return pyrs_format_buffer_append_cstr(buf, "(null)");
+    }
+    const char *utf8 = PyUnicode_AsUTF8(unicode_obj);
+    if (utf8 != NULL) {
+        return pyrs_format_buffer_append_cstr(buf, utf8);
+    }
+    return pyrs_format_buffer_append_object_text(buf, unicode_obj, 'S');
+}
+
+static int pyrs_format_buffer_append_wchar_text(PyrsFormatBuffer *buf, const wchar_t *text)
+{
+    if (text == NULL) {
+        return pyrs_format_buffer_append_cstr(buf, "(null)");
+    }
+    void *unicode_obj = PyUnicode_FromWideChar(text, -1);
+    if (unicode_obj == NULL) {
+        return 0;
+    }
+    const char *utf8 = PyUnicode_AsUTF8(unicode_obj);
+    int ok = pyrs_format_buffer_append_cstr(buf, utf8 != NULL ? utf8 : "(null)");
+    Py_DecRef(unicode_obj);
     return ok;
 }
 
@@ -273,9 +309,44 @@ static char *pyrs_format_pyerr_message(const char *format, va_list ap)
         case 'R':
         case 'A': {
             void *object = va_arg(ap, void *);
-            if (!pyrs_format_buffer_append_object_str(&buf, object)) {
+            if (!pyrs_format_buffer_append_object_text(&buf, object, spec)) {
                 free(buf.data);
                 return NULL;
+            }
+            break;
+        }
+        case 'U': {
+            void *unicode_obj = va_arg(ap, void *);
+            if (!pyrs_format_buffer_append_unicode_text(&buf, unicode_obj)) {
+                free(buf.data);
+                return NULL;
+            }
+            break;
+        }
+        case 'V': {
+            void *unicode_obj = va_arg(ap, void *);
+            if (length_l) {
+                const wchar_t *fallback = va_arg(ap, const wchar_t *);
+                if (unicode_obj != NULL) {
+                    if (!pyrs_format_buffer_append_unicode_text(&buf, unicode_obj)) {
+                        free(buf.data);
+                        return NULL;
+                    }
+                } else if (!pyrs_format_buffer_append_wchar_text(&buf, fallback)) {
+                    free(buf.data);
+                    return NULL;
+                }
+            } else {
+                const char *fallback = va_arg(ap, const char *);
+                if (unicode_obj != NULL) {
+                    if (!pyrs_format_buffer_append_unicode_text(&buf, unicode_obj)) {
+                        free(buf.data);
+                        return NULL;
+                    }
+                } else if (!pyrs_format_buffer_append_cstr(&buf, fallback)) {
+                    free(buf.data);
+                    return NULL;
+                }
             }
             break;
         }
@@ -728,7 +799,7 @@ static int bytes_builder_append_char(bytes_builder *builder, unsigned char ch)
 static int bytes_builder_append_object_text(bytes_builder *builder, void *object, char format_code)
 {
     if (object == NULL) {
-        return bytes_builder_append_cstr(builder, "<NULL>");
+        return bytes_builder_append_cstr(builder, "(null)");
     }
     void *text_obj = NULL;
     if (format_code == 'R') {
@@ -746,6 +817,33 @@ static int bytes_builder_append_object_text(bytes_builder *builder, void *object
     const char *utf8 = PyUnicode_AsUTF8(text_obj);
     int ok = bytes_builder_append_cstr(builder, utf8 != NULL ? utf8 : "<object>");
     Py_DecRef(text_obj);
+    return ok;
+}
+
+static int bytes_builder_append_unicode_text(bytes_builder *builder, void *unicode_obj)
+{
+    if (unicode_obj == NULL) {
+        return bytes_builder_append_cstr(builder, "(null)");
+    }
+    const char *utf8 = PyUnicode_AsUTF8(unicode_obj);
+    if (utf8 != NULL) {
+        return bytes_builder_append_cstr(builder, utf8);
+    }
+    return bytes_builder_append_object_text(builder, unicode_obj, 'S');
+}
+
+static int bytes_builder_append_wchar_text(bytes_builder *builder, const wchar_t *text)
+{
+    if (text == NULL) {
+        return bytes_builder_append_cstr(builder, "(null)");
+    }
+    void *unicode_obj = PyUnicode_FromWideChar(text, -1);
+    if (unicode_obj == NULL) {
+        return 0;
+    }
+    const char *utf8 = PyUnicode_AsUTF8(unicode_obj);
+    int ok = bytes_builder_append_cstr(builder, utf8 != NULL ? utf8 : "(null)");
+    Py_DecRef(unicode_obj);
     return ok;
 }
 
@@ -1278,7 +1376,7 @@ void *PyBytes_FromFormatV(const char *format, va_list vargs)
         }
 
         int longflag = 0;
-        if (*f == 'l' && (f[1] == 'd' || f[1] == 'u')) {
+        if (*f == 'l' && (f[1] == 'd' || f[1] == 'u' || f[1] == 's' || f[1] == 'V')) {
             longflag = 1;
             f++;
         }
@@ -1371,6 +1469,36 @@ void *PyBytes_FromFormatV(const char *format, va_list vargs)
                 void *object = va_arg(vargs, void *);
                 if (!bytes_builder_append_object_text(&out, object, *f)) {
                     goto error;
+                }
+                break;
+            }
+            case 'U': {
+                void *unicode_obj = va_arg(vargs, void *);
+                if (!bytes_builder_append_unicode_text(&out, unicode_obj)) {
+                    goto error;
+                }
+                break;
+            }
+            case 'V': {
+                void *unicode_obj = va_arg(vargs, void *);
+                if (longflag) {
+                    const wchar_t *fallback = va_arg(vargs, const wchar_t *);
+                    if (unicode_obj != NULL) {
+                        if (!bytes_builder_append_unicode_text(&out, unicode_obj)) {
+                            goto error;
+                        }
+                    } else if (!bytes_builder_append_wchar_text(&out, fallback)) {
+                        goto error;
+                    }
+                } else {
+                    const char *fallback = va_arg(vargs, const char *);
+                    if (unicode_obj != NULL) {
+                        if (!bytes_builder_append_unicode_text(&out, unicode_obj)) {
+                            goto error;
+                        }
+                    } else if (!bytes_builder_append_cstr(&out, fallback)) {
+                        goto error;
+                    }
                 }
                 break;
             }

@@ -24,8 +24,8 @@ use super::{
     PyType_IsSubtype, PyType_Type, PyUnicode_FromString, PyUnicode_FromStringAndSize,
     PyUnicode_InternFromString, TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
     cpython_call_internal_in_context, cpython_debug_compare_value,
-    cpython_debug_ufunc_attr_summary, cpython_getattr_in_context, cpython_is_type_object_ptr,
-    cpython_exception_traceback_ptr_for_value, cpython_exception_type_ptr_for_value,
+    cpython_debug_ufunc_attr_summary, cpython_exception_traceback_ptr_for_value,
+    cpython_exception_type_ptr_for_value, cpython_getattr_in_context, cpython_is_type_object_ptr,
     cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_ptr_is_type_object,
     cpython_safe_object_type_name, cpython_set_error, cpython_set_typed_error,
@@ -858,10 +858,8 @@ fn cpython_set_null_result_without_error(context: &mut ModuleCapiContext, method
             .and_then(|frame| frame.active_exception.clone())
         {
             let pvalue = context.alloc_cpython_ptr_for_value(active_exception.clone());
-            let ptype =
-                cpython_exception_type_ptr_for_value(context, &active_exception).unwrap_or(
-                    unsafe { PyExc_SystemError },
-                );
+            let ptype = cpython_exception_type_ptr_for_value(context, &active_exception)
+                .unwrap_or(unsafe { PyExc_SystemError });
             let ptraceback = cpython_exception_traceback_ptr_for_value(context, &active_exception)
                 .unwrap_or(std::ptr::null_mut());
             let message = context.error_message_from_ptr(pvalue);

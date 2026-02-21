@@ -14237,6 +14237,21 @@ print(ok)
 }
 
 #[test]
+fn numpy_random_generator_integers_keyword_size_path_works() {
+    let source = r#"import numpy as np
+rng = np.random.default_rng()
+text = repr(rng.integers)
+ok = (
+    "<cyfunction Generator.integers" in text
+    and "%U" not in text
+    and "%V" not in text
+)
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
 fn numpy_proxy_scalar_richcmp_dunders_cover_lt_le_gt_ge_across_types() {
     let source = r#"import numpy as np
 

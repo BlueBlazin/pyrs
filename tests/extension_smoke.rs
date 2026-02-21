@@ -9329,13 +9329,41 @@ run(PyObject *self, PyObject *args) {
 
     PyObject *direct = PyUnicode_FromFormat("n=%d s=%s p=%p %%", 7, "ok", (void *)0);
     PyObject *via_v = call_fromformatv("x=%d y=%s", -3, "done");
+    PyObject *name = PyUnicode_FromString("integers");
+    PyObject *with_u = PyUnicode_FromFormat("<cyfunction %U at %p>", name, (void *)0);
+    PyObject *with_v_obj = PyUnicode_FromFormat("%V", name, "ignored");
+    PyObject *with_v_fallback = PyUnicode_FromFormat("%V", (void *)0, "fallback");
+    PyObject *with_vf = PyUnicode_FromFormat("prefix %V suffix", name, "ignored");
 
     int direct_ok = utf8_equals(direct, "n=7 s=ok p=0x0 %");
     int via_v_ok = utf8_equals(via_v, "x=-3 y=done");
+    int with_u_ok = utf8_equals(with_u, "<cyfunction integers at 0x0>");
+    int with_v_obj_ok = utf8_equals(with_v_obj, "integers");
+    int with_v_fallback_ok = utf8_equals(with_v_fallback, "fallback");
+    int with_vf_ok = utf8_equals(with_vf, "prefix integers suffix");
+    int no_markers_ok = 1;
+    const char *u_text = with_u ? PyUnicode_AsUTF8(with_u) : 0;
+    if (!u_text || strstr(u_text, "%U") || strstr(u_text, "%V")) {
+        no_markers_ok = 0;
+    }
 
+    Py_XDECREF(with_vf);
+    Py_XDECREF(with_v_fallback);
+    Py_XDECREF(with_v_obj);
+    Py_XDECREF(with_u);
+    Py_XDECREF(name);
     Py_XDECREF(via_v);
     Py_XDECREF(direct);
-    return Py_BuildValue("(ii)", direct_ok, via_v_ok);
+    return Py_BuildValue(
+        "(iiiiiii)",
+        direct_ok,
+        via_v_ok,
+        with_u_ok,
+        with_v_obj_ok,
+        with_v_fallback_ok,
+        with_vf_ok,
+        no_markers_ok
+    );
 }
 
 static PyMethodDef module_methods[] = {
@@ -9379,7 +9407,7 @@ PyInit_cpython_api_batch63_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch63_probe as m\nres = m.run()\nassert res == (1, 1), res",
+        "import cpython_api_batch63_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1), res",
     )
     .expect("cpython api batch63 extension import should succeed");
 

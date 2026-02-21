@@ -8750,10 +8750,14 @@ impl ModuleCapiContext {
             self.alloc_cpython_ptr_for_value(vm.heap.alloc_dict(entries))
         };
         if trace_calls {
+            let type_name = unsafe {
+                c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string())
+            };
             eprintln!(
-                "[cpy-call] native callable={:p} type={:p} tp_call={:p} args={} kwargs={}",
+                "[cpy-call] native callable={:p} type={:p}({}) tp_call={:p} args={} kwargs={}",
                 callable,
                 type_ptr,
+                type_name,
                 tp_call_raw,
                 args.len(),
                 kwargs.len()

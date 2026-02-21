@@ -1221,7 +1221,10 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                     if let Object::Tuple(values) = &*tuple_obj.kind() {
                         values
                             .iter()
-                            .map(cpython_value_debug_tag)
+                            .map(|value| match value {
+                                Value::Str(name) => format!("'{name}'"),
+                                _ => cpython_value_debug_tag(value),
+                            })
                             .collect::<Vec<_>>()
                             .join(", ")
                     } else {

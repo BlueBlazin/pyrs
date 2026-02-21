@@ -9,8 +9,7 @@ use super::{
     ACTIVE_CPYTHON_INIT_CONTEXT, InternalCallOutcome, ModuleCapiContext, PyExc_RuntimeError,
     cpython_call_internal_in_context, cpython_exception_class_name_from_ptr,
     cpython_exception_ptr_for_name, cpython_exception_type_ptr,
-    cpython_keyword_args_from_dict_object,
-    cpython_positional_args_from_tuple_object,
+    cpython_keyword_args_from_dict_object, cpython_positional_args_from_tuple_object,
 };
 
 pub(in crate::vm::vm_extensions) fn with_active_cpython_context_mut<R>(
