@@ -1029,19 +1029,31 @@ pub unsafe extern "C" fn PyObject_RichCompare(
     if (op == 2 || op == 3) && left == right {
         return cpython_new_ptr_for_value(Value::Bool(op == 2));
     }
-    if cpython_can_try_richcompare_slot(left, right)
-        && let Some(result) = cpython_try_richcompare_slot(left, right, op)
-    {
-        return result;
-    }
-    let (left_value, right_value) = match with_active_cpython_context_mut(|context| {
+    let pre_mapped_values = match with_active_cpython_context_mut(|context| {
         (
             context.cpython_value_from_ptr_or_proxy(left),
             context.cpython_value_from_ptr_or_proxy(right),
         )
     }) {
-        Ok((Some(left_value), Some(right_value))) => (left_value, right_value),
-        Ok((_left_value, right_value)) => {
+        Ok(values) => values,
+        Err(err) => {
+            cpython_set_error(err);
+            return std::ptr::null_mut();
+        }
+    };
+    if let (Some(left_value), Some(right_value)) = (&pre_mapped_values.0, &pre_mapped_values.1)
+        && let Some(result) = cpython_direct_rich_compare(left_value, right_value, op)
+    {
+        return cpython_new_ptr_for_value(Value::Bool(result));
+    }
+    if cpython_can_try_richcompare_slot(left, right)
+        && let Some(result) = cpython_try_richcompare_slot(left, right, op)
+    {
+        return result;
+    }
+    let (left_value, right_value) = match pre_mapped_values {
+        (Some(left_value), Some(right_value)) => (left_value, right_value),
+        (_left_value, right_value) => {
             if let Some(result) = cpython_try_unicode_pointer_compare(left, right, op) {
                 return result;
             }
@@ -1065,10 +1077,6 @@ pub unsafe extern "C" fn PyObject_RichCompare(
                 }
             }
             cpython_set_error("unknown PyObject pointer");
-            return std::ptr::null_mut();
-        }
-        Err(err) => {
-            cpython_set_error(err);
             return std::ptr::null_mut();
         }
     };
