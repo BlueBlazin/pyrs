@@ -9,20 +9,18 @@ use crate::vm::{
 
 use super::cpython_object_call_api::PyObject_IsTrue;
 use super::{
-    _Py_EllipsisObject, _Py_FalseStruct, _Py_NoneStruct, _Py_NotImplementedStruct, _Py_TrueStruct,
-    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, Py_DecRef,
-    PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches, PyErr_Occurred,
-    PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError, PyExc_TypeError, PyLong_AsSsize_t,
-    PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string, cpython_builtin_type_name_for_ptr,
+    _Py_NotImplementedStruct, CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead,
+    ModuleCapiContext, Py_DecRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches,
+    PyErr_Occurred, PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError, PyExc_TypeError,
+    PyLong_AsSsize_t, PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string,
     cpython_call_builtin, cpython_call_object, cpython_error_message_indicates_missing_attribute,
-    cpython_exception_value_from_ptr, cpython_is_interned_unicode_ptr,
-    cpython_lookup_interned_unicode_text, cpython_mapping_ass_subscript_slot,
-    cpython_mapping_subscript_slot, cpython_new_ptr_for_value, cpython_sequence_item_slot,
-    cpython_set_error, cpython_set_typed_error, cpython_slice_bounds_step_one,
-    cpython_slice_indices_for_len, cpython_trace_numpy_reduce_enabled,
-    cpython_try_richcompare_slot, cpython_tuple_items_ptr, cpython_unicode_text_from_value,
-    cpython_value_debug_tag, cpython_value_from_ptr, is_truthy, value_to_int,
-    with_active_cpython_context_mut,
+    cpython_is_interned_unicode_ptr, cpython_lookup_interned_unicode_text,
+    cpython_mapping_ass_subscript_slot, cpython_mapping_subscript_slot, cpython_new_ptr_for_value,
+    cpython_sequence_item_slot, cpython_set_error, cpython_set_typed_error,
+    cpython_slice_bounds_step_one, cpython_slice_indices_for_len,
+    cpython_trace_numpy_reduce_enabled, cpython_try_richcompare_slot, cpython_tuple_items_ptr,
+    cpython_unicode_text_from_value, cpython_value_debug_tag, cpython_value_from_ptr, is_truthy,
+    value_to_int, with_active_cpython_context_mut,
 };
 
 fn cpython_set_item_runtime_error(message: String) {
@@ -976,42 +974,6 @@ fn cpython_try_unicode_pointer_compare(
     Some(cpython_new_ptr_for_value(Value::Bool(result)))
 }
 
-fn cpython_pointer_is_known_for_richcompare_slot(
-    context: &mut ModuleCapiContext,
-    object: *mut c_void,
-) -> bool {
-    if object.is_null() {
-        return false;
-    }
-    let raw = object as usize;
-    if raw == std::ptr::addr_of!(_Py_NoneStruct) as usize
-        || raw == std::ptr::addr_of!(_Py_TrueStruct) as usize
-        || raw == std::ptr::addr_of!(_Py_FalseStruct) as usize
-        || raw == std::ptr::addr_of!(_Py_EllipsisObject) as usize
-        || raw == std::ptr::addr_of!(_Py_NotImplementedStruct) as usize
-        || cpython_builtin_type_name_for_ptr(object).is_some()
-        || cpython_exception_value_from_ptr(raw).is_some()
-        || cpython_is_interned_unicode_ptr(object)
-        || context.cpython_handle_from_ptr(object).is_some()
-    {
-        return true;
-    }
-    if context.vm.is_null() {
-        return false;
-    }
-    // SAFETY: VM pointer is valid for active C-API context lifetime.
-    let vm = unsafe { &*context.vm };
-    vm.extension_cpython_ptr_values.contains_key(&raw)
-}
-
-fn cpython_can_try_richcompare_slot(left: *mut c_void, right: *mut c_void) -> bool {
-    with_active_cpython_context_mut(|context| {
-        cpython_pointer_is_known_for_richcompare_slot(context, left)
-            && cpython_pointer_is_known_for_richcompare_slot(context, right)
-    })
-    .unwrap_or(false)
-}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_RichCompare(
     left: *mut c_void,
@@ -1029,6 +991,9 @@ pub unsafe extern "C" fn PyObject_RichCompare(
     if (op == 2 || op == 3) && left == right {
         return cpython_new_ptr_for_value(Value::Bool(op == 2));
     }
+    if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
+        return result;
+    }
     let pre_mapped_values = match with_active_cpython_context_mut(|context| {
         (
             context.cpython_value_from_ptr_or_proxy(left),
@@ -1045,11 +1010,6 @@ pub unsafe extern "C" fn PyObject_RichCompare(
         && let Some(result) = cpython_direct_rich_compare(left_value, right_value, op)
     {
         return cpython_new_ptr_for_value(Value::Bool(result));
-    }
-    if cpython_can_try_richcompare_slot(left, right)
-        && let Some(result) = cpython_try_richcompare_slot(left, right, op)
-    {
-        return result;
     }
     let (left_value, right_value) = match pre_mapped_values {
         (Some(left_value), Some(right_value)) => (left_value, right_value),

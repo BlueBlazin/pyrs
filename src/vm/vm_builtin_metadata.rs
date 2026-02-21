@@ -5213,17 +5213,29 @@ impl Vm {
         module: &ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        let active_frame_module_dict = if self
-            .frames
-            .last()
-            .is_some_and(|frame| frame.is_module && frame.module.id() == module.id())
-        {
-            Some(self.ensure_frame_module_locals_dict(self.frames.len().saturating_sub(1)))
+        const MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
+        let module_is_initializing = match &*module.kind() {
+            Object::Module(module_data) => module_data
+                .globals
+                .get(MODULE_INITIALIZING_FLAG)
+                .is_some_and(|value| matches!(value, Value::Bool(true))),
+            _ => false,
+        };
+        let active_frame_module_dict = if module_is_initializing {
+            if self
+                .frames
+                .last()
+                .is_some_and(|frame| frame.is_module && frame.module.id() == module.id())
+            {
+                Some(self.ensure_frame_module_locals_dict(self.frames.len().saturating_sub(1)))
+            } else {
+                self.frames
+                    .iter()
+                    .rposition(|frame| frame.is_module && frame.module.id() == module.id())
+                    .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index))
+            }
         } else {
-            self.frames
-                .iter()
-                .rposition(|frame| frame.is_module && frame.module.id() == module.id())
-                .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index))
+            None
         };
         let (module_name, attr, module_getattr, module_is_package) = match &*module.kind() {
             Object::Module(module_data) => {

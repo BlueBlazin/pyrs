@@ -124,3 +124,11 @@ Do not rely on stale point-in-time numbers in this document.
   - measured release baseline improvement for:
     - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
     - from ~`0.88s` user to ~`0.62-0.65s` user on repeated local runs.
+- 2026-02-21 follow-up wave:
+  - import policy now defaults to CPython behavior: prefer validated source-bound `.pyc` by default (`PYRS_IMPORT_PREFER_PYC=0` disables).
+  - `load_attr_module` now avoids frame-scan lookup unless the target module is currently marked `__pyrs_module_initializing__`.
+  - `PyObject_RichCompare` now tries slot dispatch before pointer/value conversion fallback to reduce extension-init compare overhead.
+  - current local reading with CPython-default pyc policy:
+    - `pyrs`: ~`0.69-0.70s` user
+    - `pyrs` with source-first override (`PYRS_IMPORT_PREFER_PYC=0`): ~`0.63s` user
+    - CPython 3.14: ~`0.05s` user
