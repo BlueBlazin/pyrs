@@ -93,6 +93,8 @@ python3 scripts/probe_numpy_gate.py \
   - `np.dtype('int8')`
   - `np.random.default_rng()` construction
   - `callable(np.random.default_rng().integers)` is `True`
+  - `repr(np.random.default_rng().integers)` now renders without unresolved format markers
+    (`%U` / `%V`) and matches cyfunction-style output.
 - Lifetime stability update:
   - repeated subprocess runs of `import numpy as np; np.random.default_rng()` are now stable
     in debug mode (20/20 local runs, no segfault).
@@ -107,7 +109,12 @@ python3 scripts/probe_numpy_gate.py \
    - Current surface failures:
      - proxy slot-backed dunder exposure is incomplete (`__iter__`, `__lt__`, scalar unary/getitem dunders).
      - arrayprint/repr paths still hit `TypeError: call args must be tuple` in some probes.
-2. Scientific-stack optional probes (`scipy`/`pandas`/`matplotlib`) remain red behind Lane-B C-API/runtime parity gaps.
+2. `numpy.random.Generator.integers` execution is still regressed in direct mode.
+   - `rng.integers(0, 2, size=4)` currently raises unexpected-keyword `TypeError`.
+   - `rng.integers(0, 2, 4)` currently unwinds with `TypeError: raise: exception class must be a subclass of BaseException`
+     after an internal `IndexError` path (`index 4 is out of bounds for axis 0 with size 4`).
+   - active root-cause lane: Cython/native `tp_call` keyword/exception-state parity for cyfunction paths.
+3. Scientific-stack optional probes (`scipy`/`pandas`/`matplotlib`) remain red behind Lane-B C-API/runtime parity gaps.
 
 ## Operating Rules
 
