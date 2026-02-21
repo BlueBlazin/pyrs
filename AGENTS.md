@@ -82,6 +82,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - list-buffer `realloc` now migrates owned-pointer + registry pin state when the buffer address changes.
   - context-drop free paths now remove compat/list-buffer/aux pointers from owned-pointer sets before free to prevent stale ownership reuse on recycled addresses.
   - removed `ModuleCapiContext` legacy owned-pointer shadow set (`cpython_owned_ptrs`); ownership authority now resolves through VM-global registry (`capi_ptr_is_owned_compat`) with context vectors used only for local pointer discovery.
+  - proxy materialization now checks VM-global registry liveness first (`capi_registry_contains_live_or_pending`), reducing correctness dependence on pointer-probability heuristics after initial pointer registration.
   - owned-pointer checks are now provenance-specific (`OwnedCompat` only), so externally pinned proxy pointers are no longer misclassified as owned pointers in iterator paths.
   - NumPy proxy iterability + repr parity recovered:
     - `iter(np.arange(...))` works in direct mode again.

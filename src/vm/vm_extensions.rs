@@ -6080,8 +6080,13 @@ impl ModuleCapiContext {
             return None;
         }
         let owns_allocation = self.owns_cpython_allocation_ptr(object);
+        let registry_known_live = {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &*self.vm };
+            vm.capi_registry_contains_live_or_pending(object as usize)
+        };
         let probable_external = Self::is_probable_external_cpython_object_ptr(object);
-        if !probable_external {
+        if !probable_external && !registry_known_live {
             // Some extension-created heap metatypes can fail the conservative
             // pointer-probability gate (for example, transient Cython metatypes)
             // while still being valid type objects. Allow proxy materialization
@@ -6110,34 +6115,34 @@ impl ModuleCapiContext {
                     })
                     .unwrap_or(false)
             };
-            let owned_object_allocation = owns_allocation
-                && self
-                    .cpython_allocations
-                    .iter()
-                    .any(|allocation| allocation.cast::<c_void>() == object);
-            if (likely_type_object || owned_object_allocation)
+            if likely_type_object
                 && let Some(proxy) = self.cpython_external_proxy_value(object)
             {
                 let proxy =
                     self.cache_cpython_proxy_value_for_ptr(object, proxy, owns_allocation, true);
                 if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
                     eprintln!(
-                        "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false type_like={} owned_object_alloc={}",
-                        object, owns_allocation, likely_type_object, owned_object_allocation
+                        "[cpy-proxy-type-fallback] ptr={:p} owns={} probable=false type_like={}",
+                        object, owns_allocation, likely_type_object
                     );
                 }
                 return Some(proxy);
             }
             if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
                 eprintln!(
-                    "[cpy-proxy-reject] ptr={:p} owns={} probable=false",
+                    "[cpy-proxy-reject] ptr={:p} owns={} probable=false registry_known_live=false",
                     object, owns_allocation
                 );
             }
             return None;
         }
         let proxy = self.cpython_external_proxy_value(object)?;
-        Some(self.cache_cpython_proxy_value_for_ptr(object, proxy, owns_allocation, false))
+        Some(self.cache_cpython_proxy_value_for_ptr(
+            object,
+            proxy,
+            owns_allocation,
+            registry_known_live && !probable_external,
+        ))
     }
 
     fn cache_cpython_proxy_value_for_ptr(

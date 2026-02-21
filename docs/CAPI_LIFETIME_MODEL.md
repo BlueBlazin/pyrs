@@ -8,6 +8,7 @@ Status: `IN_PROGRESS` (execution lock, Phase 1/2 in progress).
   - removed `ModuleCapiContext` legacy owned-pointer shadow set (`cpython_owned_ptrs`).
   - owned-pointer checks now resolve through VM-global registry authority (`Vm::capi_ptr_is_owned_compat`) with context-local allocation lists only as fallback discovery, not ownership source-of-truth.
   - owned registration is now explicit for additional compat allocations (frame/cfunction/descriptor/list-buffer resize paths), reducing stale ownership divergence between context and registry.
+  - proxy materialization is now registry-first for known live/pending pointers (`capi_registry_contains_live_or_pending`) so pointer-probability heuristics are no longer a correctness gate once a pointer is registered.
   - this closes a core migration gap where context-local ownership bookkeeping could drift from registry state.
 
 - teardown-safety closure (latest):

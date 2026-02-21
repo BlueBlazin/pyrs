@@ -1126,6 +1126,10 @@ impl Vm {
         self.capi_object_registry.is_freed(ptr)
     }
 
+    pub(super) fn capi_registry_contains_live_or_pending(&self, ptr: usize) -> bool {
+        self.capi_object_registry.contains_live_or_pending(ptr)
+    }
+
     pub(super) fn capi_registry_mark_freed(&mut self, ptr: usize) {
         self.capi_object_registry.mark_freed(ptr);
     }

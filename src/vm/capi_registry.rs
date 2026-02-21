@@ -346,6 +346,12 @@ impl CapiObjectRegistry {
             .is_some_and(|entry| entry.lifecycle == CapiPtrLifecycleState::Freed)
     }
 
+    pub(crate) fn contains_live_or_pending(&self, ptr: usize) -> bool {
+        self.entries
+            .get(&ptr)
+            .is_some_and(|entry| entry.lifecycle != CapiPtrLifecycleState::Freed)
+    }
+
     pub(crate) fn should_free_now(&self, ptr: usize) -> bool {
         let Some(entry) = self.entries.get(&ptr) else {
             return false;
@@ -533,5 +539,16 @@ mod tests {
         assert!(registry.is_freed(0x55));
         registry.register_ptr(0x55, CapiPtrProvenance::OwnedCompat, None);
         assert!(registry.should_free_now(0x55));
+    }
+
+    #[test]
+    fn contains_live_or_pending_excludes_freed_entries() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x66, CapiPtrProvenance::OwnedCompat, None);
+        assert!(registry.contains_live_or_pending(0x66));
+        registry.mark_pending_free(0x66);
+        assert!(registry.contains_live_or_pending(0x66));
+        registry.mark_freed(0x66);
+        assert!(!registry.contains_live_or_pending(0x66));
     }
 }
