@@ -10,11 +10,40 @@ use super::{
     PyNumber_Positive, PyNumber_Subtract, PyNumber_TrueDivide, PyObject_CallObject,
     PyObject_GetAttrString, PyObject_GetItem, PyObject_IsTrue, PyObject_RichCompare,
     PyObject_RichCompareBool, PyObject_SetItem, PyObject_Size, RuntimeError, Value, Vm,
-    c_name_to_string, cpython_is_type_object_ptr, cpython_valid_type_ptr, cpython_value_debug_tag,
-    is_cpython_proxy_class,
+    c_name_to_string, cpython_is_type_object_ptr, cpython_resolve_vectorcall,
+    cpython_valid_type_ptr, cpython_value_debug_tag, is_cpython_proxy_class,
 };
 
 impl Vm {
+    pub(in crate::vm) fn cpython_proxy_raw_ptr_is_callable(raw_ptr: *mut c_void) -> bool {
+        if raw_ptr.is_null() {
+            return false;
+        }
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
+        if (raw_ptr as usize) < MIN_VALID_PTR
+            || (raw_ptr as usize) % std::mem::align_of::<usize>() != 0
+        {
+            return false;
+        }
+        // SAFETY: guarded by pointer/null/alignment checks.
+        let type_ptr = unsafe {
+            raw_ptr
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if !cpython_valid_type_ptr(type_ptr) {
+            return false;
+        }
+        // SAFETY: `type_ptr` was validated by `cpython_valid_type_ptr`.
+        if unsafe { !(*type_ptr).tp_call.is_null() } {
+            return true;
+        }
+        // SAFETY: only inspects vectorcall metadata on candidate CPython object.
+        unsafe { cpython_resolve_vectorcall(raw_ptr).is_some() }
+    }
+
     unsafe fn cpython_proxy_call_dunder_zeroarg(
         target_ptr: *mut c_void,
         method_name: &str,
@@ -1266,11 +1295,14 @@ impl Vm {
             ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
         let attr_ptr = unsafe { PyObject_GetAttrString(raw_ptr, c_name.as_ptr()) };
         if attr_ptr.is_null() {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "<no-error>".to_string());
+            // `load_cpython_proxy_attr_for_value` treats missing attributes as a soft miss.
+            // Clear transient C-API error state in this temporary context before returning.
+            call_ctx.clear_error();
             if trace_proxy_attr {
-                let detail = call_ctx
-                    .last_error
-                    .clone()
-                    .unwrap_or_else(|| "<no-error>".to_string());
                 eprintln!(
                     "[proxy-attr] PyObject_GetAttrString miss attr={} err={}",
                     attr_name, detail

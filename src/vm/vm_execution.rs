@@ -5748,7 +5748,13 @@ impl Vm {
                         Object::List(values) => values.clone(),
                         _ => return Err(RuntimeError::type_error("call args must be tuple")),
                     },
-                    _ => return Err(RuntimeError::type_error("call args must be tuple")),
+                    other => self.collect_iterable_values(other).map_err(|err| {
+                        if runtime_error_matches_exception(&err, "TypeError") {
+                            RuntimeError::type_error("argument after * must be an iterable")
+                        } else {
+                            err
+                        }
+                    })?,
                 };
                 match func {
                     Value::ExceptionType(name) => {

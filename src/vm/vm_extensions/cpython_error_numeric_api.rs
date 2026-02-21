@@ -1158,6 +1158,27 @@ pub(in crate::vm::vm_extensions) fn cpython_exception_type_ptr(ptr: *mut c_void)
     if ptr.is_null() {
         return std::ptr::null_mut();
     }
+    let pointer_is_safe = with_active_cpython_context_mut(|context| {
+        if cpython_exception_value_from_ptr(ptr as usize).is_some() {
+            return true;
+        }
+        if context.is_known_type_ptr(ptr) {
+            return true;
+        }
+        if context.owns_cpython_allocation_ptr(ptr) {
+            return true;
+        }
+        if context.vm.is_null() {
+            return false;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &*context.vm };
+        vm.capi_registry_contains_alive(ptr as usize)
+    })
+    .unwrap_or_else(|_| cpython_exception_value_from_ptr(ptr as usize).is_some());
+    if !pointer_is_safe {
+        return std::ptr::null_mut();
+    }
     if cpython_ptr_is_type_object(ptr) {
         return ptr;
     }

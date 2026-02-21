@@ -7232,6 +7232,8 @@ impl Vm {
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
                     class_attr_lookup(&instance_data.class, "__call__").is_some()
+                        || Self::cpython_proxy_raw_ptr_from_value(value)
+                            .is_some_and(Self::cpython_proxy_raw_ptr_is_callable)
                 }
                 _ => false,
             },

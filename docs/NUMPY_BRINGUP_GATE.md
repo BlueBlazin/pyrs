@@ -91,6 +91,8 @@ python3 scripts/probe_numpy_gate.py \
 - Direct smoke sanity is green for:
   - `import numpy as np`
   - `np.dtype('int8')`
+  - `np.random.default_rng()` construction
+  - `callable(np.random.default_rng().integers)` is `True`
 - Lifetime stability update:
   - repeated subprocess runs of `import numpy as np; np.random.default_rng()` are now stable
     in debug mode (20/20 local runs, no segfault).
@@ -103,7 +105,6 @@ python3 scripts/probe_numpy_gate.py \
 
 1. NumPy proxy callable/slot parity is still incomplete in direct mode.
    - Current surface failures:
-     - `callable(np.random.default_rng().integers)` is `False` (expected `True`).
      - proxy slot-backed dunder exposure is incomplete (`__iter__`, `__lt__`, scalar unary/getitem dunders).
      - arrayprint/repr paths still hit `TypeError: call args must be tuple` in some probes.
 2. Scientific-stack optional probes (`scipy`/`pandas`/`matplotlib`) remain red behind Lane-B C-API/runtime parity gaps.

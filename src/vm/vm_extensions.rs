@@ -1774,7 +1774,7 @@ fn cpython_slot_richcompare_method_def(attr_name: &str) -> Option<*mut CpythonMe
     match attr_name {
         "__lt__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_LT_METHOD_DEF)),
         "__le__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_LE_METHOD_DEF)),
-        "__eq__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_EQ_METHOD_DEF)),
+        "__eq__" => None,
         "__ne__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_NE_METHOD_DEF)),
         "__gt__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_GT_METHOD_DEF)),
         "__ge__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_GE_METHOD_DEF)),
@@ -3367,6 +3367,7 @@ struct ModuleCapiContext {
 
 impl Drop for ModuleCapiContext {
     fn drop(&mut self) {
+        self.clear_thread_state_error_if_owned_by_context();
         self.codec_error_handlers.clear();
         for (internal_ptr, _) in self.buffer_internal_handles.drain() {
             if internal_ptr != 0 {
@@ -4078,6 +4079,42 @@ impl ModuleCapiContext {
         raw as *mut CpythonThreadStateCompat
     }
 
+    fn clear_thread_state_error_if_owned_by_context(&self) {
+        let state_ptr = self.active_thread_state_ptr();
+        if state_ptr.is_null() {
+            return;
+        }
+        // SAFETY: thread-state pointer comes from runtime registry and is writable for active
+        // thread.
+        let current_exception = unsafe { (*state_ptr).current_exception };
+        if current_exception.is_null() {
+            return;
+        }
+        let owned_compat = self.owns_cpython_allocation_ptr(current_exception);
+        let owned_aux = self.cpython_aux_allocations.contains(&current_exception);
+        let owned_list_buffer = self
+            .cpython_list_buffers
+            .values()
+            .any(|(buffer, _)| buffer.cast::<c_void>() == current_exception);
+        let owned_context_alloc = self
+            .cpython_allocations
+            .iter()
+            .any(|raw| raw.cast::<c_void>() == current_exception);
+        if !(owned_compat || owned_aux || owned_list_buffer || owned_context_alloc) {
+            return;
+        }
+        // SAFETY: thread-state pointer is active/writable; clear stale exception indicator that
+        // points into this context before owned allocations are released.
+        unsafe {
+            (*state_ptr).current_exception = std::ptr::null_mut();
+            if !(*state_ptr).exc_info.is_null() {
+                (*(*state_ptr).exc_info).exc_value = std::ptr::null_mut();
+            }
+            (*state_ptr).exc_state.exc_value = std::ptr::null_mut();
+            (*state_ptr).exc_state.previous_item = std::ptr::null_mut();
+        }
+    }
+
     fn value_ptr_is_exception_instance(&mut self, value_ptr: *mut c_void) -> bool {
         if value_ptr.is_null() {
             return false;
@@ -4087,6 +4124,48 @@ impl ModuleCapiContext {
             Some(Value::Instance(instance_obj)) => {
                 cpython_is_exception_instance(self, &instance_obj)
             }
+            _ => false,
+        }
+    }
+
+    fn error_state_type_ptr_is_trusted(&mut self, ptype: *mut c_void) -> bool {
+        if ptype.is_null() {
+            return false;
+        }
+        if cpython_exception_value_from_ptr(ptype as usize).is_some() {
+            return true;
+        }
+        let pointer_is_known = if self.owns_cpython_allocation_ptr(ptype) {
+            true
+        } else if self.vm.is_null() {
+            false
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &*self.vm };
+            vm.capi_registry_contains_alive(ptype as usize)
+        };
+        if !pointer_is_known {
+            let mapped = self.cpython_value_from_ptr_or_proxy(ptype);
+            if mapped.is_none() {
+                return false;
+            }
+        }
+        let mapped = self
+            .cpython_value_from_ptr(ptype)
+            .or_else(|| self.cpython_value_from_ptr_or_proxy(ptype));
+        let Some(value) = mapped else {
+            return false;
+        };
+        if self.vm.is_null() {
+            return false;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *self.vm };
+        match value {
+            Value::ExceptionType(name) => vm.exception_inherits(&name, "BaseException"),
+            Value::Class(class_obj) => vm.class_is_exception_class(&class_obj),
+            Value::Instance(instance_obj) => cpython_is_exception_instance(self, &instance_obj),
+            Value::Exception(_) => true,
             _ => false,
         }
     }
@@ -4133,6 +4212,10 @@ impl ModuleCapiContext {
             }
         }
 
+        if !ptype.is_null() && !self.error_state_type_ptr_is_trusted(ptype) {
+            ptype = unsafe { PyExc_RuntimeError };
+        }
+
         (ptype, std::ptr::null_mut())
     }
 
@@ -4161,7 +4244,7 @@ impl ModuleCapiContext {
                     } else {
                         // SAFETY: VM pointer is valid for active C-API context lifetime.
                         let vm = &*self.vm;
-                        vm.capi_registry_contains_live_or_pending(normalized.pvalue as usize)
+                        vm.capi_registry_contains_alive(normalized.pvalue as usize)
                     };
                     let owned_ptr = self.owns_cpython_allocation_ptr(normalized.pvalue);
                     let pointer_is_known = owned_ptr || registry_known_live;
@@ -4241,7 +4324,7 @@ impl ModuleCapiContext {
         } else {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &*self.vm };
-            vm.capi_registry_contains_live_or_pending(current_exception as usize)
+            vm.capi_registry_contains_alive(current_exception as usize)
         };
         let owned_ptr = self.owns_cpython_allocation_ptr(current_exception);
         let pointer_is_known = registry_known_live || owned_ptr;
@@ -7837,7 +7920,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -7856,7 +7939,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -7875,7 +7958,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -7894,7 +7977,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -8038,7 +8121,7 @@ impl ModuleCapiContext {
                     method_def,
                     object,
                     std::ptr::null_mut(),
-                    current.cast::<c_void>(),
+                    std::ptr::null_mut(),
                 );
                 if !callable_ptr.is_null() {
                     if trace_lookup_branch {
@@ -8058,7 +8141,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -8077,7 +8160,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -8096,7 +8179,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -8115,7 +8198,7 @@ impl ModuleCapiContext {
                         method_def,
                         object,
                         std::ptr::null_mut(),
-                        current.cast::<c_void>(),
+                        std::ptr::null_mut(),
                     );
                     if !callable_ptr.is_null() {
                         if trace_lookup_branch {
@@ -8160,7 +8243,7 @@ impl ModuleCapiContext {
                     method_def,
                     object,
                     std::ptr::null_mut(),
-                    current.cast::<c_void>(),
+                    std::ptr::null_mut(),
                 );
                 if !callable_ptr.is_null() {
                     if trace_lookup_branch {

@@ -352,6 +352,12 @@ impl CapiObjectRegistry {
             .is_some_and(|entry| entry.lifecycle != CapiPtrLifecycleState::Freed)
     }
 
+    pub(crate) fn contains_alive(&self, ptr: usize) -> bool {
+        self.entries
+            .get(&ptr)
+            .is_some_and(|entry| entry.lifecycle == CapiPtrLifecycleState::Alive)
+    }
+
     pub(crate) fn should_free_now(&self, ptr: usize) -> bool {
         let Some(entry) = self.entries.get(&ptr) else {
             return false;

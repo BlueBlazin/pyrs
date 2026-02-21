@@ -108,17 +108,20 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Scientific-stack checkpoint (2026-02-21, latest):
   - `import numpy.random` now succeeds in direct mode.
   - direct `numpy.random.MT19937()` construction now succeeds.
-  - `numpy.random.default_rng()` is currently regressed:
-    - `extension 'numpy.random._bounded_integers' ... Py_mod_exec failed` with nested `numpy.random.bit_generator` init failure.
+  - `numpy.random.default_rng()` construction now succeeds again in direct mode.
   - active blocker root-cause lane:
     - CPython 3.14 fast-thread-state exception-indicator synchronization (`PyThreadState.current_exception` parity across `PyErr_*` flows).
   - root-cause closures landed:
     - `PyType_Ready` now installs a class-level `__init__` slot wrapper for extension types when `tp_init` exists and `__init__` is absent from `tp_dict`.
     - method-descriptor `tp_call` now handles unbound `METH_METHOD` receiver shapes where the defining class is passed before the explicit instance argument.
+    - transient proxy-attribute soft-miss paths now clear temporary C-API error state before context teardown (`load_cpython_proxy_attr_for_value`), preventing stale nested-context exception pointers from surviving into later `PyErr_*` checks.
+    - nested-context error propagation now rematerializes into parent-owned pointers only (no raw child-context pointer passthrough), preserving exception type where possible and preventing cross-context stale-pointer reuse.
+    - null-result-with-active-exception path now publishes typed exception state (`set_error_state`) instead of collapsing to message-only `RuntimeError` in descriptor call paths.
   - new regression coverage:
     - `tests/vm.rs::numpy_random_mt19937_initializer_runs_without_seedsequence_failures`.
+    - `tests/vm.rs::numpy_axis_error_does_not_poison_followup_top_level_execute` now re-validated as passing with typed `AxisError` behavior preserved.
   - remaining follow-up:
-    - re-close `default_rng()` construction and then resume generator method long-tail.
+    - continue generator/method long-tail closure after lifetime model hardening.
 - NumPy import perf + pyc checkpoint (2026-02-21, latest round):
   - import default now matches CPython policy for source+bytecode modules:
     - prefer validated source-bound `.pyc` by default;

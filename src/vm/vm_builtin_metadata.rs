@@ -4843,11 +4843,12 @@ impl Vm {
         if let Some(attr) = self.load_attr_cached_property_instance(instance, attr_name) {
             return Ok(AttrAccessOutcome::Value(attr));
         }
-        if is_cpython_proxy_instance
-            && let Some(proxy_attr) = self
-                .load_cpython_proxy_attr_for_value(&Value::Instance(instance.clone()), attr_name)
-        {
-            return Ok(AttrAccessOutcome::Value(proxy_attr));
+        if is_cpython_proxy_instance {
+            let proxy_attr = self
+                .load_cpython_proxy_attr_for_value(&Value::Instance(instance.clone()), attr_name);
+            if let Some(proxy_attr) = proxy_attr {
+                return Ok(AttrAccessOutcome::Value(proxy_attr));
+            }
         }
 
         let mut class_attr_owner: Option<ObjRef> = None;

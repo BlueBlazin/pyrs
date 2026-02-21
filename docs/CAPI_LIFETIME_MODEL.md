@@ -12,6 +12,13 @@ Status: `IN_PROGRESS` (execution lock, Phase 1/2 in progress).
     could read freed exception-instance pointers during later extension init.
   - local stress evidence: repeated subprocess probes of
     `import numpy as np; np.random.default_rng()` no longer crash in 20-run loops.
+  - proxy-attribute soft-miss path now clears temporary C-API error state in transient
+    `ModuleCapiContext` instances (`load_cpython_proxy_attr_for_value`) before context drop,
+    closing a reproducible `PyErr_GivenExceptionMatches` use-after-free path triggered during
+    NumPy `bit_generator` import recursion.
+  - nested-context error handoff now rematerializes into parent-owned pointers only, and
+    descriptor null-result fallback now preserves typed active exceptions via `set_error_state`
+    (instead of message-only fallback), restoring typed `AxisError` parity in NumPy follow-up flows.
 
 - ownership-authority cleanup (latest):
   - removed `ModuleCapiContext` legacy owned-pointer shadow set (`cpython_owned_ptrs`).

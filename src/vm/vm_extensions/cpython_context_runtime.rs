@@ -8,7 +8,8 @@ use super::cpython_error_numeric_api::cpython_make_exception_instance_from_type_
 use super::{
     ACTIVE_CPYTHON_INIT_CONTEXT, InternalCallOutcome, ModuleCapiContext, PyExc_RuntimeError,
     cpython_call_internal_in_context, cpython_exception_class_name_from_ptr,
-    cpython_exception_ptr_for_name, cpython_keyword_args_from_dict_object,
+    cpython_exception_ptr_for_name, cpython_exception_type_ptr,
+    cpython_keyword_args_from_dict_object,
     cpython_positional_args_from_tuple_object,
 };
 
@@ -49,6 +50,7 @@ impl ActiveCpythonContextGuard {
 
 impl Drop for ActiveCpythonContextGuard {
     fn drop(&mut self) {
+        let previous_ptr = self.previous;
         if !self.previous.is_null() && !self.context.is_null() {
             // SAFETY: both pointers refer to live contexts for the active call stack.
             unsafe {
@@ -62,12 +64,34 @@ impl Drop for ActiveCpythonContextGuard {
                         .clone()
                         .or_else(|| current.first_error.clone())
                         .unwrap_or_else(|| "nested CPython context raised an error".to_string());
-                    let propagated_ptype = if state.ptype.is_null() {
+                    let mut propagated_ptype = if state.ptype.is_null() {
                         PyExc_RuntimeError
                     } else if let Some(name) = cpython_exception_class_name_from_ptr(state.ptype) {
-                        cpython_exception_ptr_for_name(&name).unwrap_or(state.ptype)
+                        if let Some(symbol_ptr) = cpython_exception_ptr_for_name(&name) {
+                            symbol_ptr
+                        } else if let Some(value) =
+                            current.cpython_value_from_ptr_or_proxy(state.ptype)
+                        {
+                            let ptr = previous.alloc_cpython_ptr_for_value(value);
+                            if ptr.is_null() {
+                                PyExc_RuntimeError
+                            } else {
+                                ptr
+                            }
+                        } else {
+                            PyExc_RuntimeError
+                        }
+                    } else if let Some(value) = current.cpython_value_from_ptr_or_proxy(state.ptype)
+                    {
+                        let ptr = previous.alloc_cpython_ptr_for_value(value);
+                        if ptr.is_null() {
+                            PyExc_RuntimeError
+                        } else {
+                            ptr
+                        }
                     } else {
-                        state.ptype
+                        // Nested context-owned pointers must never escape as raw pointers.
+                        PyExc_RuntimeError
                     };
                     let propagated_pvalue = if state.pvalue.is_null() {
                         std::ptr::null_mut()
@@ -75,19 +99,21 @@ impl Drop for ActiveCpythonContextGuard {
                         current.cpython_value_from_ptr_or_proxy(state.pvalue)
                     {
                         previous.alloc_cpython_ptr_for_value(value)
-                    } else if !current.owns_cpython_allocation_ptr(state.pvalue) {
-                        state.pvalue
                     } else {
                         std::ptr::null_mut()
                     };
+                    if propagated_ptype == PyExc_RuntimeError && !propagated_pvalue.is_null() {
+                        let derived = cpython_exception_type_ptr(propagated_pvalue);
+                        if !derived.is_null() {
+                            propagated_ptype = derived;
+                        }
+                    }
                     let propagated_ptraceback = if state.ptraceback.is_null() {
                         std::ptr::null_mut()
                     } else if let Some(value) =
                         current.cpython_value_from_ptr_or_proxy(state.ptraceback)
                     {
                         previous.alloc_cpython_ptr_for_value(value)
-                    } else if !current.owns_cpython_allocation_ptr(state.ptraceback) {
-                        state.ptraceback
                     } else {
                         std::ptr::null_mut()
                     };
@@ -101,6 +127,19 @@ impl Drop for ActiveCpythonContextGuard {
             }
         }
         cpython_set_active_context(self.previous);
+        if !previous_ptr.is_null() {
+            // SAFETY: previous context pointer is still live on this call stack.
+            unsafe {
+                (&mut *previous_ptr).sync_thread_state_exception_view_from_current_error();
+            }
+        } else if !self.context.is_null() {
+            // SAFETY: current context is still live for this drop invocation.
+            unsafe {
+                let current = &mut *self.context;
+                current.current_error = None;
+                current.sync_thread_state_exception_view_from_current_error();
+            }
+        }
     }
 }
 

@@ -25,6 +25,7 @@ use super::{
     PyUnicode_InternFromString, TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
     cpython_call_internal_in_context, cpython_debug_compare_value,
     cpython_debug_ufunc_attr_summary, cpython_getattr_in_context, cpython_is_type_object_ptr,
+    cpython_exception_traceback_ptr_for_value, cpython_exception_type_ptr_for_value,
     cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_ptr_is_type_object,
     cpython_safe_object_type_name, cpython_set_error, cpython_set_typed_error,
@@ -46,6 +47,54 @@ fn cpython_cfunction_class_ptr(cfunction: *mut c_void, flags: i32) -> *mut c_voi
     }
 }
 
+fn cpython_slot_method_override(
+    method_def: *mut CpythonMethodDef,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void> {
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_LT_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_lt);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_LE_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_le);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_EQ_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_eq);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_NE_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_ne);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_GT_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_gt);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_GE_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_ge);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_BOOL_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_bool);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_INT_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_int);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_FLOAT_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_float);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_INDEX_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_index);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_GETITEM_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_getitem);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_LEN_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_len);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_ITER_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_iter);
+    }
+    if method_def == std::ptr::addr_of_mut!(super::CPY_SLOT_SETITEM_METHOD_DEF) {
+        return Some(super::cpython_slot_dunder_setitem);
+    }
+    None
+}
+
 pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     context: &mut ModuleCapiContext,
     method_def: *mut CpythonMethodDef,
@@ -58,11 +107,6 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
         context.set_error("missing method definition");
         return std::ptr::null_mut();
     }
-    // SAFETY: method pointer comes from an extension-provided PyMethodDef table.
-    let Some(method) = (unsafe { (*method_def).ml_meth }) else {
-        context.set_error("missing method callback");
-        return std::ptr::null_mut();
-    };
     let trace_calls = std::env::var_os("PYRS_TRACE_CPY_METHOD_CALLS").is_some();
     let trace_numpy_empty = std::env::var_os("PYRS_TRACE_NUMPY_EMPTY_CALL").is_some();
     let trace_numpy_result_type = std::env::var_os("PYRS_TRACE_NUMPY_RESULT_TYPE").is_some();
@@ -74,6 +118,15 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     // SAFETY: method definition pointer is valid for metadata reads.
     let method_name = unsafe {
         c_name_to_string((*method_def).ml_name).unwrap_or_else(|_| "<invalid>".to_string())
+    };
+    // Slot-wrapper method definitions are runtime-owned and must stay bound to the
+    // canonical Rust entrypoints even if foreign code mutates `ml_meth`.
+    let Some(method) = cpython_slot_method_override(method_def).or_else(|| {
+        // SAFETY: method pointer comes from an extension-provided PyMethodDef table.
+        unsafe { (*method_def).ml_meth }
+    }) else {
+        context.set_error("missing method callback");
+        return std::ptr::null_mut();
     };
     if trace_numpy_subtract && method_name == "subtract" {
         let arg_summary = args
@@ -799,16 +852,20 @@ fn cpython_set_null_result_without_error(context: &mut ModuleCapiContext, method
     if !context.vm.is_null() {
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *context.vm };
-        if vm
+        if let Some(active_exception) = vm
             .frames
             .last()
-            .and_then(|frame| frame.active_exception.as_ref())
-            .is_some()
+            .and_then(|frame| frame.active_exception.clone())
         {
-            let detail = vm
-                .runtime_error_from_active_exception("native method call failed")
-                .message;
-            context.set_error(detail);
+            let pvalue = context.alloc_cpython_ptr_for_value(active_exception.clone());
+            let ptype =
+                cpython_exception_type_ptr_for_value(context, &active_exception).unwrap_or(
+                    unsafe { PyExc_SystemError },
+                );
+            let ptraceback = cpython_exception_traceback_ptr_for_value(context, &active_exception)
+                .unwrap_or(std::ptr::null_mut());
+            let message = context.error_message_from_ptr(pvalue);
+            context.set_error_state(ptype, pvalue, ptraceback, message);
             return;
         }
     }
