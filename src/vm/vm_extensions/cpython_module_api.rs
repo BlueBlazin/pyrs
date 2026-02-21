@@ -579,36 +579,14 @@ pub unsafe extern "C" fn PyModule_GetDict(module: *mut c_void) -> *mut c_void {
                 return std::ptr::null_mut();
             }
         };
-        if let Some(existing_handle) = context.module_dict_handle_for_module(&module_obj) {
-            return context.alloc_cpython_ptr_for_handle(existing_handle);
-        }
-        let globals = match &*module_obj.kind() {
-            Object::Module(data) => data.globals.clone(),
-            _ => {
-                context.set_error("PyModule_GetDict module pointer is not a module");
+        let dict_handle = match context.ensure_module_dict_handle(&module_obj) {
+            Ok(handle) => handle,
+            Err(err) => {
+                context.set_error(format!("PyModule_GetDict failed: {err}"));
                 return std::ptr::null_mut();
             }
         };
-        // SAFETY: VM pointer is valid for context lifetime.
-        let vm = unsafe { &mut *context.vm };
-        let dict = vm.heap.alloc_dict(
-            globals
-                .into_iter()
-                .map(|(name, value)| (Value::Str(name), value))
-                .collect(),
-        );
-        let dict_ptr = context.alloc_cpython_ptr_for_value(dict);
-        let Some(dict_handle) = context.cpython_handle_from_ptr(dict_ptr) else {
-            context.set_error("PyModule_GetDict failed to materialize dict handle");
-            return std::ptr::null_mut();
-        };
-        context
-            .module_dict_handles
-            .insert(dict_handle, module_obj.clone());
-        context
-            .module_dict_handle_by_module_id
-            .insert(module_obj.id(), dict_handle);
-        dict_ptr
+        context.alloc_cpython_ptr_for_handle(dict_handle)
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);

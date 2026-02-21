@@ -12,6 +12,7 @@ use crate::runtime::{Object, RuntimeError, Value};
 use crate::vm::ExtensionCapsuleRegistryEntry;
 
 use super::cpython_context_runtime::ActiveCpythonContextGuard;
+use super::cpython_module_runtime::cpython_bind_module_def;
 use super::{
     _Py_NoneStruct, CpythonModuleDef, CpythonModuleDefSlot, CpythonObjectHead, CpythonTypeObject,
     ExtensionCallableKind, ExtensionInitScopeGuard, ModuleCapiContext, ObjRef, PYRS_DATETIME_CAPI,
@@ -398,6 +399,14 @@ impl Vm {
                 if !module_ptr.is_null() {
                     let module_def = init_result.cast::<CpythonModuleDef>();
                     if !module_def.is_null() {
+                        if let Err(err) =
+                            cpython_bind_module_def(&mut module_ctx, &active_module, module_def)
+                        {
+                            return Err(RuntimeError::new(format!(
+                                "extension '{}' initializer '{}' failed to bind module definition: {}",
+                                module_name, resolved_symbol, err
+                            )));
+                        }
                         self.register_cpython_module_methods_from_def(&active_module, module_def)?;
                         // SAFETY: module_def points to extension-provided PyModuleDef layout.
                         let slots_ptr = unsafe { (*module_def).m_slots };
@@ -449,6 +458,16 @@ impl Vm {
                                             );
                                             module_ctx.module = created_module.clone();
                                             active_module = created_module.clone();
+                                            if let Err(err) = cpython_bind_module_def(
+                                                &mut module_ctx,
+                                                &active_module,
+                                                module_def,
+                                            ) {
+                                                return Err(RuntimeError::new(format!(
+                                                    "extension '{}' create-slot module bind failed: {}",
+                                                    module_name, err
+                                                )));
+                                            }
                                             if created_module.id() != module.id()
                                                 && let Object::Module(current_data) =
                                                     &*module.kind()

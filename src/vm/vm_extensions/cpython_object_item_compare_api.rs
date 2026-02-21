@@ -1250,9 +1250,31 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_IsInstance(object: *mut c_void, class: *mut c_void) -> i32 {
+    if std::env::var_os("PYRS_TRACE_ISINSTANCE").is_some() {
+        eprintln!(
+            "[cpy-isinstance] raw-enter object={:p} class={:p}",
+            object, class
+        );
+    }
     if object.is_null() || class.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return -1;
+    }
+    let trace_isinstance = std::env::var_os("PYRS_TRACE_ISINSTANCE").is_some();
+    let class_type_name = if trace_isinstance {
+        cpython_type_name_for_object_ptr(class)
+    } else {
+        String::new()
+    };
+    let should_trace = trace_isinstance;
+    if should_trace {
+        eprintln!(
+            "[cpy-isinstance] enter object={:p} object_type={} class={:p} class_type={}",
+            object,
+            cpython_type_name_for_object_ptr(object),
+            class,
+            class_type_name
+        );
     }
     with_active_cpython_context_mut(|context| {
         let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
@@ -1270,7 +1292,15 @@ pub unsafe extern "C" fn PyObject_IsInstance(object: *mut c_void, class: *mut c_
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *context.vm };
         match vm.builtin_isinstance(vec![object_value, class_value], HashMap::new()) {
-            Ok(Value::Bool(flag)) => i32::from(flag),
+            Ok(Value::Bool(flag)) => {
+                if should_trace {
+                    eprintln!(
+                        "[cpy-isinstance] result={} object={:p} class={:p}",
+                        flag, object, class
+                    );
+                }
+                i32::from(flag)
+            }
             Ok(_) => {
                 context.set_error("PyObject_IsInstance returned non-bool result");
                 -1

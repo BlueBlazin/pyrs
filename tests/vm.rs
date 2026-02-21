@@ -14139,6 +14139,16 @@ print(ok)
 }
 
 #[test]
+fn numpy_random_mt19937_initializer_runs_without_seedsequence_failures() {
+    let source = r#"import numpy.random as npr
+bg = npr.MT19937()
+ok = hasattr(bg, "state")
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
 fn numpy_proxy_scalar_richcmp_dunders_cover_lt_le_gt_ge_across_types() {
     let source = r#"import numpy as np
 

@@ -524,9 +524,7 @@ pub unsafe extern "C" fn PyObject_GetIter(object: *mut c_void) -> *mut c_void {
             false
         } else {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
-            unsafe {
-                (&*context.vm).capi_owned_ptr_is_pinned(object as usize)
-            }
+            unsafe { (&*context.vm).capi_owned_ptr_is_pinned(object as usize) }
         };
         if !owned_object
             && !pinned_owned_object
@@ -1266,9 +1264,7 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
                             false
                         } else {
                             // SAFETY: VM pointer is valid for active C-API context lifetime.
-                            unsafe {
-                                (&*context.vm).capi_owned_ptr_is_pinned(ptr as usize)
-                            }
+                            unsafe { (&*context.vm).capi_owned_ptr_is_pinned(ptr as usize) }
                         };
                         let known_handle = context.cpython_handle_from_ptr(ptr).is_some();
                         let mapped_escaped = if context.vm.is_null() {

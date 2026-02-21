@@ -91,6 +91,16 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder` now passes.
     - `numpy_ndarray_proxy_iterability_is_preserved` passes.
     - `numpy_arrayprint_array_repr_works_without_placeholder_fallback` passes.
+- Scientific-stack checkpoint (2026-02-21, latest):
+  - `import numpy.random` now succeeds in direct mode.
+  - direct `numpy.random.MT19937()` construction now succeeds.
+  - root-cause closures landed:
+    - `PyType_Ready` now installs a class-level `__init__` slot wrapper for extension types when `tp_init` exists and `__init__` is absent from `tp_dict`.
+    - method-descriptor `tp_call` now handles unbound `METH_METHOD` receiver shapes where the defining class is passed before the explicit instance argument.
+  - new regression coverage:
+    - `tests/vm.rs::numpy_random_mt19937_initializer_runs_without_seedsequence_failures`.
+  - remaining follow-up:
+    - `numpy.random.default_rng()` still fails with `TypeError: attempted to call non-function` (tracked in `docs/NUMPY_BRINGUP_GATE.md`).
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,

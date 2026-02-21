@@ -52,8 +52,19 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     let trace_seed_attrs = std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some()
         && matches!(
             name.as_str(),
-            "BitGenerator" | "SeedSequence" | "SeedlessSeedSequence" | "generate_state"
+            "BitGenerator"
+                | "SeedSequence"
+                | "SeedlessSeedSequence"
+                | "ISeedSequence"
+                | "generate_state"
+                | "_seed_seq"
         );
+    if trace_seed_attrs {
+        eprintln!(
+            "[numpy-seed-attr] getattr-string-enter object={:p} attr={}",
+            object, name
+        );
+    }
     let trace_getattr_slots = std::env::var_os("PYRS_TRACE_GETATTR_SLOTS").is_some();
     let trace_proxy_getattr = std::env::var_os("PYRS_TRACE_PROXY_GETATTR").is_some()
         && matches!(name.as_str(), "__repr__" | "__str__");
@@ -448,6 +459,32 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     ) {
         Ok(value) => {
             let ptr = cpython_new_ptr_for_value(value);
+            if trace_seed_attrs {
+                let (tag, proxy_ptr) = with_active_cpython_context_mut(|context| {
+                    let value_tag = context
+                        .cpython_value_from_borrowed_ptr(ptr)
+                        .map(|resolved| cpython_value_debug_tag(&resolved))
+                        .unwrap_or_else(|| "<unresolved>".to_string());
+                    let proxy_ptr =
+                        context
+                            .cpython_value_from_borrowed_ptr(ptr)
+                            .and_then(|resolved| {
+                                if matches!(resolved, Value::Class(_)) {
+                                    super::ModuleCapiContext::cpython_proxy_raw_ptr_from_value(
+                                        &resolved,
+                                    )
+                                } else {
+                                    None
+                                }
+                            });
+                    (value_tag, proxy_ptr)
+                })
+                .unwrap_or_else(|_| ("<no-context>".to_string(), None));
+                eprintln!(
+                    "[numpy-seed-attr] getattr-string-result object={:p} attr={} result={:p} value={} proxy_ptr={:?}",
+                    object, name, ptr, tag, proxy_ptr
+                );
+            }
             if trace_exit_lookup {
                 eprintln!("[cpy-attr-exit-lookup] result={:p}", ptr);
             }
@@ -519,6 +556,36 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
+    let trace_seed_getattr = if std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some() {
+        with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_borrowed_ptr(name)
+                .and_then(|value| match value {
+                    Value::Str(text)
+                        if matches!(
+                            text.as_str(),
+                            "ISeedSequence"
+                                | "SeedSequence"
+                                | "SeedlessSeedSequence"
+                                | "BitGenerator"
+                        ) =>
+                    {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+        })
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    if let Some(attr_name) = trace_seed_getattr.as_deref() {
+        eprintln!(
+            "[numpy-seed-attr] getattr-enter object={:p} name_ptr={:p} attr={}",
+            object, name, attr_name
+        );
+    }
     let trace_generate_state = std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some()
         && with_active_cpython_context_mut(|context| {
             context
@@ -555,6 +622,12 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             object == none_ptr,
             target_kind
         );
+        if std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE_BT").is_some() {
+            eprintln!(
+                "[cpy-getattr] attr=generate_state bt={}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
     }
     let trace_reduce_attr_name = if cpython_trace_numpy_reduce_enabled() {
         with_active_cpython_context_mut(|context| {
@@ -637,6 +710,32 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if let Some(attr_name) = trace_seed_getattr.as_deref() {
+                let (tag, proxy_ptr) = with_active_cpython_context_mut(|context| {
+                    let value_tag = context
+                        .cpython_value_from_borrowed_ptr(result)
+                        .map(|resolved| cpython_value_debug_tag(&resolved))
+                        .unwrap_or_else(|| "<unresolved>".to_string());
+                    let proxy_ptr =
+                        context
+                            .cpython_value_from_borrowed_ptr(result)
+                            .and_then(|resolved| {
+                                if matches!(resolved, Value::Class(_)) {
+                                    super::ModuleCapiContext::cpython_proxy_raw_ptr_from_value(
+                                        &resolved,
+                                    )
+                                } else {
+                                    None
+                                }
+                            });
+                    (value_tag, proxy_ptr)
+                })
+                .unwrap_or_else(|_| ("<no-context>".to_string(), None));
+                eprintln!(
+                    "[numpy-seed-attr] getattr-result object={:p} attr={} result={:p} value={} proxy_ptr={:?}",
+                    object, attr_name, result, tag, proxy_ptr
+                );
+            }
             if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
                 eprintln!(
                     "[numpy-reduce] PyObject_GetAttr native-result object={:p} attr={} result={:p}",
@@ -983,6 +1082,24 @@ pub unsafe extern "C" fn PyObject_SetAttrString(
         std::env::var_os("PYRS_TRACE_PYX_CAPI").is_some() && name_text == "__pyx_capi__";
     let trace_pybind11_attr =
         std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && name_text.contains("__pybind11");
+    let trace_seed_setattr =
+        std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some() && name_text == "_seed_seq";
+    if trace_seed_setattr {
+        let _ = with_active_cpython_context_mut(|context| {
+            let object_tag = context
+                .cpython_value_from_borrowed_ptr(object)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unresolved-object>".to_string());
+            let value_tag = context
+                .cpython_value_from_borrowed_ptr(value_ptr)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unresolved-value>".to_string());
+            eprintln!(
+                "[numpy-seed-attr] setattr-enter object={:p} value={:p} object_tag={} value_tag={}",
+                object, value_ptr, object_tag, value_tag
+            );
+        });
+    }
     if !object.is_null() {
         let trace_native_setattr = std::env::var_os("PYRS_TRACE_SETATTR_NATIVE").is_some();
         let attr_name = name_text.clone();

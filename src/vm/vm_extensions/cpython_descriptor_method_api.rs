@@ -6,23 +6,23 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     _Py_NoneStruct, CPY_PROXY_PTR_ATTR, CPYTHON_DESCRIPTOR_REGISTRY, CpythonCFunctionCompatObject,
-    CpythonDescriptorKind, CpythonGetSetDef, CpythonMemberDef, CpythonMethodDef, CpythonObjectHead,
-    CpythonTypeObject, METH_FASTCALL, METH_KEYWORDS, METH_METHOD, METH_NOARGS, METH_O,
-    METH_VARARGS, ModuleCapiContext, PY_MEMBER_READONLY, PY_MEMBER_RELATIVE_OFFSET,
-    PY_MEMBER_T_BOOL, PY_MEMBER_T_BYTE, PY_MEMBER_T_CHAR, PY_MEMBER_T_DOUBLE, PY_MEMBER_T_FLOAT,
-    PY_MEMBER_T_INT, PY_MEMBER_T_LONG, PY_MEMBER_T_LONGLONG, PY_MEMBER_T_NONE, PY_MEMBER_T_OBJECT,
-    PY_MEMBER_T_OBJECT_EX, PY_MEMBER_T_PYSSIZET, PY_MEMBER_T_SHORT, PY_MEMBER_T_STRING,
-    PY_MEMBER_T_STRING_INPLACE, PY_MEMBER_T_UBYTE, PY_MEMBER_T_UINT, PY_MEMBER_T_ULONG,
-    PY_MEMBER_T_ULONGLONG, PY_MEMBER_T_USHORT, Py_DecRef, Py_XDecRef, Py_XIncRef, PyBool_FromLong,
-    PyCFunction_Type, PyClassMethodDescr_Type, PyDict_GetItemWithError, PyErr_BadArgument,
-    PyErr_BadInternalCall, PyErr_Occurred, PyExc_AttributeError, PyExc_SystemError,
-    PyExc_TypeError, PyExc_ValueError, PyFloat_AsDouble, PyFloat_FromDouble, PyGetSetDescr_Type,
-    PyLong_AsLong, PyLong_AsLongLong, PyLong_AsSsize_t, PyLong_AsUnsignedLong,
-    PyLong_AsUnsignedLongLong, PyLong_FromLong, PyLong_FromLongLong, PyLong_FromSsize_t,
-    PyLong_FromUnsignedLong, PyLong_FromUnsignedLongLong, PyMemberDescr_Type, PyMethodDescr_Type,
-    PyMethod_New, PyObject_Call, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyType_IsSubtype,
-    PyUnicode_FromString, PyUnicode_FromStringAndSize, PyUnicode_InternFromString,
-    TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
+    CpythonCMethodCompatObject, CpythonDescriptorKind, CpythonGetSetDef, CpythonMemberDef,
+    CpythonMethodDef, CpythonObjectHead, CpythonTypeObject, METH_FASTCALL, METH_KEYWORDS,
+    METH_METHOD, METH_NOARGS, METH_O, METH_VARARGS, ModuleCapiContext, PY_MEMBER_READONLY,
+    PY_MEMBER_RELATIVE_OFFSET, PY_MEMBER_T_BOOL, PY_MEMBER_T_BYTE, PY_MEMBER_T_CHAR,
+    PY_MEMBER_T_DOUBLE, PY_MEMBER_T_FLOAT, PY_MEMBER_T_INT, PY_MEMBER_T_LONG, PY_MEMBER_T_LONGLONG,
+    PY_MEMBER_T_NONE, PY_MEMBER_T_OBJECT, PY_MEMBER_T_OBJECT_EX, PY_MEMBER_T_PYSSIZET,
+    PY_MEMBER_T_SHORT, PY_MEMBER_T_STRING, PY_MEMBER_T_STRING_INPLACE, PY_MEMBER_T_UBYTE,
+    PY_MEMBER_T_UINT, PY_MEMBER_T_ULONG, PY_MEMBER_T_ULONGLONG, PY_MEMBER_T_USHORT, Py_DecRef,
+    Py_XDecRef, Py_XIncRef, PyBool_FromLong, PyCFunction_Type, PyClassMethodDescr_Type,
+    PyDict_GetItemWithError, PyErr_BadArgument, PyErr_BadInternalCall, PyErr_Occurred,
+    PyExc_AttributeError, PyExc_SystemError, PyExc_TypeError, PyExc_ValueError, PyFloat_AsDouble,
+    PyFloat_FromDouble, PyGetSetDescr_Type, PyLong_AsLong, PyLong_AsLongLong, PyLong_AsSsize_t,
+    PyLong_AsUnsignedLong, PyLong_AsUnsignedLongLong, PyLong_FromLong, PyLong_FromLongLong,
+    PyLong_FromSsize_t, PyLong_FromUnsignedLong, PyLong_FromUnsignedLongLong, PyMemberDescr_Type,
+    PyMethod_New, PyMethodDescr_Type, PyObject_Call, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem,
+    PyType_IsSubtype, PyType_Type, PyUnicode_FromString, PyUnicode_FromStringAndSize,
+    PyUnicode_InternFromString, TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
     cpython_call_internal_in_context, cpython_debug_compare_value,
     cpython_debug_ufunc_attr_summary, cpython_getattr_in_context, cpython_is_type_object_ptr,
     cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
@@ -31,6 +31,20 @@ use super::{
     cpython_type_name_for_object_ptr, cpython_value_debug_tag, cpython_value_from_ptr,
     value_to_int, with_active_cpython_context_mut,
 };
+
+fn cpython_cfunction_class_ptr(cfunction: *mut c_void, flags: i32) -> *mut c_void {
+    if (flags & METH_METHOD) == 0 {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `METH_METHOD` callables use PyCMethodObject-compatible layout.
+    unsafe {
+        cfunction
+            .cast::<CpythonCMethodCompatObject>()
+            .as_ref()
+            .map(|method| method.mm_class)
+            .unwrap_or(std::ptr::null_mut())
+    }
+}
 
 pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
     context: &mut ModuleCapiContext,
@@ -205,8 +219,7 @@ pub(in crate::vm::vm_extensions) fn cpython_invoke_method_from_values(
         );
         if std::env::var_os("PYRS_TRACE_NUMPY_METHOD_BINDING_BT").is_some()
             && (method_name == "dot"
-                || (method_name == "zeros"
-                    && matches!(args.first(), Some(Value::Class(_)))))
+                || (method_name == "zeros" && matches!(args.first(), Some(Value::Class(_)))))
         {
             let vm_stack = if context.vm.is_null() {
                 "<no-vm>".to_string()
@@ -1656,8 +1669,9 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
             ));
             return std::ptr::null_mut();
         }
-        // SAFETY: cfunction object layout is stable for this context.
-        let class_obj = unsafe { (*raw).m_class };
+        // SAFETY: method definition pointer is validated above.
+        let flags = unsafe { (*method_def).ml_flags };
+        let class_obj = cpython_cfunction_class_ptr(callable, flags);
         let positional = match cpython_positional_args_from_tuple_object(args) {
             Ok(values) => values,
             Err(err) => {
@@ -1677,6 +1691,16 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
             .get(&(method_def as usize))
             .copied()
         {
+            if std::env::var_os("PYRS_TRACE_CPY_CFUNCTION_BUILTIN").is_some() {
+                let method_name = unsafe { c_name_to_string((*method_def).ml_name) }
+                    .unwrap_or_else(|_| "<unnamed>".to_string());
+                if method_name == "__init__" || method_name == "register" {
+                    eprintln!(
+                        "[cpy-cfunction-builtin] method={} builtin={:?} self={:p} method_def={:p}",
+                        method_name, builtin, self_obj, method_def
+                    );
+                }
+            }
             let mut positional_with_self = positional;
             let method_def_ptr = method_def.cast::<c_void>();
             if !self_obj.is_null() && self_obj != method_def_ptr {
@@ -1737,10 +1761,11 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_descr
             context.set_error("cfunction __get__ missing method definition");
             return std::ptr::null_mut();
         }
+        // SAFETY: method definition pointer is validated above.
+        let flags = unsafe { (*method_def).ml_flags };
         // SAFETY: descriptor pointer is expected to be a cfunction compat object.
         let module_obj = unsafe { (*raw).m_module };
-        // SAFETY: descriptor pointer is expected to be a cfunction compat object.
-        let class_obj = unsafe { (*raw).m_class };
+        let class_obj = cpython_cfunction_class_ptr(descriptor, flags);
         // SAFETY: descriptor pointer is expected to be a cfunction compat object.
         let existing_self = unsafe { (*raw).m_self };
         let method_def_ptr = method_def.cast::<c_void>();
@@ -1912,19 +1937,45 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_
             return std::ptr::null_mut();
         }
         let receiver_value = positional.remove(0);
-        let receiver_ptr = context.alloc_cpython_ptr_for_value(receiver_value);
+        let mut receiver_ptr = context.alloc_cpython_ptr_for_value(receiver_value);
         if receiver_ptr.is_null() {
             context.set_error("failed to materialize descriptor receiver argument");
             return std::ptr::null_mut();
         }
         // SAFETY: receiver pointer was materialized above.
-        let receiver_type = unsafe {
+        let mut receiver_type = unsafe {
             receiver_ptr
                 .cast::<CpythonObjectHead>()
                 .as_ref()
                 .map(|head| head.ob_type.cast::<CpythonTypeObject>())
                 .unwrap_or(std::ptr::null_mut())
         };
+        let flags = unsafe { (*method_def).ml_flags };
+        let has_meth_method = (flags & METH_METHOD) != 0;
+        if has_meth_method
+            && receiver_type == std::ptr::addr_of_mut!(PyType_Type)
+            && receiver_ptr == owner_type.cast::<c_void>()
+            && !positional.is_empty()
+        {
+            // CPython METH_METHOD descriptor calls can present the defining class as the
+            // first positional argument in unbound-call shapes. In that case, shift to the
+            // explicit instance argument for receiver subtype validation and invocation.
+            let shifted_receiver = positional.remove(0);
+            let shifted_ptr = context.alloc_cpython_ptr_for_value(shifted_receiver);
+            if shifted_ptr.is_null() {
+                context.set_error("failed to materialize shifted descriptor receiver argument");
+                return std::ptr::null_mut();
+            }
+            let shifted_type = unsafe {
+                shifted_ptr
+                    .cast::<CpythonObjectHead>()
+                    .as_ref()
+                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                    .unwrap_or(std::ptr::null_mut())
+            };
+            receiver_ptr = shifted_ptr;
+            receiver_type = shifted_type;
+        }
         if receiver_type.is_null()
             || unsafe {
                 PyType_IsSubtype(receiver_type.cast::<c_void>(), owner_type.cast::<c_void>())
@@ -1933,10 +1984,9 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_descriptor_
             context.set_error("descriptor receiver is not an instance/subclass of owner type");
             return std::ptr::null_mut();
         }
-        let flags = unsafe { (*method_def).ml_flags };
         let class_obj = if class_method {
             receiver_ptr
-        } else if (flags & METH_METHOD) != 0 {
+        } else if has_meth_method {
             owner_type.cast::<c_void>()
         } else {
             std::ptr::null_mut()

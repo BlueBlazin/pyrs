@@ -98,6 +98,13 @@ pub(in crate::vm::vm_extensions) fn cpython_bind_module_def(
             }
         }
     }
+    if let Some(handle) = context
+        .cpython_object_handles_by_id
+        .get(&module_obj.id())
+        .copied()
+    {
+        context.sync_cpython_storage_from_value(handle);
+    }
     Ok(())
 }
 

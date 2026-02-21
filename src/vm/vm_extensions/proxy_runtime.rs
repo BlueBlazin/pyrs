@@ -1181,8 +1181,27 @@ impl Vm {
             );
         }
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let slot_dunder_fastpath = matches!(
+            attr_name,
+            "__lt__"
+                | "__le__"
+                | "__eq__"
+                | "__ne__"
+                | "__gt__"
+                | "__ge__"
+                | "__bool__"
+                | "__int__"
+                | "__float__"
+                | "__index__"
+                | "__getitem__"
+                | "__len__"
+                | "__iter__"
+                | "__setitem__"
+                | "__init__"
+        );
         if !is_proxy_type_object
-            && std::env::var_os("PYRS_ENABLE_PROXY_TP_DICT_FASTPATH").is_some()
+            && (slot_dunder_fastpath
+                || std::env::var_os("PYRS_ENABLE_PROXY_TP_DICT_FASTPATH").is_some())
             && !matches!(attr_name, "__repr__" | "__str__")
             && let Some(attr_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
             && !attr_ptr.is_null()
@@ -1318,6 +1337,19 @@ impl Vm {
             );
         }
         let mapped = call_ctx.cpython_value_from_owned_ptr(attr_ptr);
+        if mapped.is_none()
+            && !is_proxy_type_object
+            && let Some(fallback_ptr) = call_ctx.lookup_type_attr_via_tp_dict(raw_ptr, attr_name)
+            && !fallback_ptr.is_null()
+        {
+            if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
+                eprintln!(
+                    "[proxy-attr-map] source=getattr_unmapped_tp_dict_fallback target={:p} attr={} value_ptr={:p}",
+                    raw_ptr, attr_name, fallback_ptr
+                );
+            }
+            return call_ctx.cpython_value_from_borrowed_ptr(fallback_ptr);
+        }
         if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
             let proxy_tag = cpython_value_debug_tag(proxy_value);
             let mapped_tag = mapped

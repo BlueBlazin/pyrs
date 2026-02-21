@@ -4517,6 +4517,15 @@ impl Vm {
                 ));
             }
         };
+        let is_cpython_proxy_instance = matches!(
+            &*class_ref.kind(),
+            Object::Class(class_data)
+                if class_data.name == "__pyrs_cpython_proxy__"
+                    || matches!(
+                        class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                        Some(Value::Bool(true))
+                    )
+        );
 
         // CPython routes the default object-attribute path through a native slot
         // rather than an ordinary Python-level method call each access.
@@ -4570,6 +4579,23 @@ impl Vm {
                         }
                     },
                 );
+            }
+
+            if is_cpython_proxy_instance {
+                let proxy_fallback = self.load_attr_instance_default(instance, attr_name, false);
+                match proxy_fallback {
+                    Ok(AttrAccessOutcome::Value(value)) => {
+                        return Ok(AttrAccessOutcome::Value(value));
+                    }
+                    Ok(AttrAccessOutcome::ExceptionHandled) => {
+                        return Ok(AttrAccessOutcome::ExceptionHandled);
+                    }
+                    Err(err) => {
+                        if !runtime_error_matches_exception(&err, "AttributeError") {
+                            return Err(err);
+                        }
+                    }
+                }
             }
 
             let class_name = match &*instance.kind() {

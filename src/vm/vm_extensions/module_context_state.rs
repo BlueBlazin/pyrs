@@ -118,6 +118,9 @@ impl ModuleCapiContext {
                     );
                 }
             }
+            if let Some(handle) = self.cpython_object_handles_by_id.get(&module_id).copied() {
+                self.sync_cpython_storage_from_value(handle);
+            }
             return Ok(());
         }
         let finalize_func = vm
@@ -148,6 +151,9 @@ impl ModuleCapiContext {
                     }
                 }
             }
+        }
+        if let Some(handle) = self.cpython_object_handles_by_id.get(&module_id).copied() {
+            self.sync_cpython_storage_from_value(handle);
         }
         Ok(())
     }

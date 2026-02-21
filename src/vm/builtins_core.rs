@@ -7253,6 +7253,18 @@ impl Vm {
             },
             Value::Class(expected) => {
                 if let Object::Class(class_data) = &*expected.kind() {
+                    let trace_seed_instance = std::env::var_os("PYRS_TRACE_ISINSTANCE_CLASS")
+                        .is_some()
+                        && matches!(value, Value::None)
+                        && (class_data.name.contains("SeedSequence")
+                            || class_data.name.contains("BitGenerator"));
+                    if trace_seed_instance {
+                        eprintln!(
+                            "[isinstance-class] value=None class={} class_id={}",
+                            class_data.name,
+                            expected.id()
+                        );
+                    }
                     if class_data.name == "PathLike" {
                         return Ok(self.value_has_fspath_protocol(value));
                     }
@@ -7293,6 +7305,12 @@ impl Vm {
                         _ => false,
                     };
                     if marker_match {
+                        if trace_seed_instance {
+                            eprintln!(
+                                "[isinstance-class] marker-match class={} result=true",
+                                class_data.name
+                            );
+                        }
                         return Ok(true);
                     }
                 }
