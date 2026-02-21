@@ -128,6 +128,7 @@ Do not rely on stale point-in-time numbers in this document.
   - import policy now defaults to CPython behavior: prefer validated source-bound `.pyc` by default (`PYRS_IMPORT_PREFER_PYC=0` disables).
   - `load_attr_module` now avoids frame-scan lookup unless the target module is currently marked `__pyrs_module_initializing__`.
   - `PyObject_RichCompare` now tries slot dispatch before pointer/value conversion fallback to reduce extension-init compare overhead.
+  - added cached trace-flag env checks (`cpython_trace_flag_enabled`) and wired `PyObject_GetAttrString` hotpath probes to use cached checks instead of repeated raw environment lookups.
   - current local reading with CPython-default pyc policy:
     - `pyrs`: ~`0.69-0.70s` user
     - `pyrs` with source-first override (`PYRS_IMPORT_PREFER_PYC=0`): ~`0.63s` user
