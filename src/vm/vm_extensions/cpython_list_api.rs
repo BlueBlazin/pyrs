@@ -5,8 +5,8 @@ use crate::runtime::{Object, Value};
 use crate::vm::{NativeCallResult, NativeMethodKind};
 
 use super::{
-    CpythonListCompatObject, CpythonMappingMethods, CpythonSequenceMethods,
-    Py_IncRef, cpython_debug_compare_value, cpython_set_error, cpython_value_from_ptr,
+    CpythonListCompatObject, CpythonMappingMethods, CpythonSequenceMethods, Py_IncRef,
+    cpython_debug_compare_value, cpython_set_error, cpython_value_from_ptr,
     with_active_cpython_context_mut,
 };
 

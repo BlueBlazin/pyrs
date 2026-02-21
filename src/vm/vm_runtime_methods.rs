@@ -1765,9 +1765,8 @@ impl Vm {
             )? {
                 InternalCallOutcome::Value(value) => value,
                 InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(self.runtime_error_from_active_exception(
-                        "metaclass __prepare__ call failed",
-                    ));
+                    return Err(self
+                        .runtime_error_from_active_exception("metaclass __prepare__ call failed"));
                 }
             };
             if self

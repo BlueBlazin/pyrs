@@ -6159,9 +6159,7 @@ impl Vm {
                             return Ok(None);
                         }
                         GeneratorResumeOutcome::PropagatedException => {
-                            return Err(self.iteration_error_from_state(
-                                "zip() iteration failed",
-                            )?);
+                            return Err(self.iteration_error_from_state("zip() iteration failed")?);
                         }
                     }
                 }

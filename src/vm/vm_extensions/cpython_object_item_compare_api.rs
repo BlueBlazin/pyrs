@@ -3,7 +3,9 @@ use std::ffi::c_void;
 
 use crate::runtime::{BuiltinFunction, Object, Value};
 use crate::vm::ops::compare_order;
-use crate::vm::{InternalCallOutcome, dict_remove_value, dict_set_value_checked};
+use crate::vm::{
+    InternalCallOutcome, dict_remove_value, dict_set_value_checked, env_var_present_cached,
+};
 
 use super::cpython_object_call_api::PyObject_IsTrue;
 use super::{
@@ -14,13 +16,13 @@ use super::{
     PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string, cpython_builtin_type_name_for_ptr,
     cpython_call_builtin, cpython_call_object, cpython_error_message_indicates_missing_attribute,
     cpython_exception_value_from_ptr, cpython_is_interned_unicode_ptr,
-    cpython_lookup_interned_unicode_text,
-    cpython_mapping_ass_subscript_slot, cpython_mapping_subscript_slot, cpython_new_ptr_for_value,
-    cpython_sequence_item_slot, cpython_set_error, cpython_set_typed_error,
-    cpython_slice_bounds_step_one, cpython_slice_indices_for_len,
-    cpython_trace_numpy_reduce_enabled, cpython_try_richcompare_slot, cpython_tuple_items_ptr,
-    cpython_unicode_text_from_value, cpython_value_debug_tag, cpython_value_from_ptr, is_truthy,
-    value_to_int, with_active_cpython_context_mut,
+    cpython_lookup_interned_unicode_text, cpython_mapping_ass_subscript_slot,
+    cpython_mapping_subscript_slot, cpython_new_ptr_for_value, cpython_sequence_item_slot,
+    cpython_set_error, cpython_set_typed_error, cpython_slice_bounds_step_one,
+    cpython_slice_indices_for_len, cpython_trace_numpy_reduce_enabled,
+    cpython_try_richcompare_slot, cpython_tuple_items_ptr, cpython_unicode_text_from_value,
+    cpython_value_debug_tag, cpython_value_from_ptr, is_truthy, value_to_int,
+    with_active_cpython_context_mut,
 };
 
 fn cpython_set_item_runtime_error(message: String) {
@@ -810,7 +812,7 @@ fn cpython_direct_rich_compare(left: &Value, right: &Value, op: i32) -> Option<b
         }
         (Value::Str(lhs), Value::Str(rhs)) => {
             if op == 2
-                && std::env::var_os("PYRS_TRACE_CPY_STRING_EQ").is_some()
+                && env_var_present_cached("PYRS_TRACE_CPY_STRING_EQ")
                 && (lhs.contains("device") || rhs.contains("device"))
             {
                 eprintln!(
@@ -1024,16 +1026,22 @@ pub unsafe extern "C" fn PyObject_RichCompare(
         cpython_set_error("PyObject_RichCompare received invalid compare op");
         return std::ptr::null_mut();
     };
+    if (op == 2 || op == 3) && left == right {
+        return cpython_new_ptr_for_value(Value::Bool(op == 2));
+    }
     if cpython_can_try_richcompare_slot(left, right)
         && let Some(result) = cpython_try_richcompare_slot(left, right, op)
     {
         return result;
     }
-    let right_value = match with_active_cpython_context_mut(|context| {
-        context.cpython_value_from_ptr_or_proxy(right)
+    let (left_value, right_value) = match with_active_cpython_context_mut(|context| {
+        (
+            context.cpython_value_from_ptr_or_proxy(left),
+            context.cpython_value_from_ptr_or_proxy(right),
+        )
     }) {
-        Ok(Some(value)) => value,
-        Ok(None) => {
+        Ok((Some(left_value), Some(right_value))) => (left_value, right_value),
+        Ok((_left_value, right_value)) => {
             if let Some(result) = cpython_try_unicode_pointer_compare(left, right, op) {
                 return result;
             }
@@ -1042,8 +1050,19 @@ pub unsafe extern "C" fn PyObject_RichCompare(
                 let result = if op == 2 { equal } else { !equal };
                 return cpython_new_ptr_for_value(Value::Bool(result));
             }
-            if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
-                eprintln!("[cpy-rich-unknown] right_ptr={right:p} left_ptr={left:p} op={op}");
+            if env_var_present_cached("PYRS_TRACE_CPY_UNKNOWN_PTR") {
+                if right_value.is_none() {
+                    eprintln!("[cpy-rich-unknown] right_ptr={right:p} left_ptr={left:p} op={op}");
+                } else {
+                    let _ = with_active_cpython_context_mut(|context| {
+                        eprintln!(
+                            "[cpy-rich-unknown] left_ptr={left:p} right_ptr={right:p} op={op} owns_left={} probable_left={} left_handle={:?}",
+                            context.owns_cpython_allocation_ptr(left),
+                            ModuleCapiContext::is_probable_external_cpython_object_ptr(left),
+                            context.cpython_handle_from_ptr(left),
+                        );
+                    });
+                }
             }
             cpython_set_error("unknown PyObject pointer");
             return std::ptr::null_mut();
@@ -1053,38 +1072,7 @@ pub unsafe extern "C" fn PyObject_RichCompare(
             return std::ptr::null_mut();
         }
     };
-    let left_value = match with_active_cpython_context_mut(|context| {
-        context.cpython_value_from_ptr_or_proxy(left)
-    }) {
-        Ok(Some(value)) => value,
-        Ok(None) => {
-            if let Some(result) = cpython_try_unicode_pointer_compare(left, right, op) {
-                return result;
-            }
-            if op == 2 || op == 3 {
-                let equal = std::ptr::eq(left, right);
-                let result = if op == 2 { equal } else { !equal };
-                return cpython_new_ptr_for_value(Value::Bool(result));
-            }
-            if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
-                let _ = with_active_cpython_context_mut(|context| {
-                    eprintln!(
-                        "[cpy-rich-unknown] left_ptr={left:p} right_ptr={right:p} op={op} owns_left={} probable_left={} left_handle={:?}",
-                        context.owns_cpython_allocation_ptr(left),
-                        ModuleCapiContext::is_probable_external_cpython_object_ptr(left),
-                        context.cpython_handle_from_ptr(left),
-                    );
-                });
-            }
-            cpython_set_error("unknown PyObject pointer");
-            return std::ptr::null_mut();
-        }
-        Err(err) => {
-            cpython_set_error(err);
-            return std::ptr::null_mut();
-        }
-    };
-    if op == 2 && std::env::var_os("PYRS_TRACE_CPY_RICH_VALUES").is_some() {
+    if op == 2 && env_var_present_cached("PYRS_TRACE_CPY_RICH_VALUES") {
         eprintln!(
             "[cpy-rich] left={:?} right={:?}",
             cpython_debug_compare_value(&left_value),
@@ -1092,7 +1080,7 @@ pub unsafe extern "C" fn PyObject_RichCompare(
         );
     }
     if let Some(result) = cpython_direct_rich_compare(&left_value, &right_value, op) {
-        if op == 2 && std::env::var_os("PYRS_TRACE_CPY_RICH_VALUES").is_some() {
+        if op == 2 && env_var_present_cached("PYRS_TRACE_CPY_RICH_VALUES") {
             eprintln!("[cpy-rich] direct={result}");
         }
         return cpython_new_ptr_for_value(Value::Bool(result));
@@ -1168,7 +1156,7 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
     right: *mut c_void,
     op: i32,
 ) -> i32 {
-    let trace_compare_errors = std::env::var_os("PYRS_TRACE_CPY_COMPARE_ERRORS").is_some();
+    let trace_compare_errors = env_var_present_cached("PYRS_TRACE_CPY_COMPARE_ERRORS");
     if left == right {
         if op == 2 {
             return 1;
@@ -1177,7 +1165,22 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
             return 0;
         }
     }
-    let trace_compare = std::env::var_os("PYRS_TRACE_CPY_COMPARE").is_some();
+    let trace_compare = env_var_present_cached("PYRS_TRACE_CPY_COMPARE");
+    let direct_compare = with_active_cpython_context_mut(|context| {
+        let left_value = context.cpython_value_from_ptr_or_proxy(left);
+        let right_value = context.cpython_value_from_ptr_or_proxy(right);
+        match (left_value, right_value) {
+            (Some(left_value), Some(right_value)) => {
+                cpython_direct_rich_compare(&left_value, &right_value, op)
+            }
+            _ => None,
+        }
+    })
+    .ok()
+    .flatten();
+    if let Some(result) = direct_compare {
+        return i32::from(result);
+    }
     if trace_compare && op == 2 {
         let mut left_raw = String::new();
         let mut right_raw = String::new();

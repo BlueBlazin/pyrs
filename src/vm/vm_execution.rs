@@ -14,15 +14,13 @@ use super::{
     bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
     decode_call_counts, deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value,
     dict_set_value, dict_set_value_checked, ensure_hashable, env_var_present_cached,
-    exception_message_from_call_args,
-    floor_div_values, format_repr, format_value, is_comprehension_code, is_import_error_family,
-    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
-    memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
-    mod_values, module_globals_version, pos_value, pow_values, rshift_values,
-    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
-    value_to_int,
-    value_to_optional_index,
+    exception_message_from_call_args, floor_div_values, format_repr, format_value,
+    is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
+    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
+    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
+    module_globals_version, pos_value, pow_values, rshift_values, runtime_error_matches_exception,
+    slice_bounds_for_step_one, slice_indices, slot_names_from_value, source_path_from_cache_path,
+    value_from_bigint, value_from_object_ref, value_to_int, value_to_optional_index,
 };
 use crate::runtime::SliceValue;
 
@@ -116,7 +114,8 @@ impl Vm {
         if module_name.is_empty() || module_name == "__main__" {
             return Ok(false);
         }
-        if self.prefer_pyc_when_source_available && loader_name == SOURCELESS_FILE_LOADER
+        if self.prefer_pyc_when_source_available
+            && loader_name == SOURCELESS_FILE_LOADER
             && let Some(origin_path) = Vm::module_origin_path(&frame.module)
         {
             let source_path = std::path::PathBuf::from(source_path_from_cache_path(
@@ -840,13 +839,14 @@ impl Vm {
                 };
                 let value = if let Some(value) = mapping_hit {
                     value
-                } else if let Some(value) = self.frames.last().and_then(|frame| match &*frame
-                    .function_globals
-                    .kind()
+                } else if let Some(value) =
+                    self.frames
+                        .last()
+                        .and_then(|frame| match &*frame.function_globals.kind() {
+                            Object::Module(module_data) => module_data.globals.get(&name).cloned(),
+                            _ => None,
+                        })
                 {
-                    Object::Module(module_data) => module_data.globals.get(&name).cloned(),
-                    _ => None,
-                }) {
                     value
                 } else if let Some(value) = self.builtins.get(&name).cloned() {
                     value
@@ -3250,9 +3250,7 @@ impl Vm {
                 let result = match self.getitem_value(value, index) {
                     Ok(value) => value,
                     Err(err) => {
-                        if trace_subscript_error
-                            && let Some(frame) = self.frames.last()
-                        {
+                        if trace_subscript_error && let Some(frame) = self.frames.last() {
                             let location = frame.code.locations.get(frame.last_ip);
                             let value_tag = trace_value
                                 .as_ref()
@@ -6794,7 +6792,11 @@ impl Vm {
                         .get(frame.last_ip)
                         .map(|instr| format!("{:?}", instr.opcode))
                         .unwrap_or_else(|| "<unknown>".to_string());
-                    (frame.code.filename.clone(), frame.code.name.clone(), opcode_name)
+                    (
+                        frame.code.filename.clone(),
+                        frame.code.name.clone(),
+                        opcode_name,
+                    )
                 })
                 .unwrap_or_else(|| {
                     (
@@ -6812,10 +6814,7 @@ impl Vm {
             eprintln!("[handle-runtime] active={}", active);
             eprintln!(
                 "[handle-runtime] file={} fn={} ip={} opcode={} handler={handler:?} blocks={block_len}",
-                file,
-                function_name,
-                last_ip,
-                opcode_name,
+                file, function_name, last_ip, opcode_name,
             );
         }
         if let Some(exception) = exception {
@@ -8013,7 +8012,8 @@ impl Vm {
                 {
                     if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
                         match slot {
-                            Some(Value::Cell(existing_cell)) if existing_cell.id() == cell.id() => {}
+                            Some(Value::Cell(existing_cell)) if existing_cell.id() == cell.id() => {
+                            }
                             Some(Value::Cell(_)) => {
                                 *slot = Some(Value::Cell(cell.clone()));
                             }
@@ -8176,7 +8176,10 @@ impl Vm {
         Ok(())
     }
 
-    fn take_fast_local_optional(&mut self, idx: usize) -> Result<(String, Option<Value>), RuntimeError> {
+    fn take_fast_local_optional(
+        &mut self,
+        idx: usize,
+    ) -> Result<(String, Option<Value>), RuntimeError> {
         let name = {
             let frame = self.frames.last().expect("frame exists");
             frame
@@ -9419,7 +9422,10 @@ impl Vm {
         }
         let proxy_callable_is_already_bound = callable_is_proxy
             && receiver_is_proxy
-            && matches!(callable_type_name.as_str(), "builtin_function_or_method" | "method");
+            && matches!(
+                callable_type_name.as_str(),
+                "builtin_function_or_method" | "method"
+            );
         let call_args = if proxy_callable_is_already_bound {
             args
         } else {
@@ -9645,11 +9651,9 @@ impl Vm {
                 );
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            BoundDispatchKind::Generic => self.call_bound_method_via_call_internal(
-                function,
-                receiver,
-                vec![arg0, arg1, arg2],
-            ),
+            BoundDispatchKind::Generic => {
+                self.call_bound_method_via_call_internal(function, receiver, vec![arg0, arg1, arg2])
+            }
         }
     }
 

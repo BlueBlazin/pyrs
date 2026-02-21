@@ -197,10 +197,9 @@ use self::cpython_error_numeric_api::{
     PyStructSequence_GetItem, PyStructSequence_New, PyStructSequence_NewType,
     PyStructSequence_SetItem, PyUnstable_Object_IsUniqueReferencedTemporary,
     PyUnstable_Object_IsUniquelyReferenced, cpython_exception_class_name_from_ptr,
-    cpython_make_exception_instance_from_type_and_value,
     cpython_exception_traceback_ptr_for_value, cpython_exception_type_ptr,
-    cpython_exception_type_ptr_for_value, cpython_ptr_is_type_object,
-    cpython_safe_object_type_name,
+    cpython_exception_type_ptr_for_value, cpython_make_exception_instance_from_type_and_value,
+    cpython_ptr_is_type_object, cpython_safe_object_type_name,
 };
 use self::cpython_eval_api::{
     PyEval_GetBuiltins, PyEval_GetFrame, PyEval_GetFrameBuiltins, PyEval_GetFrameGlobals,
@@ -4062,7 +4061,9 @@ impl ModuleCapiContext {
         }
         match self.cpython_value_from_ptr_or_proxy(value_ptr) {
             Some(Value::Exception(_)) => true,
-            Some(Value::Instance(instance_obj)) => cpython_is_exception_instance(self, &instance_obj),
+            Some(Value::Instance(instance_obj)) => {
+                cpython_is_exception_instance(self, &instance_obj)
+            }
             _ => false,
         }
     }
@@ -4072,10 +4073,7 @@ impl ModuleCapiContext {
         mut ptype: *mut c_void,
         mut pvalue: *mut c_void,
     ) -> (*mut c_void, *mut c_void) {
-        if pvalue.is_null()
-            && !ptype.is_null()
-            && self.value_ptr_is_exception_instance(ptype)
-        {
+        if pvalue.is_null() && !ptype.is_null() && self.value_ptr_is_exception_instance(ptype) {
             pvalue = ptype;
             let derived = cpython_exception_type_ptr(ptype);
             if !derived.is_null() {
@@ -4188,8 +4186,8 @@ impl ModuleCapiContext {
 
         let ptype = cpython_exception_type_ptr_for_value(self, &exception_value)
             .unwrap_or_else(|| cpython_exception_type_ptr(current_exception));
-        let ptraceback =
-            cpython_exception_traceback_ptr_for_value(self, &exception_value).unwrap_or(std::ptr::null_mut());
+        let ptraceback = cpython_exception_traceback_ptr_for_value(self, &exception_value)
+            .unwrap_or(std::ptr::null_mut());
         let next_state = CpythonErrorState {
             ptype,
             pvalue: current_exception,
@@ -6152,9 +6150,7 @@ impl ModuleCapiContext {
                     })
                     .unwrap_or(false)
             };
-            if likely_type_object
-                && let Some(proxy) = self.cpython_external_proxy_value(object)
-            {
+            if likely_type_object && let Some(proxy) = self.cpython_external_proxy_value(object) {
                 let proxy =
                     self.cache_cpython_proxy_value_for_ptr(object, proxy, owns_allocation, true);
                 if std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
@@ -8890,13 +8886,16 @@ impl ModuleCapiContext {
                     }
                 }
                 if !fallback_indices.is_empty()
-                    && let Some(existing_values) = self.objects.get(&handle).and_then(|slot| match &slot.value {
-                        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
-                            Object::Tuple(items) => Some(items.clone()),
-                            _ => None,
-                        },
-                        _ => None,
-                    })
+                    && let Some(existing_values) =
+                        self.objects
+                            .get(&handle)
+                            .and_then(|slot| match &slot.value {
+                                Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                                    Object::Tuple(items) => Some(items.clone()),
+                                    _ => None,
+                                },
+                                _ => None,
+                            })
                 {
                     for idx in fallback_indices {
                         if let Some(existing) = existing_values.get(idx) {
@@ -8929,13 +8928,16 @@ impl ModuleCapiContext {
                     }
                 }
                 if !fallback_indices.is_empty()
-                    && let Some(existing_values) = self.objects.get(&handle).and_then(|slot| match &slot.value {
-                        Value::List(list_obj) => match &*list_obj.kind() {
-                            Object::List(items) => Some(items.clone()),
-                            _ => None,
-                        },
-                        _ => None,
-                    })
+                    && let Some(existing_values) =
+                        self.objects
+                            .get(&handle)
+                            .and_then(|slot| match &slot.value {
+                                Value::List(list_obj) => match &*list_obj.kind() {
+                                    Object::List(items) => Some(items.clone()),
+                                    _ => None,
+                                },
+                                _ => None,
+                            })
                 {
                     for idx in fallback_indices {
                         if let Some(existing) = existing_values.get(idx) {
@@ -9010,15 +9012,10 @@ impl ModuleCapiContext {
         let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied() else {
             return;
         };
-        // Only write object headers for pointers owned by this context.
-        let Some(raw) = self
-            .cpython_allocations
-            .iter()
-            .copied()
-            .find(|owned| (*owned).cast::<c_void>() == ptr)
-        else {
+        if !self.is_owned_compat_ptr(ptr) {
             return;
-        };
+        }
+        let raw = ptr.cast::<CpythonCompatObject>();
         if let Some(slot) = self.capsules.get(&handle) {
             // SAFETY: `raw` points to owned capsule-compatible storage for this handle.
             unsafe {
@@ -9051,15 +9048,10 @@ impl ModuleCapiContext {
         let Some(ptr) = self.cpython_ptr_by_handle.get(&handle).copied() else {
             return;
         };
-        // Only write object headers for pointers owned by this context.
-        let Some(raw) = self
-            .cpython_allocations
-            .iter()
-            .copied()
-            .find(|owned| (*owned).cast::<c_void>() == ptr)
-        else {
+        if !self.is_owned_compat_ptr(ptr) {
             return;
-        };
+        }
+        let raw = ptr.cast::<CpythonCompatObject>();
         if pull_from_raw {
             // Pull direct raw-storage writes (e.g. macro-style tuple/list mutations in native
             // code) back into the Value graph before mirroring Value state into raw headers.
@@ -9335,14 +9327,26 @@ impl ModuleCapiContext {
             let vm = unsafe { &*self.vm };
             return vm.capi_ptr_is_owned_compat(ptr as usize);
         }
-        self.cpython_allocations
-            .iter()
-            .any(|allocation| allocation.cast::<c_void>() == ptr)
+        self.is_owned_compat_ptr(ptr)
             || self.cpython_aux_allocations.contains(&ptr)
             || self
                 .cpython_list_buffers
                 .values()
                 .any(|(buffer, _)| buffer.cast::<c_void>() == ptr)
+    }
+
+    fn is_owned_compat_ptr(&self, ptr: *mut c_void) -> bool {
+        if ptr.is_null() {
+            return false;
+        }
+        if !self.vm.is_null() {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &*self.vm };
+            return vm.capi_ptr_is_owned_compat(ptr as usize);
+        }
+        self.cpython_allocations
+            .iter()
+            .any(|allocation| allocation.cast::<c_void>() == ptr)
     }
 
     fn refresh_owned_type_proxy_name(&mut self, ptr: *mut c_void) {

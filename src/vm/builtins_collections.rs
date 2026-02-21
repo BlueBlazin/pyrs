@@ -3478,7 +3478,10 @@ impl Vm {
                 _ => None,
             })
             .unwrap_or_else(|| "__main__".to_string());
-        let module = match self.heap.alloc_module(ModuleObject::new(module_name.clone())) {
+        let module = match self
+            .heap
+            .alloc_module(ModuleObject::new(module_name.clone()))
+        {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
@@ -3508,8 +3511,14 @@ impl Vm {
             overridden.name = code_name;
             std::rc::Rc::new(overridden)
         };
-        let function =
-            FunctionObject::new(code, module, defaults, kwonly_defaults, closure_values, None);
+        let function = FunctionObject::new(
+            code,
+            module,
+            defaults,
+            kwonly_defaults,
+            closure_values,
+            None,
+        );
         Ok(self.heap.alloc_function(function))
     }
 

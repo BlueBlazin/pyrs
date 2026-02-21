@@ -3,13 +3,13 @@ use std::ffi::c_void;
 
 use crate::runtime::{BuiltinFunction, Object, Value};
 
+use super::cpython_error_numeric_api::cpython_make_exception_instance_from_type_and_value;
 use super::{
     ACTIVE_CPYTHON_INIT_CONTEXT, InternalCallOutcome, ModuleCapiContext, PyExc_RuntimeError,
-    cpython_call_internal_in_context, cpython_keyword_args_from_dict_object,
-    cpython_positional_args_from_tuple_object, cpython_exception_class_name_from_ptr,
-    cpython_exception_ptr_for_name,
+    cpython_call_internal_in_context, cpython_exception_class_name_from_ptr,
+    cpython_exception_ptr_for_name, cpython_keyword_args_from_dict_object,
+    cpython_positional_args_from_tuple_object,
 };
-use super::cpython_error_numeric_api::cpython_make_exception_instance_from_type_and_value;
 
 pub(in crate::vm::vm_extensions) fn with_active_cpython_context_mut<R>(
     f: impl FnOnce(&mut ModuleCapiContext) -> R,
@@ -70,7 +70,8 @@ impl Drop for ActiveCpythonContextGuard {
                     };
                     let propagated_pvalue = if state.pvalue.is_null() {
                         std::ptr::null_mut()
-                    } else if let Some(value) = current.cpython_value_from_ptr_or_proxy(state.pvalue)
+                    } else if let Some(value) =
+                        current.cpython_value_from_ptr_or_proxy(state.pvalue)
                     {
                         previous.alloc_cpython_ptr_for_value(value)
                     } else if !current.owns_cpython_allocation_ptr(state.pvalue) {
@@ -185,7 +186,9 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
         // that read `tstate->current_exception` get an exception instance.
         let pvalue =
             cpython_make_exception_instance_from_type_and_value(context, ty, Some(fallback_value))
-                .unwrap_or_else(|| context.alloc_cpython_ptr_for_value(Value::Str(message.clone())));
+                .unwrap_or_else(|| {
+                    context.alloc_cpython_ptr_for_value(Value::Str(message.clone()))
+                });
         context.set_error_state(ty, pvalue, std::ptr::null_mut(), message);
     });
 }

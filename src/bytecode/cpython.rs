@@ -211,7 +211,9 @@ impl<'a> Translator<'a> {
         let total_posonly = self.code.posonlyargcount as usize;
         let total_pos = self.code.argcount as usize;
         if total_pos < total_posonly {
-            return Err(CpythonError::new("argcount is smaller than posonlyargcount"));
+            return Err(CpythonError::new(
+                "argcount is smaller than posonlyargcount",
+            ));
         }
         let total_positional = total_pos - total_posonly;
         let total_kwonly = self.code.kwonlyargcount as usize;
@@ -244,10 +246,16 @@ impl<'a> Translator<'a> {
     fn translate_instructions(&mut self) -> Result<Vec<Instruction>, CpythonError> {
         let cp_instructions = decode_instructions(&self.code.code, &self.opmap)?;
         validate_cpython_control_flow(&cp_instructions)?;
-        let trace_this_code = std::env::var_os("PYRS_TRACE_PYC_TRANSLATE")
-            .is_some_and(|_| {
+        let trace_this_code = if let Some(filter) =
+            std::env::var_os("PYRS_TRACE_PYC_TRANSLATE_FILTER")
+            && let Some(filter) = filter.to_str()
+        {
+            self.code.filename.contains(filter)
+        } else {
+            std::env::var_os("PYRS_TRACE_PYC_TRANSLATE").is_some_and(|_| {
                 self.code.filename.ends_with("/abc.py") && self.code.name == "__new__"
-            });
+            })
+        };
         let mut result = Vec::with_capacity(cp_instructions.len());
         let mut pending_kw_names: Option<u16> = None;
         let mut prev_was_return_generator = false;
@@ -1112,7 +1120,7 @@ fn translated_successors(
         Ok(stack_depth - count)
     };
 
-        let successors = match instr.opcode {
+    let successors = match instr.opcode {
         Opcode::Nop
         | Opcode::MakeCell
         | Opcode::DeleteFast

@@ -36,8 +36,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};

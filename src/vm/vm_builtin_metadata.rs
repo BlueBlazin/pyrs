@@ -2173,7 +2173,9 @@ impl Vm {
                         ));
                     };
                     match &*func_data.module.kind() {
-                        Object::Module(module_data) => module_data.globals.get("__builtins__").cloned(),
+                        Object::Module(module_data) => {
+                            module_data.globals.get("__builtins__").cloned()
+                        }
                         _ => None,
                     }
                 };
@@ -2311,15 +2313,13 @@ impl Vm {
             "__self__" => self.receiver_value(&receiver),
             "__func__" => as_value(&function_kind, &function)
                 .ok_or_else(|| RuntimeError::attribute_error("attribute access unsupported type")),
-            "__name__"
-            | "__qualname__"
-            | "__module__"
-            | "__doc__"
-            | "__annotate__"
-            | "__type_params__"
-            | "__builtins__" => {
+            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
+            | "__type_params__" | "__builtins__" => {
                 if let BoundFunctionKind::NativeMethod(kind) = &function_kind {
-                    if matches!(attr_name, "__annotate__" | "__type_params__" | "__builtins__") {
+                    if matches!(
+                        attr_name,
+                        "__annotate__" | "__type_params__" | "__builtins__"
+                    ) {
                         return Err(RuntimeError::attribute_error(format!(
                             "method has no attribute '{}'",
                             attr_name
@@ -2365,11 +2365,7 @@ impl Vm {
             method_data.function.clone()
         };
         match attr_name {
-            "__name__"
-            | "__qualname__"
-            | "__module__"
-            | "__doc__"
-            | "__annotate__"
+            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
             | "__type_params__" => {}
             _ => {
                 return Err(RuntimeError::new(format!(
@@ -5222,52 +5218,33 @@ impl Vm {
             .iter()
             .rposition(|frame| frame.is_module && frame.module.id() == module.id())
             .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index));
-        let (module_name, attr, module_getattr, globals_snapshot, module_is_package) =
-            match &*module.kind() {
-                Object::Module(module_data) => {
-                    let attr_key = Value::Str(attr_name.to_string());
-                    let getattr_key = Value::Str("__getattr__".to_string());
-                    let path_key = Value::Str("__path__".to_string());
-                    let attr = active_frame_module_dict
-                        .as_ref()
-                        .and_then(|dict| dict_get_value(dict, &attr_key))
-                        .or_else(|| module_data.globals.get(attr_name).cloned());
-                    let module_getattr = active_frame_module_dict
-                        .as_ref()
-                        .and_then(|dict| dict_get_value(dict, &getattr_key))
-                        .or_else(|| module_data.globals.get("__getattr__").cloned());
-                    let module_name = module_data.name.clone();
-                    let module_is_package = active_frame_module_dict
-                        .as_ref()
-                        .and_then(|dict| dict_get_value(dict, &path_key))
-                        .is_some()
-                        || module_data.globals.contains_key("__path__");
-                    let globals_snapshot = if let Some(dict) = &active_frame_module_dict {
-                        match &*dict.kind() {
-                            Object::Dict(entries) => entries.to_vec(),
-                            _ => Vec::new(),
-                        }
-                    } else {
-                        module_data
-                            .globals
-                            .iter()
-                            .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
-                            .collect::<Vec<_>>()
-                    };
-                    (
-                        module_name,
-                        attr,
-                        module_getattr,
-                        globals_snapshot,
-                        module_is_package,
-                    )
-                }
-                _ => {
-                    return Err(RuntimeError::attribute_error(
-                        "attribute access unsupported type",
-                    ));
-                }
-            };
+        let (module_name, attr, module_getattr, module_is_package) = match &*module.kind() {
+            Object::Module(module_data) => {
+                let attr_key = Value::Str(attr_name.to_string());
+                let getattr_key = Value::Str("__getattr__".to_string());
+                let path_key = Value::Str("__path__".to_string());
+                let attr = active_frame_module_dict
+                    .as_ref()
+                    .and_then(|dict| dict_get_value(dict, &attr_key))
+                    .or_else(|| module_data.globals.get(attr_name).cloned());
+                let module_getattr = active_frame_module_dict
+                    .as_ref()
+                    .and_then(|dict| dict_get_value(dict, &getattr_key))
+                    .or_else(|| module_data.globals.get("__getattr__").cloned());
+                let module_name = module_data.name.clone();
+                let module_is_package = active_frame_module_dict
+                    .as_ref()
+                    .and_then(|dict| dict_get_value(dict, &path_key))
+                    .is_some()
+                    || module_data.globals.contains_key("__path__");
+                (module_name, attr, module_getattr, module_is_package)
+            }
+            _ => {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            }
+        };
         if let Some(attr) = attr {
             return Ok(attr);
         }
@@ -5280,13 +5257,20 @@ impl Vm {
             ));
         }
         if module_name == "unittest" && attr_name == "IsolatedAsyncioTestCase" {
-            if let Some(test_case) = globals_snapshot
-                .iter()
-                .find_map(|(name, value)| match name {
-                    Value::Str(name) if name == "TestCase" || name == "Case" => Some(value.clone()),
+            let test_case = if let Some(dict) = &active_frame_module_dict {
+                dict_get_value(dict, &Value::Str("TestCase".to_string()))
+                    .or_else(|| dict_get_value(dict, &Value::Str("Case".to_string())))
+            } else {
+                match &*module.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("TestCase")
+                        .cloned()
+                        .or_else(|| module_data.globals.get("Case").cloned()),
                     _ => None,
-                })
-            {
+                }
+            };
+            if let Some(test_case) = test_case {
                 return Ok(test_case);
             }
             return Ok(Value::Class(
@@ -5300,7 +5284,15 @@ impl Vm {
             if let Some(dict) = active_frame_module_dict {
                 return Ok(Value::Dict(dict));
             }
-            return Ok(self.heap.alloc_dict(globals_snapshot));
+            if let Object::Module(module_data) = &*module.kind() {
+                let globals_snapshot = module_data
+                    .globals
+                    .iter()
+                    .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                    .collect::<Vec<_>>();
+                return Ok(self.heap.alloc_dict(globals_snapshot));
+            }
+            return Ok(self.heap.alloc_dict(Vec::new()));
         }
         if module_name == "__re_pattern__" {
             let kind = match attr_name {
@@ -5346,25 +5338,21 @@ impl Vm {
         if module_is_package && let Some(submodule) = self.load_submodule(module, attr_name) {
             return Ok(Value::Module(submodule));
         }
-        if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_RESOLVE").is_some()
+        if super::env_var_present_cached("PYRS_TRACE_NUMPY_DTYPE_RESOLVE")
             && module_name == "numpy.dtypes"
         {
-            let mut keys = globals_snapshot
-                .iter()
-                .filter_map(|(key, _)| match key {
-                    Value::Str(text) => Some(text.clone()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            keys.sort();
-            eprintln!(
-                "[numpy-dtypes] resolve attr={} has___getattr__={} is_package={} globals_len={} keys={:?}",
-                attr_name,
-                module_getattr.is_some(),
-                module_is_package,
-                keys.len(),
-                keys
-            );
+            if let Object::Module(module_data) = &*module.kind() {
+                let mut keys = module_data.globals.keys().cloned().collect::<Vec<_>>();
+                keys.sort();
+                eprintln!(
+                    "[numpy-dtypes] resolve attr={} has___getattr__={} is_package={} globals_len={} keys={:?}",
+                    attr_name,
+                    module_getattr.is_some(),
+                    module_is_package,
+                    keys.len(),
+                    keys
+                );
+            }
         }
         if attr_name != "__getattr__"
             && let Some(module_getattr) = module_getattr

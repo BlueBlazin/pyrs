@@ -9,8 +9,8 @@ use super::{
     CpythonTypeObject, Cwchar, ModuleCapiContext, Py_DecRef, Py_IncRef, Py_XDecRef,
     PyBytes_AsString, PyErr_BadArgument, PyErr_BadInternalCall, PyErr_Clear, PyErr_NoMemory,
     PyErr_Occurred, PyExc_IndexError, PyExc_RuntimeError, PyExc_SystemError, PyExc_TypeError,
-    PyExc_UnicodeEncodeError, PyExc_ValueError, PyMem_Malloc, PyOS_FSPath,
-    c_name_to_string, cpython_call_internal_in_context, cpython_call_method_for_capi,
+    PyExc_UnicodeEncodeError, PyExc_ValueError, PyMem_Malloc, PyOS_FSPath, c_name_to_string,
+    cpython_call_internal_in_context, cpython_call_method_for_capi,
     cpython_codec_error_name_optional, cpython_codec_module_in_context,
     cpython_codec_name_or_default, cpython_getattr_in_context, cpython_lookup_interned_unicode_ptr,
     cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_register_interned_unicode,
@@ -679,9 +679,7 @@ pub unsafe extern "C" fn PyUnicode_Format(format: *mut c_void, arg: *mut c_void)
                     // SAFETY: VM pointer is valid for active C-API context lifetime.
                     unsafe { (&mut *context.vm).value_type_name_for_error(&other) }
                 };
-                context.set_error(format!(
-                    "PyUnicode_Format expected str format, got {got}"
-                ));
+                context.set_error(format!("PyUnicode_Format expected str format, got {got}"));
                 return std::ptr::null_mut();
             }
             None => {
@@ -722,9 +720,7 @@ pub unsafe extern "C" fn PyUnicode_Format(format: *mut c_void, arg: *mut c_void)
                     // SAFETY: VM pointer is valid for active C-API context lifetime.
                     unsafe { (&mut *context.vm).value_type_name_for_error(&other) }
                 };
-                context.set_error(format!(
-                    "PyUnicode_Format expected str result, got {got}"
-                ));
+                context.set_error(format!("PyUnicode_Format expected str result, got {got}"));
                 std::ptr::null_mut()
             }
         }
