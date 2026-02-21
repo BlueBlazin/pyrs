@@ -109,6 +109,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - remaining follow-up:
     - re-close `default_rng()` construction and then resume generator method long-tail.
 - NumPy import perf + pyc checkpoint (2026-02-21, latest round):
+  - import default now matches CPython policy for source+bytecode modules:
+    - prefer validated source-bound `.pyc` by default;
+    - can be overridden via `PYRS_IMPORT_PREFER_PYC=0`.
   - fixed CPython bytecode translation parity bug for `StoreFastStoreFast` operand order (`src/vm/vm_execution.rs`), restoring pyc-path correctness on affected modules.
   - pyc import resolution now supports cache-only `__pycache__/...cpython-314.pyc` module/package imports without source files (`src/vm/vm_bootstrap_import.rs`), with passing regressions:
     - `imports_module_from_cached_pyc_without_source_file`
