@@ -129,15 +129,23 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - pyc compatibility closure (latest):
     - marshal loader now accepts `TYPE_ELLIPSIS ('.')`, `TYPE_STOPITER ('S')`, and arbitrary-size `TYPE_LONG ('l')` constants (decoded to `BigInt` when needed).
     - pyc constant translation now supports bytes constants.
-    - translation now maps `DELETE_ATTR`, `LOAD_FROM_DICT_OR_DEREF`, and `CALL_INTRINSIC_2`.
-    - runtime now handles `CALL_INTRINSIC_2` `arg=4` (`INTRINSIC_SET_FUNCTION_TYPE_PARAMS`).
+    - translation now maps `DELETE_ATTR`, `LOAD_FROM_DICT_OR_DEREF`, `CALL_INTRINSIC_2`, `MATCH_CLASS`, `MATCH_KEYS`, `MATCH_MAPPING`, `MATCH_SEQUENCE`, `GET_LEN`, `BUILD_TEMPLATE`, and `BUILD_INTERPOLATION`.
+    - runtime now handles:
+      - `CALL_INTRINSIC_1`: `3/7/8/9/10/11` (in addition to existing `2/5/6`)
+      - `CALL_INTRINSIC_2`: `1/2/3/5` (in addition to existing `4`)
     - new regression: `tests/pyc_exec.rs::executes_cpython_pyc_with_bytes_bigint_ellipsis_and_delete_attr`.
     - new regression: `tests/pyc_translate.rs::translates_call_intrinsic_2`.
+    - new regression: `tests/pyc_exec.rs::executes_cpython_pyc_with_match_class_mapping_and_sequence`.
+    - new regression: `tests/pyc_translate.rs::translates_get_len_and_build_template`.
+    - pyc-only import check for `typing` + `annotationlib` now succeeds (manual direct run from cache-only path).
     - NumPy import graph counters improved to:
-      - `source_compiles=12`, `pyc_attempts=111`, `pyc_fallbacks=11` (was `30/111/29`).
-    - remaining translation blockers on the import path are now narrowed to:
-      - `MATCH_CLASS`,
-      - plus runtime pyc fallback for `_collections_abc`, `re.*`, `textwrap`, `numpy._core._add_newdocs`.
+      - `source_compiles=9`, `pyc_attempts=111`, `pyc_fallbacks=8` (was `30/111/29`).
+    - remaining runtime pyc fallback on the import path is currently:
+      - `_collections_abc`,
+      - `re.*`,
+      - `textwrap`,
+      - `collections.abc`,
+      - `numpy._core._add_newdocs`.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,
@@ -607,7 +615,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - dispatch/cache checkpoint: `CALL_FUNCTION` site quickening metadata now includes zero-arg and two-arg direct function lanes; `LOAD_ATTR` instance cache now covers plain value attributes in addition to function/descriptor forms.
   - perf checkpoint: terminal arithmetic return fusion is active for `BinaryAdd` / `BinarySub` / `BinaryMul` / `BinaryDiv` / `BinaryFloorDiv` / `BinaryMod` on simple no-cells frames, and release builds use `lto = "fat"`; local gate currently measures `fib(29)` at ~`0.13s` user (`scripts/bench_fib_gate.sh`).
   - startup/import checkpoint: import resolver state now tracks `sys.path`/`meta_path`/`path_hooks` signatures to avoid repeated default-finder scans, default CPython stdlib auto-detection now selects a single canonical fallback root (instead of loading every discovered system path), sourceless `__pycache__/*.cpython-314.pyc` module/package imports are accepted when source files are absent, and pyc fallback diagnostics report exact translate/load failure reasons when `PYRS_IMPORT_PERF_VERBOSE=1`.
-  - pyc translator checkpoint: marshal reader/writer now supports set/frozenset constants (`<`/`>`); `BINARY_OP` mapping covers the full CPython 3.14 arg table (including bitwise/shift/matmul and inplace variants); f-string translation paths handle `CONVERT_VALUE`/`FORMAT_SIMPLE`/`FORMAT_WITH_SPEC` plus `BUILD_STRING`; and CPython opcode coverage now includes `DICT_MERGE`, `COPY`, `SWAP`, masked `COMPARE_OP` decoding, `CALL_INTRINSIC_1` (current runtime support: args `2/5/6`), and `LOAD_SPECIAL`.
+  - pyc translator checkpoint: marshal reader/writer now supports set/frozenset constants (`<`/`>`); `BINARY_OP` mapping covers the full CPython 3.14 arg table (including bitwise/shift/matmul and inplace variants); f-string translation paths handle `CONVERT_VALUE`/`FORMAT_SIMPLE`/`FORMAT_WITH_SPEC` plus `BUILD_STRING`; and CPython opcode coverage now includes `DICT_MERGE`, `COPY`, `SWAP`, masked `COMPARE_OP` decoding, `LOAD_SPECIAL`, `MATCH_CLASS`/`MATCH_KEYS`/`MATCH_MAPPING`/`MATCH_SEQUENCE`, `GET_LEN`, `BUILD_TEMPLATE`/`BUILD_INTERPOLATION`, and expanded intrinsic runtime support (`CALL_INTRINSIC_1`: `2/3/5/6/7/8/9/10/11`, `CALL_INTRINSIC_2`: `1/2/3/4/5`).
   - translated-`.pyc` exception-table runtime checkpoint: VM now executes CPython 3.14 exception-table handlers (`PUSH_EXC_INFO`/`POP_EXCEPT`/`WITH_EXCEPT_START`/`RERAISE`/`CHECK_EXC_MATCH`) with table-driven unwind dispatch and `RERAISE` lasti handling; translator jump-target math is corrected for 3.14 control-flow forms (`POP_JUMP_IF_*`, `SEND`, backward jumps), and CPython `CALL` stack layout (`callable`, `self_or_null`) is aligned for translated opcode paths.
   - opcode stack-layout checkpoint: `DICT_UPDATE`/`DICT_MERGE` and list stack-target lookup now follow CPython operand layout (`dict/list, unused[oparg-1], update -- ...`) after operand pop, removing false `stack underflow` errors on stdlib import paths (including `xml.etree.ElementTree`).
   - startup pyc-preference note: exception-table execution baseline is now active for translated `.pyc`; with `PYRS_IMPORT_PREFER_PYC=1`, `import site` no longer depends on source fallback for this gap. Remaining `.pyc` work is long-tail opcode/state parity closure.

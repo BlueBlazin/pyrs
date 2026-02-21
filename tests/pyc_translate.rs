@@ -194,6 +194,42 @@ fn translates_call_intrinsic_2() {
 }
 
 #[test]
+fn translates_get_len_and_build_template() {
+    let code = test_code(vec![
+        op("LOAD_CONST"),
+        0,
+        op("GET_LEN"),
+        0,
+        op("LOAD_CONST"),
+        0,
+        op("LOAD_CONST"),
+        0,
+        op("BUILD_TEMPLATE"),
+        0,
+        op("RETURN_VALUE"),
+        0,
+    ]);
+    let mut heap = Heap::new();
+    let translated = translate_code(&code, &mut heap).expect("translation should succeed");
+    let opcodes: Vec<Opcode> = translated
+        .instructions
+        .iter()
+        .map(|instr| instr.opcode)
+        .collect();
+    assert_eq!(
+        opcodes,
+        vec![
+            Opcode::LoadConst,
+            Opcode::GetLen,
+            Opcode::LoadConst,
+            Opcode::LoadConst,
+            Opcode::BuildTemplate,
+            Opcode::ReturnValue,
+        ]
+    );
+}
+
+#[test]
 fn translates_exception_table_and_with_except_opcodes() {
     let mut code = test_code(vec![
         op("LOAD_CONST"),

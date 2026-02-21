@@ -277,3 +277,49 @@ ok = (
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn executes_cpython_pyc_with_match_class_mapping_and_sequence() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+class P:
+    __match_args__ = ("x", "y")
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+subject_map = {"a": 1, "b": 2}
+subject_seq = [1, 2, 3]
+subject_cls = P(4, 5)
+
+match subject_map:
+    case {"a": a, "b": b}:
+        map_ok = (a, b) == (1, 2)
+    case _:
+        map_ok = False
+
+match subject_seq:
+    case [1, 2, *rest]:
+        seq_ok = rest == [3]
+    case _:
+        seq_ok = False
+
+match subject_cls:
+    case P(4, y=5):
+        cls_ok = True
+    case _:
+        cls_ok = False
+
+ok = map_ok and seq_ok and cls_ok
+"#;
+
+    let pyc_path = compile_pyc(source, "match_feature_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

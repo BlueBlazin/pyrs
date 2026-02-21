@@ -7,7 +7,7 @@ Primary user-facing gate:
 - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
 
 ## Current Baseline (2026-02-21, latest local)
-- `pyrs` (default pyc policy): ~`0.79s` user
+- `pyrs` (default pyc policy): ~`0.77-0.79s` user
 - `pyrs` with `PYRS_IMPORT_PREFER_PYC=0`: ~`0.64s` user
 - CPython 3.14: ~`0.05s` user
 
@@ -70,6 +70,20 @@ For each optimization slice:
   - bytes constants now translate directly from pyc constants.
   - opcode mapping support for `DELETE_ATTR` and `LOAD_FROM_DICT_OR_DEREF`.
   - opcode mapping/runtime support for `CALL_INTRINSIC_2` (`arg=4` function type-params intrinsic).
+  - opcode mapping/runtime support for:
+    - `MATCH_CLASS`, `MATCH_KEYS`, `MATCH_MAPPING`, `MATCH_SEQUENCE`
+    - `GET_LEN`
+    - `BUILD_TEMPLATE` + `BUILD_INTERPOLATION`
+  - intrinsic runtime support expanded:
+    - `CALL_INTRINSIC_1`: `3/7/8/9/10/11`
+    - `CALL_INTRINSIC_2`: `1/2/3/5`
+  - pyc-only import closure for `typing` + `annotationlib` path (direct execution now succeeds without source fallback when pyc is present).
 - NumPy import graph pyc fallback counters improved from:
   - `source_compiles=30`, `pyc_fallbacks=29`
-  - to `source_compiles=12`, `pyc_fallbacks=11`.
+  - to `source_compiles=9`, `pyc_fallbacks=8`.
+  - remaining pyc runtime-fallback modules in the NumPy import path:
+    - `_collections_abc`
+    - `re._constants`, `re._parser`, `re._compiler`, `re`
+    - `textwrap`
+    - `collections.abc`
+    - `numpy._core._add_newdocs`

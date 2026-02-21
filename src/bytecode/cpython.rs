@@ -484,6 +484,7 @@ impl<'a> Translator<'a> {
                 }
                 "GET_ITER" => Instruction::new(Opcode::GetIter, None),
                 "GET_YIELD_FROM_ITER" => Instruction::new(Opcode::GetIter, None),
+                "GET_LEN" => Instruction::new(Opcode::GetLen, None),
                 "FOR_ITER" => Instruction::new(Opcode::ForIter, Some(for_iter_target(idx, arg)?)),
                 "INSTRUMENTED_FOR_ITER"
                 | "FOR_ITER_GEN"
@@ -504,6 +505,8 @@ impl<'a> Translator<'a> {
                 "BUILD_SET" => Instruction::new(Opcode::BuildSet, Some(arg)),
                 "BUILD_TUPLE" => Instruction::new(Opcode::BuildTuple, Some(arg)),
                 "BUILD_STRING" => Instruction::new(Opcode::BuildString, Some(arg)),
+                "BUILD_INTERPOLATION" => Instruction::new(Opcode::BuildInterpolation, Some(arg)),
+                "BUILD_TEMPLATE" => Instruction::new(Opcode::BuildTemplate, None),
                 "LIST_APPEND" => Instruction::new(Opcode::ListAppend, Some(arg)),
                 "SET_ADD" => Instruction::new(Opcode::SetAdd, Some(arg)),
                 "LIST_EXTEND" => Instruction::new(Opcode::ListExtend, Some(arg)),
@@ -609,6 +612,16 @@ impl<'a> Translator<'a> {
                 "RERAISE" => Instruction::new(Opcode::Reraise, Some(arg)),
                 "RAISE_VARARGS" => Instruction::new(Opcode::Raise, Some(arg)),
                 "CHECK_EXC_MATCH" => Instruction::new(Opcode::CheckExcMatch, None),
+                name if name.starts_with("MATCH_CLASS") => {
+                    Instruction::new(Opcode::MatchClass, Some(arg))
+                }
+                name if name.starts_with("MATCH_KEYS") => Instruction::new(Opcode::MatchKeys, None),
+                name if name.starts_with("MATCH_MAPPING") => {
+                    Instruction::new(Opcode::MatchMapping, None)
+                }
+                name if name.starts_with("MATCH_SEQUENCE") => {
+                    Instruction::new(Opcode::MatchSequence, None)
+                }
                 // In CPython 3.14 this is a pseudo-op lowered to NOP.
                 "POP_BLOCK" => Instruction::new(Opcode::Nop, None),
                 _ => {
@@ -1238,12 +1251,23 @@ fn translated_successors(
         | Opcode::CompareIsNot
         | Opcode::Subscript
         | Opcode::MatchException => vec![(next_ip, pop(2)? + 1)],
+        Opcode::MatchClass => vec![(next_ip, pop(3)? + 1)],
+        Opcode::MatchKeys | Opcode::MatchMapping | Opcode::MatchSequence => {
+            vec![(next_ip, stack_depth + 1)]
+        }
+        Opcode::GetLen => vec![(next_ip, stack_depth + 1)],
         Opcode::CheckExcMatch => vec![(next_ip, pop(2)? + 2)],
         Opcode::MatchExceptionStar => vec![(next_ip, pop(2)? + 2)],
         Opcode::BuildList | Opcode::BuildSet | Opcode::BuildTuple | Opcode::BuildString => {
             let count = arg.ok_or_else(|| CpythonError::new("missing build count"))? as i32;
             vec![(next_ip, pop(count)? + 1)]
         }
+        Opcode::BuildInterpolation => {
+            let raw = arg.ok_or_else(|| CpythonError::new("missing BUILD_INTERPOLATION arg"))?;
+            let pop_count = if (raw & 1) != 0 { 3 } else { 2 };
+            vec![(next_ip, pop(pop_count)? + 1)]
+        }
+        Opcode::BuildTemplate => vec![(next_ip, pop(2)? + 1)],
         Opcode::FormatWithSpec => vec![(next_ip, pop(2)? + 1)],
         Opcode::BuildDict => {
             let count = arg.ok_or_else(|| CpythonError::new("missing dict count"))? as i32;

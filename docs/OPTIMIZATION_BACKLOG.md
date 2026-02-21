@@ -109,7 +109,7 @@ Do not rely on stale point-in-time numbers in this document.
   - release profile now uses `lto = "fat"` (from thin) to improve cross-function optimization in hot VM call/dispatch paths.
   - dispatch hotpath benchmark remains non-regressing after terminal-op fusion extension (`scripts/bench_dispatch_hotpath.sh`: `0.8493s` at `bfeba79` vs `0.8470s` current in local runs; lower is better).
   - startup/import optimization wave: positive module-source lookup cache (`(root, module_name)`), `sys.path` sync short-circuit, and resolver-state signatures for `meta_path`/`path_hooks` are landed; default CPython stdlib auto-detection now selects one canonical fallback root to cut startup/import search churn.
-  - pyc translation closure wave (startup-focused): marshal set/frozenset support (`<`/`>`), full CPython 3.14 `BINARY_OP` arg mapping, f-string opcode translation (`CONVERT_VALUE`/`FORMAT_SIMPLE`/`FORMAT_WITH_SPEC` + `BUILD_STRING`), `DICT_MERGE`, `COPY`, `SWAP`, masked `COMPARE_OP` decoding, `CALL_INTRINSIC_1` baseline (`2/5/6`), and `LOAD_SPECIAL` mapping/runtime are landed with regression coverage in `tests/pyc_translate.rs` and `tests/pyc_exec.rs`.
+  - pyc translation closure wave (startup-focused): marshal set/frozenset support (`<`/`>`), full CPython 3.14 `BINARY_OP` arg mapping, f-string opcode translation (`CONVERT_VALUE`/`FORMAT_SIMPLE`/`FORMAT_WITH_SPEC` + `BUILD_STRING`), `DICT_MERGE`, `COPY`, `SWAP`, masked `COMPARE_OP` decoding, `LOAD_SPECIAL`, `MATCH_CLASS`/`MATCH_KEYS`/`MATCH_MAPPING`/`MATCH_SEQUENCE`, `GET_LEN`, `BUILD_TEMPLATE`/`BUILD_INTERPOLATION`, and expanded intrinsic runtime support (`CALL_INTRINSIC_1`: `2/3/5/6/7/8/9/10/11`; `CALL_INTRINSIC_2`: `1/2/3/4/5`) are landed with regression coverage in `tests/pyc_translate.rs` and `tests/pyc_exec.rs`.
   - pyc-preference startup checkpoint: exception-table execution baseline is landed for translated `.pyc`, and `PYRS_IMPORT_PREFER_PYC=1` `import site` now stays on `.pyc` for the covered path; remaining `.pyc` work is long-tail opcode/state parity.
   - startup benchmark methodology now uses wall-clock `perf_counter` in `scripts/bench_startup_gate.sh` (replacing coarse `/usr/bin/time -p` user-time sampling).
   - latest local startup gate (`scripts/bench_startup_gate.sh 20`, warmup `1`):
@@ -139,8 +139,10 @@ Do not rely on stale point-in-time numbers in this document.
   - CPython opcode mapping closure landed for `DELETE_ATTR` and `LOAD_FROM_DICT_OR_DEREF`.
   - `_collections_abc`/`re`/NumPy import path pyc fallback counters improved from:
     - `source_compiles=30`, `pyc_fallbacks=29`
-    - to `source_compiles=12`, `pyc_fallbacks=11`.
-  - remaining pyc translation blockers in the NumPy import graph are now concentrated in:
-    - `MATCH_CLASS`
-    - plus runtime pyc fallback exceptions in a smaller stdlib subset (`_collections_abc`, `re.*`, `textwrap`, `numpy._core._add_newdocs`).
-  - `CALL_INTRINSIC_2` translation now maps to `Opcode::CallIntrinsic2` with runtime support for `INTRINSIC_SET_FUNCTION_TYPE_PARAMS` (`arg=4`).
+    - to `source_compiles=9`, `pyc_fallbacks=8`.
+  - remaining pyc runtime fallback exceptions in the NumPy import graph are now concentrated in:
+    - `_collections_abc`
+    - `re.*`
+    - `textwrap`
+    - `collections.abc`
+    - `numpy._core._add_newdocs`.

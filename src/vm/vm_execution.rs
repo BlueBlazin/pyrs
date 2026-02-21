@@ -2818,6 +2818,15 @@ impl Vm {
                             return Err(RuntimeError::new("INTRINSIC_LIST_TO_TUPLE expects list"));
                         }
                     },
+                    3 => self.intrinsic_stopiteration_error(value)?,
+                    7 => self.intrinsic_make_typing_param(BuiltinFunction::TypingTypeVar, value)?,
+                    8 => {
+                        self.intrinsic_make_typing_param(BuiltinFunction::TypingParamSpec, value)?
+                    }
+                    9 => self
+                        .intrinsic_make_typing_param(BuiltinFunction::TypingTypeVarTuple, value)?,
+                    10 => self.intrinsic_subscript_generic(value)?,
+                    11 => self.intrinsic_make_type_alias(value)?,
                     other => {
                         return Err(RuntimeError::new(format!(
                             "unsupported CALL_INTRINSIC_1 arg {other}"
@@ -2833,6 +2842,9 @@ impl Vm {
                 let value1 = self.pop_value()?;
                 let value2 = self.pop_value()?;
                 let result = match intrinsic {
+                    1 => value2,
+                    2 => self.intrinsic_make_typevar_with_bound(value2, value1)?,
+                    3 => self.intrinsic_make_typevar_with_constraints(value2, value1)?,
                     4 => match value2 {
                         Value::Function(function) => {
                             self.store_attr_function(
@@ -2848,6 +2860,7 @@ impl Vm {
                             ));
                         }
                     },
+                    5 => self.intrinsic_set_typeparam_default(value2, value1)?,
                     other => {
                         return Err(RuntimeError::new(format!(
                             "unsupported CALL_INTRINSIC_2 arg {other}"
@@ -2887,6 +2900,18 @@ impl Vm {
                 let value = self.pop_value()?;
                 let truthy = self.truthy_from_value(&value)?;
                 self.push_value(Value::Bool(truthy));
+            }
+            Opcode::GetLen => {
+                let value = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("GET_LEN stack underflow"))?
+                };
+                let len = self.builtin_len(vec![value], HashMap::new())?;
+                self.push_value(len);
             }
             Opcode::BuildList => {
                 let count = instr
@@ -2947,6 +2972,33 @@ impl Vm {
                     }
                 }
                 self.push_value(Value::Str(out));
+            }
+            Opcode::BuildInterpolation => {
+                let raw = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing BUILD_INTERPOLATION argument"))?;
+                let has_format = (raw & 1) != 0;
+                let conversion = raw >> 2;
+                let format_spec = if has_format {
+                    self.pop_value()?
+                } else {
+                    Value::Str(String::new())
+                };
+                let expression = self.pop_value()?;
+                let value = self.pop_value()?;
+                let interpolation = self.build_template_interpolation_value(
+                    value,
+                    expression,
+                    conversion,
+                    format_spec,
+                )?;
+                self.push_value(interpolation);
+            }
+            Opcode::BuildTemplate => {
+                let interpolations = self.pop_value()?;
+                let strings = self.pop_value()?;
+                let template = self.build_template_value(strings, interpolations)?;
+                self.push_value(template);
             }
             Opcode::BuildDict => {
                 let count = instr
@@ -6215,6 +6267,174 @@ impl Vm {
                 }
                 let matches = self.exception_matches(&exception, &handler_type)?;
                 self.push_value(Value::Bool(matches));
+            }
+            Opcode::MatchClass => {
+                let positional_count = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing MATCH_CLASS argument"))?
+                    as usize;
+                let names_value = self.pop_value()?;
+                let class_value = self.pop_value()?;
+                let subject = self.pop_value()?;
+
+                let keyword_names =
+                    self.match_class_attr_names_from_tuple(&names_value, "MATCH_CLASS names")?;
+                let isinstance_value = self.builtin_isinstance(
+                    vec![subject.clone(), class_value.clone()],
+                    HashMap::new(),
+                )?;
+                if !is_truthy(&isinstance_value) {
+                    self.push_value(Value::None);
+                } else {
+                    let mut positional_attr_names = Vec::new();
+                    let mut use_match_self = false;
+                    if positional_count > 0 {
+                        if let Some(match_args_value) =
+                            self.optional_getattr_value(class_value.clone(), "__match_args__")?
+                        {
+                            let match_args = self.match_class_attr_names_from_tuple(
+                                &match_args_value,
+                                "__match_args__",
+                            )?;
+                            if positional_count > match_args.len() {
+                                return Err(RuntimeError::type_error(
+                                    "too many positional sub-patterns for class pattern",
+                                ));
+                            }
+                            positional_attr_names
+                                .extend(match_args.into_iter().take(positional_count));
+                        } else if positional_count == 1
+                            && Self::class_pattern_supports_match_self(&class_value)
+                        {
+                            use_match_self = true;
+                        } else {
+                            return Err(RuntimeError::type_error(
+                                "positional sub-patterns are not supported for this class pattern",
+                            ));
+                        }
+                    }
+
+                    let mut seen_attrs = HashSet::new();
+                    let mut matched_attrs =
+                        Vec::with_capacity(positional_count + keyword_names.len());
+                    let mut missing_attribute = false;
+
+                    if use_match_self {
+                        matched_attrs.push(subject.clone());
+                    } else {
+                        for attr_name in positional_attr_names {
+                            if !seen_attrs.insert(attr_name.clone()) {
+                                return Err(RuntimeError::type_error(
+                                    "class pattern has duplicate attribute name",
+                                ));
+                            }
+                            match self.optional_getattr_value(subject.clone(), &attr_name)? {
+                                Some(value) => matched_attrs.push(value),
+                                None => {
+                                    missing_attribute = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if !missing_attribute {
+                        for attr_name in keyword_names {
+                            if !seen_attrs.insert(attr_name.clone()) {
+                                return Err(RuntimeError::type_error(
+                                    "class pattern has duplicate attribute name",
+                                ));
+                            }
+                            match self.optional_getattr_value(subject.clone(), &attr_name)? {
+                                Some(value) => matched_attrs.push(value),
+                                None => {
+                                    missing_attribute = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if missing_attribute {
+                        self.push_value(Value::None);
+                    } else {
+                        self.push_value(self.heap.alloc_tuple(matched_attrs));
+                    }
+                }
+            }
+            Opcode::MatchKeys => {
+                let keys = {
+                    let frame = self.frames.last().expect("frame exists");
+                    if frame.stack.len() < 2 {
+                        return Err(RuntimeError::new("MATCH_KEYS stack underflow"));
+                    }
+                    frame.stack[frame.stack.len() - 1].clone()
+                };
+                let subject = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame.stack[frame.stack.len() - 2].clone()
+                };
+                let key_values = match keys {
+                    Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                        Object::Tuple(values) => values.clone(),
+                        _ => {
+                            return Err(RuntimeError::type_error(
+                                "MATCH_KEYS expects tuple[str] keys",
+                            ));
+                        }
+                    },
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "MATCH_KEYS expects tuple[str] keys",
+                        ));
+                    }
+                };
+                let mut values = Vec::with_capacity(key_values.len());
+                let mut missing_key = false;
+                for key in key_values {
+                    let value = match &subject {
+                        Value::Dict(dict_obj) => dict_get_value(dict_obj, &key),
+                        _ => match self.getitem_value(subject.clone(), key.clone()) {
+                            Ok(value) => Some(value),
+                            Err(err) if runtime_error_matches_exception(&err, "KeyError") => None,
+                            Err(err) => return Err(err),
+                        },
+                    };
+                    match value {
+                        Some(value) => values.push(value),
+                        None => {
+                            missing_key = true;
+                            break;
+                        }
+                    }
+                }
+                if missing_key {
+                    self.push_value(Value::None);
+                } else {
+                    self.push_value(self.heap.alloc_tuple(values));
+                }
+            }
+            Opcode::MatchMapping => {
+                let subject = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("MATCH_MAPPING stack underflow"))?
+                };
+                self.push_value(Value::Bool(Self::value_supports_mapping_pattern(&subject)));
+            }
+            Opcode::MatchSequence => {
+                let subject = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .stack
+                        .last()
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("MATCH_SEQUENCE stack underflow"))?
+                };
+                self.push_value(Value::Bool(Self::value_supports_sequence_pattern(&subject)));
             }
             Opcode::CheckExcMatch => {
                 let handler_type = self.pop_value()?;
@@ -10971,6 +11191,458 @@ impl Vm {
                 }
             }
         }
+    }
+
+    fn match_class_attr_names_from_tuple(
+        &self,
+        value: &Value,
+        context: &str,
+    ) -> Result<Vec<String>, RuntimeError> {
+        let values = match value {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(values) => values.clone(),
+                _ => {
+                    return Err(RuntimeError::type_error(format!(
+                        "{context} must be a tuple of strings",
+                    )));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(format!(
+                    "{context} must be a tuple of strings",
+                )));
+            }
+        };
+        let mut names = Vec::with_capacity(values.len());
+        for entry in values {
+            match entry {
+                Value::Str(name) => names.push(name),
+                _ => {
+                    return Err(RuntimeError::type_error(format!(
+                        "{context} entries must be strings",
+                    )));
+                }
+            }
+        }
+        Ok(names)
+    }
+
+    fn class_pattern_supports_match_self(class_value: &Value) -> bool {
+        match class_value {
+            Value::Builtin(builtin) => matches!(
+                builtin,
+                BuiltinFunction::Bool
+                    | BuiltinFunction::Int
+                    | BuiltinFunction::Float
+                    | BuiltinFunction::Complex
+                    | BuiltinFunction::Str
+                    | BuiltinFunction::Bytes
+                    | BuiltinFunction::ByteArray
+                    | BuiltinFunction::List
+                    | BuiltinFunction::Tuple
+                    | BuiltinFunction::Dict
+                    | BuiltinFunction::Set
+                    | BuiltinFunction::FrozenSet
+            ),
+            _ => false,
+        }
+    }
+
+    fn value_supports_mapping_pattern(value: &Value) -> bool {
+        matches!(value, Value::Dict(_))
+    }
+
+    fn value_supports_sequence_pattern(value: &Value) -> bool {
+        matches!(value, Value::List(_) | Value::Tuple(_))
+    }
+
+    fn intrinsic_make_typing_param(
+        &mut self,
+        builtin: BuiltinFunction,
+        name: Value,
+    ) -> Result<Value, RuntimeError> {
+        self.call_builtin(builtin, vec![name], HashMap::new())
+    }
+
+    fn intrinsic_set_attr_for_value(
+        &mut self,
+        target: &Value,
+        attr_name: &str,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        match target {
+            Value::Instance(instance) => {
+                if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                    instance_data.attrs.insert(attr_name.to_string(), value);
+                }
+                Ok(())
+            }
+            Value::Function(function) => {
+                self.store_attr_function(function, attr_name.to_string(), value)
+            }
+            Value::Class(class) => {
+                if let Object::Class(class_data) = &mut *class.kind_mut() {
+                    class_data.attrs.insert(attr_name.to_string(), value);
+                }
+                self.touch_class_attr_version(class);
+                Ok(())
+            }
+            _ => Err(RuntimeError::type_error(format!(
+                "cannot set intrinsic attribute '{}' on {}",
+                attr_name,
+                self.value_type_name_for_error(target),
+            ))),
+        }
+    }
+
+    fn intrinsic_stopiteration_error(&mut self, exc: Value) -> Result<Value, RuntimeError> {
+        let Value::Instance(instance) = &exc else {
+            return Ok(exc);
+        };
+        let Some(exception_name) = self.exception_class_name_for_instance(instance) else {
+            return Ok(exc);
+        };
+
+        let frame_flags = self.frames.last().map(|frame| {
+            (
+                frame.code.is_generator,
+                frame.code.is_coroutine,
+                frame.code.is_async_generator,
+            )
+        });
+        let (is_generator, is_coroutine, is_async_generator) =
+            frame_flags.unwrap_or((false, false, false));
+
+        let message = match exception_name.as_str() {
+            "StopIteration" => {
+                if is_async_generator {
+                    Some("async generator raised StopIteration")
+                } else if is_coroutine {
+                    Some("coroutine raised StopIteration")
+                } else if is_generator {
+                    Some("generator raised StopIteration")
+                } else {
+                    None
+                }
+            }
+            "StopAsyncIteration" if is_async_generator => {
+                Some("async generator raised StopAsyncIteration")
+            }
+            _ => None,
+        };
+
+        let Some(message) = message else {
+            return Ok(exc);
+        };
+
+        let wrapped = self.instantiate_exception_type(
+            "RuntimeError",
+            &[Value::Str(message.to_string())],
+            &HashMap::new(),
+        )?;
+        self.intrinsic_set_attr_for_value(&wrapped, "__cause__", exc.clone())?;
+        self.intrinsic_set_attr_for_value(&wrapped, "__context__", exc)?;
+        self.intrinsic_set_attr_for_value(&wrapped, "__suppress_context__", Value::Bool(true))?;
+        Ok(wrapped)
+    }
+
+    fn intrinsic_make_typevar_with_bound(
+        &mut self,
+        name: Value,
+        evaluate_bound: Value,
+    ) -> Result<Value, RuntimeError> {
+        let marker = self.intrinsic_make_typing_param(BuiltinFunction::TypingTypeVar, name)?;
+        self.intrinsic_set_attr_for_value(&marker, "__bound__", evaluate_bound)?;
+        Ok(marker)
+    }
+
+    fn intrinsic_make_typevar_with_constraints(
+        &mut self,
+        name: Value,
+        evaluate_constraints: Value,
+    ) -> Result<Value, RuntimeError> {
+        let marker = self.intrinsic_make_typing_param(BuiltinFunction::TypingTypeVar, name)?;
+        self.intrinsic_set_attr_for_value(&marker, "__constraints__", evaluate_constraints)?;
+        Ok(marker)
+    }
+
+    fn intrinsic_set_typeparam_default(
+        &mut self,
+        type_param: Value,
+        default: Value,
+    ) -> Result<Value, RuntimeError> {
+        self.intrinsic_set_attr_for_value(&type_param, "__default__", default)?;
+        Ok(type_param)
+    }
+
+    fn intrinsic_subscript_generic(&mut self, params: Value) -> Result<Value, RuntimeError> {
+        let generic = self
+            .modules
+            .get("typing")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("Generic").cloned(),
+                _ => None,
+            })
+            .or_else(|| {
+                self.modules
+                    .get("_typing")
+                    .and_then(|module| match &*module.kind() {
+                        Object::Module(module_data) => module_data.globals.get("Generic").cloned(),
+                        _ => None,
+                    })
+            })
+            .ok_or_else(|| RuntimeError::new("Cannot find Generic type"))?;
+        Ok(self.alloc_generic_alias_instance(generic, params))
+    }
+
+    fn intrinsic_make_type_alias(&mut self, value: Value) -> Result<Value, RuntimeError> {
+        let entries = match value {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(entries) => entries.clone(),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "INTRINSIC_TYPEALIAS expects a tuple",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "INTRINSIC_TYPEALIAS expects a tuple",
+                ));
+            }
+        };
+        if entries.len() != 3 {
+            return Err(RuntimeError::type_error(
+                "INTRINSIC_TYPEALIAS expects (name, type_params, value)",
+            ));
+        }
+
+        let name = match &entries[0] {
+            Value::Str(name) => name.clone(),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "INTRINSIC_TYPEALIAS name must be str",
+                ));
+            }
+        };
+        let type_params = entries[1].clone();
+        let alias_value = entries[2].clone();
+        let alias = self.intrinsic_make_typing_param(
+            BuiltinFunction::TypingTypeAliasType,
+            Value::Str(name.clone()),
+        )?;
+        self.intrinsic_set_attr_for_value(&alias, "__name__", Value::Str(name.clone()))?;
+        self.intrinsic_set_attr_for_value(&alias, "__qualname__", Value::Str(name))?;
+        self.intrinsic_set_attr_for_value(&alias, "__type_params__", type_params)?;
+        self.intrinsic_set_attr_for_value(&alias, "__value__", alias_value)?;
+        Ok(alias)
+    }
+
+    fn template_literal_class(&mut self, cache_key: &str, class_name: &str) -> ObjRef {
+        if let Some(existing) = self.synthetic_builtin_classes.get(cache_key).cloned() {
+            return existing;
+        }
+
+        let object_base = self.builtins.get("object").and_then(|value| match value {
+            Value::Class(class) => Some(class.clone()),
+            _ => None,
+        });
+        let mut bases = Vec::new();
+        if let Some(base) = object_base {
+            bases.push(base);
+        }
+        let class = match self
+            .heap
+            .alloc_class(ClassObject::new(class_name.to_string(), bases.clone()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        let mro = if bases.is_empty() {
+            vec![class.clone()]
+        } else {
+            self.build_class_mro(&class, &bases).unwrap_or_else(|_| {
+                let mut fallback = vec![class.clone()];
+                fallback.extend(bases.iter().cloned());
+                fallback
+            })
+        };
+        let default_meta = self.default_type_metaclass();
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.bases = bases.clone();
+            class_data.mro = mro.clone();
+            if class_data.metaclass.is_none() {
+                class_data.metaclass = default_meta;
+            }
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str(class_name.to_string()));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str(class_name.to_string()),
+            );
+            class_data.attrs.insert(
+                "__module__".to_string(),
+                Value::Str("string.templatelib".to_string()),
+            );
+            class_data
+                .attrs
+                .insert("__flags__".to_string(), Value::Int(0));
+            class_data.attrs.insert(
+                "__bases__".to_string(),
+                self.heap
+                    .alloc_tuple(bases.iter().cloned().map(Value::Class).collect()),
+            );
+            class_data.attrs.insert(
+                "__mro__".to_string(),
+                self.heap
+                    .alloc_tuple(mro.iter().cloned().map(Value::Class).collect()),
+            );
+        }
+        self.synthetic_builtin_classes
+            .insert(cache_key.to_string(), class.clone());
+        class
+    }
+
+    fn build_template_interpolation_value(
+        &mut self,
+        value: Value,
+        expression: Value,
+        conversion: u32,
+        format_spec: Value,
+    ) -> Result<Value, RuntimeError> {
+        let expression_value = match expression {
+            Value::Str(text) => text,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "BUILD_INTERPOLATION expects str expression",
+                ));
+            }
+        };
+        let format_spec_value = match format_spec {
+            Value::Str(text) => text,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "BUILD_INTERPOLATION expects str format spec",
+                ));
+            }
+        };
+        let conversion_value = match conversion {
+            0 => Value::None,
+            1 => Value::Str("s".to_string()),
+            2 => Value::Str("r".to_string()),
+            3 => Value::Str("a".to_string()),
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "invalid interpolation conversion code {other}",
+                )));
+            }
+        };
+
+        let interpolation_class = self.template_literal_class(
+            "__pyrs_template_literal_interpolation_class__",
+            "Interpolation",
+        );
+        let interpolation = match self
+            .heap
+            .alloc_instance(InstanceObject::new(interpolation_class))
+        {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *interpolation.kind_mut() {
+            instance_data.attrs.insert("value".to_string(), value);
+            instance_data
+                .attrs
+                .insert("expression".to_string(), Value::Str(expression_value));
+            instance_data
+                .attrs
+                .insert("conversion".to_string(), conversion_value);
+            instance_data
+                .attrs
+                .insert("format_spec".to_string(), Value::Str(format_spec_value));
+        }
+        Ok(Value::Instance(interpolation))
+    }
+
+    fn build_template_value(
+        &mut self,
+        strings: Value,
+        interpolations: Value,
+    ) -> Result<Value, RuntimeError> {
+        let string_items = match strings {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(items) => items.clone(),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "BUILD_TEMPLATE expects tuple[str] strings",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "BUILD_TEMPLATE expects tuple[str] strings",
+                ));
+            }
+        };
+        for item in &string_items {
+            if !matches!(item, Value::Str(_)) {
+                return Err(RuntimeError::type_error(
+                    "BUILD_TEMPLATE strings must be str entries",
+                ));
+            }
+        }
+        let interpolation_items = match interpolations {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(items) => items.clone(),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "BUILD_TEMPLATE expects tuple interpolations",
+                    ));
+                }
+            },
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "BUILD_TEMPLATE expects tuple interpolations",
+                ));
+            }
+        };
+
+        let strings_tuple = self.heap.alloc_tuple(string_items.clone());
+        let interpolations_tuple = self.heap.alloc_tuple(interpolation_items.clone());
+
+        let mut parts = Vec::with_capacity(string_items.len() + interpolation_items.len());
+        let max_len = string_items.len().max(interpolation_items.len());
+        for idx in 0..max_len {
+            if let Some(item) = string_items.get(idx) {
+                parts.push(item.clone());
+            }
+            if let Some(item) = interpolation_items.get(idx) {
+                parts.push(item.clone());
+            }
+        }
+
+        let template_class =
+            self.template_literal_class("__pyrs_template_literal_template_class__", "Template");
+        let template = match self
+            .heap
+            .alloc_instance(InstanceObject::new(template_class))
+        {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        if let Object::Instance(instance_data) = &mut *template.kind_mut() {
+            instance_data
+                .attrs
+                .insert("strings".to_string(), strings_tuple);
+            instance_data
+                .attrs
+                .insert("interpolations".to_string(), interpolations_tuple);
+            instance_data
+                .attrs
+                .insert("__parts__".to_string(), self.heap.alloc_tuple(parts));
+        }
+        Ok(Value::Instance(template))
     }
 
     pub(super) fn property_descriptor_name(
