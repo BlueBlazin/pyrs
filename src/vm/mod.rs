@@ -456,6 +456,18 @@ fn env_flag_enabled(name: &str) -> bool {
     matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
 }
 
+fn env_flag_enabled_or_default(name: &str, default: bool) -> bool {
+    let Ok(raw) = std::env::var(name) else {
+        return default;
+    };
+    let normalized = raw.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
 fn env_var_present_cached(name: &'static str) -> bool {
     static CACHE: OnceLock<Mutex<HashMap<&'static str, bool>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -1043,7 +1055,12 @@ impl Vm {
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
             prefer_pure_re_when_available: true,
-            prefer_pyc_when_source_available: env_flag_enabled("PYRS_IMPORT_PREFER_PYC"),
+            // CPython-default behavior: prefer validated source-bound pyc when available.
+            // `PYRS_IMPORT_PREFER_PYC` can still explicitly override this.
+            prefer_pyc_when_source_available: env_flag_enabled_or_default(
+                "PYRS_IMPORT_PREFER_PYC",
+                true,
+            ),
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             recursion_limit: 1000,
