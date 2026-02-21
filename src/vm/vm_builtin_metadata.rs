@@ -1520,6 +1520,7 @@ impl Vm {
                         false,
                     ),
                     IteratorKind::Map { .. } => ("map", None, None, None, true, true),
+                    IteratorKind::Zip { .. } => ("zip", None, None, None, true, true),
                     IteratorKind::Range { .. } => ("range_iterator", None, None, None, false, true),
                     IteratorKind::List(_) => ("list_iterator", None, None, None, false, true),
                     IteratorKind::Tuple(_) => ("tuple_iterator", None, None, None, false, true),
@@ -1849,6 +1850,22 @@ impl Vm {
             "__delitem__" => NativeMethodKind::DictDelItem,
             "pop" => NativeMethodKind::DictPop,
             _ => {
+                if attr_name == "_member_names"
+                    && std::env::var_os("PYRS_TRACE_ENUM_MEMBER_NAMES").is_some()
+                {
+                    eprintln!("[enum-member-names] attr lookup on dict");
+                    for frame in self.frames.iter().rev().take(12) {
+                        let location = frame.code.locations.get(frame.last_ip);
+                        eprintln!(
+                            "  fn={} file={} line={} col={} ip={}",
+                            frame.code.name,
+                            frame.code.filename,
+                            location.map(|loc| loc.line).unwrap_or(0),
+                            location.map(|loc| loc.column).unwrap_or(0),
+                            frame.last_ip
+                        );
+                    }
+                }
                 return Err(RuntimeError::attribute_error(format!(
                     "dict has no attribute '{}'",
                     attr_name
@@ -2093,21 +2110,7 @@ impl Vm {
             "__func__" => Ok(Value::Function(func.clone())),
             "__get__" => Ok(self
                 .alloc_native_bound_method(NativeMethodKind::FunctionDescriptorGet, func.clone())),
-            "__annotate__" => {
-                let wrapper = match self
-                    .heap
-                    .alloc_module(ModuleObject::new("__function_annotate__".to_string()))
-                {
-                    Value::Module(obj) => obj,
-                    _ => unreachable!(),
-                };
-                if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
-                    module_data
-                        .globals
-                        .insert("function".to_string(), Value::Function(func.clone()));
-                }
-                Ok(self.alloc_native_bound_method(NativeMethodKind::FunctionAnnotate, wrapper))
-            }
+            "__annotate__" => Ok(Value::None),
             "__defaults__" => {
                 let defaults = {
                     let func_ref = func.kind();
@@ -2160,6 +2163,46 @@ impl Vm {
                     Ok(self.heap.alloc_tuple(values))
                 }
             }
+            "__type_params__" => Ok(self.heap.alloc_tuple(Vec::new())),
+            "__builtins__" => {
+                let module_builtins = {
+                    let func_ref = func.kind();
+                    let Object::Function(func_data) = &*func_ref else {
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
+                    };
+                    match &*func_data.module.kind() {
+                        Object::Module(module_data) => module_data.globals.get("__builtins__").cloned(),
+                        _ => None,
+                    }
+                };
+                let resolved = match module_builtins {
+                    Some(Value::Dict(dict)) => Value::Dict(dict),
+                    Some(Value::Module(module)) => {
+                        if let Object::Module(module_data) = &*module.kind() {
+                            let entries = module_data
+                                .globals
+                                .iter()
+                                .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                                .collect::<Vec<_>>();
+                            self.heap.alloc_dict(entries)
+                        } else {
+                            Value::None
+                        }
+                    }
+                    Some(other) => other,
+                    None => {
+                        let entries = self
+                            .builtins
+                            .iter()
+                            .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                            .collect::<Vec<_>>();
+                        self.heap.alloc_dict(entries)
+                    }
+                };
+                Ok(resolved)
+            }
             _ => Err(RuntimeError::attribute_error(format!(
                 "function has no attribute '{}'",
                 attr_name
@@ -2209,7 +2252,12 @@ impl Vm {
         };
         if matches!(
             attr_name,
-            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
+            "__name__"
+                | "__qualname__"
+                | "__module__"
+                | "__doc__"
+                | "__annotate__"
+                | "__type_params__"
         ) && let Some(overrides) = self.callable_attr_overrides.get(&function.id())
             && let Some(value) = overrides.get(attr_name)
         {
@@ -2263,9 +2311,15 @@ impl Vm {
             "__self__" => self.receiver_value(&receiver),
             "__func__" => as_value(&function_kind, &function)
                 .ok_or_else(|| RuntimeError::attribute_error("attribute access unsupported type")),
-            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__" => {
+            "__name__"
+            | "__qualname__"
+            | "__module__"
+            | "__doc__"
+            | "__annotate__"
+            | "__type_params__"
+            | "__builtins__" => {
                 if let BoundFunctionKind::NativeMethod(kind) = &function_kind {
-                    if attr_name == "__annotate__" {
+                    if matches!(attr_name, "__annotate__" | "__type_params__" | "__builtins__") {
                         return Err(RuntimeError::attribute_error(format!(
                             "method has no attribute '{}'",
                             attr_name
@@ -2311,7 +2365,12 @@ impl Vm {
             method_data.function.clone()
         };
         match attr_name {
-            "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__" => {}
+            "__name__"
+            | "__qualname__"
+            | "__module__"
+            | "__doc__"
+            | "__annotate__"
+            | "__type_params__" => {}
             _ => {
                 return Err(RuntimeError::new(format!(
                     "method has no writable attribute '{}'",
@@ -2496,6 +2555,25 @@ impl Vm {
                 };
                 func_data.dict = Some(dict);
                 Ok(())
+            }
+            "__builtins__" => Err(RuntimeError::attribute_error("readonly attribute")),
+            "__type_params__" => match value {
+                Value::Tuple(_) => {
+                    let dict = self.ensure_function_dict(func)?;
+                    self.dict_set_str_key(&dict, attr_name, value)
+                }
+                _ => Err(RuntimeError::type_error(
+                    "__type_params__ must be set to a tuple",
+                )),
+            },
+            "__annotate__" => {
+                if !matches!(value, Value::None) && !self.is_callable_value(&value) {
+                    return Err(RuntimeError::type_error(
+                        "__annotate__ must be callable or None",
+                    ));
+                }
+                let dict = self.ensure_function_dict(func)?;
+                self.dict_set_str_key(&dict, attr_name, value)
             }
             _ => {
                 let dict = self.ensure_function_dict(func)?;
@@ -4288,6 +4366,17 @@ impl Vm {
         let custom_new = class_attr_lookup_direct(&metaclass, "__new__")
             .filter(|callable| !matches!(callable, Value::Builtin(BuiltinFunction::Type)));
         if let Some(new_callable) = custom_new {
+            if std::env::var_os("PYRS_TRACE_METACLASS_NEW_FAIL").is_some() {
+                eprintln!(
+                    "[metaclass-new] metaclass={} callable_type={} callable_repr={}",
+                    match &*metaclass.kind() {
+                        Object::Class(class_data) => class_data.name.clone(),
+                        _ => "<non-class>".to_string(),
+                    },
+                    self.value_type_name_for_error(&new_callable),
+                    format_repr(&new_callable)
+                );
+            }
             let mut new_args = Vec::with_capacity(4);
             new_args.push(Value::Class(metaclass.clone()));
             new_args.extend(args.clone());
@@ -4298,6 +4387,23 @@ impl Vm {
                 }
             };
             if !matches!(created, Value::Class(_)) {
+                if std::env::var_os("PYRS_TRACE_METACLASS_NEW_FAIL").is_some() {
+                    let meta_name = match &*metaclass.kind() {
+                        Object::Class(class_data) => class_data.name.clone(),
+                        _ => "<non-class>".to_string(),
+                    };
+                    let class_name = match args.first() {
+                        Some(Value::Str(name)) => name.clone(),
+                        Some(value) => format!("<{}>", self.value_type_name_for_error(value)),
+                        None => "<missing>".to_string(),
+                    };
+                    eprintln!(
+                        "[metaclass-new-fail] metaclass={} class_name={} returned_type={}",
+                        meta_name,
+                        class_name,
+                        self.value_type_name_for_error(&created)
+                    );
+                }
                 return Err(RuntimeError::new(
                     "metaclass __new__ must return a class object",
                 ));

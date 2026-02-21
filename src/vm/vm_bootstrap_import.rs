@@ -151,7 +151,7 @@ impl Vm {
         )
     }
 
-    fn queue_source_module_execution(
+    pub(super) fn queue_source_module_execution(
         &mut self,
         module: &ObjRef,
         name: &str,
@@ -3214,6 +3214,14 @@ impl Vm {
             class_data.attrs.insert(
                 "__str__".to_string(),
                 Value::Builtin(BuiltinFunction::SimpleNamespaceTypeRepr),
+            );
+        }
+        if let Value::Class(class_obj) = &function_type_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::TypesFunctionType),
             );
         }
         self.install_builtin_module(
@@ -6836,9 +6844,9 @@ impl Vm {
                 is_extension: false,
             });
         }
-        if pyc_candidate.exists() {
+        if direct_pyc.exists() {
             return cache_positive(ModuleSourceInfo {
-                path: pyc_candidate,
+                path: direct_pyc,
                 is_package: false,
                 package_dirs: Vec::new(),
                 is_namespace: false,
@@ -6846,9 +6854,9 @@ impl Vm {
                 is_extension: false,
             });
         }
-        if direct_pyc.exists() {
+        if pyc_candidate.exists() {
             return cache_positive(ModuleSourceInfo {
-                path: direct_pyc,
+                path: pyc_candidate,
                 is_package: false,
                 package_dirs: Vec::new(),
                 is_namespace: false,
@@ -6919,9 +6927,9 @@ impl Vm {
                 is_extension: false,
             });
         }
-        if package_init_pyc.exists() {
+        if direct_package_init_pyc.exists() {
             return cache_positive(ModuleSourceInfo {
-                path: package_init_pyc,
+                path: direct_package_init_pyc,
                 is_package: true,
                 package_dirs: vec![package_dir],
                 is_namespace: false,
@@ -6929,9 +6937,9 @@ impl Vm {
                 is_extension: false,
             });
         }
-        if direct_package_init_pyc.exists() {
+        if package_init_pyc.exists() {
             return cache_positive(ModuleSourceInfo {
-                path: direct_package_init_pyc,
+                path: package_init_pyc,
                 is_package: true,
                 package_dirs: vec![package_dir],
                 is_namespace: false,

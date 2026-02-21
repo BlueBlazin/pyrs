@@ -6,7 +6,7 @@ use crate::vm::{NativeCallResult, NativeMethodKind};
 
 use super::{
     CpythonListCompatObject, CpythonMappingMethods, CpythonSequenceMethods,
-    cpython_debug_compare_value, cpython_set_error, cpython_value_from_ptr,
+    Py_IncRef, cpython_debug_compare_value, cpython_set_error, cpython_value_from_ptr,
     with_active_cpython_context_mut,
 };
 
@@ -650,6 +650,32 @@ pub unsafe extern "C" fn PyList_Reverse(list: *mut c_void) -> i32 {
 pub unsafe extern "C" fn PyList_GetItemRef(list: *mut c_void, index: isize) -> *mut c_void {
     let trace_lists = std::env::var_os("PYRS_TRACE_CPY_LIST").is_some();
     with_active_cpython_context_mut(|context| {
+        if index < 0 {
+            context.set_error("PyList_GetItemRef index out of range");
+            return std::ptr::null_mut();
+        }
+        if context.owns_cpython_allocation_ptr(list) {
+            // SAFETY: owned list pointers use `CpythonListCompatObject` layout.
+            let raw = unsafe { list.cast::<CpythonListCompatObject>().as_ref() };
+            let Some(raw) = raw else {
+                context.set_error("PyList_GetItemRef received invalid list pointer");
+                return std::ptr::null_mut();
+            };
+            let len = raw.ob_base.ob_size.max(0) as usize;
+            if (index as usize) >= len || raw.ob_item.is_null() {
+                context.set_error("PyList_GetItemRef index out of range");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: `ob_item` points to at least `len` entries.
+            let item = unsafe { *raw.ob_item.add(index as usize) };
+            if item.is_null() {
+                context.set_error("PyList_GetItemRef encountered null list slot");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: item is a live PyObject* by list storage contract.
+            unsafe { Py_IncRef(item) };
+            return item;
+        }
         let Some(value) = context.cpython_value_from_ptr(list) else {
             if trace_lists {
                 eprintln!(
@@ -688,16 +714,12 @@ pub unsafe extern "C" fn PyList_GetItemRef(list: *mut c_void, index: isize) -> *
                 values.len()
             );
         }
-        let idx = if index < 0 {
-            values.len() as isize + index
-        } else {
-            index
-        };
-        if idx < 0 || idx as usize >= values.len() {
+        let idx = index as usize;
+        if idx >= values.len() {
             context.set_error("PyList_GetItemRef index out of range");
             return std::ptr::null_mut();
         }
-        context.alloc_cpython_ptr_for_value(values[idx as usize].clone())
+        context.alloc_cpython_ptr_for_value(values[idx].clone())
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);

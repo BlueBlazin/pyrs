@@ -108,6 +108,21 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::numpy_random_mt19937_initializer_runs_without_seedsequence_failures`.
   - remaining follow-up:
     - re-close `default_rng()` construction and then resume generator method long-tail.
+- NumPy import perf + pyc checkpoint (2026-02-21, latest round):
+  - fixed CPython bytecode translation parity bug for `StoreFastStoreFast` operand order (`src/vm/vm_execution.rs`), restoring pyc-path correctness on affected modules.
+  - pyc import resolution now supports cache-only `__pycache__/...cpython-314.pyc` module/package imports without source files (`src/vm/vm_bootstrap_import.rs`), with passing regressions:
+    - `imports_module_from_cached_pyc_without_source_file`
+    - `imports_package_from_cached_pyc_without_source_file`
+  - `PyList_GetItemRef` now has an owned-list raw-buffer fast path with correct CPython index contract and new-ref behavior (`src/vm/vm_extensions/cpython_list_api.rs`), reducing direct NumPy import overhead.
+  - C-API sync/conversion hot paths were tightened:
+    - `sync_value_from_cpython_storage` now avoids full list/tuple cloning unless fallback slots are actually needed (`src/vm/vm_extensions.rs`),
+    - interned-unicode pointer checks now avoid unnecessary string clone lookups in rich-compare pointer gating (`src/vm/vm_extensions/cpython_object_item_compare_api.rs`).
+  - VM env-flag checks in `vm_execution` now use a cached lookup helper (`env_var_present_cached`) instead of repeated raw environment probes on hot paths (`src/vm/mod.rs`, `src/vm/vm_execution.rs`).
+  - measured release import baseline improved from ~`1.65s` to ~`0.93-0.96s` for:
+    - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
+  - remaining blocker for full pyc-first closure:
+    - `PYRS_IMPORT_PREFER_PYC=1` still fails on NumPy import with `AttributeError: str has no attribute 'value'`.
+    - runtime sourceless->source fallback hooks now fire, but root-cause CPython bytecode semantic mismatch remains and must be closed in translator/runtime semantics (not shimmed).
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,

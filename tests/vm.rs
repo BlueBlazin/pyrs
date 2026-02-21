@@ -1220,6 +1220,17 @@ fn executes_zip_builtin() {
 }
 
 #[test]
+fn zip_supports_strict_keyword_contract() {
+    let source = "ok_equal = list(zip([1, 2], [3, 4], strict=True)) == [(1, 3), (2, 4)]\nshort_error = False\nshort_text = ''\ntry:\n    list(zip([1, 2], [3], strict=True))\nexcept ValueError as exc:\n    short_error = True\n    short_text = str(exc)\nlong_error = False\nlong_text = ''\ntry:\n    list(zip([1], [3, 4], strict=True))\nexcept ValueError as exc:\n    long_error = True\n    long_text = str(exc)\nok = ok_equal and short_error and ('shorter' in short_text) and long_error and ('longer' in long_text)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_ellipsis_builtin() {
     let source = "x = Ellipsis\ny = type(...)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1229,6 +1240,17 @@ fn exposes_ellipsis_builtin() {
     assert_eq!(value, Value::None);
     assert!(matches!(vm.get_global("x"), Some(Value::Instance(_))));
     assert!(matches!(vm.get_global("y"), Some(Value::Class(_))));
+}
+
+#[test]
+fn types_functiontype_accepts_kwdefaults_and_dict_subclass_globals() {
+    let source = "import types\nclass G(dict):\n    pass\n\ndef outer():\n    x = 10\n    def inner():\n        return x\n    return inner\n\norig = outer()\nbase = G(globals())\nfn = types.FunctionType(orig.__code__, base, closure=orig.__closure__)\n\ndef k(*, y=5):\n    return y\nfn2 = types.FunctionType(k.__code__, base, name='renamed', kwdefaults={'y': 2})\nok = (fn() == 10) and (fn2() == 2) and (fn2.__name__ == 'renamed') and isinstance(fn2.__builtins__, dict)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
 
 #[test]

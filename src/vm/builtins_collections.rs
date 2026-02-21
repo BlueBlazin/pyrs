@@ -7,6 +7,7 @@ use super::{
     format_repr, format_value, is_missing_attribute_error, is_truthy, mod_values, mul_values,
     sub_values, unary_predicate, value_to_int,
 };
+use crate::runtime::FunctionObject;
 
 impl Vm {
     pub(super) fn builtin_operator_add(
@@ -3266,6 +3267,250 @@ impl Vm {
             _ => return Err(RuntimeError::new("module name must be string")),
         };
         Ok(self.alloc_module(name))
+    }
+
+    pub(super) fn builtin_types_functiontype(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 3 || args.len() > 7 {
+            return Err(RuntimeError::type_error(
+                "function() takes from 3 to 7 positional arguments",
+            ));
+        }
+        let class_arg = args.remove(0);
+        if !matches!(class_arg, Value::Class(_)) {
+            return Err(RuntimeError::type_error(
+                "descriptor '__new__' requires a type object",
+            ));
+        }
+        let code = match args.remove(0) {
+            Value::Code(code) => code,
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "function() argument 'code' must be code, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+        let globals_dict = match args.remove(0) {
+            Value::Dict(dict) => dict,
+            Value::Instance(instance) => {
+                if let Some(dict) = self.instance_backing_dict(&instance) {
+                    dict
+                } else {
+                    return Err(RuntimeError::type_error(format!(
+                        "function() argument 'globals' must be dict, not {}",
+                        self.value_type_name_for_error(&Value::Instance(instance))
+                    )));
+                }
+            }
+            other => {
+                return Err(RuntimeError::type_error(format!(
+                    "function() argument 'globals' must be dict, not {}",
+                    self.value_type_name_for_error(&other)
+                )));
+            }
+        };
+
+        let mut name_arg = args.first().cloned();
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        let mut defaults_arg = args.first().cloned();
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        let mut closure_arg = args.first().cloned();
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        let mut kwdefaults_arg = args.first().cloned();
+        if !args.is_empty() {
+            args.remove(0);
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "function() takes from 3 to 7 positional arguments",
+            ));
+        }
+
+        let mut take_kw = |key: &str, target: &mut Option<Value>| -> Result<(), RuntimeError> {
+            if let Some(value) = kwargs.remove(key) {
+                if target.is_some() {
+                    return Err(RuntimeError::type_error(format!(
+                        "argument for function() given by name ('{}') and position",
+                        key
+                    )));
+                }
+                *target = Some(value);
+            }
+            Ok(())
+        };
+        take_kw("name", &mut name_arg)?;
+        take_kw("argdefs", &mut defaults_arg)?;
+        take_kw("closure", &mut closure_arg)?;
+        take_kw("kwdefaults", &mut kwdefaults_arg)?;
+        if !kwargs.is_empty() {
+            let mut keys = kwargs.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            let key = keys.first().cloned().unwrap_or_default();
+            return Err(RuntimeError::type_error(format!(
+                "function() got an unexpected keyword argument '{}'",
+                key
+            )));
+        }
+
+        let code_name = match name_arg {
+            None | Some(Value::None) => code.name.clone(),
+            Some(Value::Str(name)) => name,
+            Some(_) => {
+                return Err(RuntimeError::type_error(
+                    "arg 3 (name) must be None or string",
+                ));
+            }
+        };
+        let defaults = match defaults_arg {
+            None | Some(Value::None) => Vec::new(),
+            Some(Value::Tuple(defaults)) => match &*defaults.kind() {
+                Object::Tuple(values) => values.to_vec(),
+                _ => Vec::new(),
+            },
+            Some(_) => {
+                return Err(RuntimeError::type_error(
+                    "arg 4 (defaults) must be None or tuple",
+                ));
+            }
+        };
+        let closure_values = match closure_arg {
+            None => {
+                if !code.freevars.is_empty() {
+                    return Err(RuntimeError::type_error("arg 5 (closure) must be tuple"));
+                }
+                Vec::new()
+            }
+            Some(Value::None) => {
+                if !code.freevars.is_empty() {
+                    return Err(RuntimeError::type_error("arg 5 (closure) must be tuple"));
+                }
+                Vec::new()
+            }
+            Some(Value::Tuple(closure)) => {
+                let Object::Tuple(values) = &*closure.kind() else {
+                    return Err(RuntimeError::type_error("arg 5 (closure) must be tuple"));
+                };
+                let mut cells = Vec::with_capacity(values.len());
+                for value in values {
+                    match value {
+                        Value::Cell(cell) => cells.push(cell.clone()),
+                        other => {
+                            return Err(RuntimeError::type_error(format!(
+                                "arg 5 (closure) expected cell, found {}",
+                                self.value_type_name_for_error(other)
+                            )));
+                        }
+                    }
+                }
+                cells
+            }
+            Some(_) => return Err(RuntimeError::type_error("arg 5 (closure) must be tuple")),
+        };
+        if closure_values.len() != code.freevars.len() {
+            return Err(RuntimeError::value_error(format!(
+                "{} requires closure of length {}, not {}",
+                code_name,
+                code.freevars.len(),
+                closure_values.len()
+            )));
+        }
+        let kwonly_defaults = match kwdefaults_arg {
+            None | Some(Value::None) => HashMap::new(),
+            Some(Value::Dict(dict)) => {
+                let Object::Dict(entries) = &*dict.kind() else {
+                    return Err(RuntimeError::type_error(
+                        "arg 6 (kwdefaults) must be None or dict",
+                    ));
+                };
+                let mut mapped = HashMap::new();
+                for (key, value) in entries.iter() {
+                    if let Value::Str(name) = key {
+                        mapped.insert(name.clone(), value.clone());
+                    }
+                }
+                mapped
+            }
+            Some(Value::Instance(instance)) => {
+                let Some(dict) = self.instance_backing_dict(&instance) else {
+                    return Err(RuntimeError::type_error(
+                        "arg 6 (kwdefaults) must be None or dict",
+                    ));
+                };
+                let Object::Dict(entries) = &*dict.kind() else {
+                    return Err(RuntimeError::type_error(
+                        "arg 6 (kwdefaults) must be None or dict",
+                    ));
+                };
+                let mut mapped = HashMap::new();
+                for (key, value) in entries.iter() {
+                    if let Value::Str(name) = key {
+                        mapped.insert(name.clone(), value.clone());
+                    }
+                }
+                mapped
+            }
+            Some(_) => {
+                return Err(RuntimeError::type_error(
+                    "arg 6 (kwdefaults) must be None or dict",
+                ));
+            }
+        };
+
+        let Object::Dict(global_entries) = &*globals_dict.kind() else {
+            return Err(RuntimeError::type_error(
+                "function() argument 'globals' must be dict",
+            ));
+        };
+        let module_name = global_entries
+            .iter()
+            .find_map(|(key, value)| match (key, value) {
+                (Value::Str(name), Value::Str(value)) if name == "__name__" => Some(value.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "__main__".to_string());
+        let module = match self.heap.alloc_module(ModuleObject::new(module_name.clone())) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            for (key, value) in global_entries.iter() {
+                if let Value::Str(name) = key {
+                    module_data.globals.insert(name.clone(), value.clone());
+                }
+            }
+            module_data
+                .globals
+                .entry("__name__".to_string())
+                .or_insert_with(|| Value::Str(module_name));
+            if !module_data.globals.contains_key("__builtins__")
+                && let Some(builtins) = self.modules.get("builtins")
+            {
+                module_data
+                    .globals
+                    .insert("__builtins__".to_string(), Value::Module(builtins.clone()));
+            }
+        }
+
+        let code = if code_name == code.name {
+            code
+        } else {
+            let mut overridden = (*code).clone();
+            overridden.name = code_name;
+            std::rc::Rc::new(overridden)
+        };
+        let function =
+            FunctionObject::new(code, module, defaults, kwonly_defaults, closure_values, None);
+        Ok(self.heap.alloc_function(function))
     }
 
     pub(super) fn builtin_types_methodtype(

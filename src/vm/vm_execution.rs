@@ -13,13 +13,15 @@ use super::{
     SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings,
     bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
     decode_call_counts, deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value, dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
+    dict_set_value, dict_set_value_checked, ensure_hashable, env_var_present_cached,
+    exception_message_from_call_args,
     floor_div_values, format_repr, format_value, is_comprehension_code, is_import_error_family,
     is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
     memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
     mod_values, module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, value_from_bigint, value_from_object_ref, value_to_int,
+    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
+    value_to_int,
     value_to_optional_index,
 };
 use crate::runtime::SliceValue;
@@ -65,6 +67,14 @@ impl Vm {
     }
 
     #[inline]
+    fn is_fast_local_unbound_marker(&self, value: &Value) -> bool {
+        match (value, &self.fast_local_unbound_marker) {
+            (Value::Instance(lhs), Value::Instance(rhs)) => lhs.id() == rhs.id(),
+            _ => false,
+        }
+    }
+
+    #[inline]
     fn finalize_module_frame_success(&mut self, frame: &Frame) {
         if !frame.is_module {
             return;
@@ -74,26 +84,84 @@ impl Vm {
     }
 
     #[inline]
-    fn cleanup_failed_module_frame(&mut self, frame: &Frame) {
+    fn cleanup_failed_module_frame(&mut self, frame: &Frame) -> Result<bool, RuntimeError> {
         if !frame.is_module {
-            return;
+            return Ok(false);
         }
         self.clear_module_initializing(&frame.module);
-        let (module_name, loader_name) = match &*frame.module.kind() {
-            Object::Module(module_data) => (
-                module_data.name.clone(),
-                Vm::module_loader_name(&frame.module).unwrap_or_default(),
-            ),
-            _ => return,
+        let (module_name, loader_name, is_package, package_dirs) = match &*frame.module.kind() {
+            Object::Module(module_data) => {
+                let package_dirs = match module_data.globals.get("__path__") {
+                    Some(Value::List(paths)) => match &*paths.kind() {
+                        Object::List(values) => values
+                            .iter()
+                            .filter_map(|value| match value {
+                                Value::Str(path) => Some(std::path::PathBuf::from(path)),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>(),
+                        _ => Vec::new(),
+                    },
+                    _ => Vec::new(),
+                };
+                (
+                    module_data.name.clone(),
+                    Vm::module_loader_name(&frame.module).unwrap_or_default(),
+                    !package_dirs.is_empty(),
+                    package_dirs,
+                )
+            }
+            _ => return Ok(false),
         };
         if module_name.is_empty() || module_name == "__main__" {
-            return;
+            return Ok(false);
+        }
+        if self.prefer_pyc_when_source_available && loader_name == SOURCELESS_FILE_LOADER
+            && let Some(origin_path) = Vm::module_origin_path(&frame.module)
+        {
+            let source_path = std::path::PathBuf::from(source_path_from_cache_path(
+                &origin_path.to_string_lossy(),
+            ));
+            if source_path.is_file() {
+                if self.import_perf_enabled {
+                    self.import_perf_counters.pyc_load_fallback_to_source = self
+                        .import_perf_counters
+                        .pyc_load_fallback_to_source
+                        .saturating_add(1);
+                }
+                if env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE") {
+                    eprintln!(
+                        "[import-perf] pyc-runtime-fallback module={} pyc={} source={} reason=runtime exception",
+                        module_name,
+                        origin_path.display(),
+                        source_path.display()
+                    );
+                }
+                self.clear_active_exception();
+                self.remove_module_entry_and_parent_binding(&module_name);
+                let replacement =
+                    self.create_module_for_loader(&module_name, SOURCE_FILE_LOADER)?;
+                self.set_module_metadata(
+                    &replacement,
+                    &module_name,
+                    Some(&source_path),
+                    Some(SOURCE_FILE_LOADER),
+                    is_package,
+                    package_dirs.clone(),
+                    false,
+                );
+                self.register_module(&module_name, replacement.clone());
+                self.link_module_chain(&module_name, replacement.clone());
+                self.queue_source_module_execution(&replacement, &module_name, &source_path)?;
+                return Ok(true);
+            }
         }
         let import_loader =
             loader_name == SOURCE_FILE_LOADER || loader_name == SOURCELESS_FILE_LOADER;
         if import_loader {
             self.remove_module_entry_and_parent_binding(&module_name);
         }
+        Ok(false)
     }
 
     fn stack_dict_target_for_merge(
@@ -134,6 +202,23 @@ impl Vm {
         }
     }
 
+    fn stack_set_target(&self, oparg: usize, opname: &str) -> Result<ObjRef, RuntimeError> {
+        let frame = self.frames.last().expect("frame exists");
+        if frame.stack.len() < oparg {
+            return Err(RuntimeError::new(format!("{opname} stack underflow")));
+        }
+        let set_index = frame.stack.len() - oparg;
+        let set_value = frame
+            .stack
+            .get(set_index)
+            .cloned()
+            .ok_or_else(|| RuntimeError::new(format!("{opname} stack underflow")))?;
+        match set_value {
+            Value::Set(set) => Ok(set),
+            _ => Err(RuntimeError::new(format!("{opname} expects set target"))),
+        }
+    }
+
     fn mapping_entries_for_update(
         &mut self,
         source: Value,
@@ -153,7 +238,7 @@ impl Vm {
             )
             .ok();
         if let Some(keys_callable) = keys_callable {
-            if std::env::var_os("PYRS_TRACE_DICT_MERGE").is_some() {
+            if env_var_present_cached("PYRS_TRACE_DICT_MERGE") {
                 eprintln!(
                     "[dict-merge] keys() path for {}",
                     self.value_type_name_for_error(&source)
@@ -582,6 +667,43 @@ impl Vm {
     fn execute_instruction(&mut self, instr: Instruction) -> Result<Option<Value>, RuntimeError> {
         match instr.opcode {
             Opcode::Nop => {}
+            Opcode::MakeCell => {
+                let idx = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing MAKE_CELL argument"))?
+                    as usize;
+                let frame = self.frames.last_mut().expect("frame exists");
+                let name = frame
+                    .code
+                    .names
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("name index out of range"))?;
+                let cell_idx = frame
+                    .code
+                    .cellvar_to_index
+                    .get(&name)
+                    .copied()
+                    .ok_or_else(|| RuntimeError::new("MAKE_CELL expected cellvar slot"))?;
+                let initial_value = frame
+                    .fast_locals
+                    .get_mut(idx)
+                    .and_then(Option::take)
+                    .or_else(|| frame.locals.get(&name).cloned());
+                let cell = frame
+                    .cells
+                    .get(cell_idx)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::new("cell index out of range"))?;
+                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                    if cell_data.value.is_none() {
+                        cell_data.value = initial_value;
+                    }
+                }
+                if let Some(slot) = frame.fast_locals.get_mut(idx) {
+                    *slot = Some(Value::Cell(cell));
+                }
+            }
             Opcode::LoadConst => {
                 let idx = instr
                     .arg
@@ -692,11 +814,80 @@ impl Vm {
                 let value = self.builtin_locals(Vec::new(), HashMap::new())?;
                 self.push_value(value);
             }
+            Opcode::LoadFromDictOrGlobals => {
+                let idx = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing name argument"))?
+                    as usize;
+                let name = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .code
+                        .names
+                        .get(idx)
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                };
+                let mapping = self.pop_value()?;
+                let key = Value::Str(name.clone());
+                let mapping_hit = match mapping {
+                    Value::Dict(dict) => dict_get_value(&dict, &key),
+                    other => match self.getitem_value(other, key.clone()) {
+                        Ok(value) => Some(value),
+                        Err(err) if runtime_error_matches_exception(&err, "KeyError") => None,
+                        Err(err) => return Err(err),
+                    },
+                };
+                let value = if let Some(value) = mapping_hit {
+                    value
+                } else if let Some(value) = self.frames.last().and_then(|frame| match &*frame
+                    .function_globals
+                    .kind()
+                {
+                    Object::Module(module_data) => module_data.globals.get(&name).cloned(),
+                    _ => None,
+                }) {
+                    value
+                } else if let Some(value) = self.builtins.get(&name).cloned() {
+                    value
+                } else {
+                    return Err(RuntimeError::new(format!("name '{name}' is not defined")));
+                };
+                self.push_value(value);
+            }
             Opcode::LoadFast => {
                 let idx = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing local argument"))?
                     as usize;
+                if env_var_present_cached("PYRS_TRACE_FAST_CELL")
+                    && let Some(frame) = self.frames.last()
+                    && frame.code.name == "deprecated"
+                    && frame.code.filename.ends_with("_py_warnings.py")
+                    && idx == 1
+                {
+                    let slot_type = frame
+                        .fast_locals
+                        .get(idx)
+                        .and_then(|slot| slot.as_ref())
+                        .map(|value| self.value_type_name_for_error(value))
+                        .unwrap_or_else(|| "<unset>".to_string());
+                    let local_name = frame
+                        .code
+                        .names
+                        .get(idx)
+                        .cloned()
+                        .unwrap_or_else(|| "<out-of-range>".to_string());
+                    eprintln!(
+                        "[trace-fast-cell] fn={} file={} idx={} name={} slot_type={} fast_len={}",
+                        frame.code.name,
+                        frame.code.filename,
+                        idx,
+                        local_name,
+                        slot_type,
+                        frame.fast_locals.len()
+                    );
+                }
                 #[cfg(not(debug_assertions))]
                 {
                     let fast_return = {
@@ -1014,7 +1205,8 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing local argument"))?
                     as usize;
-                let value = self.take_fast_local(idx)?;
+                let (_, maybe_value) = self.take_fast_local_optional(idx)?;
+                let value = maybe_value.unwrap_or_else(|| self.fast_local_unbound_marker.clone());
                 self.push_value(value);
             }
             Opcode::LoadGlobal => {
@@ -1350,6 +1542,21 @@ impl Vm {
                 let caller_idx = self.frames.len().saturating_sub(1);
                 let site_index = self.current_site_index();
                 let value = self.pop_value()?;
+                if env_var_present_cached("PYRS_TRACE_STARTSWITH_ATTR")
+                    && attr_name == "startswith"
+                    && let Some(frame) = self.frames.last()
+                {
+                    let location = frame.code.locations.get(frame.last_ip);
+                    eprintln!(
+                        "[startswith-attr] file={} fn={} line={} col={} value_type={} value={}",
+                        frame.code.filename,
+                        frame.code.name,
+                        location.map(|loc| loc.line).unwrap_or(0),
+                        location.map(|loc| loc.column).unwrap_or(0),
+                        self.value_type_name_for_error(&value),
+                        format_repr(&value)
+                    );
+                }
                 let attr = if attr_name == "__doc__"
                     && !matches!(
                         value,
@@ -1676,6 +1883,55 @@ impl Vm {
                     frame.stack.push(Value::None);
                 }
             }
+            Opcode::LoadSuperAttr => {
+                let raw = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing LOAD_SUPER_ATTR argument"))?
+                    as usize;
+                let name_idx = raw >> 2;
+                let push_null = (raw & 0b01) != 0;
+                let attr_name = {
+                    let frame = self.frames.last().expect("frame exists");
+                    frame
+                        .code
+                        .names
+                        .get(name_idx)
+                        .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                        .clone()
+                };
+                let object_value = self.pop_value()?;
+                let type_value = self.pop_value()?;
+                let super_callable = self.pop_value()?;
+                if !matches!(super_callable, Value::Builtin(BuiltinFunction::Super)) {
+                    return Err(RuntimeError::type_error(
+                        "LOAD_SUPER_ATTR expected builtin super",
+                    ));
+                }
+                let super_value =
+                    self.builtin_super(vec![type_value, object_value], HashMap::new())?;
+                let attr = match super_value {
+                    Value::Super(super_obj) => {
+                        match self.load_attr_super(&super_obj, &attr_name)? {
+                            AttrAccessOutcome::Value(value) => value,
+                            AttrAccessOutcome::ExceptionHandled => {
+                                return Err(self.runtime_error_from_active_exception(
+                                    "LOAD_SUPER_ATTR attribute lookup failed",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::type_error(
+                            "super() did not return a super object",
+                        ));
+                    }
+                };
+                let frame = self.frames.last_mut().expect("frame exists");
+                frame.stack.push(attr);
+                if push_null {
+                    frame.stack.push(Value::None);
+                }
+            }
             Opcode::LoadSpecial => {
                 let oparg = instr
                     .arg
@@ -1799,6 +2055,13 @@ impl Vm {
                     self.propagate_module_globals_version(module_id, version);
                 }
             }
+            Opcode::DeleteFast => {
+                let idx = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing local argument"))?
+                    as usize;
+                let _ = self.take_fast_local(idx)?;
+            }
             Opcode::StoreFast => {
                 let idx = instr
                     .arg
@@ -1832,10 +2095,13 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::new("missing locals argument"))?;
                 let first = (arg >> 16) as usize;
                 let second = (arg & 0xFFFF) as usize;
-                let value2 = self.pop_value()?;
-                let value1 = self.pop_value()?;
-                self.store_fast_local(first, value1)?;
-                self.store_fast_local(second, value2)?;
+                // CPython stack contract for STORE_FAST_STORE_FAST is
+                // (value2, value1 --), so TOS (first pop) is stored to
+                // the first local, then the next value to the second local.
+                let value_for_first = self.pop_value()?;
+                let value_for_second = self.pop_value()?;
+                self.store_fast_local(first, value_for_first)?;
+                self.store_fast_local(second, value_for_second)?;
             }
             Opcode::StoreAttr => {
                 let idx = instr
@@ -1885,7 +2151,7 @@ impl Vm {
                         self.store_attr_builtin(builtin, &attr_name, value)?
                     }
                     _ => {
-                        if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
+                        if env_var_present_cached("PYRS_TRACE_STORE_ATTR") {
                             if let Some(frame) = self.frames.last() {
                                 let location = frame.code.locations.get(frame.last_ip);
                                 eprintln!(
@@ -1955,7 +2221,7 @@ impl Vm {
                         self.store_attr_builtin(builtin, &attr_name, value)?
                     }
                     _ => {
-                        if std::env::var_os("PYRS_TRACE_STORE_ATTR").is_some() {
+                        if env_var_present_cached("PYRS_TRACE_STORE_ATTR") {
                             if let Some(frame) = self.frames.last() {
                                 let location = frame.code.locations.get(frame.last_ip);
                                 eprintln!(
@@ -2041,6 +2307,19 @@ impl Vm {
                         self.delete_attr_builtin(builtin, &attr_name)?;
                     }
                     _ => {
+                        if env_var_present_cached("PYRS_TRACE_DELETE_ATTR") {
+                            if let Some(frame) = self.frames.last() {
+                                let location = frame.code.locations.get(frame.last_ip);
+                                eprintln!(
+                                    "[delete-attr] file={} line={} col={} target_type={} attr={}",
+                                    frame.code.filename,
+                                    location.map(|loc| loc.line).unwrap_or(0),
+                                    location.map(|loc| loc.column).unwrap_or(0),
+                                    self.value_type_name_for_error(&target),
+                                    attr_name
+                                );
+                            }
+                        }
                         return Err(RuntimeError::type_error(
                             "attribute deletion unsupported type",
                         ));
@@ -2550,6 +2829,18 @@ impl Vm {
                 values.reverse();
                 self.push_value(self.heap.alloc_list(values));
             }
+            Opcode::BuildSet => {
+                let count = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing set size"))?
+                    as usize;
+                let mut values = Vec::with_capacity(count);
+                for _ in 0..count {
+                    values.push(self.pop_value()?);
+                }
+                values.reverse();
+                self.push_value(self.heap.alloc_set(values));
+            }
             Opcode::BuildTuple => {
                 let count = instr
                     .arg
@@ -2601,7 +2892,8 @@ impl Vm {
                 values.reverse();
                 self.push_value(self.heap.alloc_dict(values));
             }
-            Opcode::UnpackSequence => {
+            Opcode::UnpackSequence | Opcode::UnpackSequenceCpython => {
+                let cpython_unpack = matches!(instr.opcode, Opcode::UnpackSequenceCpython);
                 let count = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing unpack size"))?
@@ -2624,8 +2916,14 @@ impl Vm {
                                 "too many values to unpack (expected {count})"
                             )));
                         }
-                        for item in values {
-                            self.push_value(item.clone());
+                        if cpython_unpack {
+                            for item in values.iter().rev() {
+                                self.push_value(item.clone());
+                            }
+                        } else {
+                            for item in values {
+                                self.push_value(item.clone());
+                            }
                         }
                     }
                     Value::Tuple(obj) => {
@@ -2644,8 +2942,14 @@ impl Vm {
                                 "too many values to unpack (expected {count})"
                             )));
                         }
-                        for item in values {
-                            self.push_value(item.clone());
+                        if cpython_unpack {
+                            for item in values.iter().rev() {
+                                self.push_value(item.clone());
+                            }
+                        } else {
+                            for item in values {
+                                self.push_value(item.clone());
+                            }
                         }
                     }
                     other => {
@@ -2663,13 +2967,20 @@ impl Vm {
                                 "too many values to unpack (expected {count})"
                             )));
                         }
-                        for item in items {
-                            self.push_value(item);
+                        if cpython_unpack {
+                            for item in items.into_iter().rev() {
+                                self.push_value(item);
+                            }
+                        } else {
+                            for item in items {
+                                self.push_value(item);
+                            }
                         }
                     }
                 }
             }
-            Opcode::UnpackEx => {
+            Opcode::UnpackEx | Opcode::UnpackExCpython => {
+                let cpython_unpack = matches!(instr.opcode, Opcode::UnpackExCpython);
                 let packed = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing unpack sizes"))?;
@@ -2690,13 +3001,24 @@ impl Vm {
                             )));
                         }
                         let split_after = values.len() - after;
-                        for item in &values[..before] {
-                            self.push_value(item.clone());
-                        }
-                        let middle: Vec<Value> = values[before..split_after].to_vec();
-                        self.push_value(self.heap.alloc_list(middle));
-                        for item in &values[split_after..] {
-                            self.push_value(item.clone());
+                        if cpython_unpack {
+                            for item in values[split_after..].iter().rev() {
+                                self.push_value(item.clone());
+                            }
+                            let middle: Vec<Value> = values[before..split_after].to_vec();
+                            self.push_value(self.heap.alloc_list(middle));
+                            for item in values[..before].iter().rev() {
+                                self.push_value(item.clone());
+                            }
+                        } else {
+                            for item in &values[..before] {
+                                self.push_value(item.clone());
+                            }
+                            let middle: Vec<Value> = values[before..split_after].to_vec();
+                            self.push_value(self.heap.alloc_list(middle));
+                            for item in &values[split_after..] {
+                                self.push_value(item.clone());
+                            }
                         }
                     }
                     Value::Tuple(obj) => {
@@ -2712,13 +3034,24 @@ impl Vm {
                             )));
                         }
                         let split_after = values.len() - after;
-                        for item in &values[..before] {
-                            self.push_value(item.clone());
-                        }
-                        let middle: Vec<Value> = values[before..split_after].to_vec();
-                        self.push_value(self.heap.alloc_list(middle));
-                        for item in &values[split_after..] {
-                            self.push_value(item.clone());
+                        if cpython_unpack {
+                            for item in values[split_after..].iter().rev() {
+                                self.push_value(item.clone());
+                            }
+                            let middle: Vec<Value> = values[before..split_after].to_vec();
+                            self.push_value(self.heap.alloc_list(middle));
+                            for item in values[..before].iter().rev() {
+                                self.push_value(item.clone());
+                            }
+                        } else {
+                            for item in &values[..before] {
+                                self.push_value(item.clone());
+                            }
+                            let middle: Vec<Value> = values[before..split_after].to_vec();
+                            self.push_value(self.heap.alloc_list(middle));
+                            for item in &values[split_after..] {
+                                self.push_value(item.clone());
+                            }
                         }
                     }
                     other => {
@@ -2734,12 +3067,22 @@ impl Vm {
                         }
                         let trailing = items.split_off(items.len() - after);
                         let middle = items.split_off(before);
-                        for item in items {
-                            self.push_value(item);
-                        }
-                        self.push_value(self.heap.alloc_list(middle));
-                        for item in trailing {
-                            self.push_value(item);
+                        if cpython_unpack {
+                            for item in trailing.into_iter().rev() {
+                                self.push_value(item);
+                            }
+                            self.push_value(self.heap.alloc_list(middle));
+                            for item in items.into_iter().rev() {
+                                self.push_value(item);
+                            }
+                        } else {
+                            for item in items {
+                                self.push_value(item);
+                            }
+                            self.push_value(self.heap.alloc_list(middle));
+                            for item in trailing {
+                                self.push_value(item);
+                            }
                         }
                     }
                 }
@@ -2755,6 +3098,22 @@ impl Vm {
                     values.push(value);
                 } else {
                     return Err(RuntimeError::new("list append expects list"));
+                }
+            }
+            Opcode::SetAdd => {
+                let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
+                if oparg == 0 {
+                    return Err(RuntimeError::new("SET_ADD expects oparg >= 1"));
+                }
+                let value = self.pop_value()?;
+                let set = self.stack_set_target(oparg, "SET_ADD")?;
+                ensure_hashable(&value)?;
+                if let Object::Set(values) = &mut *set.kind_mut() {
+                    if !values.contains(&value) {
+                        values.push(value);
+                    }
+                } else {
+                    return Err(RuntimeError::new("SET_ADD expects set target"));
                 }
             }
             Opcode::ListExtend => {
@@ -2773,6 +3132,27 @@ impl Vm {
                     return Err(RuntimeError::new("list extend expects list"));
                 }
             }
+            Opcode::SetUpdate => {
+                let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
+                if oparg == 0 {
+                    return Err(RuntimeError::new("SET_UPDATE expects oparg >= 1"));
+                }
+                let other = self.pop_value()?;
+                let set = self.stack_set_target(oparg, "SET_UPDATE")?;
+                let extra = self
+                    .collect_iterable_values(other)
+                    .map_err(|_| RuntimeError::new("set update expects iterable"))?;
+                if let Object::Set(values) = &mut *set.kind_mut() {
+                    for item in extra {
+                        ensure_hashable(&item)?;
+                        if !values.contains(&item) {
+                            values.push(item);
+                        }
+                    }
+                } else {
+                    return Err(RuntimeError::new("SET_UPDATE expects set target"));
+                }
+            }
             Opcode::DictSet => {
                 let value = self.pop_value()?;
                 let key = self.pop_value()?;
@@ -2784,6 +3164,16 @@ impl Vm {
                     }
                     _ => return Err(RuntimeError::new("dict set expects dict")),
                 }
+            }
+            Opcode::MapAdd => {
+                let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
+                if oparg == 0 {
+                    return Err(RuntimeError::new("MAP_ADD expects oparg >= 1"));
+                }
+                let value = self.pop_value()?;
+                let key = self.pop_value()?;
+                let dict = self.stack_dict_target_for_merge(oparg, "MAP_ADD")?;
+                dict_set_value_checked(&dict, key, value)?;
             }
             Opcode::DictUpdate => {
                 let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
@@ -2799,7 +3189,7 @@ impl Vm {
                     return Err(RuntimeError::new("DICT_MERGE expects oparg >= 1"));
                 }
                 let update = self.pop_value()?;
-                if std::env::var_os("PYRS_TRACE_DICT_MERGE").is_some() {
+                if env_var_present_cached("PYRS_TRACE_DICT_MERGE") {
                     eprintln!(
                         "[dict-merge] oparg={} source={}",
                         oparg,
@@ -2817,10 +3207,31 @@ impl Vm {
                 let step = value_to_optional_index(step)?;
                 self.push_value(Value::Slice(Box::new(SliceValue::new(lower, upper, step))));
             }
+            Opcode::BinarySlice => {
+                let upper = self.pop_value()?;
+                let lower = self.pop_value()?;
+                let target = self.pop_value()?;
+                let lower = value_to_optional_index(lower)?;
+                let upper = value_to_optional_index(upper)?;
+                let slice = Value::Slice(Box::new(SliceValue::new(lower, upper, None)));
+                let result = self.getitem_value(target, slice)?;
+                self.push_value(result);
+            }
             Opcode::Subscript => {
                 let index = self.pop_value()?;
                 let value = self.pop_value()?;
-                if std::env::var_os("PYRS_TRACE_SUBSCRIPT").is_some()
+                let trace_subscript_error = env_var_present_cached("PYRS_TRACE_SUBSCRIPT_ERROR");
+                let trace_value = if trace_subscript_error {
+                    Some(value.clone())
+                } else {
+                    None
+                };
+                let trace_index = if trace_subscript_error {
+                    Some(index.clone())
+                } else {
+                    None
+                };
+                if env_var_present_cached("PYRS_TRACE_SUBSCRIPT")
                     && matches!(value, Value::Tuple(_))
                     && matches!(index, Value::Tuple(_))
                 {
@@ -2836,13 +3247,61 @@ impl Vm {
                         );
                     }
                 }
-                let result = self.getitem_value(value, index)?;
+                let result = match self.getitem_value(value, index) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        if trace_subscript_error
+                            && let Some(frame) = self.frames.last()
+                        {
+                            let location = frame.code.locations.get(frame.last_ip);
+                            let value_tag = trace_value
+                                .as_ref()
+                                .map(|v| self.value_type_name_for_error(v))
+                                .unwrap_or_else(|| "<missing>".to_string());
+                            let index_tag = trace_index
+                                .as_ref()
+                                .map(|v| self.value_type_name_for_error(v))
+                                .unwrap_or_else(|| "<missing>".to_string());
+                            let value_repr = trace_value
+                                .as_ref()
+                                .map(format_repr)
+                                .unwrap_or_else(|| "<missing>".to_string());
+                            let index_repr = trace_index
+                                .as_ref()
+                                .map(format_repr)
+                                .unwrap_or_else(|| "<missing>".to_string());
+                            eprintln!(
+                                "[subscript-error] file={} fn={} line={} col={} err={} value_type={} value={} index_type={} index={}",
+                                frame.code.filename,
+                                frame.code.name,
+                                location.map(|loc| loc.line).unwrap_or(0),
+                                location.map(|loc| loc.column).unwrap_or(0),
+                                err.message,
+                                value_tag,
+                                value_repr,
+                                index_tag,
+                                index_repr
+                            );
+                        }
+                        return Err(err);
+                    }
+                };
                 self.push_value(result);
             }
             Opcode::StoreSubscript => {
-                let value = self.pop_value()?;
-                let index = self.pop_value()?;
-                let target = self.pop_value()?;
+                let cpython_order = instr.arg == Some(1);
+                let discard_result = cpython_order;
+                let (value, index, target) = if cpython_order {
+                    let index = self.pop_value()?;
+                    let target = self.pop_value()?;
+                    let value = self.pop_value()?;
+                    (value, index, target)
+                } else {
+                    let value = self.pop_value()?;
+                    let index = self.pop_value()?;
+                    let target = self.pop_value()?;
+                    (value, index, target)
+                };
                 match target {
                     Value::List(obj) => match index {
                         Value::Slice(slice) => {
@@ -3006,7 +3465,7 @@ impl Vm {
                                 dict_set_value_checked(&backing_dict, index, value)?;
                                 self.push_value(Value::Instance(instance));
                             } else {
-                                if std::env::var_os("PYRS_TRACE_STORE_SUBSCRIPT").is_some() {
+                                if env_var_present_cached("PYRS_TRACE_STORE_SUBSCRIPT") {
                                     let target_value = Value::Instance(instance.clone());
                                     eprintln!(
                                         "[store-subscript] unsupported instance target_type={} index_type={} value_type={} target={} index={} value={}",
@@ -3417,7 +3876,7 @@ impl Vm {
                                 proxy_result?;
                                 self.push_value(target_value);
                             } else {
-                                if std::env::var_os("PYRS_TRACE_STORE_SUBSCRIPT").is_some() {
+                                if env_var_present_cached("PYRS_TRACE_STORE_SUBSCRIPT") {
                                     eprintln!(
                                         "[store-subscript] unsupported target_type={} index_type={} value_type={} target={} index={} value={}",
                                         self.value_type_name_for_error(&target),
@@ -3433,6 +3892,25 @@ impl Vm {
                         }
                     },
                 };
+                if discard_result {
+                    let _ = self.pop_value()?;
+                }
+            }
+            Opcode::StoreSlice => {
+                let upper = self.pop_value()?;
+                let lower = self.pop_value()?;
+                let target = self.pop_value()?;
+                let value = self.pop_value()?;
+                let lower = value_to_optional_index(lower)?;
+                let upper = value_to_optional_index(upper)?;
+                let slice = Value::Slice(Box::new(SliceValue::new(lower, upper, None)));
+                // Reuse STORE_SUBSCR CPython stack convention so all target/setitem
+                // semantics stay centralized in one implementation path.
+                self.push_value(value);
+                self.push_value(target);
+                self.push_value(slice);
+                let _ =
+                    self.execute_instruction(Instruction::new(Opcode::StoreSubscript, Some(1)))?;
             }
             Opcode::DeleteSubscript => {
                 let index = self.pop_value()?;
@@ -3744,7 +4222,7 @@ impl Vm {
                     _ => return Err(RuntimeError::new("class bases must be a tuple")),
                 };
                 let orig_bases_tuple = self.heap.alloc_tuple(bases.clone());
-                let trace_build_class = std::env::var_os("PYRS_TRACE_BUILD_CLASS").is_some();
+                let trace_build_class = env_var_present_cached("PYRS_TRACE_BUILD_CLASS");
                 let trace_this_class = trace_build_class && class_name == "_TagInfo";
                 let mut resolved_bases = Vec::new();
                 for base in bases {
@@ -3809,7 +4287,7 @@ impl Vm {
                     match self.class_from_base_value(base.clone()) {
                         Ok(class) => base_classes.push(class),
                         Err(err) => {
-                            if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some()
+                            if env_var_present_cached("PYRS_TRACE_CLASS_BASE")
                                 && runtime_error_matches_exception(&err, "TypeError")
                                 && let Some(frame) = self.frames.last()
                             {
@@ -4077,6 +4555,18 @@ impl Vm {
                                         match value {
                                             Value::Cell(cell) => cells.push(cell.clone()),
                                             _ => {
+                                                if std::env::var_os("PYRS_TRACE_CLOSURE_SHAPE")
+                                                    .is_some()
+                                                {
+                                                    if let Some(frame) = self.frames.last() {
+                                                        eprintln!(
+                                                            "[closure-shape] file={} fn={} attr_kind=0x08 entry_type={}",
+                                                            frame.code.filename,
+                                                            frame.code.name,
+                                                            self.value_type_name_for_error(value)
+                                                        );
+                                                    }
+                                                }
                                                 return Err(RuntimeError::new(
                                                     "closure entries must be cells",
                                                 ));
@@ -5043,7 +5533,7 @@ impl Vm {
                                 return Err(RuntimeError::new("import from expects module object"));
                             }
                         };
-                        if std::env::var_os("PYRS_TRACE_NUMPY_CORE_IMPORTFROM").is_some()
+                        if env_var_present_cached("PYRS_TRACE_NUMPY_CORE_IMPORTFROM")
                             && module_name == "numpy._core"
                         {
                             eprintln!(
@@ -5073,6 +5563,64 @@ impl Vm {
                     _ => {
                         return Err(RuntimeError::new("import from expects module object"));
                     }
+                }
+            }
+            Opcode::CallFunctionEx => {
+                let kwargs_value = self.pop_value()?;
+                let args_value = self.pop_value()?;
+                let maybe_null_or_func = self.pop_value()?;
+                let func = if matches!(maybe_null_or_func, Value::None) {
+                    self.pop_value()?
+                } else {
+                    maybe_null_or_func
+                };
+                let kwargs = match kwargs_value {
+                    Value::None => HashMap::new(),
+                    Value::Dict(obj) => match &*obj.kind() {
+                        Object::Dict(entries) => {
+                            let mut map = HashMap::new();
+                            for (key, value) in entries {
+                                let key = match key {
+                                    Value::Str(name) => name.clone(),
+                                    _ => {
+                                        return Err(RuntimeError::type_error(
+                                            "keyword name must be string",
+                                        ));
+                                    }
+                                };
+                                if map.contains_key(&key) {
+                                    return Err(RuntimeError::type_error(
+                                        "duplicate keyword argument",
+                                    ));
+                                }
+                                map.insert(key, value.clone());
+                            }
+                            map
+                        }
+                        _ => return Err(RuntimeError::type_error("call kwargs must be dict")),
+                    },
+                    _ => return Err(RuntimeError::type_error("call kwargs must be dict")),
+                };
+                let args = match args_value {
+                    Value::Tuple(obj) => match &*obj.kind() {
+                        Object::Tuple(values) => values.clone(),
+                        _ => return Err(RuntimeError::type_error("call args must be tuple")),
+                    },
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => values.clone(),
+                        _ => return Err(RuntimeError::type_error("call args must be tuple")),
+                    },
+                    _ => return Err(RuntimeError::type_error("call args must be tuple")),
+                };
+                match func {
+                    Value::ExceptionType(name) => {
+                        let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
+                        self.push_value(value);
+                    }
+                    callable => match self.call_internal(callable, args, kwargs)? {
+                        InternalCallOutcome::Value(value) => self.push_value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {}
+                    },
                 }
             }
             Opcode::JumpIfFalse => {
@@ -5250,7 +5798,7 @@ impl Vm {
                         }
                     }
                     _ => {
-                        if std::env::var_os("PYRS_TRACE_FOR_ITER_FAIL").is_some() {
+                        if env_var_present_cached("PYRS_TRACE_FOR_ITER_FAIL") {
                             let (filename, function_name, line, column, ip) = self
                                 .frames
                                 .last()
@@ -5499,7 +6047,7 @@ impl Vm {
                     }
                     let frame = self.frames.last_mut().expect("frame exists");
                     frame.reraise_lasti_override = Some(lasti as usize);
-                    if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
+                    if env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE") {
                         eprintln!(
                             "[reraise] oparg={} lasti={} current_last_ip={} next_ip={}",
                             oparg, lasti, frame.last_ip, frame.ip
@@ -5530,7 +6078,7 @@ impl Vm {
                         }
                     }
                 }
-                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
                     let active_tag = active_exception
                         .as_ref()
                         .map(|value| self.value_type_name_for_error(value))
@@ -5589,7 +6137,7 @@ impl Vm {
                 {
                     *top = exception.clone();
                 }
-                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
                     eprintln!(
                         "[match-exc-before] exception={} handler={}",
                         self.value_type_name_for_error(&exception),
@@ -5620,7 +6168,7 @@ impl Vm {
                         }
                     }
                 }
-                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
                     let active_tag = active_exception
                         .as_ref()
                         .map(|value| self.value_type_name_for_error(value))
@@ -5665,7 +6213,7 @@ impl Vm {
                 {
                     exception = recovered;
                 }
-                if std::env::var_os("PYRS_TRACE_CHECK_EXC").is_some() {
+                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
                     eprintln!(
                         "[check-exc-before-match] exception={} handler={}",
                         self.value_type_name_for_error(&exception),
@@ -5673,7 +6221,7 @@ impl Vm {
                     );
                 }
                 let matches = self.exception_matches(&exception, &handler_type)?;
-                if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
+                if env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE") {
                     eprintln!(
                         "[check-exc-match] exception={} handler={} -> {}",
                         self.value_type_name_for_error(&exception),
@@ -6100,7 +6648,7 @@ impl Vm {
             if let Some((target, depth, push_lasti)) =
                 Self::exception_handler_for_ip(frame, frame.last_ip)
             {
-                if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
+                if env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE") {
                     eprintln!(
                         "[exc-table] last_ip={} ip={} -> target={} depth={} push_lasti={} stack_len={}",
                         frame.last_ip,
@@ -6133,7 +6681,9 @@ impl Vm {
             }
 
             let frame = self.frames.pop().expect("frame exists");
-            self.cleanup_failed_module_frame(&frame);
+            if self.cleanup_failed_module_frame(&frame)? {
+                return Ok(());
+            }
             if let Some(owner) = frame.generator_owner {
                 self.generator_states.remove(&owner.id());
                 let _ = self.set_generator_running(&owner, false);
@@ -6153,7 +6703,7 @@ impl Vm {
         explicit_cause: Option<Value>,
     ) -> Result<(), RuntimeError> {
         let mut exc = self.normalize_exception_value(value)?;
-        if std::env::var_os("PYRS_TRACE_ASSERT_RAISE").is_some() {
+        if env_var_present_cached("PYRS_TRACE_ASSERT_RAISE") {
             let is_assertion = match &exc {
                 Value::Exception(exception) => exception.name == "AssertionError",
                 Value::ExceptionType(name) => name == "AssertionError",
@@ -6217,7 +6767,7 @@ impl Vm {
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
         let RuntimeError { message, exception } = err;
-        if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
+        if env_var_present_cached("PYRS_TRACE_IMPORT_PENDING") {
             let active = self
                 .frames
                 .last()
@@ -6234,6 +6784,25 @@ impl Vm {
                     )
                 })
                 .unwrap_or((0, None));
+            let (file, function_name, opcode_name) = self
+                .frames
+                .last()
+                .map(|frame| {
+                    let opcode_name = frame
+                        .code
+                        .instructions
+                        .get(frame.last_ip)
+                        .map(|instr| format!("{:?}", instr.opcode))
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    (frame.code.filename.clone(), frame.code.name.clone(), opcode_name)
+                })
+                .unwrap_or_else(|| {
+                    (
+                        "<no-frame>".to_string(),
+                        "<no-frame>".to_string(),
+                        "<unknown>".to_string(),
+                    )
+                });
             let block_len = self
                 .frames
                 .last()
@@ -6242,8 +6811,11 @@ impl Vm {
             eprintln!("[handle-runtime] msg={}", message);
             eprintln!("[handle-runtime] active={}", active);
             eprintln!(
-                "[handle-runtime] last_ip={} handler={handler:?} blocks={block_len}",
-                last_ip
+                "[handle-runtime] file={} fn={} ip={} opcode={} handler={handler:?} blocks={block_len}",
+                file,
+                function_name,
+                last_ip,
+                opcode_name,
             );
         }
         if let Some(exception) = exception {
@@ -6882,7 +7454,7 @@ impl Vm {
                 }
                 return Ok(ClassBuildOutcome::Value(class_value));
             };
-            if std::env::var_os("PYRS_TRACE_BUILD_CLASS").is_some() && name == "_TagInfo" {
+            if env_var_present_cached("PYRS_TRACE_BUILD_CLASS") && name == "_TagInfo" {
                 let base_debug = bases
                     .iter()
                     .map(|base| match &*base.kind() {
@@ -6963,7 +7535,7 @@ impl Vm {
         class: &ObjRef,
         class_keywords: &HashMap<String, Value>,
     ) -> Result<bool, RuntimeError> {
-        let trace_init_subclass = std::env::var_os("PYRS_TRACE_INIT_SUBCLASS").is_some();
+        let trace_init_subclass = env_var_present_cached("PYRS_TRACE_INIT_SUBCLASS");
         let mro = self.class_mro_entries(class);
         let init_subclass = mro
             .into_iter()
@@ -7069,6 +7641,8 @@ impl Vm {
         bases: Vec<ObjRef>,
         metaclass: Option<ObjRef>,
     ) -> Result<Value, RuntimeError> {
+        let mut attrs = attrs;
+        let class_cell = attrs.remove("__classcell__");
         let module_name = self
             .frames
             .last()
@@ -7080,6 +7654,21 @@ impl Vm {
         let class = ClassObject::new(name, bases.clone());
         let class_value = self.heap.alloc_class(class);
         if let Value::Class(class_ref) = &class_value {
+            if let Some(class_cell) = class_cell {
+                match class_cell {
+                    Value::Cell(cell) => {
+                        if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                            cell_data.value = Some(Value::Class(class_ref.clone()));
+                        }
+                    }
+                    other => {
+                        return Err(RuntimeError::type_error(format!(
+                            "__classcell__ must be a cell, got {}",
+                            self.value_type_name_for_error(&other)
+                        )));
+                    }
+                }
+            }
             if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
                 class_data.attrs.extend(attrs);
                 class_data.metaclass = metaclass;
@@ -7417,7 +8006,26 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new("cell index out of range"))?;
         match &mut *cell.kind_mut() {
             Object::Cell(cell_data) => {
-                cell_data.value = Some(value);
+                cell_data.value = Some(value.clone());
+                if idx < frame.code.cellvars.len()
+                    && let Some(name) = frame.code.cellvars.get(idx)
+                    && let Some(slot_idx) = frame.code.name_to_index.get(name).copied()
+                {
+                    if let Some(slot) = frame.fast_locals.get_mut(slot_idx) {
+                        match slot {
+                            Some(Value::Cell(existing_cell)) if existing_cell.id() == cell.id() => {}
+                            Some(Value::Cell(_)) => {
+                                *slot = Some(Value::Cell(cell.clone()));
+                            }
+                            Some(_) | None => {
+                                *slot = Some(Value::Cell(cell.clone()));
+                            }
+                        }
+                    }
+                    if let Some(existing) = frame.locals.get_mut(name) {
+                        *existing = value;
+                    }
+                }
                 Ok(())
             }
             _ => Err(RuntimeError::new("invalid cell object")),
@@ -7446,11 +8054,51 @@ impl Vm {
                 .get(idx)
                 .ok_or_else(|| RuntimeError::new("name index out of range"))?
                 .clone();
-            let value = frame.locals.get(&name).cloned();
+            let value = frame
+                .locals
+                .get(&name)
+                .cloned()
+                .or_else(|| {
+                    frame
+                        .code
+                        .cellvar_to_index
+                        .get(&name)
+                        .and_then(|cell_idx| frame.cells.get(*cell_idx))
+                        .and_then(|cell| match &*cell.kind() {
+                            Object::Cell(cell_data) => cell_data.value.clone(),
+                            _ => None,
+                        })
+                })
+                .or_else(|| {
+                    frame
+                        .code
+                        .freevars
+                        .iter()
+                        .position(|free_name| free_name == &name)
+                        .map(|free_idx| frame.code.cellvars.len() + free_idx)
+                        .and_then(|cell_idx| frame.cells.get(cell_idx))
+                        .map(|cell| Value::Cell(cell.clone()))
+                });
             (name, value)
         };
 
-        let value = value.ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))?;
+        let value = value.ok_or_else(|| {
+            if env_var_present_cached("PYRS_TRACE_FAST_LOCAL_UNBOUND")
+                && let Some(frame) = self.frames.last()
+            {
+                let location = frame.code.locations.get(frame.last_ip);
+                eprintln!(
+                    "[fast-local-unbound] fn={} file={} line={} col={} ip={} name={}",
+                    frame.code.name,
+                    frame.code.filename,
+                    location.map(|loc| loc.line).unwrap_or(0),
+                    location.map(|loc| loc.column).unwrap_or(0),
+                    frame.last_ip,
+                    name
+                );
+            }
+            RuntimeError::new(format!("local '{name}' not set"))
+        })?;
         if let Some(frame) = self.frames.last_mut()
             && let Some(slot) = frame.fast_locals.get_mut(idx)
         {
@@ -7474,9 +8122,51 @@ impl Vm {
                 .ok_or_else(|| RuntimeError::new("name index out of range"))?
                 .clone()
         };
+        let is_unbound_marker = self.is_fast_local_unbound_marker(&value);
         let frame = self.frames.last_mut().expect("frame exists");
+        if is_unbound_marker {
+            if let Some(slot) = frame.fast_locals.get_mut(idx) {
+                *slot = None;
+            } else {
+                return Err(RuntimeError::new("name index out of range"));
+            }
+            if let Some(cell_idx) = frame.code.cellvar_to_index.get(&name).copied()
+                && let Some(cell) = frame.cells.get(cell_idx)
+                && let Object::Cell(cell_data) = &mut *cell.kind_mut()
+            {
+                cell_data.value = None;
+            }
+            if let Some(free_idx) = frame.code.freevars.iter().position(|free| free == &name)
+                && let Some(cell) = frame.cells.get(frame.code.cellvars.len() + free_idx)
+                && let Object::Cell(cell_data) = &mut *cell.kind_mut()
+            {
+                cell_data.value = None;
+            }
+            frame.locals.remove(&name);
+            return Ok(());
+        }
         if let Some(slot) = frame.fast_locals.get_mut(idx) {
-            Self::write_fast_local_slot(slot, value.clone());
+            if let Some(cell_idx) = frame.code.cellvar_to_index.get(&name).copied()
+                && let Some(cell) = frame.cells.get(cell_idx)
+            {
+                if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                    cell_data.value = Some(value.clone());
+                }
+                if matches!(slot, Some(Value::Cell(_))) {
+                    // Fast-local slots for initialized cellvars store the cell object.
+                    // Keep that shape and update cell contents only.
+                } else {
+                    Self::write_fast_local_slot(slot, value.clone());
+                }
+            } else {
+                if let Some(free_idx) = frame.code.freevars.iter().position(|free| free == &name)
+                    && let Some(cell) = frame.cells.get(frame.code.cellvars.len() + free_idx)
+                    && let Object::Cell(cell_data) = &mut *cell.kind_mut()
+                {
+                    cell_data.value = Some(value.clone());
+                }
+                Self::write_fast_local_slot(slot, value.clone());
+            }
         } else {
             return Err(RuntimeError::new("name index out of range"));
         }
@@ -7486,7 +8176,7 @@ impl Vm {
         Ok(())
     }
 
-    pub(super) fn take_fast_local(&mut self, idx: usize) -> Result<Value, RuntimeError> {
+    fn take_fast_local_optional(&mut self, idx: usize) -> Result<(String, Option<Value>), RuntimeError> {
         let name = {
             let frame = self.frames.last().expect("frame exists");
             frame
@@ -7497,14 +8187,61 @@ impl Vm {
                 .clone()
         };
         let frame = self.frames.last_mut().expect("frame exists");
-        let value = if let Some(slot) = frame.fast_locals.get_mut(idx) {
-            slot.take()
+        let mut value = if let Some(slot) = frame.fast_locals.get_mut(idx) {
+            match slot {
+                Some(Value::Cell(cell)) if frame.code.cellvar_to_index.contains_key(&name) => {
+                    let mut cell_value = None;
+                    if let Object::Cell(cell_data) = &mut *cell.kind_mut() {
+                        cell_value = cell_data.value.take();
+                    }
+                    *slot = Some(Value::Cell(cell.clone()));
+                    cell_value
+                }
+                _ => slot.take(),
+            }
         } else {
             None
+        };
+        if value.is_none() {
+            value = frame.locals.remove(&name);
         }
-        .or_else(|| frame.locals.remove(&name));
+        if value.is_none()
+            && let Some(cell_idx) = frame.code.cellvar_to_index.get(&name).copied()
+            && let Some(cell) = frame.cells.get(cell_idx)
+            && let Object::Cell(cell_data) = &mut *cell.kind_mut()
+        {
+            value = cell_data.value.take();
+        }
+        if value.is_none()
+            && let Some(free_idx) = frame.code.freevars.iter().position(|free| free == &name)
+            && let Some(cell) = frame.cells.get(frame.code.cellvars.len() + free_idx)
+            && let Object::Cell(cell_data) = &mut *cell.kind_mut()
+        {
+            value = cell_data.value.take();
+        }
         frame.locals.remove(&name);
-        value.ok_or_else(|| RuntimeError::new(format!("local '{name}' not set")))
+        Ok((name, value))
+    }
+
+    pub(super) fn take_fast_local(&mut self, idx: usize) -> Result<Value, RuntimeError> {
+        let (name, value) = self.take_fast_local_optional(idx)?;
+        value.ok_or_else(|| {
+            if env_var_present_cached("PYRS_TRACE_FAST_LOCAL_UNBOUND")
+                && let Some(frame) = self.frames.last()
+            {
+                let location = frame.code.locations.get(frame.last_ip);
+                eprintln!(
+                    "[fast-local-unbound] fn={} file={} line={} col={} ip={} name={}",
+                    frame.code.name,
+                    frame.code.filename,
+                    location.map(|loc| loc.line).unwrap_or(0),
+                    location.map(|loc| loc.column).unwrap_or(0),
+                    frame.last_ip,
+                    name
+                );
+            }
+            RuntimeError::new(format!("local '{name}' not set"))
+        })
     }
 
     pub(super) fn ensure_frame_module_locals_dict(&mut self, frame_index: usize) -> ObjRef {

@@ -9,7 +9,7 @@ use super::{
     PyListIter_Type, PyLong_Type, PyMap_Type, PyMemoryView_Type, PyMethod_Type, PyModule_Type,
     PyNone_Type, PyRange_Type, PyRangeIter_Type, PySeqIter_Type, PySet_Type, PySetIter_Type,
     PySlice_Type, PySuper_Type, PyTuple_Type, PyTupleIter_Type, PyType_Type, PyUnicode_Type,
-    PyUnicodeIter_Type, cpython_exception_ptr_for_name,
+    PyUnicodeIter_Type, PyZip_Type, cpython_exception_ptr_for_name,
 };
 
 pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
@@ -39,6 +39,7 @@ pub(super) fn cpython_type_for_value(value: &Value) -> *mut c_void {
                 IteratorKind::Bytes(_) => std::ptr::addr_of_mut!(PyBytesIter_Type).cast(),
                 IteratorKind::ByteArray(_) => std::ptr::addr_of_mut!(PyByteArrayIter_Type).cast(),
                 IteratorKind::Map { .. } => std::ptr::addr_of_mut!(PyMap_Type).cast(),
+                IteratorKind::Zip { .. } => std::ptr::addr_of_mut!(PyZip_Type).cast(),
                 IteratorKind::RangeObject { .. } => std::ptr::addr_of_mut!(PyRange_Type).cast(),
                 IteratorKind::Range { .. } => std::ptr::addr_of_mut!(PyRangeIter_Type).cast(),
                 IteratorKind::CallIter { .. } => std::ptr::addr_of_mut!(PyCallIter_Type).cast(),

@@ -36,7 +36,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -456,6 +456,21 @@ fn env_flag_enabled(name: &str) -> bool {
     matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
 }
 
+fn env_var_present_cached(name: &'static str) -> bool {
+    static CACHE: OnceLock<Mutex<HashMap<&'static str, bool>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock()
+        && let Some(value) = guard.get(name)
+    {
+        return *value;
+    }
+    let present = std::env::var_os(name).is_some();
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(name, present);
+    }
+    present
+}
+
 struct Frame {
     code: Rc<CodeObject>,
     ip: usize,
@@ -797,6 +812,7 @@ pub struct Vm {
     next_synthetic_thread_ident: i64,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
+    fast_local_unbound_marker: Value,
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
 }
@@ -923,6 +939,19 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
+        let fast_local_unbound_marker = {
+            let marker_class = match heap.alloc_class(ClassObject::new(
+                "__pyrs_fast_local_unbound__".to_string(),
+                Vec::new(),
+            )) {
+                Value::Class(obj) => obj,
+                _ => unreachable!(),
+            };
+            match heap.alloc_instance(InstanceObject::new(marker_class)) {
+                Value::Instance(obj) => Value::Instance(obj),
+                _ => unreachable!(),
+            }
+        };
 
         let mut modules = HashMap::new();
         modules.insert("__main__".to_string(), main_module.clone());
@@ -1031,6 +1060,7 @@ impl Vm {
             next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
+            fast_local_unbound_marker,
             instruction_step_limit: std::env::var("PYRS_STEP_LIMIT")
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
@@ -5784,7 +5814,8 @@ fn value_to_bytes_payload(value: Value) -> Result<Vec<u8>, RuntimeError> {
                 }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
-                | IteratorKind::Cycle { .. } => {
+                | IteratorKind::Cycle { .. }
+                | IteratorKind::Zip { .. } => {
                     return Err(RuntimeError::type_error("expected bytes-like payload"));
                 }
             };
@@ -8301,7 +8332,15 @@ fn assign_binding(frame: &mut Frame, code: &CodeObject, name: &str, value: Value
         && let Some(cell) = frame.cells.get(idx)
         && let Object::Cell(cell_data) = &mut *cell.kind_mut()
     {
-        cell_data.value = Some(value);
+        cell_data.value = Some(value.clone());
+        if let Some(slot_idx) = code.name_to_index.get(name).copied()
+            && let Some(slot) = frame.fast_locals.get_mut(slot_idx)
+        {
+            *slot = Some(value.clone());
+        }
+        if let Some(existing) = frame.locals.get_mut(name) {
+            *existing = value;
+        }
         return;
     }
     if let Some(slot_idx) = code.name_to_index.get(name).copied() {

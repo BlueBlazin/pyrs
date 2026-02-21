@@ -1124,6 +1124,11 @@ pub enum IteratorKind {
         sources: Vec<Value>,
         exhausted: bool,
     },
+    Zip {
+        iterators: Vec<Value>,
+        strict: bool,
+        exhausted: bool,
+    },
     Range {
         current: BigInt,
         stop: BigInt,
@@ -1683,6 +1688,11 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
                     trace_value(source, stack, marked);
                 }
             }
+            IteratorKind::Zip { iterators, .. } => {
+                for iterator in iterators {
+                    trace_value(iterator, stack, marked);
+                }
+            }
             IteratorKind::SequenceGetItem { target, getitem } => {
                 trace_value(target, stack, marked);
                 trace_value(getitem, stack, marked);
@@ -1819,6 +1829,11 @@ fn clear_object_refs(obj: &ObjRef) {
                     values.clear();
                     iterators.clear();
                     sources.clear();
+                    iterator.kind = IteratorKind::Str(String::new());
+                    iterator.index = 0;
+                }
+                IteratorKind::Zip { iterators, .. } => {
+                    iterators.clear();
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
@@ -2876,6 +2891,7 @@ pub enum BuiltinFunction {
     InspectStaticGetMro,
     InspectGetDunderDictOfClass,
     TypesModuleType,
+    TypesFunctionType,
     TypesMappingProxy,
     TypesMethodType,
     TypesNewClass,
@@ -5884,6 +5900,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectStaticGetMro
             | BuiltinFunction::InspectGetDunderDictOfClass
             | BuiltinFunction::TypesModuleType
+            | BuiltinFunction::TypesFunctionType
             | BuiltinFunction::TypesMethodType
             | BuiltinFunction::TypesNewClass
             | BuiltinFunction::TypesCoroutine
@@ -6639,7 +6656,8 @@ fn iterable_values(source: Value) -> Result<Vec<Value>, RuntimeError> {
                 }
                 IteratorKind::CallIter { .. }
                 | IteratorKind::Count { .. }
-                | IteratorKind::Cycle { .. } => Err(RuntimeError::type_error("expected iterable")),
+                | IteratorKind::Cycle { .. }
+                | IteratorKind::Zip { .. } => Err(RuntimeError::type_error("expected iterable")),
             }
         }
         Value::Str(value) => Ok(value.chars().map(|ch| Value::Str(ch.to_string())).collect()),
@@ -7759,6 +7777,7 @@ fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
         BuiltinFunction::Property => Some("property"),
         BuiltinFunction::Super => Some("super"),
         BuiltinFunction::TypesModuleType => Some("module"),
+        BuiltinFunction::TypesFunctionType => Some("function"),
         BuiltinFunction::TypesMethodType => Some("method"),
         BuiltinFunction::TypesCoroutine => Some("coroutine"),
         _ => None,
@@ -7826,6 +7845,7 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::Property => "property".to_string(),
         BuiltinFunction::Super => "super".to_string(),
         BuiltinFunction::TypesModuleType => "ModuleType".to_string(),
+        BuiltinFunction::TypesFunctionType => "FunctionType".to_string(),
         BuiltinFunction::TypesMethodType => "MethodType".to_string(),
         BuiltinFunction::TypesCoroutine => "coroutine".to_string(),
         BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),

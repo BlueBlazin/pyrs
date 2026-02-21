@@ -5761,6 +5761,7 @@ impl Vm {
                     IteratorKind::Cycle { .. } => "cycle",
                     IteratorKind::Count { .. } => "count",
                     IteratorKind::Map { .. } => "map",
+                    IteratorKind::Zip { .. } => "zip",
                     IteratorKind::RangeObject { .. } => "range",
                     IteratorKind::Range { .. } => "range_iterator",
                     IteratorKind::SequenceGetItem { .. } => "iterator",
@@ -5782,6 +5783,10 @@ impl Vm {
             MapEvaluate {
                 func: Value,
                 iterators: Vec<Value>,
+            },
+            ZipEvaluate {
+                iterators: Vec<Value>,
+                strict: bool,
             },
             SequenceGetItem {
                 target: Value,
@@ -5983,6 +5988,19 @@ impl Vm {
                         iterators: iterators.clone(),
                     };
                 }
+                IteratorKind::Zip {
+                    iterators,
+                    strict,
+                    exhausted,
+                } => {
+                    if *exhausted {
+                        return Ok(None);
+                    }
+                    pending_step = PendingIteratorStep::ZipEvaluate {
+                        iterators: iterators.clone(),
+                        strict: *strict,
+                    };
+                }
                 IteratorKind::RangeObject { start, stop, step } => {
                     if step.is_zero() {
                         return Err(RuntimeError::value_error("range() arg 3 must not be zero"));
@@ -6079,6 +6097,81 @@ impl Vm {
                 {
                     values.push(value.clone());
                     state.index += 1;
+                    return Ok(Some(value));
+                }
+                Ok(None)
+            }
+            PendingIteratorStep::ZipEvaluate { iterators, strict } => {
+                if iterators.is_empty() {
+                    let mut iter = iterator_ref.kind_mut();
+                    if let Object::Iterator(state) = &mut *iter
+                        && let IteratorKind::Zip { exhausted, .. } = &mut state.kind
+                    {
+                        *exhausted = true;
+                    }
+                    return Ok(None);
+                }
+
+                let mut tuple_items = Vec::with_capacity(iterators.len());
+                for (idx, iterator) in iterators.iter().enumerate() {
+                    match self.next_from_iterator_value(iterator)? {
+                        GeneratorResumeOutcome::Yield(value) => tuple_items.push(value),
+                        GeneratorResumeOutcome::Complete(_) => {
+                            let mut iter = iterator_ref.kind_mut();
+                            if let Object::Iterator(state) = &mut *iter
+                                && let IteratorKind::Zip { exhausted, .. } = &mut state.kind
+                            {
+                                *exhausted = true;
+                            }
+                            if !strict {
+                                return Ok(None);
+                            }
+
+                            if idx > 0 {
+                                let plural = if idx == 1 { " " } else { "s 1-" };
+                                return Err(RuntimeError::value_error(format!(
+                                    "zip() argument {} is shorter than argument{}{}",
+                                    idx + 1,
+                                    plural,
+                                    idx
+                                )));
+                            }
+
+                            for follow_idx in 1..iterators.len() {
+                                match self.next_from_iterator_value(&iterators[follow_idx])? {
+                                    GeneratorResumeOutcome::Yield(_) => {
+                                        let plural = if follow_idx == 1 { " " } else { "s 1-" };
+                                        return Err(RuntimeError::value_error(format!(
+                                            "zip() argument {} is longer than argument{}{}",
+                                            follow_idx + 1,
+                                            plural,
+                                            follow_idx
+                                        )));
+                                    }
+                                    GeneratorResumeOutcome::Complete(_) => {}
+                                    GeneratorResumeOutcome::PropagatedException => {
+                                        return Err(self.iteration_error_from_state(
+                                            "zip() iteration failed",
+                                        )?);
+                                    }
+                                }
+                            }
+                            return Ok(None);
+                        }
+                        GeneratorResumeOutcome::PropagatedException => {
+                            return Err(self.iteration_error_from_state(
+                                "zip() iteration failed",
+                            )?);
+                        }
+                    }
+                }
+
+                let value = self.heap.alloc_tuple(tuple_items);
+                let mut iter = iterator_ref.kind_mut();
+                if let Object::Iterator(state) = &mut *iter
+                    && let IteratorKind::Zip { .. } = &mut state.kind
+                {
+                    state.index = state.index.saturating_add(1);
                     return Ok(Some(value));
                 }
                 Ok(None)
@@ -7322,6 +7415,7 @@ impl Vm {
                 self.builtin_inspect_get_dunder_dict_of_class(args, kwargs)
             }
             BuiltinFunction::TypesModuleType => self.builtin_types_moduletype(args, kwargs),
+            BuiltinFunction::TypesFunctionType => self.builtin_types_functiontype(args, kwargs),
             BuiltinFunction::TypesMethodType => self.builtin_types_methodtype(args, kwargs),
             BuiltinFunction::TypesCoroutine => self.builtin_types_coroutine(args, kwargs),
             BuiltinFunction::TypesNewClass => self.builtin_types_new_class(args, kwargs),

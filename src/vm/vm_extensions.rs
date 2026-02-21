@@ -8849,18 +8849,8 @@ impl ModuleCapiContext {
         match payload {
             Some(SyncPayload::Tuple(item_ptrs)) => {
                 let trace_raw = std::env::var_os("PYRS_TRACE_CPY_TUPLE_RAW").is_some();
-                let existing_values = self
-                    .objects
-                    .get(&handle)
-                    .and_then(|slot| match &slot.value {
-                        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
-                            Object::Tuple(items) => Some(items.clone()),
-                            _ => None,
-                        },
-                        _ => None,
-                    })
-                    .unwrap_or_default();
                 let mut values = Vec::with_capacity(item_ptrs.len());
+                let mut fallback_indices = Vec::new();
                 for (idx, item_ptr) in item_ptrs.iter().copied().enumerate() {
                     if item_ptr.is_null() {
                         if trace_raw {
@@ -8869,7 +8859,8 @@ impl ModuleCapiContext {
                                 handle, ptr, idx
                             );
                         }
-                        values.push(existing_values.get(idx).cloned().unwrap_or(Value::None));
+                        fallback_indices.push(idx);
+                        values.push(Value::None);
                         continue;
                     }
                     match self.cpython_value_from_ptr_or_proxy(item_ptr) {
@@ -8893,7 +8884,23 @@ impl ModuleCapiContext {
                                     handle, ptr, idx, item_ptr
                                 );
                             }
-                            values.push(existing_values.get(idx).cloned().unwrap_or(Value::None))
+                            fallback_indices.push(idx);
+                            values.push(Value::None)
+                        }
+                    }
+                }
+                if !fallback_indices.is_empty()
+                    && let Some(existing_values) = self.objects.get(&handle).and_then(|slot| match &slot.value {
+                        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                            Object::Tuple(items) => Some(items.clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                {
+                    for idx in fallback_indices {
+                        if let Some(existing) = existing_values.get(idx) {
+                            values[idx] = existing.clone();
                         }
                     }
                 }
@@ -8905,27 +8912,34 @@ impl ModuleCapiContext {
                 }
             }
             Some(SyncPayload::List(item_ptrs)) => {
-                let existing_values = self
-                    .objects
-                    .get(&handle)
-                    .and_then(|slot| match &slot.value {
+                let mut values = Vec::with_capacity(item_ptrs.len());
+                let mut fallback_indices = Vec::new();
+                for (idx, item_ptr) in item_ptrs.into_iter().enumerate() {
+                    if item_ptr.is_null() {
+                        fallback_indices.push(idx);
+                        values.push(Value::None);
+                        continue;
+                    }
+                    match self.cpython_value_from_ptr_or_proxy(item_ptr) {
+                        Some(value) => values.push(value),
+                        None => {
+                            fallback_indices.push(idx);
+                            values.push(Value::None)
+                        }
+                    }
+                }
+                if !fallback_indices.is_empty()
+                    && let Some(existing_values) = self.objects.get(&handle).and_then(|slot| match &slot.value {
                         Value::List(list_obj) => match &*list_obj.kind() {
                             Object::List(items) => Some(items.clone()),
                             _ => None,
                         },
                         _ => None,
                     })
-                    .unwrap_or_default();
-                let mut values = Vec::with_capacity(item_ptrs.len());
-                for (idx, item_ptr) in item_ptrs.into_iter().enumerate() {
-                    if item_ptr.is_null() {
-                        values.push(existing_values.get(idx).cloned().unwrap_or(Value::None));
-                        continue;
-                    }
-                    match self.cpython_value_from_ptr_or_proxy(item_ptr) {
-                        Some(value) => values.push(value),
-                        None => {
-                            values.push(existing_values.get(idx).cloned().unwrap_or(Value::None))
+                {
+                    for idx in fallback_indices {
+                        if let Some(existing) = existing_values.get(idx) {
+                            values[idx] = existing.clone();
                         }
                     }
                 }

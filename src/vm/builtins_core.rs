@@ -7169,28 +7169,34 @@ impl Vm {
     pub(super) fn builtin_zip(
         &mut self,
         args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let strict = if let Some(strict_value) = kwargs.remove("strict") {
+            self.truthy_from_value(&strict_value)?
+        } else {
+            false
+        };
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("zip() does not accept keyword arguments"));
+            let mut keys = kwargs.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            let key = keys.first().cloned().unwrap_or_default();
+            return Err(RuntimeError::type_error(format!(
+                "zip() got an unexpected keyword argument '{}'",
+                key
+            )));
         }
-        if args.is_empty() {
-            return Ok(self.heap.alloc_list(Vec::new()));
-        }
-        let mut columns = Vec::with_capacity(args.len());
+        let mut iterators = Vec::with_capacity(args.len());
         for source in args {
-            columns.push(self.collect_iterable_values(source)?);
+            iterators.push(self.to_iterator_value(source)?);
         }
-        let len = columns.iter().map(Vec::len).min().unwrap_or(0);
-        let mut rows = Vec::with_capacity(len);
-        for idx in 0..len {
-            let mut tuple_items = Vec::with_capacity(columns.len());
-            for col in &columns {
-                tuple_items.push(col[idx].clone());
-            }
-            rows.push(self.heap.alloc_tuple(tuple_items));
-        }
-        Ok(self.heap.alloc_list(rows))
+        Ok(self.heap.alloc_iterator(IteratorObject {
+            kind: IteratorKind::Zip {
+                iterators,
+                strict,
+                exhausted: false,
+            },
+            index: 0,
+        }))
     }
 
     pub(super) fn is_callable_value(&self, value: &Value) -> bool {

@@ -1,12 +1,12 @@
 use super::{
-    BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
-    InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
-    RuntimeError, Value, Vm, builtin_exception_parent, dict_get_value, dict_set_value_checked,
-    ensure_hashable, format_repr, memoryview_bounds, memoryview_decode_element,
-    memoryview_element_offset, memoryview_format_for_view, memoryview_layout_1d,
-    memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts, module_globals_version,
-    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices, value_from_bigint,
-    value_to_bytes_payload, value_to_int, with_bytes_like_source,
+    AttrAccessOutcome, BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome,
+    HashMap, InstanceObject, InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind,
+    ObjRef, Object, Ordering, RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup,
+    dict_get_value, dict_set_value_checked, ensure_hashable, format_repr, memoryview_bounds,
+    memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
+    memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
+    module_globals_version, runtime_error_matches_exception, slice_bounds_for_step_one,
+    slice_indices, value_from_bigint, value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
 use crate::runtime::SliceValue;
 
@@ -1733,6 +1733,52 @@ impl Vm {
             eprintln!("[build-class] name={} base_classes=[{}]", name, base_names);
         }
 
+        let class_metaclass = metaclass.filter(|value| !matches!(value, Value::None));
+        let resolved_metaclass =
+            self.resolve_class_metaclass(&base_classes, class_metaclass.as_ref())?;
+        let effective_metaclass = class_metaclass
+            .clone()
+            .or_else(|| resolved_metaclass.map(Value::Class));
+        let mut prepared_namespace = self.heap.alloc_dict(Vec::new());
+        if let Some(Value::Class(meta_class)) = effective_metaclass
+            && class_attr_lookup(&meta_class, "__prepare__").is_some()
+        {
+            let prepare_callable = match self.load_attr_class(&meta_class, "__prepare__")? {
+                AttrAccessOutcome::Value(value) => value,
+                AttrAccessOutcome::ExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "metaclass __prepare__ lookup failed",
+                    ));
+                }
+            };
+            let bases_tuple = self.heap.alloc_tuple(
+                base_classes
+                    .iter()
+                    .cloned()
+                    .map(Value::Class)
+                    .collect::<Vec<_>>(),
+            );
+            prepared_namespace = match self.call_internal(
+                prepare_callable,
+                vec![Value::Str(name.clone()), bases_tuple],
+                kwargs.clone(),
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "metaclass __prepare__ call failed",
+                    ));
+                }
+            };
+            if self
+                .class_namespace_backing_dict(&prepared_namespace)
+                .is_none()
+            {
+                return Err(RuntimeError::new(
+                    "metaclass __prepare__() must return a mapping",
+                ));
+            }
+        }
         let class_module = match self.heap.alloc_module(ModuleObject::new(name.clone())) {
             Value::Module(obj) => obj,
             _ => unreachable!(),
@@ -1740,7 +1786,10 @@ impl Vm {
         if let Object::Module(module_data) = &mut *class_module.kind_mut() {
             module_data
                 .globals
-                .insert("__name__".to_string(), Value::Str(name));
+                .insert("__name__".to_string(), Value::Str(name.clone()));
+            module_data
+                .globals
+                .insert("__qualname__".to_string(), Value::Str(name));
         }
 
         let outer_globals = func_data.module.clone();
@@ -1761,13 +1810,15 @@ impl Vm {
         frame.function_globals_version = module_globals_version(&outer_globals);
         frame.globals_fallback = Some(outer_globals);
         frame.locals_fallback = outer_locals;
+        frame.class_namespace = Some(prepared_namespace.clone());
+        frame.module_locals_dict = self.class_namespace_backing_dict(&prepared_namespace);
         frame.locals.insert(
             "__classdict__".to_string(),
             self.heap.alloc_dict(Vec::new()),
         );
         frame.return_class = true;
         frame.class_bases = base_classes;
-        frame.class_metaclass = metaclass.filter(|value| !matches!(value, Value::None));
+        frame.class_metaclass = class_metaclass;
         frame.class_keywords = kwargs;
         self.frames.push(Box::new(frame));
         Ok(None)

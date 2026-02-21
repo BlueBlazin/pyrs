@@ -13,7 +13,8 @@ use super::{
     PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError, PyExc_TypeError, PyLong_AsSsize_t,
     PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string, cpython_builtin_type_name_for_ptr,
     cpython_call_builtin, cpython_call_object, cpython_error_message_indicates_missing_attribute,
-    cpython_exception_value_from_ptr, cpython_lookup_interned_unicode_text,
+    cpython_exception_value_from_ptr, cpython_is_interned_unicode_ptr,
+    cpython_lookup_interned_unicode_text,
     cpython_mapping_ass_subscript_slot, cpython_mapping_subscript_slot, cpython_new_ptr_for_value,
     cpython_sequence_item_slot, cpython_set_error, cpython_set_typed_error,
     cpython_slice_bounds_step_one, cpython_slice_indices_for_len,
@@ -946,11 +947,13 @@ fn cpython_debug_tuple_raw_ptrs(
 }
 
 fn cpython_unicode_text_from_ptr_for_compare(object: *mut c_void) -> Option<String> {
+    if cpython_is_interned_unicode_ptr(object) {
+        return cpython_lookup_interned_unicode_text(object);
+    }
     with_active_cpython_context_mut(|context| {
         context
             .cpython_value_from_ptr(object)
             .and_then(|value| cpython_unicode_text_from_value(&value))
-            .or_else(|| cpython_lookup_interned_unicode_text(object))
     })
     .ok()
     .flatten()
@@ -986,7 +989,7 @@ fn cpython_pointer_is_known_for_richcompare_slot(
         || raw == std::ptr::addr_of!(_Py_NotImplementedStruct) as usize
         || cpython_builtin_type_name_for_ptr(object).is_some()
         || cpython_exception_value_from_ptr(raw).is_some()
-        || cpython_lookup_interned_unicode_text(object).is_some()
+        || cpython_is_interned_unicode_ptr(object)
         || context.cpython_handle_from_ptr(object).is_some()
     {
         return true;
