@@ -268,7 +268,7 @@ Traceback rendering happens only at boundary points:
 
 - CLI output
 - unraisable hook/log paths
-- C-API bridges that need text (`PyErr_*` compat glue)
+- C-API boundary surfaces that still need text (`PyErr_*` compat glue)
 
 Internal VM flow should never need `format_traceback(...)->String` as transport.
 
@@ -318,7 +318,7 @@ Keep compatibility by adding one rendering helper:
 
 - `err.render_for_capi()` -> CPython-like text
 
-This allows typed internals while preserving bridge behavior.
+This allows typed internals while preserving C-API boundary behavior.
 
 ## Migration Phases
 
@@ -347,7 +347,7 @@ Convert largest producers/consumers first:
 ### Phase 3 (Stdlib + Extension Bridges)
 
 1. Convert `csv`, `sqlite3`, `pickle`, `re`, `expat`, etc. branching logic.
-2. Convert CPython bridge surfaces to use typed-to-string rendering only at boundary.
+2. Convert CPython C-API boundary surfaces to use typed-to-string rendering only at boundary.
 
 ### Phase 4 (Delete Legacy)
 

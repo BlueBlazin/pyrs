@@ -98,7 +98,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `import numpy.random` now succeeds in direct mode.
   - direct `numpy.random.MT19937()` construction now succeeds.
   - `numpy.random.default_rng()` is currently regressed:
-    - `TypeError: raise: exception class must be a subclass of BaseException`.
+    - `extension 'numpy.random._bounded_integers' ... Py_mod_exec failed` with nested `numpy.random.bit_generator` init failure.
   - active blocker root-cause lane:
     - CPython 3.14 fast-thread-state exception-indicator synchronization (`PyThreadState.current_exception` parity across `PyErr_*` flows).
   - root-cause closures landed:

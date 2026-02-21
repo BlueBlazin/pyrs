@@ -10,7 +10,9 @@ Status:
 
 ## Release Gate Policy
 - Functional closure is Milestone 13.
+- Native extension ecosystem closure is Milestone 15.
 - Performance/architecture hardening is Milestone 14.
+- Final release certification is Milestone 16.
 - No blocker is considered closed without tests and documented evidence.
 
 ## P0 Release Blockers

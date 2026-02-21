@@ -27,44 +27,46 @@ It is intentionally state-oriented, not a historical changelog.
 | 10 | Async/concurrency foundations | Complete |
 | 11 | Test/parity gate infrastructure | Complete |
 | 12 | Curated language/import harness closure | Complete |
-| 13 | Long-tail parity + stdlib usability closure | In Progress |
+| 13 | Long-tail parity + stdlib usability closure | In Progress (background) |
 | 14 | Performance + observability + architecture hardening | Pending |
-| 15 | Native extension ecosystem compatibility | Pending |
+| 15 | Native extension ecosystem compatibility | In Progress (active) |
 | 16 | Release hardening/certification | Pending |
 
-## Active Milestone: 13
+## Active Execution Lock: Milestone 15
 
 ### Exit Criteria
-Milestone 13 is complete only when all are true:
-1. P0 blockers in `docs/PRODUCTION_READINESS.md` are closed.
-2. Milestone-13 P0 rows in `docs/STUB_ACCOUNTING.md` are closed.
-3. Active strict stdlib lane is green with empty allowlist.
-4. Deferred strict pickle lane is re-enabled and green.
-5. Engineering gates in `docs/ENGINEERING_GATES.md` are satisfied for Milestone 13 scope.
-6. Builtin parity gate (`docs/BUILTIN_PARITY.md`) is green with empty allowlists.
+Milestone 15 is complete only when all are true:
+1. Extension capability matrix P0 rows are closed (`docs/EXTENSION_CAPABILITY_MATRIX.md`).
+2. `docs/NUMPY_BRINGUP_GATE.md` base gates are green and scientific-stack blockers are either closed or explicitly downgraded with accepted scope.
+3. C-API lifetime-model closure criteria are satisfied (`docs/CAPI_LIFETIME_MODEL.md`).
+4. No bridge fallback/shim-only workaround is required for primary scientific-stack gates.
 
 ### Implementation Strategy
-1. Native-core-first, then strict pure-stdlib expansion.
-2. Use CPython sources as implementation references:
-   - `Modules/*.c`
-   - `Objects/*.c`
-   - `Lib/*.py`
-3. Prefer official pure-Python stdlib modules for high-level semantics.
-4. Keep native VM stdlib code as accelerator/runtime substrate only.
-5. Track all partial behavior in `docs/STUB_ACCOUNTING.md`.
+1. CPython-semantics-first; no pyrs-specific behavior where CPython differs.
+2. Substrate-first closure: fix shared C-API/runtime invariants before per-module symptoms.
+3. Keep pointer ownership and lifetime authority in the VM-global registry.
+4. Update docs + tests + probe artifacts in the same checkpoint.
 
 ### Workstreams
-- Runtime/native core parity:
-  - `_io`, `_csv`, `_sre`, `_pickle`
-  - translated `.pyc` long-tail opcode/state parity closure (exception-table runtime baseline is landed)
-  - object-model protocol long-tail parity
-- Pure-stdlib handoff:
-  - make CPython pure modules the default behavior path where feasible
-  - retire temporary shims once parity blockers close
-- Gate-driven closure:
-  - targeted unit/regression tests
-  - curated + strict harness lanes
-  - differential tests against CPython
+- C-API substrate:
+  - lifetime/ownership invariants
+  - exception-indicator/thread-state parity
+  - type/call/descriptor parity
+- Scientific-stack bring-up:
+  - NumPy direct-mode blockers first
+  - pandas/scipy/matplotlib closure after NumPy random stack is stable
+- Quality gates:
+  - targeted regression tests in `tests/vm.rs`
+  - probe artifacts in `perf/numpy_gate_direct_latest.json`
+  - CI gate integration and stability lanes
+
+## Milestone 13 (Still Open)
+
+Milestone 13 remains open and is tracked in parallel for stdlib/runtime long-tail parity.
+Its closure criteria remain in:
+- `docs/PRODUCTION_READINESS.md`
+- `docs/STUB_ACCOUNTING.md`
+- `docs/ENGINEERING_GATES.md`
 
 ## Milestone 14 (Performance and Architecture)
 Deliverables:

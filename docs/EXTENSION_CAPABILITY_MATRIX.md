@@ -49,9 +49,9 @@ Legend:
 | Gate | Status | Owner | Evidence | Notes |
 |---|---|---|---|---|
 | Extension smoke gate (compiled native fixture + `hello_ext`) | DONE | VM/extensions | `tests/extension_smoke.rs` + CI `Extension smoke lane` | CI covers manifest-only, compiled-manifest, direct shared-object, tagged-filename, len/getitem + iterator + mixed-surface cross-API fixtures, invalid-handle resilience fixture, and error-path fixtures. |
-| NumPy import gate (`import numpy`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` + `perf/numpy_gate_direct_latest.json` + CI `NumPy direct-mode probe (non-blocking)` | Direct-mode probing is active; current first blocker is unresolved CPython C-API symbol surface (`PyBaseObject_Type` and wider type/runtime exports). |
-| NumPy ndarray smoke (`np.array([...]).sum()`) | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` + `perf/numpy_gate_direct_latest.json` | Direct-mode ndarray smoke remains blocked behind broader CPython C-ABI/object-model closure. |
-| Pandas/matplotlib/scipy smoke gates | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py --include-scientific-stack --probe-local-stack` + `perf/numpy_gate_direct_latest.json` | Direct-mode scientific-stack probes are active and currently blocked by shared CPython C-ABI/runtime gaps; no CPython bridge fallback remains. |
+| NumPy import gate (`import numpy`) | DONE | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` + `perf/numpy_gate_direct_latest.json` + CI `NumPy direct-mode probe (non-blocking)` | Direct-mode import baseline is green; keep this green while closing random/scientific-stack blockers. |
+| NumPy ndarray smoke (`np.array([...]).sum()`) | DONE | milestone-15 bring-up | `scripts/probe_numpy_gate.py` + `docs/NUMPY_BRINGUP_GATE.md` + `perf/numpy_gate_direct_latest.json` | Direct-mode ndarray baseline is green (`int(np.array([1,2,3]).sum()) == 6`). |
+| Pandas/matplotlib/scipy smoke gates | IN PROGRESS | milestone-15 bring-up | `scripts/probe_numpy_gate.py --include-scientific-stack --probe-local-stack` + `perf/numpy_gate_direct_latest.json` | Direct-mode scientific-stack probes remain blocked by remaining CPython C-ABI/runtime parity gaps (current first lane is `numpy.random.default_rng()` init path). |
 
 ## Policy
 

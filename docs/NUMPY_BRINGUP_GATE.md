@@ -2,11 +2,11 @@
 
 Status: active (Milestone 15).
 
-Purpose: track direct native-extension execution gates for NumPy and the scientific stack.
+Purpose: track direct native-extension execution gates for NumPy and scientific-stack bring-up.
 
 Execution model: see `docs/CAPI_PLAN.md`.
 - Lane A: Stable ABI (`abi3`) closure.
-- Lane B: explicit non-abi3 surfaces required by NumPy/scientific stack.
+- Lane B: non-`abi3` CPython C-API/runtime surfaces required by real scientific-stack wheels.
 
 ## Gate Definitions
 
@@ -24,16 +24,16 @@ Execution model: see `docs/CAPI_PLAN.md`.
      - `assert nt.float64 is not None`
      - `assert nt.bool_ is not None`
 
-These are intentionally small but strict: they verify import path + first ndarray runtime path.
-
-Optional scientific-stack cases are also available via `--include-scientific-stack`:
+Optional scientific-stack probe cases (`--include-scientific-stack`):
 - `scipy_import`
 - `pandas_import`
 - `pandas_series_sum`
 - `matplotlib_import`
 - `matplotlib_pyplot_smoke`
 
-## Import-Probe Command
+## Probe Commands
+
+Base gate:
 
 ```bash
 python3 scripts/probe_numpy_gate.py \
@@ -43,50 +43,7 @@ python3 scripts/probe_numpy_gate.py \
   --timeout 20
 ```
 
-Optional strict mode (`--strict`) returns non-zero if any gate fails.
-
-## Local-Install Probe Mode
-
-To distinguish environment absence (`module-not-found`) from runtime ABI issues, you can probe a local Python for an installed NumPy and reuse its site-packages root:
-
-```bash
-python3 scripts/probe_numpy_gate.py \
-  --pyrs target/debug/pyrs \
-  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
-  --probe-local-numpy \
-  --python-probe-bin python3 \
-  --out perf/numpy_gate_local_probe_latest.json \
-  --timeout 20
-```
-
-Report field:
-- `local_numpy_probe.status = FOUND|NOT_FOUND|ERROR|SKIP`
-- `local_module_probe.modules.<name>.status = FOUND|NOT_FOUND`
-
-When `FOUND`, the probe injects the detected site-packages root into `PYTHONPATH` for gate cases.
-
-## Source-Build Bring-Up Command
-
-When a local NumPy source checkout is available, run:
-
-```bash
-python3 scripts/probe_numpy_gate.py \
-  --pyrs target/debug/pyrs \
-  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
-  --numpy-src /path/to/numpy/source/tree \
-  --python-build-bin python3 \
-  --build-timeout 1800 \
-  --out perf/numpy_gate_source_build_latest.json \
-  --timeout 30
-```
-
-This performs:
-1. Source-build attempt (`pip install --target ...`) from the provided NumPy source tree.
-2. `import numpy` + first ndarray smoke against the resulting site-packages path.
-
-If `--numpy-src` does not exist, the build stage is recorded as `SKIP` and the report still captures runtime probe results.
-
-## Scientific-Stack Probe Command (Direct Mode)
+Direct-mode gate + scientific stack:
 
 ```bash
 python3 scripts/probe_numpy_gate.py \
@@ -99,141 +56,60 @@ python3 scripts/probe_numpy_gate.py \
   --timeout 30
 ```
 
-If a probed local module is not installed, its dependent cases are recorded as `SKIP` rather than `FAIL`.
+Local site-packages probe mode:
 
-## Current Expected State
+```bash
+python3 scripts/probe_numpy_gate.py \
+  --pyrs target/debug/pyrs \
+  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --probe-local-numpy \
+  --python-probe-bin python3 \
+  --out perf/numpy_gate_local_probe_latest.json \
+  --timeout 20
+```
 
-- 2026-02-21 NumPy random-init checkpoint (latest):
-  - `import numpy.random` now succeeds in direct mode.
-  - direct `numpy.random.MT19937()` construction now succeeds (new regression:
-    `tests/vm.rs::numpy_random_mt19937_initializer_runs_without_seedsequence_failures`).
-  - `numpy.random.default_rng()` is currently blocked again (direct mode):
-    - `TypeError: raise: exception class must be a subclass of BaseException`
-    - active root-cause lane is CPython 3.14 fast-thread-state exception-indicator synchronization (`PyThreadState.current_exception` vs C-API error APIs).
-  - root-cause closures in C-API substrate:
-    - `PyType_Ready` now installs a class-level `__init__` slot wrapper when `tp_init` exists and the type dict does not already define `__init__`.
-    - method-descriptor `tp_call` now handles unbound `METH_METHOD` receiver shapes where the defining class is passed before the explicit instance argument.
-  - remaining `numpy.random` long-tail blocker:
-    - generator method calls (for example `rng.integers(...)` / `rng.random()`) currently fail in direct mode with
-      `TypeError: unsupported format string passed to Int64DType.__format__` / `Float64DType.__format__`.
-- 2026-02-21 lifetime-model hardening checkpoint (P0):
-  - fixed deterministic post-NumPy teardown aborts (`SIGABRT` / pointer-not-allocated in `Vm::drop`) by closing stale-owned-pointer paths:
-    - list-buffer `realloc` now migrates registry/pin state when buffer addresses move,
-    - context-drop free paths now remove compat/list-buffer/aux pointers from owned-pointer sets before free.
-  - fixed external-proxy iterator gating regression:
-    - owned-pointer checks are now provenance-specific (`OwnedCompat` only) and no longer misclassify externally pinned proxies as non-iterable,
-    - `iter(np.arange(...))` now works again in direct mode.
-  - repr parity closure:
-    - `repr(np.arange(0, 10, 0.5))` now routes through NumPy arrayprint semantics again (no placeholder fallback),
-    - `tests/vm.rs::numpy_float_ndarray_repr_does_not_fall_back_to_instance_placeholder` is now passing.
-  - stress evidence:
-    - `cargo test -q --test vm numpy_repeated_axis_sum_remains_stable_across_calls -- --exact` passes repeatedly.
-    - `cargo test -q --test vm numpy_axis_sum_and_repr_stress_stays_stable -- --exact` passes.
-- 2026-02-20 lifetime-model checkpoint (P0):
-  - scientific-stack direct mode now has an explicit lifetime-safety lock tracked in
-    `docs/CAPI_LIFETIME_MODEL.md`.
-  - root issue: CPython-compat wrapper lifetime currently mixes context-scoped frees with
-    refcount-scoped extension usage, which can produce use-after-free class failures in repeated
-    NumPy call paths.
-  - immediate policy:
-    - treat temporary wrapper pinning as crash containment only,
-    - migrate to VM-global CAPI object registry + explicit borrowed/new/stolen ownership,
-    - do not close scientific-stack milestones until lifetime-model closure criteria are green.
-  - latest hardening in this lane:
-    - NumPy UAF stress probes added (`numpy_axis_sum_and_repr_stress_stays_stable`,
-      `numpy_repeated_array_ops_and_reprs_stay_stable` in `tests/vm.rs`),
-    - ASan CI lane added (`sanitizer-stability` job in `.github/workflows/parity-gate.yml`).
-- 2026-02-19 import-state checkpoint:
-  - fixed source-module failure cleanup so failed imports no longer leave partial modules in `sys.modules` (tracked via internal module-initializing marker + unwind cleanup).
-  - concrete closure: after `import numpy`, attempting `import ctypes` now raises `ModuleNotFoundError: module '_ctypes' not found` (no stale partial `ctypes` module with missing `CFUNCTYPE`).
-- 2026-02-20 import-state checkpoint:
-  - removed the bootstrap `abc` shim (`ABCMeta = type`) so stdlib now uses CPython `Lib/abc.py` + native `_abc` substrate.
-  - `tp_getattro` metatype paths now bind metaclass descriptors against the original class object (fixes `ABCMeta.register` argument binding semantics).
-  - proxy type-probability gating now accepts transient Cython metatype pointers with `ob_refcnt==0` only when their metatype chain still validates as a real `type` lineage.
-  - SciPy direct-mode blocker has moved forward to:
-    - `ModuleNotFoundError: module '_ctypes' not found` from `scipy._lib._ccallback_c` init.
-- 2026-02-19 checkpoint (current):
-  - closed direct blockers hit in the latest scientific-stack pass:
-    - `PyBytes_Resize` + `_PyBytes_Resize` exported and kept alive (Mach-O symbol closure for Pillow/matplotlib dependency chain),
-    - `PyGen_Type` exported in type-surface baseline,
-    - `inspect.getdoc` exposed in bootstrap inspect module,
-    - `set.remove` surfaced with `KeyError` miss semantics,
-    - `property()` now accepts keyword arguments (`fget`/`fset`/`fdel`/`doc`),
-    - namedtuple runtime parity improved for defaults + `super().__new__(cls, ...)` subclass flows,
-    - slice assignment now falls back to `__setitem__` for instance/proxy targets.
-  - current P0 blocker:
-    - `import matplotlib` / `import matplotlib._c_internal_utils` currently exits with `SIGSEGV` (`139`).
-    - trace runs show repeated `_multiarray_umath.add_docstring` extension-call traffic before failure; crash analysis remains active in Lane B.
-- CPython ABI bridge mode has been removed; probes run in direct mode only.
-- Lane B remains required even with Lane A progress; local NumPy artifacts are currently `cp314-cp314` wheels (not abi3-only wheels).
-- Import-probe and source-build modes both produce actionable failure diagnostics in JSON.
-- Local-install probe mode helps classify failures as environment/setup (`NOT_FOUND`) vs substrate/ABI (`missing-symbol`, `abi-mismatch`, `init-failure`).
-- Probe output classifies common failure kinds (`module-not-found`, `missing-symbol`, `abi-mismatch`, `init-failure`) to guide C-API/loader closure work.
-- Dynamic-link symbol closure for `_multiarray_umath` is now in place (public `Py*` and internal `_Py*` surfaces exported by `pyrs`).
-- Latest direct-mode gate status (`perf/numpy_gate_direct_latest.json`):
-  - `numpy_import`: `PASS`
-  - `numpy_ndarray_sum`: `PASS` (`int(np.array([1,2,3]).sum()) == 6`)
-  - `numpy_numerictypes_core`: `PASS` (`int8`/`float64`/`bool_` publication baseline)
-  - foreign `PyLong` compact-layout decoding now follows CPython 3.14 `longintrepr.h` semantics (including compact zero/sign handling), fixing the prior NumPy regression where `np.dtype('int64').itemsize` and `np.iinfo(np.int64).bits` collapsed to `0`.
-- NumPy import warning cleanup checkpoint:
-  - proxy class `__flags__` now reflects CPython `tp_flags` for extension-backed types (instead of always returning `PY_TPFLAGS_HEAPTYPE`), which removed the prior `_add_newdocs_scalars` warning flood during `import numpy`.
-- Current direct-mode NumPy baseline:
+Source-build mode:
+
+```bash
+python3 scripts/probe_numpy_gate.py \
+  --pyrs target/debug/pyrs \
+  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --numpy-src /path/to/numpy/source/tree \
+  --python-build-bin python3 \
+  --build-timeout 1800 \
+  --out perf/numpy_gate_source_build_latest.json \
+  --timeout 30
+```
+
+## Current Snapshot (2026-02-21)
+
+- Direct mode only; CPython bridge mode was removed.
+- Base NumPy gate is green:
   - `numpy_import`: `PASS`
   - `numpy_ndarray_sum`: `PASS`
   - `numpy_numerictypes_core`: `PASS`
-  - `PyUnicode_AsUTF8` pointer-lifetime parity fix landed:
-    - returned UTF-8 pointers now come from a stable process registry (not per-call scratch storage), matching CPython's "pointer remains valid while object exists" contract for extension consumers.
-    - this closed a concrete `arr_add_docstring` use-after-free in NumPy bring-up.
-  - `numpy.random` remains blocked:
-    - active-context restore is now RAII-guarded (`ActiveCpythonContextGuard`) across proxy/callable/loader/object-call runtime paths.
-    - the prior `NULL result without error in generate_state()` path is closed; traced failure now surfaces the underlying extension error:
-      `index 4 is out of bounds for axis 0 with size 4` from `numpy.random.mtrand` init.
-    - `pandas_import` / `pandas_series_sum` now fail with the same surfaced `numpy.random.mtrand` `Py_mod_exec` error (runtime error, exit `2`) instead of native crash exits.
-    - prior `PyObject_GetBuffer` unknown-pointer path is closed:
-      internal handle recovery now backfills via proxy-value mapping, and
-      `PyBuffer_Release` no longer treats foreign `Py_buffer.internal` pointers as pyrs-owned allocations.
-  - `np.arange(0, 10, 0.5)` `repr/str` parity is restored (arrayprint output, no proxy placeholder fallback).
-  - root-cause fix: `PyObject_SetAttrString` now accepts foreign extension value pointers through proxy conversion (`cpython_value_from_ptr_or_proxy`) instead of rejecting them as unknown pointers during `_multiarray_umath._populate_finfo_constants`.
-  - metatype-backed type objects (for example `numpy.dtype`) now resolve class attributes through type-object semantics (not metatype-only lookup), which unblocked `dtype.alignment` and `dtype.__ge__` bring-up blockers.
-  - proxy class `str`/`repr` now use class-safe rendering (`<class 'module.name'>`) and no longer route through ndarray-only rendering logic.
-- Latest optional scientific-stack probe (`--include-scientific-stack`) remains red:
-  - `scipy_import`: `FAIL` (`AttributeError: module 'ctypes' has no attribute 'CFUNCTYPE'`)
-  - `pandas_import` / `pandas_series_sum`: `FAIL` (`numpy.random.mtrand` `Py_mod_exec` fails with `index 4 is out of bounds for axis 0 with size 4`)
-  - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (missing symbol `PyInstanceMethod_Type`)
-- Proxy special-method audit (`scripts/audit_proxy_dunders.py`, `perf/proxy_dunder_audit_latest.json`):
-  - latest debug-mode audit reduced exposure gaps from `54` to `30` after binding instance rich-compare wrappers (`__lt__`, `__le__`, `__gt__`, `__ge__`) to `tp_richcompare` slot wrappers.
-  - remaining top missing proxy attributes are concentrated in scalar conversion/truthiness and item protocol surfaces (`__bool__`, `__int__`, `__float__`, `__getitem__`, plus `__index__` for integer-like scalars).
-- Next P0 focus after NumPy baseline pass:
-  - close `ctypes.CFUNCTYPE` surface for SciPy import.
-  - fix `numpy.random.mtrand` `generate_state` bounds/shape semantics to unblock pandas import/smoke.
-  - export/implement `PyInstanceMethod_Type` for matplotlib binary imports.
-- `PyNumber_Long` reduction-path blocker is closed via:
-  - stable CPython-pointer reuse for identity-bearing runtime objects across C-API contexts (fixes sentinel identity paths like `_NoValue`), and
-  - Python-level `int()` fallback to CPython proxy numeric slots (`nb_int`/`nb_index`) when native runtime conversion reports unsupported type.
-- Extension-init failure reporting now preserves the first meaningful per-module `Py_mod_exec` failure across retry attempts, preventing fallback noise like `cannot load module more than once per process` from masking the root blocker.
-- Recent direct-mode bring-up deltas:
-  - Cython thread-state exception-stack access no longer crashes on direct imports:
-    - thread-state compat now publishes an initialized `_PyErr_StackItem` chain at the CPython offset used by `PyThreadState_GetUnchecked` consumers (e.g., SciPy `_cyutility`).
-  - CPython extension init path now reconciles module-instance mismatch returns:
-    - when `PyInit_*` returns a different module object than the pre-created import target, the loader now syncs globals and modules registry instead of failing with `returned unexpected module instance`.
-  - NumPy scalar construction/formatting root-cause closure:
-    - `PyFloat_Type.tp_new` now implements CPython-style constructor behavior (base + subtype allocation path), fixing zero-initialized scalar results in NumPy float constructors.
-    - `PyUnicode_FromFormat` / `PyBytes_FromFormatV` now support object format specifiers `%S`, `%R`, `%A`.
-  - Lane-B symbol closure advanced for current SciPy loader paths:
-    - exported/kept `PyBytes_Join`, `_PyBytes_Join`, `PyDict_Pop`, `PyDict_PopString`, `_PyDict_Pop`, and `_Py_FatalErrorFunc`.
-  - `_PyType_Lookup` now preserves no-new-error semantics and falls back to runtime MRO lookup when `tp_dict`-only lookup misses.
-  - attribute optional/presence helpers now treat CPython-style "missing attribute" message paths as non-fatal misses (`HasAttr*WithError`, `GetOptionalAttr*`).
-  - pure-stdlib preference logic now includes `typing` (not only `types`) when CPython `Lib` sources are present.
-  - `datetime.datetime_CAPI` capsule baseline is now registered for `PyCapsule_Import`.
-  - `math.trunc` landed for stdlib parity used during NumPy init.
-  - `sys.modules` identity is now stable across imports (no dict-object replacement on each register/unregister).
-  - `_Py_BuildValue` now routes through a C varargs shim (`build.rs` + `src/vm/capi_variadics.c`) with partial format coverage (`()`, `O`, `N`, `s`, tuple `(...)` for `O/N/i/l/k/n/d/f/s`, `{ON}`, `{s:O}`, `{s:N}`).
-  - C-side varargs parser/call surfaces now include `PyArg_ParseTuple`, `PyArg_ParseTupleAndKeywords`, `PyObject_CallFunctionObjArgs`, and `PyObject_CallMethod`.
-  - `PyTypeObject` compat layout now includes init/alloc/new/call slots used by direct extension type construction paths.
-- Failures are signal, not noise; they should be used to drive substrate work in:
-  - `docs/EXTENSION_CAPABILITY_MATRIX.md`
-  - `docs/EXTENSION_PACKAGING_CONTRACT.md`
-  - `docs/EXTENSION_ECOSYSTEM_DESIGN.md`
+- Direct smoke sanity is green for:
+  - `import numpy as np`
+  - `np.dtype('int8')`
+- Lifetime substrate is in active migration (`docs/CAPI_LIFETIME_MODEL.md`):
+  - VM-global pointer registry is authoritative for pointer provenance/liveness.
+  - Per-context owned-pointer shadow set has been removed.
+  - Owned-pointer free transitions are centralized.
+
+## Current P0 Blockers
+
+1. `numpy.random.default_rng()` fails in direct mode during extension init.
+   - Current surface failure:
+     - `extension 'numpy.random._bounded_integers' ... Py_mod_exec failed`
+     - nested `numpy.random.bit_generator` `Py_mod_exec` failure.
+2. Scientific-stack optional probes (`scipy`/`pandas`/`matplotlib`) remain red behind Lane-B C-API/runtime parity gaps.
+
+## Operating Rules
+
+1. No bridge fallback, shim patching, or test-by-test attr patch churn.
+2. Fix shared substrate root causes first, then close downstream module failures.
+3. Update this document and `perf/numpy_gate_direct_latest.json` in the same checkpoint as behavior changes.
+4. Add/adjust targeted regression tests with every blocker closure.
 
 ## Closure Criteria
 

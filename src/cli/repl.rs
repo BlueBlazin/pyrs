@@ -1725,10 +1725,7 @@ fn execute_timeit_command(
             } else {
                 10
             };
-            loops = loops
-                .saturating_mul(scale)
-                .min(MAX_CALIBRATION_LOOPS)
-                .max(1);
+            loops = loops.saturating_mul(scale).clamp(1, MAX_CALIBRATION_LOOPS);
         }
     };
     let repeats = request.repeats.unwrap_or(DEFAULT_REPEATS).max(1);

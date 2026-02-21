@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,7 +14,7 @@ fn pyrs_bin() -> PathBuf {
     release
 }
 
-fn exported_symbols(bin: &PathBuf) -> HashSet<String> {
+fn exported_symbols(bin: &Path) -> HashSet<String> {
     let nm_commands = vec![
         vec!["-gU".to_string(), bin.to_string_lossy().to_string()],
         vec!["-g".to_string(), bin.to_string_lossy().to_string()],

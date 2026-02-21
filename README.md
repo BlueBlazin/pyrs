@@ -7,7 +7,8 @@
 `pyrs` is in active alpha development.
 
 - Milestones `0-12` are complete.
-- Milestones `13-16` remain (long-tail parity, stdlib/packaging closure, performance/observability, extension ecosystem, and release hardening).
+- Milestones `13-16` remain.
+- Active execution lock is Milestone `15` (native extension ecosystem compatibility and scientific-stack bring-up).
 - Optimization phase-1 checkpoint is complete; remaining throughput gaps are tracked in `docs/OPTIMIZATION_BACKLOG.md`.
 
 ## What Works Today
@@ -21,7 +22,9 @@
 ## Current Limits
 
 - Not full CPython 3.14 parity yet (remaining long-tail language/runtime and stdlib edge semantics).
-- C-extension compatibility is not implemented yet (e.g. NumPy remains out of scope until extension milestones).
+- C-extension compatibility is partial/in progress:
+  - direct-mode `import numpy` and ndarray baseline smoke are working,
+  - NumPy random stack and broader scipy/pandas/matplotlib closure remain open.
 - Performance/hardening milestones are still ahead.
 
 ## Performance Snapshot
