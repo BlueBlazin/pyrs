@@ -441,6 +441,7 @@ impl<'a> Translator<'a> {
                 | "CALL_KW_PY" => Instruction::new(Opcode::CallCpythonKwStack, Some(arg)),
                 "CALL_FUNCTION_EX" => Instruction::new(Opcode::CallFunctionEx, Some(arg)),
                 "CALL_INTRINSIC_1" => Instruction::new(Opcode::CallIntrinsic1, Some(arg)),
+                "CALL_INTRINSIC_2" => Instruction::new(Opcode::CallIntrinsic2, Some(arg)),
                 "POP_JUMP_IF_FALSE" => Instruction::new(
                     Opcode::JumpIfFalse,
                     Some(relative_forward_target_plus_two(idx, arg)?),
@@ -1191,6 +1192,7 @@ fn translated_successors(
         | Opcode::FormatSimple
         | Opcode::CallIntrinsic1
         | Opcode::ToBool => vec![(next_ip, pop(1)? + 1)],
+        Opcode::CallIntrinsic2 => vec![(next_ip, pop(2)? + 1)],
         Opcode::StoreFastLoadFast => {
             let depth = pop(1)? + 1;
             vec![(next_ip, depth)]

@@ -142,5 +142,5 @@ Do not rely on stale point-in-time numbers in this document.
     - to `source_compiles=12`, `pyc_fallbacks=11`.
   - remaining pyc translation blockers in the NumPy import graph are now concentrated in:
     - `MATCH_CLASS`
-    - `CALL_INTRINSIC_2`
     - plus runtime pyc fallback exceptions in a smaller stdlib subset (`_collections_abc`, `re.*`, `textwrap`, `numpy._core._add_newdocs`).
+  - `CALL_INTRINSIC_2` translation now maps to `Opcode::CallIntrinsic2` with runtime support for `INTRINSIC_SET_FUNCTION_TYPE_PARAMS` (`arg=4`).

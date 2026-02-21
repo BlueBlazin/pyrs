@@ -134,6 +134,7 @@ pub enum Opcode {
     CallCpython,
     CallCpythonKwStack,
     CallIntrinsic1,
+    CallIntrinsic2,
     MakeFunctionStack,
     SetFunctionAttribute,
     ReturnConst,

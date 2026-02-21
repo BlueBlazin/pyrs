@@ -2826,6 +2826,36 @@ impl Vm {
                 };
                 self.push_value(result);
             }
+            Opcode::CallIntrinsic2 => {
+                let intrinsic = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing CALL_INTRINSIC_2 argument"))?;
+                let value1 = self.pop_value()?;
+                let value2 = self.pop_value()?;
+                let result = match intrinsic {
+                    4 => match value2 {
+                        Value::Function(function) => {
+                            self.store_attr_function(
+                                &function,
+                                "__type_params__".to_string(),
+                                value1,
+                            )?;
+                            Value::Function(function)
+                        }
+                        _ => {
+                            return Err(RuntimeError::type_error(
+                                "INTRINSIC_SET_FUNCTION_TYPE_PARAMS expects function",
+                            ));
+                        }
+                    },
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "unsupported CALL_INTRINSIC_2 arg {other}"
+                        )));
+                    }
+                };
+                self.push_value(result);
+            }
             Opcode::FormatSimple => {
                 let value = self.pop_value()?;
                 let rendered = self.builtin_format(vec![value], HashMap::new())?;

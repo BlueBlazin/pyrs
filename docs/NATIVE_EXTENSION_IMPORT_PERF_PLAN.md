@@ -69,6 +69,7 @@ For each optimization slice:
   - marshal `TYPE_ELLIPSIS`, `TYPE_STOPITER`, and bigint `TYPE_LONG` decode support.
   - bytes constants now translate directly from pyc constants.
   - opcode mapping support for `DELETE_ATTR` and `LOAD_FROM_DICT_OR_DEREF`.
+  - opcode mapping/runtime support for `CALL_INTRINSIC_2` (`arg=4` function type-params intrinsic).
 - NumPy import graph pyc fallback counters improved from:
   - `source_compiles=30`, `pyc_fallbacks=29`
   - to `source_compiles=12`, `pyc_fallbacks=11`.
