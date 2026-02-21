@@ -122,6 +122,16 @@ impl Vm {
                 &origin_path.to_string_lossy(),
             ));
             if source_path.is_file() {
+                let runtime_reason = if env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE") {
+                    self.frames
+                        .last()
+                        .and_then(|f| f.active_exception.as_ref())
+                        .map(|exc| {
+                            format!("active_exception={}", self.value_type_name_for_error(exc))
+                        })
+                } else {
+                    None
+                };
                 if self.import_perf_enabled {
                     self.import_perf_counters.pyc_load_fallback_to_source = self
                         .import_perf_counters
@@ -129,11 +139,13 @@ impl Vm {
                         .saturating_add(1);
                 }
                 if env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE") {
+                    let reason = runtime_reason.unwrap_or_else(|| "runtime exception".to_string());
                     eprintln!(
-                        "[import-perf] pyc-runtime-fallback module={} pyc={} source={} reason=runtime exception",
+                        "[import-perf] pyc-runtime-fallback module={} pyc={} source={} reason={}",
                         module_name,
                         origin_path.display(),
-                        source_path.display()
+                        source_path.display(),
+                        reason
                     );
                 }
                 self.clear_active_exception();
@@ -852,6 +864,35 @@ impl Vm {
                     value
                 } else {
                     return Err(RuntimeError::new(format!("name '{name}' is not defined")));
+                };
+                self.push_value(value);
+            }
+            Opcode::LoadFromDictOrDeref => {
+                let idx = instr
+                    .arg
+                    .ok_or_else(|| RuntimeError::new("missing deref argument"))?
+                    as usize;
+                let name = {
+                    let frame = self.frames.last().expect("frame exists");
+                    deref_name(&frame.code, idx)
+                        .or_else(|| frame.code.cellvars.get(idx).map(String::as_str))
+                        .unwrap_or("<cell>")
+                        .to_string()
+                };
+                let mapping = self.pop_value()?;
+                let key = Value::Str(name);
+                let mapping_hit = match mapping {
+                    Value::Dict(dict) => dict_get_value(&dict, &key),
+                    other => match self.getitem_value(other, key.clone()) {
+                        Ok(value) => Some(value),
+                        Err(err) if runtime_error_matches_exception(&err, "KeyError") => None,
+                        Err(err) => return Err(err),
+                    },
+                };
+                let value = if let Some(value) = mapping_hit {
+                    value
+                } else {
+                    self.load_deref(idx)?
                 };
                 self.push_value(value);
             }

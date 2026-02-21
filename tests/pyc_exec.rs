@@ -243,3 +243,37 @@ ok = events == ["except", "enter", "body", "RuntimeError"]
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn executes_cpython_pyc_with_bytes_bigint_ellipsis_and_delete_attr() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+payload = b"\x00\x01\xff"
+big = 12345678901234567890123456789012345678901234567890
+sentinel = (...)
+
+class C:
+    pass
+
+c = C()
+c.x = 1
+del c.x
+
+ok = (
+    payload[2] == 255
+    and big.bit_length() > 64
+    and sentinel is Ellipsis
+    and not hasattr(c, "x")
+)
+"#;
+
+    let pyc_path = compile_pyc(source, "const_surface_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

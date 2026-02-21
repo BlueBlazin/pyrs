@@ -6,9 +6,9 @@ Reduce native scientific-stack import overhead (starting with `import numpy`) wh
 Primary user-facing gate:
 - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
 
-## Current Baseline (2026-02-21)
-- `pyrs` (default pyc policy): ~`0.69-0.70s` user
-- `pyrs` with `PYRS_IMPORT_PREFER_PYC=0`: ~`0.63s` user
+## Current Baseline (2026-02-21, latest local)
+- `pyrs` (default pyc policy): ~`0.79s` user
+- `pyrs` with `PYRS_IMPORT_PREFER_PYC=0`: ~`0.64s` user
 - CPython 3.14: ~`0.05s` user
 
 ## Root-Cause Buckets
@@ -65,3 +65,10 @@ For each optimization slice:
 ## Implemented In This Round
 - Module attr lookup now skips frame scans when module is not actively initializing.
 - `PyObject_RichCompare` now attempts slot dispatch directly before pointer/value conversion fallback.
+- pyc compatibility closure for import-path blockers:
+  - marshal `TYPE_ELLIPSIS`, `TYPE_STOPITER`, and bigint `TYPE_LONG` decode support.
+  - bytes constants now translate directly from pyc constants.
+  - opcode mapping support for `DELETE_ATTR` and `LOAD_FROM_DICT_OR_DEREF`.
+- NumPy import graph pyc fallback counters improved from:
+  - `source_compiles=30`, `pyc_fallbacks=29`
+  - to `source_compiles=12`, `pyc_fallbacks=11`.

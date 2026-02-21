@@ -1169,6 +1169,8 @@ pub struct Heap {
     external_buffer_pins: RefCell<HashMap<u64, usize>>,
     small_int_ids: RefCell<Vec<u64>>,
     immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
+    ellipsis_class: RefCell<Option<ObjRef>>,
+    ellipsis_instance: RefCell<Option<ObjRef>>,
     allocation_count: Cell<usize>,
 }
 
@@ -1213,6 +1215,8 @@ impl Heap {
             external_buffer_pins: RefCell::new(HashMap::new()),
             small_int_ids: RefCell::new(vec![0; SMALL_INT_COUNT]),
             immediate_ids: RefCell::new(HashMap::new()),
+            ellipsis_class: RefCell::new(None),
+            ellipsis_instance: RefCell::new(None),
             allocation_count: Cell::new(0),
         }
     }
@@ -1253,6 +1257,36 @@ impl Heap {
 
     pub fn alloc_dict_keys_view(&self, dict: ObjRef) -> Value {
         Value::DictKeys(self.alloc(Object::DictKeysView(DictKeysView::new(dict))))
+    }
+
+    pub fn ellipsis_singleton(&self) -> Value {
+        if let Some(instance) = self.ellipsis_instance.borrow().as_ref().cloned() {
+            return Value::Instance(instance);
+        }
+        let class = match self.alloc_class(ClassObject::new("ellipsis".to_string(), Vec::new())) {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        let instance = match self.alloc_instance(InstanceObject::new(class.clone())) {
+            Value::Instance(instance) => instance,
+            _ => unreachable!(),
+        };
+        *self.ellipsis_class.borrow_mut() = Some(class);
+        *self.ellipsis_instance.borrow_mut() = Some(instance.clone());
+        Value::Instance(instance)
+    }
+
+    pub fn ellipsis_type(&self) -> Value {
+        if self.ellipsis_class.borrow().is_none() {
+            let _ = self.ellipsis_singleton();
+        }
+        let class = self
+            .ellipsis_class
+            .borrow()
+            .as_ref()
+            .cloned()
+            .expect("ellipsis class initialized");
+        Value::Class(class)
     }
 
     pub fn alloc_set(&self, values: Vec<Value>) -> Value {

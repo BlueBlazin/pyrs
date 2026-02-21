@@ -126,6 +126,17 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - pyc-first status:
     - the previously observed `AttributeError: str has no attribute 'value'` repro was caused by a stale local cache-only `__pycache__/enum.cpython-314.pyc` shadowing stdlib enum in the workspace root.
     - with that stale local cache removed, the minimal enum pyc repro now follows CPython behavior; remaining pyc work is long-tail parity/perf closure.
+  - pyc compatibility closure (latest):
+    - marshal loader now accepts `TYPE_ELLIPSIS ('.')`, `TYPE_STOPITER ('S')`, and arbitrary-size `TYPE_LONG ('l')` constants (decoded to `BigInt` when needed).
+    - pyc constant translation now supports bytes constants.
+    - translation now maps `DELETE_ATTR` and `LOAD_FROM_DICT_OR_DEREF`.
+    - new regression: `tests/pyc_exec.rs::executes_cpython_pyc_with_bytes_bigint_ellipsis_and_delete_attr`.
+    - NumPy import graph counters improved to:
+      - `source_compiles=12`, `pyc_attempts=111`, `pyc_fallbacks=11` (was `30/111/29`).
+    - remaining translation blockers on the import path are now narrowed to:
+      - `MATCH_CLASS`,
+      - `CALL_INTRINSIC_2`,
+      - plus runtime pyc fallback for `_collections_abc`, `re.*`, `textwrap`, `numpy._core._add_newdocs`.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:
     - `runtime_error_matches_exception(...)` is typed/subclass-only,

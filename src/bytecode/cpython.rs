@@ -4,7 +4,7 @@ use std::rc::Rc;
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::pyc::{PycHeader, parse_pyc_header, write_pyc_header};
 use crate::bytecode::{CodeObject, ExceptionHandler, Instruction, Opcode};
-use crate::runtime::{Heap, SliceValue, Value};
+use crate::runtime::{BigInt, Heap, SliceValue, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpythonError {
@@ -43,8 +43,11 @@ pub struct CpythonCode {
 pub enum PyObject {
     Null,
     None,
+    StopIteration,
+    Ellipsis,
     Bool(bool),
     Int(i64),
+    BigInt(BigInt),
     Float(f64),
     Complex {
         real: f64,
@@ -322,6 +325,9 @@ impl<'a> Translator<'a> {
                 "LOAD_FROM_DICT_OR_GLOBALS" => {
                     Instruction::new(Opcode::LoadFromDictOrGlobals, Some(self.map_name(arg)?))
                 }
+                "LOAD_FROM_DICT_OR_DEREF" => {
+                    Instruction::new(Opcode::LoadFromDictOrDeref, Some(self.map_deref(arg)?))
+                }
                 "STORE_NAME" => Instruction::new(Opcode::StoreName, Some(self.map_name(arg)?)),
                 "DELETE_NAME" => Instruction::new(Opcode::DeleteName, Some(self.map_name(arg)?)),
                 "DELETE_FAST" => Instruction::new(Opcode::DeleteFast, Some(self.map_local(arg)?)),
@@ -390,6 +396,7 @@ impl<'a> Translator<'a> {
                 name if name.starts_with("STORE_ATTR") => {
                     Instruction::new(Opcode::StoreAttrCpython, Some(self.map_name(arg)?))
                 }
+                "DELETE_ATTR" => Instruction::new(Opcode::DeleteAttr, Some(self.map_name(arg)?)),
                 "LOAD_BUILD_CLASS" => Instruction::new(Opcode::LoadBuildClass, None),
                 "PUSH_NULL" => Instruction::new(Opcode::PushNull, None),
                 "GET_AWAITABLE" => Instruction::new(Opcode::GetAwaitable, None),
@@ -673,8 +680,14 @@ impl<'a> Translator<'a> {
     fn convert_object(&mut self, obj: &PyObject) -> Result<Value, CpythonError> {
         match obj {
             PyObject::None => Ok(Value::None),
+            PyObject::StopIteration => Ok(Value::ExceptionType("StopIteration".to_string())),
+            PyObject::Ellipsis => Ok(self.heap.ellipsis_singleton()),
             PyObject::Bool(value) => Ok(Value::Bool(*value)),
             PyObject::Int(value) => Ok(Value::Int(*value)),
+            PyObject::BigInt(value) => match value.to_i64() {
+                Some(integer) => Ok(Value::Int(integer)),
+                None => Ok(Value::BigInt(Box::new(value.clone()))),
+            },
             PyObject::Float(value) => Ok(Value::Float(*value)),
             PyObject::Complex { real, imag } => Ok(Value::Complex {
                 real: *real,
@@ -726,6 +739,7 @@ impl<'a> Translator<'a> {
                 let lower = match lower {
                     Some(value) => match self.convert_object(value)? {
                         Value::Int(value) => Some(value),
+                        Value::BigInt(value) => value.to_i64(),
                         Value::None => None,
                         _ => return Err(CpythonError::new("slice expects int or None")),
                     },
@@ -734,6 +748,7 @@ impl<'a> Translator<'a> {
                 let upper = match upper {
                     Some(value) => match self.convert_object(value)? {
                         Value::Int(value) => Some(value),
+                        Value::BigInt(value) => value.to_i64(),
                         Value::None => None,
                         _ => return Err(CpythonError::new("slice expects int or None")),
                     },
@@ -742,6 +757,7 @@ impl<'a> Translator<'a> {
                 let step = match step {
                     Some(value) => match self.convert_object(value)? {
                         Value::Int(value) => Some(value),
+                        Value::BigInt(value) => value.to_i64(),
                         Value::None => None,
                         _ => return Err(CpythonError::new("slice expects int or None")),
                     },
@@ -749,7 +765,7 @@ impl<'a> Translator<'a> {
                 };
                 Ok(Value::Slice(Box::new(SliceValue::new(lower, upper, step))))
             }
-            PyObject::Bytes(_) => Err(CpythonError::new("bytes constants unsupported")),
+            PyObject::Bytes(value) => Ok(self.heap.alloc_bytes(value.clone())),
             PyObject::Null => Err(CpythonError::new("unexpected null constant")),
         }
     }
@@ -1137,7 +1153,9 @@ fn translated_successors(
         | Opcode::LoadClosure
         | Opcode::LoadBuildClass
         | Opcode::PushNull => vec![(next_ip, stack_depth + 1)],
-        Opcode::LoadFromDictOrGlobals => vec![(next_ip, pop(1)? + 1)],
+        Opcode::LoadFromDictOrGlobals | Opcode::LoadFromDictOrDeref => {
+            vec![(next_ip, pop(1)? + 1)]
+        }
         Opcode::LoadFast2 => vec![(next_ip, stack_depth + 2)],
         Opcode::LoadFastAndClear => vec![(next_ip, stack_depth + 1)],
         Opcode::LoadGlobal => {
@@ -1446,6 +1464,8 @@ impl MarshalWriter {
         match obj {
             PyObject::Null => self.write_u8(b'0'),
             PyObject::None => self.write_u8(b'N'),
+            PyObject::StopIteration => self.write_u8(b'S'),
+            PyObject::Ellipsis => self.write_u8(b'.'),
             PyObject::Bool(false) => self.write_u8(b'F'),
             PyObject::Bool(true) => self.write_u8(b'T'),
             PyObject::Int(value) => {
@@ -1456,6 +1476,11 @@ impl MarshalWriter {
                     self.write_u8(b'l');
                     self.write_long(*value)?;
                 }
+            }
+            PyObject::BigInt(_) => {
+                return Err(CpythonError::new(
+                    "cannot marshal bigint constants outside i64 range",
+                ));
             }
             PyObject::Float(value) => {
                 self.write_u8(b'g');
@@ -1614,10 +1639,12 @@ impl<'a> MarshalReader<'a> {
         let value = match obj_type as char {
             '0' => PyObject::Null,
             'N' => PyObject::None,
+            'S' => PyObject::StopIteration,
+            '.' => PyObject::Ellipsis,
             'F' => PyObject::Bool(false),
             'T' => PyObject::Bool(true),
             'i' => PyObject::Int(self.read_i32()? as i64),
-            'l' => PyObject::Int(self.read_long()?),
+            'l' => self.read_long_object()?,
             'g' => PyObject::Float(f64::from_le_bytes(self.read_exact(8)?.try_into().unwrap())),
             'y' => {
                 let real = f64::from_le_bytes(self.read_exact(8)?.try_into().unwrap());
@@ -1835,25 +1862,31 @@ impl<'a> MarshalReader<'a> {
         Ok(i32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
-    fn read_long(&mut self) -> Result<i64, CpythonError> {
-        let n = self.read_i32()? as i64;
+    fn read_long_object(&mut self) -> Result<PyObject, CpythonError> {
+        let n = self.read_i32()?;
         if n == 0 {
-            return Ok(0);
+            return Ok(PyObject::Int(0));
         }
         let sign = if n < 0 { -1 } else { 1 };
         let count = n.unsigned_abs() as usize;
-        let mut value: i128 = 0;
-        let mut factor: i128 = 1;
+        let mut digits = Vec::with_capacity(count);
         for _ in 0..count {
-            let digit = self.read_u16()? as i128;
-            value += digit * factor;
-            factor <<= 15;
+            digits.push(self.read_u16()? as u64);
         }
-        value *= sign as i128;
-        if value > i64::MAX as i128 || value < i64::MIN as i128 {
-            return Err(CpythonError::new("long constant out of range"));
+        let mut value = BigInt::zero();
+        for digit in digits.into_iter().rev() {
+            value = value.shl_bits(15);
+            if digit != 0 {
+                value = value.add(&BigInt::from_u64(digit));
+            }
         }
-        Ok(value as i64)
+        if sign < 0 {
+            value = value.negated();
+        }
+        match value.to_i64() {
+            Some(integer) => Ok(PyObject::Int(integer)),
+            None => Ok(PyObject::BigInt(value)),
+        }
     }
 
     fn read_u16(&mut self) -> Result<u16, CpythonError> {

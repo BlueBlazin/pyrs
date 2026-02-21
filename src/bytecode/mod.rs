@@ -14,6 +14,7 @@ pub enum Opcode {
     LoadName,
     LoadLocals,
     LoadFromDictOrGlobals,
+    LoadFromDictOrDeref,
     LoadFast,
     LoadFast2,
     LoadFastAndClear,

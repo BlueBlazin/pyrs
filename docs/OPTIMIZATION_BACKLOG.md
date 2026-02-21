@@ -133,3 +133,14 @@ Do not rely on stale point-in-time numbers in this document.
     - `pyrs`: ~`0.69-0.70s` user
     - `pyrs` with source-first override (`PYRS_IMPORT_PREFER_PYC=0`): ~`0.63s` user
     - CPython 3.14: ~`0.05s` user
+- 2026-02-21 pyc compatibility closure wave:
+  - marshal loader now supports `TYPE_ELLIPSIS ('.')`, `TYPE_STOPITER ('S')`, and unbounded `TYPE_LONG ('l')` constants (`BigInt` path instead of i64-range rejection).
+  - pyc translation now supports bytes constants (`LOAD_CONST` bytes path no longer hard-fails).
+  - CPython opcode mapping closure landed for `DELETE_ATTR` and `LOAD_FROM_DICT_OR_DEREF`.
+  - `_collections_abc`/`re`/NumPy import path pyc fallback counters improved from:
+    - `source_compiles=30`, `pyc_fallbacks=29`
+    - to `source_compiles=12`, `pyc_fallbacks=11`.
+  - remaining pyc translation blockers in the NumPy import graph are now concentrated in:
+    - `MATCH_CLASS`
+    - `CALL_INTRINSIC_2`
+    - plus runtime pyc fallback exceptions in a smaller stdlib subset (`_collections_abc`, `re.*`, `textwrap`, `numpy._core._add_newdocs`).

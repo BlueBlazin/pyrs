@@ -1228,16 +1228,7 @@ impl Vm {
             "property".to_string(),
             Value::Builtin(BuiltinFunction::Property),
         );
-        let ellipsis = {
-            let class = match self
-                .heap
-                .alloc_class(ClassObject::new("ellipsis".to_string(), Vec::new()))
-            {
-                Value::Class(obj) => obj,
-                _ => unreachable!(),
-            };
-            self.heap.alloc_instance(InstanceObject::new(class))
-        };
+        let ellipsis = self.heap.ellipsis_singleton();
         self.builtins.insert("Ellipsis".to_string(), ellipsis);
         let not_implemented = {
             let class = match self.heap.alloc_class(ClassObject::new(

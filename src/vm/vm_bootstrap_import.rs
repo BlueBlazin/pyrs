@@ -3248,11 +3248,7 @@ impl Vm {
                     self.heap
                         .alloc_class(ClassObject::new("NoneType".to_string(), Vec::new())),
                 ),
-                (
-                    "EllipsisType",
-                    self.heap
-                        .alloc_class(ClassObject::new("ellipsis".to_string(), Vec::new())),
-                ),
+                ("EllipsisType", self.heap.ellipsis_type()),
                 (
                     "NotImplementedType",
                     self.heap.alloc_class(ClassObject::new(

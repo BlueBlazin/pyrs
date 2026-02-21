@@ -10,6 +10,9 @@ pub(super) fn value_to_cpython_marshal_object(
         Value::None => Ok(CpythonMarshalObject::None),
         Value::Bool(value) => Ok(CpythonMarshalObject::Bool(*value)),
         Value::Int(value) => Ok(CpythonMarshalObject::Int(*value)),
+        Value::ExceptionType(name) if name == "StopIteration" => {
+            Ok(CpythonMarshalObject::StopIteration)
+        }
         Value::BigInt(value) => value
             .to_i64()
             .map(CpythonMarshalObject::Int)
@@ -91,8 +94,16 @@ pub(super) fn cpython_marshal_object_to_value(
     match object {
         CpythonMarshalObject::Null => Ok(Value::None),
         CpythonMarshalObject::None => Ok(Value::None),
+        CpythonMarshalObject::StopIteration => {
+            Ok(Value::ExceptionType("StopIteration".to_string()))
+        }
+        CpythonMarshalObject::Ellipsis => Ok(vm.heap.ellipsis_singleton()),
         CpythonMarshalObject::Bool(value) => Ok(Value::Bool(*value)),
         CpythonMarshalObject::Int(value) => Ok(Value::Int(*value)),
+        CpythonMarshalObject::BigInt(value) => match value.to_i64() {
+            Some(integer) => Ok(Value::Int(integer)),
+            None => Ok(Value::BigInt(Box::new(value.clone()))),
+        },
         CpythonMarshalObject::Float(value) => Ok(Value::Float(*value)),
         CpythonMarshalObject::Complex { real, imag } => Ok(Value::Complex {
             real: *real,
