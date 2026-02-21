@@ -5213,11 +5213,18 @@ impl Vm {
         module: &ObjRef,
         attr_name: &str,
     ) -> Result<Value, RuntimeError> {
-        let active_frame_module_dict = self
+        let active_frame_module_dict = if self
             .frames
-            .iter()
-            .rposition(|frame| frame.is_module && frame.module.id() == module.id())
-            .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index));
+            .last()
+            .is_some_and(|frame| frame.is_module && frame.module.id() == module.id())
+        {
+            Some(self.ensure_frame_module_locals_dict(self.frames.len().saturating_sub(1)))
+        } else {
+            self.frames
+                .iter()
+                .rposition(|frame| frame.is_module && frame.module.id() == module.id())
+                .map(|frame_index| self.ensure_frame_module_locals_dict(frame_index))
+        };
         let (module_name, attr, module_getattr, module_is_package) = match &*module.kind() {
             Object::Module(module_data) => {
                 let attr_key = Value::Str(attr_name.to_string());
