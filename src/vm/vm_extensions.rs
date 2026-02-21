@@ -571,6 +571,14 @@ struct CpythonErrorState {
     ptraceback: *mut c_void,
 }
 
+#[derive(Clone)]
+struct CpythonExceptionCompatState {
+    args: Option<Value>,
+    notes: Option<Value>,
+    traceback: Option<Value>,
+    suppress_context: bool,
+}
+
 #[derive(Clone, Copy)]
 enum CpythonDescriptorKind {
     Method {
@@ -686,6 +694,19 @@ struct CpythonFloatCompatObject {
 struct CpythonComplexCompatObject {
     ob_base: CpythonObjectHead,
     cval: CpythonComplexValue,
+}
+
+#[repr(C)]
+struct CpythonBaseExceptionCompatObject {
+    ob_base: CpythonObjectHead,
+    dict: *mut c_void,
+    args: *mut c_void,
+    notes: *mut c_void,
+    traceback: *mut c_void,
+    context: *mut c_void,
+    cause: *mut c_void,
+    suppress_context: c_char,
+    _padding: [u8; 7],
 }
 
 #[repr(C)]
@@ -3773,16 +3794,11 @@ impl ModuleCapiContext {
     }
 
     fn is_probable_type_object_ptr(object: *mut c_void) -> bool {
+        const MIN_VALID_PTR: usize = 0x1_0000_0000;
         if object.is_null() {
             return false;
         }
-        // First require the payload itself to look like a type object. This avoids
-        // misclassifying ordinary instances whose `ob_type` happens to be a subtype
-        // of `type` (which is true for virtually all Python objects).
-        if !Self::is_probable_type_object_without_metatype(object) {
-            return false;
-        }
-        // SAFETY: best-effort probe for candidate type objects.
+        // SAFETY: best-effort probe of object header only.
         let object_type = unsafe {
             object
                 .cast::<CpythonObjectHead>()
@@ -3796,6 +3812,13 @@ impl ModuleCapiContext {
         }
         if object_type == expected_type {
             return true;
+        }
+        let type_addr = object_type as usize;
+        if type_addr < MIN_VALID_PTR || type_addr % std::mem::align_of::<usize>() != 0 {
+            return false;
+        }
+        if !Self::is_probable_type_object_without_metatype(object_type.cast::<c_void>()) {
+            return false;
         }
         // SAFETY: `object_type` is non-null in this branch and used only for
         // type-subclass/probe checks.
@@ -4127,11 +4150,66 @@ impl ModuleCapiContext {
             if let Some(current) = self.current_error {
                 let (ptype, pvalue) =
                     self.normalize_exception_state_type_and_value(current.ptype, current.pvalue);
-                let normalized = CpythonErrorState {
+                let mut normalized = CpythonErrorState {
                     ptype,
                     pvalue,
                     ptraceback: current.ptraceback,
                 };
+                if !normalized.pvalue.is_null() {
+                    let registry_known_live = if self.vm.is_null() {
+                        false
+                    } else {
+                        // SAFETY: VM pointer is valid for active C-API context lifetime.
+                        let vm = &*self.vm;
+                        vm.capi_registry_contains_live_or_pending(normalized.pvalue as usize)
+                    };
+                    let owned_ptr = self.owns_cpython_allocation_ptr(normalized.pvalue);
+                    let pointer_is_known = owned_ptr || registry_known_live;
+                    let mapped_value = if pointer_is_known {
+                        self.cpython_value_from_ptr(normalized.pvalue)
+                            .or_else(|| self.cpython_value_from_ptr_or_proxy(normalized.pvalue))
+                    } else {
+                        None
+                    };
+                    let mapped_exception_instance =
+                        mapped_value.as_ref().is_some_and(|value| match value {
+                            Value::Exception(_) => true,
+                            Value::Instance(instance_obj) => {
+                                cpython_is_exception_instance(self, &instance_obj)
+                            }
+                            _ => false,
+                        });
+                    if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some() {
+                        let mapped_value_tag = mapped_value
+                            .as_ref()
+                            .map(cpython_value_debug_tag)
+                            .unwrap_or_else(|| "<unmapped>".to_string());
+                        eprintln!(
+                            "[tstate-exc-sync] pvalue={:p} ptype={:p} mapped={} mapped_exc={} owned={} registry_live={} pointer_is_known={}",
+                            normalized.pvalue,
+                            normalized.ptype,
+                            mapped_value_tag,
+                            mapped_exception_instance,
+                            owned_ptr,
+                            registry_known_live,
+                            pointer_is_known
+                        );
+                    }
+                    if !pointer_is_known || !mapped_exception_instance {
+                        if std::env::var_os("PYRS_TRACE_DEFAULT_RNG_ERRFLOW").is_some() {
+                            eprintln!(
+                                "[tstate-exc-sync] dropping non-exception pvalue={:p} mapped_exception_instance={} owned={} registry_live={} pointer_is_known={} ptype={:p}",
+                                normalized.pvalue,
+                                mapped_exception_instance,
+                                owned_ptr,
+                                registry_known_live,
+                                pointer_is_known,
+                                normalized.ptype
+                            );
+                        }
+                        normalized.pvalue = std::ptr::null_mut();
+                    }
+                }
                 self.current_error = Some(normalized);
                 state.current_exception = normalized.pvalue;
                 state.exc_state.exc_value = normalized.pvalue;
@@ -4165,14 +4243,36 @@ impl ModuleCapiContext {
             let vm = unsafe { &*self.vm };
             vm.capi_registry_contains_live_or_pending(current_exception as usize)
         };
-        if !registry_known_live
-            && !self.owns_cpython_allocation_ptr(current_exception)
-            && !Self::is_probable_external_cpython_object_ptr(current_exception)
-        {
+        let owned_ptr = self.owns_cpython_allocation_ptr(current_exception);
+        let pointer_is_known = registry_known_live || owned_ptr;
+        if !pointer_is_known {
+            // SAFETY: thread-state pointer is writable for active thread.
+            unsafe {
+                (*state_ptr).current_exception = std::ptr::null_mut();
+                if !(*state_ptr).exc_info.is_null() {
+                    (*(*state_ptr).exc_info).exc_value = std::ptr::null_mut();
+                }
+                (*state_ptr).exc_state.exc_value = std::ptr::null_mut();
+                (*state_ptr).exc_state.previous_item = std::ptr::null_mut();
+            }
+            self.current_error = None;
             return;
         }
 
-        let Some(exception_value) = self.cpython_value_from_ptr_or_proxy(current_exception) else {
+        let Some(exception_value) = self
+            .cpython_value_from_ptr(current_exception)
+            .or_else(|| self.cpython_value_from_ptr_or_proxy(current_exception))
+        else {
+            // SAFETY: thread-state pointer is writable for active thread.
+            unsafe {
+                (*state_ptr).current_exception = std::ptr::null_mut();
+                if !(*state_ptr).exc_info.is_null() {
+                    (*(*state_ptr).exc_info).exc_value = std::ptr::null_mut();
+                }
+                (*state_ptr).exc_state.exc_value = std::ptr::null_mut();
+                (*state_ptr).exc_state.previous_item = std::ptr::null_mut();
+            }
+            self.current_error = None;
             return;
         };
         let value_is_exception = match &exception_value {
@@ -4181,6 +4281,16 @@ impl ModuleCapiContext {
             _ => false,
         };
         if !value_is_exception {
+            // SAFETY: thread-state pointer is writable for active thread.
+            unsafe {
+                (*state_ptr).current_exception = std::ptr::null_mut();
+                if !(*state_ptr).exc_info.is_null() {
+                    (*(*state_ptr).exc_info).exc_value = std::ptr::null_mut();
+                }
+                (*state_ptr).exc_state.exc_value = std::ptr::null_mut();
+                (*state_ptr).exc_state.previous_item = std::ptr::null_mut();
+            }
+            self.current_error = None;
             return;
         }
 
@@ -4382,8 +4492,12 @@ impl ModuleCapiContext {
     #[track_caller]
     fn set_error(&mut self, message: impl Into<String>) {
         let message = message.into();
+        let inferred_ptype = message
+            .split_once(':')
+            .and_then(|(head, _)| cpython_exception_ptr_for_name(head.trim()))
+            .unwrap_or(unsafe { PyExc_RuntimeError });
         self.current_error = Some(CpythonErrorState {
-            ptype: unsafe { PyExc_RuntimeError },
+            ptype: inferred_ptype,
             pvalue: std::ptr::null_mut(),
             ptraceback: std::ptr::null_mut(),
         });
@@ -4535,6 +4649,7 @@ impl ModuleCapiContext {
         if ptr.is_null() {
             return;
         }
+        self.clear_thread_state_exception_if_matches(ptr);
         if !self.vm.is_null() {
             // SAFETY: VM pointer is valid for context lifetime.
             let vm = unsafe { &mut *self.vm };
@@ -4549,6 +4664,36 @@ impl ModuleCapiContext {
             }
         }
         self.capi_registry_mark_freed_ptr(ptr);
+    }
+
+    fn clear_thread_state_exception_if_matches(&mut self, ptr: *mut c_void) {
+        if ptr.is_null() {
+            return;
+        }
+        let state_ptr = self.active_thread_state_ptr();
+        if state_ptr.is_null() {
+            return;
+        }
+        // SAFETY: thread-state pointer comes from runtime registry and is writable for active thread.
+        unsafe {
+            let state = &mut *state_ptr;
+            let mut cleared = false;
+            if state.current_exception == ptr {
+                state.current_exception = std::ptr::null_mut();
+                cleared = true;
+            }
+            if !state.exc_info.is_null() && (*state.exc_info).exc_value == ptr {
+                (*state.exc_info).exc_value = std::ptr::null_mut();
+                cleared = true;
+            }
+            if state.exc_state.exc_value == ptr {
+                state.exc_state.exc_value = std::ptr::null_mut();
+                cleared = true;
+            }
+            if cleared {
+                self.current_error = None;
+            }
+        }
     }
 
     fn capi_registry_pin_external_once_ptr(&mut self, ptr: *mut c_void) -> bool {
@@ -4593,6 +4738,7 @@ impl ModuleCapiContext {
             bound_method_state,
             float_value,
             complex_value,
+            exception_state,
         ) = match self.objects.get(&handle).map(|slot| {
             (
                 slot.refcount.max(1) as isize,
@@ -4682,12 +4828,14 @@ impl ModuleCapiContext {
                     }),
                     _ => None,
                 },
+                self.exception_compat_state_from_value(&slot.value),
             )
         }) {
             Some(state) => state,
             None if capsule_state.is_some() => (
                 1,
                 std::ptr::null_mut(),
+                None,
                 None,
                 None,
                 None,
@@ -4870,6 +5018,42 @@ impl ModuleCapiContext {
                 });
             }
             raw_float.cast::<CpythonCompatObject>()
+        } else if let Some(exception_state) = exception_state.as_ref() {
+            // SAFETY: allocate storage for CPython base-exception-compatible header.
+            let raw_exception =
+                unsafe { malloc(std::mem::size_of::<CpythonBaseExceptionCompatObject>()) }
+                    .cast::<CpythonBaseExceptionCompatObject>();
+            if raw_exception.is_null() {
+                self.set_error("out of memory allocating CPython exception compat object");
+                return std::ptr::null_mut();
+            }
+            let args_ptr = self.exception_args_tuple_ptr_from_state(exception_state.args.clone());
+            let notes_ptr =
+                self.exception_optional_ptr_from_state_value(exception_state.notes.clone());
+            let traceback_ptr =
+                self.exception_optional_ptr_from_state_value(exception_state.traceback.clone());
+            // SAFETY: initialize base-exception header and payload fields.
+            unsafe {
+                raw_exception.write(CpythonBaseExceptionCompatObject {
+                    ob_base: CpythonObjectHead {
+                        ob_refcnt: refcount,
+                        ob_type,
+                    },
+                    dict: std::ptr::null_mut(),
+                    args: args_ptr,
+                    notes: notes_ptr,
+                    traceback: traceback_ptr,
+                    context: std::ptr::null_mut(),
+                    cause: std::ptr::null_mut(),
+                    suppress_context: if exception_state.suppress_context {
+                        1
+                    } else {
+                        0
+                    },
+                    _padding: [0; 7],
+                });
+            }
+            raw_exception.cast::<CpythonCompatObject>()
         } else if let Some(dict_len) = dict_len {
             // SAFETY: allocate storage for CPython dict-compatible header.
             let raw_dict = unsafe { malloc(std::mem::size_of::<CpythonDictCompatObject>()) }
@@ -5288,6 +5472,113 @@ impl ModuleCapiContext {
                 }
             }
             _ => None,
+        }
+    }
+
+    fn value_is_exception_instance_like(&self, value: &Value) -> bool {
+        match value {
+            Value::Exception(_) => true,
+            Value::Instance(instance_obj) => {
+                if self.vm.is_null() {
+                    return false;
+                }
+                let Object::Instance(instance_data) = &*instance_obj.kind() else {
+                    return false;
+                };
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &*self.vm };
+                vm.class_is_exception_class(&instance_data.class)
+            }
+            _ => false,
+        }
+    }
+
+    fn exception_compat_state_from_value(
+        &self,
+        value: &Value,
+    ) -> Option<CpythonExceptionCompatState> {
+        match value {
+            Value::Exception(exception_obj) => {
+                let attrs = exception_obj.attrs.borrow();
+                let args = attrs
+                    .get("args")
+                    .cloned()
+                    .or_else(|| exception_obj.message.clone().map(Value::Str));
+                let notes = attrs.get("__notes__").cloned();
+                let traceback = attrs
+                    .get("__traceback__")
+                    .cloned()
+                    .or_else(|| attrs.get("exc_traceback").cloned());
+                let suppress_context = exception_obj.suppress_context
+                    || matches!(attrs.get("__suppress_context__"), Some(Value::Bool(true)));
+                Some(CpythonExceptionCompatState {
+                    args,
+                    notes,
+                    traceback,
+                    suppress_context,
+                })
+            }
+            Value::Instance(instance_obj) => {
+                if self.vm.is_null() {
+                    return None;
+                }
+                let Object::Instance(instance_data) = &*instance_obj.kind() else {
+                    return None;
+                };
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &*self.vm };
+                if !vm.class_is_exception_class(&instance_data.class) {
+                    return None;
+                }
+                let args = instance_data.attrs.get("args").cloned();
+                let notes = instance_data.attrs.get("__notes__").cloned();
+                let traceback = instance_data
+                    .attrs
+                    .get("__traceback__")
+                    .cloned()
+                    .or_else(|| instance_data.attrs.get("exc_traceback").cloned());
+                let suppress_context = matches!(
+                    instance_data.attrs.get("__suppress_context__"),
+                    Some(Value::Bool(true))
+                );
+                Some(CpythonExceptionCompatState {
+                    args,
+                    notes,
+                    traceback,
+                    suppress_context,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn exception_args_tuple_ptr_from_state(&mut self, args: Option<Value>) -> *mut c_void {
+        let tuple_value = match args {
+            Some(value @ Value::Tuple(_)) => value,
+            Some(Value::None) | None => {
+                if self.vm.is_null() {
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                vm.heap.alloc_tuple(Vec::new())
+            }
+            Some(value) => {
+                if self.vm.is_null() {
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: VM pointer is valid for active C-API context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                vm.heap.alloc_tuple(vec![value])
+            }
+        };
+        self.alloc_cpython_ptr_for_value(tuple_value)
+    }
+
+    fn exception_optional_ptr_from_state_value(&mut self, value: Option<Value>) -> *mut c_void {
+        match value {
+            Some(Value::None) | None => std::ptr::null_mut(),
+            Some(value) => self.alloc_cpython_ptr_for_value(value),
         }
     }
 
@@ -5744,9 +6035,8 @@ impl ModuleCapiContext {
         // PyType_Check(op): treat any object whose metatype is `type` (or subtype) as a type.
         // NumPy DType classes use `_DTypeMeta`, so strict pointer-equality with `PyType_Type`
         // is insufficient and would misclassify those type objects as plain instances.
-        let is_type_object = (self.is_known_type_ptr(object)
-            || Self::is_probable_type_object_ptr(object))
-            && Self::is_probable_type_object_without_metatype(object);
+        let is_type_object =
+            self.is_known_type_ptr(object) || Self::is_probable_type_object_ptr(object);
         if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
             let object_type_name = unsafe {
                 object_type
@@ -8774,6 +9064,12 @@ impl ModuleCapiContext {
             Tuple(Vec<*mut c_void>),
             List(Vec<*mut c_void>),
             Bytes(Vec<u8>),
+            Exception {
+                args: *mut c_void,
+                notes: *mut c_void,
+                traceback: *mut c_void,
+                suppress_context: bool,
+            },
             Module {
                 module: ObjRef,
                 md_dict: *mut c_void,
@@ -8825,6 +9121,28 @@ impl ModuleCapiContext {
                         std::slice::from_raw_parts(data.cast::<u8>(), len).to_vec()
                     };
                     Some(SyncPayload::Bytes(bytes))
+                }
+                Value::Exception(_) => {
+                    // SAFETY: `ptr` is an owned base-exception-compatible allocation for this handle.
+                    let raw_exception =
+                        unsafe { ptr.cast::<CpythonBaseExceptionCompatObject>().as_ref() };
+                    raw_exception.map(|raw_exception| SyncPayload::Exception {
+                        args: raw_exception.args,
+                        notes: raw_exception.notes,
+                        traceback: raw_exception.traceback,
+                        suppress_context: raw_exception.suppress_context != 0,
+                    })
+                }
+                Value::Instance(_) if self.value_is_exception_instance_like(&slot.value) => {
+                    // SAFETY: `ptr` is an owned base-exception-compatible allocation for this handle.
+                    let raw_exception =
+                        unsafe { ptr.cast::<CpythonBaseExceptionCompatObject>().as_ref() };
+                    raw_exception.map(|raw_exception| SyncPayload::Exception {
+                        args: raw_exception.args,
+                        notes: raw_exception.notes,
+                        traceback: raw_exception.traceback,
+                        suppress_context: raw_exception.suppress_context != 0,
+                    })
                 }
                 Value::Module(module_obj) => {
                     // SAFETY: `ptr` is an owned module-compatible allocation for this handle.
@@ -8963,6 +9281,76 @@ impl ModuleCapiContext {
                         Value::ByteArray(bytes_obj) => {
                             if let Object::ByteArray(values) = &mut *bytes_obj.kind_mut() {
                                 *values = bytes;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some(SyncPayload::Exception {
+                args,
+                notes,
+                traceback,
+                suppress_context,
+            }) => {
+                let args_value = if args.is_null() {
+                    None
+                } else {
+                    self.cpython_value_from_ptr_or_proxy(args)
+                };
+                let notes_value = if notes.is_null() {
+                    None
+                } else {
+                    self.cpython_value_from_ptr_or_proxy(notes)
+                };
+                let traceback_value = if traceback.is_null() {
+                    None
+                } else {
+                    self.cpython_value_from_ptr_or_proxy(traceback)
+                };
+                if let Some(slot) = self.objects.get_mut(&handle) {
+                    match &mut slot.value {
+                        Value::Exception(exception_obj) => {
+                            let mut attrs = exception_obj.attrs.borrow_mut();
+                            if let Some(args_value) = args_value.clone() {
+                                attrs.insert("args".to_string(), args_value);
+                            }
+                            if let Some(traceback_value) = traceback_value.clone() {
+                                attrs.insert("__traceback__".to_string(), traceback_value.clone());
+                                attrs.insert("exc_traceback".to_string(), traceback_value);
+                            }
+                            if let Some(notes_value) = notes_value {
+                                attrs.insert("__notes__".to_string(), notes_value);
+                            }
+                            attrs.insert(
+                                "__suppress_context__".to_string(),
+                                Value::Bool(suppress_context),
+                            );
+                            exception_obj.suppress_context = suppress_context;
+                        }
+                        Value::Instance(instance_obj) => {
+                            if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
+                                if let Some(args_value) = args_value.clone() {
+                                    instance_data.attrs.insert("args".to_string(), args_value);
+                                }
+                                if let Some(traceback_value) = traceback_value.clone() {
+                                    instance_data.attrs.insert(
+                                        "__traceback__".to_string(),
+                                        traceback_value.clone(),
+                                    );
+                                    instance_data
+                                        .attrs
+                                        .insert("exc_traceback".to_string(), traceback_value);
+                                }
+                                if let Some(notes_value) = notes_value {
+                                    instance_data
+                                        .attrs
+                                        .insert("__notes__".to_string(), notes_value);
+                                }
+                                instance_data.attrs.insert(
+                                    "__suppress_context__".to_string(),
+                                    Value::Bool(suppress_context),
+                                );
                             }
                         }
                         _ => {}
@@ -9121,6 +9509,7 @@ impl ModuleCapiContext {
             },
             _ => None,
         };
+        let exception_state = self.exception_compat_state_from_value(&slot.value);
         let is_unicode = matches!(&slot.value, Value::Str(_));
         // SAFETY: `raw` is owned allocation with `CpythonCompatObject` layout.
         unsafe {
@@ -9149,6 +9538,24 @@ impl ModuleCapiContext {
                 return;
             }
             if is_unicode {
+                return;
+            }
+            if let Some(exception_state) = exception_state.as_ref() {
+                let raw_exception = raw.cast::<CpythonBaseExceptionCompatObject>();
+                (*raw_exception).dict = std::ptr::null_mut();
+                (*raw_exception).args =
+                    self.exception_args_tuple_ptr_from_state(exception_state.args.clone());
+                (*raw_exception).notes =
+                    self.exception_optional_ptr_from_state_value(exception_state.notes.clone());
+                (*raw_exception).traceback =
+                    self.exception_optional_ptr_from_state_value(exception_state.traceback.clone());
+                (*raw_exception).context = std::ptr::null_mut();
+                (*raw_exception).cause = std::ptr::null_mut();
+                (*raw_exception).suppress_context = if exception_state.suppress_context {
+                    1
+                } else {
+                    0
+                };
                 return;
             }
             if let Some(items) = list_items.as_ref() {

@@ -3498,6 +3498,20 @@ impl Vm {
         Ok(self.heap.alloc_list(entries))
     }
 
+    pub(super) fn builtin_type_prepare(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() < 3 {
+            return Err(RuntimeError::new(
+                "__prepare__() missing required positional arguments",
+            ));
+        }
+        let _ = kwargs;
+        Ok(self.heap.alloc_dict(Vec::new()))
+    }
+
     pub(super) fn builtin_type_annotations_get(
         &mut self,
         args: Vec<Value>,

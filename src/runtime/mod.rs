@@ -2343,6 +2343,7 @@ pub enum BuiltinFunction {
     Type,
     TypeInit,
     TypeMro,
+    TypePrepare,
     ClassMethod,
     StaticMethod,
     Property,
@@ -4457,6 +4458,14 @@ impl BuiltinFunction {
                     _ => Vec::new(),
                 };
                 Ok(heap.alloc_list(mro))
+            }
+            BuiltinFunction::TypePrepare => {
+                if args.len() < 3 {
+                    return Err(RuntimeError::new(
+                        "__prepare__() missing required positional arguments",
+                    ));
+                }
+                Ok(heap.alloc_dict(Vec::new()))
             }
             BuiltinFunction::ClassMethod => {
                 if args.len() != 1 {
@@ -7867,6 +7876,7 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::IsSubclass => "issubclass".to_string(),
         BuiltinFunction::TypeInstanceCheck => "__instancecheck__".to_string(),
         BuiltinFunction::TypeSubclassCheck => "__subclasscheck__".to_string(),
+        BuiltinFunction::TypePrepare => "__prepare__".to_string(),
         BuiltinFunction::GetAttr => "getattr".to_string(),
         BuiltinFunction::SetAttr => "setattr".to_string(),
         BuiltinFunction::DelAttr => "delattr".to_string(),

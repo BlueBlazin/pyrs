@@ -1092,6 +1092,12 @@ impl Vm {
                     Value::Builtin(builtin),
                     BuiltinFunction::TypeSubclassCheck,
                 )),
+            "__prepare__" if self.builtin_is_type_object(builtin) => Ok(self
+                .alloc_builtin_unbound_method(
+                    "__builtin_unbound_method__",
+                    Value::Builtin(builtin),
+                    BuiltinFunction::TypePrepare,
+                )),
             _ => Err(RuntimeError::attribute_error(format!(
                 "builtin has no attribute '{}'",
                 attr_name
@@ -4000,6 +4006,11 @@ impl Vm {
         } else if attr_name == "mro" {
             return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
                 BuiltinFunction::TypeMro,
+                class.clone(),
+            )));
+        } else if attr_name == "__prepare__" && self.class_has_builtin_type_base(class) {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::TypePrepare,
                 class.clone(),
             )));
         } else if attr_name == "__module__" {

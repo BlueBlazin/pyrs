@@ -68,6 +68,17 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- C-API lifetime-model checkpoint (2026-02-22, latest):
+  - owned-pointer free path now clears active thread-state exception pointers when they
+    alias the freed pointer (`current_exception`, `exc_info.exc_value`, `exc_state.exc_value`).
+  - this closes a stale-pointer path that could surface as intermittent NumPy init crashes in
+    `PyErr_*` / subtype checks.
+  - local stability probe: `import numpy as np; np.random.default_rng()` passes in 20/20
+    subprocess runs without segfault.
+  - NumPy gate remains blocked on proxy slot/callable parity:
+    - `callable(np.random.default_rng().integers)` is still `False`,
+    - proxy slot-backed dunder coverage remains incomplete (`__iter__`, scalar richcmp/getitem paths),
+    - arrayprint path still has `TypeError: call args must be tuple` in targeted probes.
 - C-API lifetime-model checkpoint (2026-02-20, latest):
   - VM-global pointer registry landed in `src/vm/capi_registry.rs` (provenance/lifecycle/ref-kind tracking).
   - registry is now wired into core compat allocation and teardown paths (`src/vm/vm_extensions.rs`, `src/vm/mod.rs`), including external-pin accounting and pending/free state transitions.

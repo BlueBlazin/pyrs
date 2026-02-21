@@ -4,17 +4,18 @@ use std::rc::Rc;
 
 use crate::bytecode::CodeObject;
 use crate::runtime::{BoundMethod, BuiltinFunction, ObjRef, Object, Value};
+use crate::vm::containers::dict_get_value;
 
 use super::cpython_context_runtime::ActiveCpythonContextGuard;
 use super::{
     CPY_PROXY_GET_ITER_ACTIVE, CpythonCFunctionCompatObject, CpythonMappingMethods,
     CpythonNumberMethods, CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject,
     InternalCallOutcome, ModuleCapiContext, Py_DecRef, Py_XIncRef, PyCFunction_Type, PyDict_Clear,
-    PyErr_BadInternalCall, PyErr_Clear, PyErr_Occurred, PyMethod_Type, PyMethodDescr_Type,
-    PyObject_GetAttr, PyObject_GetAttrString, PyObject_HasAttrStringWithError, PyTuple_New,
-    PyTuple_SetItem, PyTuple_Size, PyType_IsSubtype, PyUnicode_InternFromString, c_name_to_string,
-    cpython_call_builtin, cpython_call_object, cpython_keyword_args_from_dict_object,
-    cpython_new_ptr_for_value, cpython_objref_from_value,
+    PyErr_BadInternalCall, PyErr_Clear, PyErr_Occurred, PyFunction_Type, PyMethod_Type,
+    PyMethodDescr_Type, PyObject_GetAttr, PyObject_GetAttrString, PyObject_HasAttrStringWithError,
+    PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyType_IsSubtype, PyUnicode_InternFromString,
+    c_name_to_string, cpython_call_builtin, cpython_call_object,
+    cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value, cpython_objref_from_value,
     cpython_positional_args_from_tuple_object, cpython_resolve_vectorcall, cpython_set_error,
     cpython_value_debug_tag, cpython_value_from_ptr, is_truthy, with_active_cpython_context_mut,
 };
@@ -1646,17 +1647,48 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
     }
     // SAFETY: caller guarantees at least one arg pointer.
     let self_obj = unsafe { *args };
-    let method = unsafe { PyObject_GetAttr(self_obj, name) };
+    let looked_up_method = with_active_cpython_context_mut(|context| {
+        let method_name =
+            context
+                .cpython_value_from_borrowed_ptr(name)
+                .and_then(|value| match value {
+                    Value::Str(text) => Some(text),
+                    _ => None,
+                });
+        let Some(method_name) = method_name else {
+            return std::ptr::null_mut();
+        };
+        context
+            .lookup_type_attr_via_tp_dict(self_obj, &method_name)
+            .unwrap_or(std::ptr::null_mut())
+    })
+    .unwrap_or(std::ptr::null_mut());
+    let method = if looked_up_method.is_null() {
+        unsafe { PyObject_GetAttr(self_obj, name) }
+    } else {
+        unsafe { Py_XIncRef(looked_up_method) };
+        looked_up_method
+    };
     if method.is_null() {
         return std::ptr::null_mut();
     }
     let trace_vectorcall_method = std::env::var_os("PYRS_TRACE_VECTORCALL_METHOD").is_some();
-    let method_requires_explicit_self = unsafe {
-        let method_type = method
+    let method_type = unsafe {
+        method
             .cast::<CpythonObjectHead>()
             .as_ref()
             .map(|head| head.ob_type)
-            .unwrap_or(std::ptr::null_mut());
+            .unwrap_or(std::ptr::null_mut())
+    };
+    let method_is_function = unsafe {
+        !method_type.is_null()
+            && (method_type == std::ptr::addr_of_mut!(PyFunction_Type).cast::<c_void>()
+                || PyType_IsSubtype(
+                    method_type,
+                    std::ptr::addr_of_mut!(PyFunction_Type).cast::<c_void>(),
+                ) != 0)
+    };
+    let mut method_requires_explicit_self = unsafe {
         if method_type.is_null() {
             false
         } else if method_type == std::ptr::addr_of_mut!(PyMethod_Type).cast::<c_void>()
@@ -1694,6 +1726,40 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
                 .unwrap_or(false)
         }
     };
+    if !method_requires_explicit_self && method_is_function {
+        let treat_as_instance_method = with_active_cpython_context_mut(|context| {
+            let attr_name = context
+                .cpython_value_from_borrowed_ptr(name)
+                .and_then(|value| match value {
+                    Value::Str(text) => Some(text),
+                    _ => None,
+                });
+            let Some(attr_name) = attr_name else {
+                return false;
+            };
+            let Some(Value::Instance(instance_obj)) =
+                context.cpython_value_from_borrowed_ptr(self_obj)
+            else {
+                return false;
+            };
+            let Object::Instance(instance_data) = &*instance_obj.kind() else {
+                return false;
+            };
+            if instance_data.attrs.contains_key(&attr_name) {
+                return false;
+            }
+            if let Some(Value::Dict(dict_obj)) =
+                instance_data.attrs.get("__pyrs_instance_dict_storage__")
+            {
+                return dict_get_value(dict_obj, &Value::Str(attr_name)).is_none();
+            }
+            true
+        })
+        .unwrap_or(false);
+        if treat_as_instance_method {
+            method_requires_explicit_self = true;
+        }
+    }
     if trace_vectorcall_method {
         let method_name_value = with_active_cpython_context_mut(|context| {
             context

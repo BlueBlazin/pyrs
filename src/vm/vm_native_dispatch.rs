@@ -6578,6 +6578,7 @@ impl Vm {
             BuiltinFunction::Type => self.builtin_type(args, kwargs),
             BuiltinFunction::TypeInit => self.builtin_type_init(args, kwargs),
             BuiltinFunction::TypeMro => self.builtin_type_mro(args, kwargs),
+            BuiltinFunction::TypePrepare => self.builtin_type_prepare(args, kwargs),
             BuiltinFunction::IsInstance => self.builtin_isinstance(args, kwargs),
             BuiltinFunction::IsSubclass => self.builtin_issubclass(args, kwargs),
             BuiltinFunction::TypeInstanceCheck => self.builtin_type_instancecheck(args, kwargs),

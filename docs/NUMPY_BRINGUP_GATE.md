@@ -81,7 +81,7 @@ python3 scripts/probe_numpy_gate.py \
   --timeout 30
 ```
 
-## Current Snapshot (2026-02-21)
+## Current Snapshot (2026-02-22)
 
 - Direct mode only; CPython bridge mode was removed.
 - Base NumPy gate is green:
@@ -91,6 +91,9 @@ python3 scripts/probe_numpy_gate.py \
 - Direct smoke sanity is green for:
   - `import numpy as np`
   - `np.dtype('int8')`
+- Lifetime stability update:
+  - repeated subprocess runs of `import numpy as np; np.random.default_rng()` are now stable
+    in debug mode (20/20 local runs, no segfault).
 - Lifetime substrate is in active migration (`docs/CAPI_LIFETIME_MODEL.md`):
   - VM-global pointer registry is authoritative for pointer provenance/liveness.
   - Per-context owned-pointer shadow set has been removed.
@@ -98,10 +101,11 @@ python3 scripts/probe_numpy_gate.py \
 
 ## Current P0 Blockers
 
-1. `numpy.random.default_rng()` fails in direct mode during extension init.
-   - Current surface failure:
-     - `extension 'numpy.random._bounded_integers' ... Py_mod_exec failed`
-     - nested `numpy.random.bit_generator` `Py_mod_exec` failure.
+1. NumPy proxy callable/slot parity is still incomplete in direct mode.
+   - Current surface failures:
+     - `callable(np.random.default_rng().integers)` is `False` (expected `True`).
+     - proxy slot-backed dunder exposure is incomplete (`__iter__`, `__lt__`, scalar unary/getitem dunders).
+     - arrayprint/repr paths still hit `TypeError: call args must be tuple` in some probes.
 2. Scientific-stack optional probes (`scipy`/`pandas`/`matplotlib`) remain red behind Lane-B C-API/runtime parity gaps.
 
 ## Operating Rules

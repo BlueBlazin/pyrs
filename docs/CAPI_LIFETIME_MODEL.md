@@ -4,6 +4,15 @@ Status: `IN_PROGRESS` (execution lock, Phase 1/2 in progress).
 
 ## Latest Checkpoint (2026-02-21)
 
+- thread-state stale-exception hardening (2026-02-22):
+  - owned-pointer free paths now clear active thread-state exception slots when they still
+    point at the pointer being freed (`current_exception`, `exc_info.exc_value`,
+    `exc_state.exc_value`).
+  - this removes a concrete stale-pointer reuse path where `PyErr_*`/`PyType_IsSubtype`
+    could read freed exception-instance pointers during later extension init.
+  - local stress evidence: repeated subprocess probes of
+    `import numpy as np; np.random.default_rng()` no longer crash in 20-run loops.
+
 - ownership-authority cleanup (latest):
   - removed `ModuleCapiContext` legacy owned-pointer shadow set (`cpython_owned_ptrs`).
   - owned-pointer checks now resolve through VM-global registry authority (`Vm::capi_ptr_is_owned_compat`) with context-local allocation lists only as fallback discovery, not ownership source-of-truth.
