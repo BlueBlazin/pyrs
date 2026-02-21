@@ -80,10 +80,8 @@ For each optimization slice:
   - pyc-only import closure for `typing` + `annotationlib` path (direct execution now succeeds without source fallback when pyc is present).
 - NumPy import graph pyc fallback counters improved from:
   - `source_compiles=30`, `pyc_fallbacks=29`
-  - to `source_compiles=9`, `pyc_fallbacks=8`.
+  - to `source_compiles=7`, `pyc_fallbacks=6`.
   - remaining pyc runtime-fallback modules in the NumPy import path:
-    - `_collections_abc`
     - `re._constants`, `re._parser`, `re._compiler`, `re`
     - `textwrap`
-    - `collections.abc`
     - `numpy._core._add_newdocs`

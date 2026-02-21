@@ -137,14 +137,16 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - new regression: `tests/pyc_translate.rs::translates_call_intrinsic_2`.
     - new regression: `tests/pyc_exec.rs::executes_cpython_pyc_with_match_class_mapping_and_sequence`.
     - new regression: `tests/pyc_translate.rs::translates_get_len_and_build_template`.
+    - coroutine materialization parity fix landed for translated pyc function calls:
+      - coroutine/async-generator code objects now allocate generator/coroutine state on call (not only `code.is_generator`),
+      - fixes `_collections_abc` pyc path failure (`_coro.close()` on `None`),
+      - new regression: `tests/pyc_exec.rs::executes_cpython_pyc_async_def_returns_coroutine_object`.
     - pyc-only import check for `typing` + `annotationlib` now succeeds (manual direct run from cache-only path).
     - NumPy import graph counters improved to:
-      - `source_compiles=9`, `pyc_attempts=111`, `pyc_fallbacks=8` (was `30/111/29`).
+      - `source_compiles=7`, `pyc_attempts=111`, `pyc_fallbacks=6` (was `30/111/29`).
     - remaining runtime pyc fallback on the import path is currently:
-      - `_collections_abc`,
       - `re.*`,
       - `textwrap`,
-      - `collections.abc`,
       - `numpy._core._add_newdocs`.
 - VM error-model closure checkpoint (2026-02-20, latest):
   - removed VM-control-flow string classification in `src/vm/mod.rs`:

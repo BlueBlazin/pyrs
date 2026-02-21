@@ -9290,7 +9290,7 @@ impl Vm {
         if code.plain_positional_arg0_cell.is_some()
             || !code.cellvars.is_empty()
             || !func_data.closure.is_empty()
-            || code.is_generator
+            || Self::code_returns_generator_like(code)
             || code.is_comprehension
         {
             return None;
@@ -10091,7 +10091,7 @@ impl Vm {
                 && code.plain_positional_arg0_cell.is_none()
                 && code.cellvars.is_empty()
                 && func_data.closure.is_empty()
-                && !code.is_generator
+                && !Self::code_returns_generator_like(&code)
                 && !code.is_comprehension;
             (
                 code,
@@ -10350,7 +10350,7 @@ impl Vm {
                 && code.plain_positional_arg1_cell.is_none()
                 && code.cellvars.is_empty()
                 && func_data.closure.is_empty()
-                && !code.is_generator
+                && !Self::code_returns_generator_like(&code)
                 && !code.is_comprehension;
             (simple_positional_path, no_cells_hot)
         };
@@ -10406,7 +10406,7 @@ impl Vm {
                 && code.plain_positional_arg2_cell.is_none()
                 && code.cellvars.is_empty()
                 && func_data.closure.is_empty()
-                && !code.is_generator
+                && !Self::code_returns_generator_like(&code)
                 && !code.is_comprehension;
             (simple_positional_path, no_cells_hot)
         };
@@ -10487,6 +10487,11 @@ impl Vm {
     }
 
     #[inline]
+    fn code_returns_generator_like(code: &CodeObject) -> bool {
+        code.is_generator || code.is_coroutine || code.is_async_generator
+    }
+
+    #[inline]
     fn push_simple_positional_function_frame_two_args_no_cells_ref(
         &mut self,
         code: &Rc<CodeObject>,
@@ -10495,7 +10500,7 @@ impl Vm {
         arg0: Value,
         arg1: Value,
     ) -> Result<(), RuntimeError> {
-        debug_assert!(!code.is_generator);
+        debug_assert!(!Self::code_returns_generator_like(code));
         debug_assert!(!code.is_comprehension);
         let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
         if let Some(caller) = self.frames.last()
@@ -10528,7 +10533,7 @@ impl Vm {
         arg1: Value,
         arg2: Value,
     ) -> Result<(), RuntimeError> {
-        debug_assert!(!code.is_generator);
+        debug_assert!(!Self::code_returns_generator_like(code));
         debug_assert!(!code.is_comprehension);
         let mut frame = self.acquire_simple_frame_no_cells_ref(code, module, owner_class);
         if let Some(caller) = self.frames.last()
@@ -10571,7 +10576,7 @@ impl Vm {
 
         self.store_fast_positional_arg(&code, &mut frame, 0, arg0);
 
-        if code.is_generator {
+        if Self::code_returns_generator_like(&code) {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
                 code.is_coroutine,
                 code.is_async_generator,
@@ -10686,7 +10691,7 @@ impl Vm {
         self.store_fast_positional_arg(&code, &mut frame, 0, arg0);
         self.store_fast_positional_arg(&code, &mut frame, 1, arg1);
 
-        if code.is_generator {
+        if Self::code_returns_generator_like(&code) {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
                 code.is_coroutine,
                 code.is_async_generator,
@@ -10724,7 +10729,7 @@ impl Vm {
         self.store_fast_positional_arg(&code, &mut frame, 1, arg1);
         self.store_fast_positional_arg(&code, &mut frame, 2, arg2);
 
-        if code.is_generator {
+        if Self::code_returns_generator_like(&code) {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
                 code.is_coroutine,
                 code.is_async_generator,
@@ -10808,7 +10813,7 @@ impl Vm {
             self.store_fast_positional_arg(&code, &mut frame, arg_idx, value);
         }
 
-        if code.is_generator {
+        if Self::code_returns_generator_like(&code) {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
                 code.is_coroutine,
                 code.is_async_generator,
@@ -10835,7 +10840,7 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         let mut frame = self.prepare_function_frame(&code, module, owner_class, cells);
         apply_bindings(&mut frame, &code, bindings, &self.heap);
-        if code.is_generator {
+        if Self::code_returns_generator_like(&code) {
             let generator = match self.heap.alloc_generator(GeneratorObject::new(
                 code.is_coroutine,
                 code.is_async_generator,

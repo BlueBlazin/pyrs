@@ -139,10 +139,8 @@ Do not rely on stale point-in-time numbers in this document.
   - CPython opcode mapping closure landed for `DELETE_ATTR` and `LOAD_FROM_DICT_OR_DEREF`.
   - `_collections_abc`/`re`/NumPy import path pyc fallback counters improved from:
     - `source_compiles=30`, `pyc_fallbacks=29`
-    - to `source_compiles=9`, `pyc_fallbacks=8`.
+    - to `source_compiles=7`, `pyc_fallbacks=6`.
   - remaining pyc runtime fallback exceptions in the NumPy import graph are now concentrated in:
-    - `_collections_abc`
     - `re.*`
     - `textwrap`
-    - `collections.abc`
     - `numpy._core._add_newdocs`.

@@ -323,3 +323,26 @@ ok = map_ok and seq_ok and cls_ok
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn executes_cpython_pyc_async_def_returns_coroutine_object() {
+    if python_path().is_none() {
+        eprintln!("python3.14 not found; skipping");
+        return;
+    }
+    let source = r#"
+async def _coro():
+    return 1
+
+coro = _coro()
+ok = hasattr(coro, "close")
+coro.close()
+"#;
+
+    let pyc_path = compile_pyc(source, "async_def_module");
+    let bytes = fs::read(&pyc_path).expect("read pyc");
+    let mut vm = Vm::new();
+    let value = vm.execute_pyc_bytes(&bytes).expect("execute pyc");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
