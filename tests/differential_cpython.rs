@@ -753,3 +753,50 @@ fn differential_unindent_mismatch_matches_cpython() {
         caret_line_after_source(&ours, "      pass").or_else(|| caret_line_after_source(&ours, "    pass"));
     assert_eq!(py_caret, ours_caret, "unindent-mismatch caret mismatch");
 }
+
+#[test]
+fn differential_class_header_colon_inside_unclosed_paren_is_invalid_syntax() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "class A(:\n    pass\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError: invalid syntax"), "{}", py);
+    assert!(ours.contains("SyntaxError: invalid syntax"), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    class A(:").expect("python class-header caret");
+    let ours_caret = caret_line_after_source(&ours, "    class A(:").expect("pyrs class-header caret");
+    assert_eq!(py_caret, ours_caret, "class-header caret mismatch");
+}
+
+#[test]
+fn differential_function_header_colon_inside_unclosed_paren_is_invalid_syntax() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f(:\n    pass\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError: invalid syntax"), "{}", py);
+    assert!(ours.contains("SyntaxError: invalid syntax"), "{}", ours);
+    let py_caret =
+        caret_line_after_source(&py, "    def f(:").expect("python function-header caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    def f(:").expect("pyrs function-header caret");
+    assert_eq!(py_caret, ours_caret, "function-header caret mismatch");
+}
+
+#[test]
+fn differential_open_bracket_with_colon_is_invalid_syntax() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "[1:";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError: invalid syntax"), "{}", py);
+    assert!(ours.contains("SyntaxError: invalid syntax"), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    [1:").expect("python list-colon caret");
+    let ours_caret = caret_line_after_source(&ours, "    [1:").expect("pyrs list-colon caret");
+    assert_eq!(py_caret, ours_caret, "list-colon caret mismatch");
+}

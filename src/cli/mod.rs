@@ -228,12 +228,25 @@ fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
                 line,
                 column,
             },
-            DelimiterIssue::UnclosedOpen { open, line, column } => SyntaxDiagnostic {
-                error_type: "SyntaxError",
-                message: format!("'{}' was never closed", open),
-                line,
-                column,
-            },
+            DelimiterIssue::UnclosedOpen { open, line, column } => {
+                if matches!(open, '(' | '[')
+                    && let Some(colon_column) = line_colon_after_column(source, line, column)
+                {
+                    SyntaxDiagnostic {
+                        error_type: "SyntaxError",
+                        message: "invalid syntax".to_string(),
+                        line,
+                        column: colon_column,
+                    }
+                } else {
+                    SyntaxDiagnostic {
+                        error_type: "SyntaxError",
+                        message: format!("'{}' was never closed", open),
+                        line,
+                        column,
+                    }
+                }
+            }
         };
     }
 
@@ -463,6 +476,23 @@ fn line_end_column(source: &str, line: usize) -> Option<usize> {
         .lines()
         .nth(line.saturating_sub(1))
         .map(|entry| entry.trim_end_matches('\r').chars().count().saturating_add(1))
+}
+
+fn line_colon_after_column(source: &str, line: usize, column: usize) -> Option<usize> {
+    let line_text = source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .map(|entry| entry.trim_end_matches('\r'))?;
+    for (idx, ch) in line_text.chars().enumerate() {
+        let one_based = idx.saturating_add(1);
+        if one_based <= column {
+            continue;
+        }
+        if ch == ':' {
+            return Some(one_based);
+        }
+    }
+    None
 }
 
 fn detect_unexpected_top_level_indent(source: &str) -> Option<(usize, usize)> {
