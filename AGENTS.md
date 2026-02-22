@@ -36,6 +36,7 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Before starting a new coding round, re-check:
   - `docs/CAPI_PLAN.md` (execution lock + abi3 status),
   - `docs/CAPI_LIFETIME_MODEL.md` (lifetime invariants + migration phase),
+  - `docs/CAPI_NOOP_EXECUTION_ORDER.md` (ordered closure checklist for remaining C-API no-op rows),
   - `docs/NUMPY_BRINGUP_GATE.md` (current blocker + gate state),
   - `perf/abi3_manifest_latest.json` (coverage baseline).
 - Required cadence for each ABI batch:

@@ -56,6 +56,7 @@ It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those a
 - Canonical progress tracker: `docs/STUB_ACCOUNTING.md` (Milestone 15 extension ecosystem row).
 - Safety constraints: `docs/CAPI_LIFETIME_MODEL.md`.
 - Execution plan: `docs/CAPI_PLAN.md`.
+- Ordered implementation checklist: `docs/CAPI_NOOP_EXECUTION_ORDER.md`.
 
 A C-API no-op is only considered closed when:
 1. behavior matches CPython 3.14 semantics (or explicit supported-scope policy is documented and enforced),
