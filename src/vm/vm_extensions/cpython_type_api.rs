@@ -3037,11 +3037,46 @@ pub unsafe extern "C" fn PyType_GetBaseByToken(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_ClearCache() -> c_uint {
-    0
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return 0;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        vm.clear_all_type_caches()
+    })
+    .unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyType_Modified(_ty: *mut c_void) {}
+pub unsafe extern "C" fn PyType_Modified(ty: *mut c_void) {
+    if ty.is_null() {
+        return;
+    }
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        let Some(type_value) = context.cpython_value_from_ptr_or_proxy(ty) else {
+            // Unknown type pointer: conservatively invalidate all type caches.
+            // SAFETY: VM pointer is valid for active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let _ = vm.clear_all_type_caches();
+            return;
+        };
+        let Value::Class(class_obj) = type_value else {
+            // Non-runtime class mapping: fall back to global invalidation.
+            // SAFETY: VM pointer is valid for active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let _ = vm.clear_all_type_caches();
+            return;
+        };
+        context.populate_proxy_class_attrs_from_type_dict(&class_obj, ty);
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let _ = vm.invalidate_type_cache_for_class_id(class_obj.id());
+    });
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_Freeze(ty: *mut c_void) -> c_int {

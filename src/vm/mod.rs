@@ -1074,6 +1074,7 @@ pub struct Vm {
     next_synthetic_thread_ident: i64,
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
+    type_cache_version_tag: u32,
     fast_local_unbound_marker: Value,
     instruction_step_limit: Option<u64>,
     instruction_steps: u64,
@@ -1336,6 +1337,7 @@ impl Vm {
             next_synthetic_thread_ident: SYNTHETIC_THREAD_IDENT_START,
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
+            type_cache_version_tag: 1,
             fast_local_unbound_marker,
             instruction_step_limit: std::env::var("PYRS_STEP_LIMIT")
                 .ok()
@@ -1661,6 +1663,74 @@ impl Vm {
     #[inline]
     fn touch_class_attr_version(&mut self, class: &ObjRef) -> u64 {
         self.touch_class_attr_version_by_id(class.id())
+    }
+
+    #[inline]
+    fn next_type_cache_version_tag(&mut self) -> u32 {
+        self.type_cache_version_tag = self.type_cache_version_tag.wrapping_add(1);
+        if self.type_cache_version_tag == 0 {
+            self.type_cache_version_tag = 1;
+        }
+        self.type_cache_version_tag
+    }
+
+    fn clear_type_related_inline_caches(&mut self) {
+        for frame in &mut self.frames {
+            for slot in &mut frame.load_attr_inline_cache {
+                *slot = [None, None];
+            }
+            for slot in &mut frame.one_arg_inline_cache {
+                *slot = None;
+            }
+        }
+        for frame in self.generator_states.values_mut() {
+            for slot in &mut frame.load_attr_inline_cache {
+                *slot = [None, None];
+            }
+            for slot in &mut frame.one_arg_inline_cache {
+                *slot = None;
+            }
+        }
+    }
+
+    fn collect_runtime_class_ids_for_type_cache(&self, modified_class_id: Option<u64>) -> Vec<u64> {
+        let mut class_ids = Vec::new();
+        for object in self.heap.snapshot_objects() {
+            let Object::Class(class_data) = &*object.kind() else {
+                continue;
+            };
+            if modified_class_id.is_none_or(|target_id| {
+                object.id() == target_id || class_data.mro.iter().any(|base| base.id() == target_id)
+            }) {
+                class_ids.push(object.id());
+            }
+        }
+        if let Some(class_id) = modified_class_id {
+            class_ids.push(class_id);
+        }
+        class_ids.sort_unstable();
+        class_ids.dedup();
+        class_ids
+    }
+
+    pub(super) fn invalidate_type_cache_for_class_id(&mut self, class_id: u64) -> u32 {
+        let class_ids = self.collect_runtime_class_ids_for_type_cache(Some(class_id));
+        for id in class_ids {
+            self.touch_class_attr_version_by_id(id);
+        }
+        self.touch_builtins_version();
+        self.clear_type_related_inline_caches();
+        self.next_type_cache_version_tag()
+    }
+
+    pub(super) fn clear_all_type_caches(&mut self) -> u32 {
+        let class_ids = self.collect_runtime_class_ids_for_type_cache(None);
+        for id in class_ids {
+            self.touch_class_attr_version_by_id(id);
+        }
+        self.touch_builtins_version();
+        self.clear_type_related_inline_caches();
+        self.next_type_cache_version_tag()
     }
 
     fn acquire_frame(

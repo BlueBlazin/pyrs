@@ -784,6 +784,7 @@ long long PyNumber_AsSsize_t(PyObject *object, PyObject *exc);
 PyObject *PyNumber_ToBase(PyObject *object, int base);
 PyObject *PyObject_GetAttrString(PyObject *object, const char *name);
 PyObject *PyObject_GetAttr(PyObject *object, PyObject *name);
+int PyObject_SetAttrString(PyObject *object, const char *name, PyObject *value);
 PyObject *PyObject_Type(PyObject *object);
 PyObject *PyObject_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *_PyObject_CallFunction_SizeT(PyObject *callable, const char *format, ...);
@@ -1010,6 +1011,7 @@ void PyBuffer_Release(Py_buffer *view);
 
 PyObject *PyDict_New(void);
 int PyDict_SetItem(PyObject *dict, PyObject *key, PyObject *value);
+int PyDict_SetItemString(PyObject *dict, const char *key, PyObject *value);
 PyObject *PyDict_GetItemString(PyObject *dict, const char *key);
 PyObject *PyDict_Keys(PyObject *dict);
 PyObject *PyDict_Values(PyObject *dict);
