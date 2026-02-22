@@ -15351,6 +15351,198 @@ ok = (sys._clear_type_descriptors(C) is None)
 }
 
 #[test]
+fn sys_clear_type_descriptors_validates_type_and_immutable_contracts() {
+    let source = r#"import sys
+class C:
+    pass
+cleared = (sys._clear_type_descriptors(C) is None)
+try:
+    sys._clear_type_descriptors(1)
+except TypeError as exc:
+    wrong_type = ("must be type" in str(exc))
+else:
+    wrong_type = False
+try:
+    sys._clear_type_descriptors(object)
+except TypeError as exc:
+    immutable = ("immutable" in str(exc))
+else:
+    immutable = False
+ok = cleared and wrong_type and immutable
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn object_init_subclass_matches_default_cpython_contracts() {
+    let source = r#"ok = (object.__init_subclass__() is None)
+try:
+    object.__init_subclass__(x=1)
+except TypeError as exc:
+    kw_error = ("takes no keyword arguments" in str(exc))
+else:
+    kw_error = False
+try:
+    object.__init_subclass__(1)
+except TypeError as exc:
+    arg_error = ("takes no arguments" in str(exc))
+else:
+    arg_error = False
+ok = ok and kw_error and arg_error
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_audit_validates_event_name_and_accepts_varargs() {
+    let source = r#"import sys
+ok = (sys.audit("event.name", 1, 2, 3) is None)
+try:
+    sys.audit()
+except TypeError as exc:
+    missing = ("at least 1 argument" in str(exc))
+else:
+    missing = False
+try:
+    sys.audit(1)
+except TypeError as exc:
+    wrong_type = ("argument 1 must be str" in str(exc))
+else:
+    wrong_type = False
+ok = ok and missing and wrong_type
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_breakpointhook_obeys_pythonbreakpoint_contracts() {
+    let source = r#"import os, sys
+os.putenv("PYTHONBREAKPOINT", "0")
+disabled = (sys.breakpointhook() is None and sys.__breakpointhook__() is None)
+os.putenv("PYTHONBREAKPOINT", "int")
+builtin_hook = (sys.breakpointhook("7") == 7)
+os.putenv("PYTHONBREAKPOINT", ".")
+invalid = (sys.breakpointhook() is None)
+ok = disabled and builtin_hook and invalid
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_unraisablehook_validates_argument_shape_and_receives_runtime_records() {
+    let source = r#"import gc, sys
+try:
+    sys.unraisablehook(object())
+except TypeError as exc:
+    invalid_arg = ("UnraisableHookArgs" in str(exc))
+else:
+    invalid_arg = False
+records = []
+def capture(unraisable):
+    records.append((
+        hasattr(unraisable, "exc_type"),
+        hasattr(unraisable, "exc_value"),
+        hasattr(unraisable, "err_msg"),
+        hasattr(unraisable, "object"),
+    ))
+sys.unraisablehook = capture
+class Bad:
+    def __del__(self):
+        raise ValueError("boom")
+obj = Bad()
+del obj
+gc.collect()
+ok = invalid_arg and len(records) >= 1 and records[0] == (True, True, True, True)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_monitoring_core_apis_match_cpython_shape_and_state_contracts() {
+    let source = r#"import sys
+m = sys.monitoring
+events = m.events
+code = (lambda: None).__code__
+ok = (m.get_tool(0) is None)
+try:
+    m.get_tool(99)
+except ValueError as exc:
+    bad_tool = ("invalid tool 99" in str(exc))
+else:
+    bad_tool = False
+m.use_tool_id(2, "prof")
+tool_set = (m.get_tool(2) == "prof")
+try:
+    m.use_tool_id(2, "dup")
+except ValueError as exc:
+    duplicate = ("already in use" in str(exc))
+else:
+    duplicate = False
+first = m.register_callback(2, events.LINE, 123)
+second = m.register_callback(2, events.LINE, None)
+callbacks = (first is None and second == 123)
+try:
+    m.register_callback(2, events.LINE | events.JUMP, None)
+except ValueError as exc:
+    invalid_event = ("one event at a time" in str(exc))
+else:
+    invalid_event = False
+m.set_events(2, events.LINE | events.BRANCH)
+m.set_local_events(2, code, events.LINE | events.BRANCH)
+m.restart_events()
+m.clear_tool_id(2)
+cleared = (m.get_tool(2) == "prof")
+m.set_events(2, 0)
+m.free_tool_id(2)
+freed = (m.get_tool(2) is None)
+try:
+    m.set_events(2, 0)
+except ValueError as exc:
+    set_events_error = ("not in use" in str(exc))
+else:
+    set_events_error = False
+try:
+    m.set_local_events(2, code, 0)
+except ValueError as exc:
+    set_local_error = ("not in use" in str(exc))
+else:
+    set_local_error = False
+try:
+    m.set_local_events(2, 1, 0)
+except TypeError as exc:
+    code_error = ("code object" in str(exc))
+else:
+    code_error = False
+ok = ok and bad_tool and tool_set and duplicate and callbacks and invalid_event and cleared and freed and set_events_error and set_local_error and code_error
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn os_path_realpath_accepts_strict_keyword() {
     let source = r#"import os
 value = os.path.realpath(".", strict=False)

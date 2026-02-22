@@ -6,27 +6,17 @@ This classifies the current entries in `docs/NOOP_BUILTIN_INVENTORY.txt` into:
 
 Snapshot date: 2026-02-22
 
-## Production-Facing Symbols (15)
+## Production-Facing Symbols (0)
 
-- `__main__.__builtins__.object.__init_subclass__`
-- `sys.__breakpointhook__`
-- `sys.__unraisablehook__`
-- `sys._clear_type_descriptors`
-- `sys.audit`
-- `sys.breakpointhook`
-- `sys.monitoring.clear_tool_id`
-- `sys.monitoring.free_tool_id`
-- `sys.monitoring.get_tool`
-- `sys.monitoring.register_callback`
-- `sys.monitoring.restart_events`
-- `sys.monitoring.set_events`
-- `sys.monitoring.set_local_events`
-- `sys.monitoring.use_tool_id`
-- `sys.unraisablehook`
+- none
 
 Notes:
-- `sys.monitoring.*` is advanced tooling/debugging API, but it is still runtime-facing.
-- `sys._clear_type_descriptors` is private-prefixed, but currently exposed in the runtime surface and not `_test*`-scoped.
+- The previously-tracked production no-op surfaces were implemented in this round:
+  - `object.__init_subclass__`
+  - `sys.audit`, `sys.breakpointhook`, `sys.__breakpointhook__`
+  - `sys.unraisablehook`, `sys.__unraisablehook__`
+  - `sys._clear_type_descriptors`
+  - `sys.monitoring.{get_tool,use_tool_id,clear_tool_id,free_tool_id,register_callback,set_events,set_local_events,restart_events}`
 
 ## Test-Only Symbols (26)
 

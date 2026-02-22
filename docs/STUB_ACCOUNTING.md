@@ -81,7 +81,7 @@ Shims are temporary bootstrap fallbacks and are not allowed to shadow CPython `L
 
 ## Remaining Intentional NoOp Scope
 - Test-only CPython helper modules (`_testcapi`, `_testinternalcapi` family)
-- `sys.monitoring` and `sys._jit` scaffolding
+- `sys._jit` scaffolding
 
 These entries must not silently expand.
 

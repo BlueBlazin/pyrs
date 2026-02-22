@@ -1,4 +1,3 @@
-__main__.__builtins__.object.__init_subclass__
 _testcapi.MethClass.meth_fastcall
 _testcapi.MethClass.meth_fastcall_keywords
 _testcapi.MethClass.meth_noargs
@@ -25,17 +24,3 @@ _testcapi.meth_varargs
 _testcapi.meth_varargs_keywords
 _testinternalcapi.has_inline_values
 _testinternalcapi.set_eval_frame_default
-sys.__breakpointhook__
-sys.__unraisablehook__
-sys._clear_type_descriptors
-sys.audit
-sys.breakpointhook
-sys.monitoring.clear_tool_id
-sys.monitoring.free_tool_id
-sys.monitoring.get_tool
-sys.monitoring.register_callback
-sys.monitoring.restart_events
-sys.monitoring.set_events
-sys.monitoring.set_local_events
-sys.monitoring.use_tool_id
-sys.unraisablehook
