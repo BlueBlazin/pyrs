@@ -1,4 +1,4 @@
-//! Runtime object model (stubbed).
+//! Runtime object model.
 
 pub mod bigint;
 mod dict_backend;

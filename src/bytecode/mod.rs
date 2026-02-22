@@ -1,4 +1,4 @@
-//! Bytecode representation and metadata (stubbed).
+//! Bytecode representation and metadata.
 
 pub mod cpython;
 pub mod metadata;
