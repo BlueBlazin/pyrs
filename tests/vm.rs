@@ -9281,9 +9281,64 @@ fn rejects_continue_in_for_else_without_outer_loop() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let err = compiler::compile_module(&module).expect_err("compile should fail");
     assert!(
-        err.message.contains("continue outside loop"),
+        err.message.contains("'continue' not properly in loop"),
         "unexpected message: {}",
         err.message
+    );
+}
+
+#[test]
+fn rejects_return_outside_function_with_syntax_message() {
+    let source = "return\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("'return' outside function"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "expected span for return syntax error");
+}
+
+#[test]
+fn rejects_yield_outside_function_with_syntax_message() {
+    let source = "yield 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("'yield' outside function"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "expected span for yield syntax error");
+}
+
+#[test]
+fn rejects_await_outside_async_function_with_syntax_message() {
+    let source = "await 1\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("'await' outside function"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "expected span for await syntax error");
+}
+
+#[test]
+fn rejects_async_generator_return_with_value_with_syntax_message() {
+    let source = "async def f():\n    yield 1\n    return 2\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("'return' with value in async generator"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(
+        err.span.is_some(),
+        "expected span for async-generator return syntax error"
     );
 }
 

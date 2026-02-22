@@ -2,6 +2,7 @@ use super::{
     AttrAccessOutcome, AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BigInt, BoundMethod,
     BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
     DICT_BACKING_STORAGE_ATTR, FLOAT_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Frame,
+    ExceptionObject,
     GeneratorResumeKind, GeneratorResumeOutcome, HashMap, HashSet, INT_BACKING_STORAGE_ATTR,
     InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR,
     MONITORING_EVENT_BRANCH, MONITORING_EVENT_BRANCH_LEFT, MONITORING_EVENT_BRANCH_RIGHT,
@@ -25,6 +26,31 @@ use super::{
 use crate::runtime::value_lookup_hash;
 
 impl Vm {
+    fn exception_str_value(&self, exception: &ExceptionObject) -> String {
+        if exception.name == "KeyError" {
+            let keyerror_from_args = {
+                let attrs = exception.attrs.borrow();
+                if let Some(Value::Tuple(tuple)) = attrs.get("args") {
+                    if let Object::Tuple(args) = &*tuple.kind() {
+                        if args.len() == 1 {
+                            Some(format_repr(&args[0]))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(rendered) = keyerror_from_args {
+                return rendered;
+            }
+        }
+        exception.message.clone().unwrap_or_default()
+    }
+
     pub(super) fn value_type_name_for_error(&self, value: &Value) -> String {
         match value {
             Value::None => "NoneType".to_string(),
@@ -3328,6 +3354,9 @@ impl Vm {
 
         let object = object.unwrap_or_else(|| Value::Str(String::new()));
         if encoding.is_none() && errors.is_none() {
+            if let Value::Exception(exception) = &object {
+                return Ok(Value::Str(self.exception_str_value(exception)));
+            }
             let is_proxy = Self::cpython_proxy_raw_ptr_from_value(&object).is_some();
             if is_proxy {
                 match self.cpython_proxy_str(&object) {

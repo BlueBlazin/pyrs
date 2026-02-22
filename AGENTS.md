@@ -105,6 +105,17 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     (fixes line-0 fallback in `.pyc` context-chain tracebacks).
   - traceback footer exception formatting now resolves display text from exception `args` where
     available and applies CPython KeyError single-arg `repr(arg)` behavior.
+  - compiler now enforces CPython semantic syntax errors (with span-backed diagnostics):
+    - `'return' outside function`,
+    - `'break' outside loop`,
+    - `'continue' not properly in loop`,
+    - `'await' outside function`,
+    - `'yield' outside function`,
+    - `'yield from' outside function`,
+    - `'return' with value in async generator`.
+  - CLI/REPL compile diagnostics now render as `SyntaxError` (instead of `compile error: ...`);
+    `-c` semantic compile errors omit source+caret to match CPython command-mode behavior.
+  - `str(KeyError(<arg>))` now follows CPython single-arg behavior (`repr(arg)`).
   - Unhandled exception propagation no longer re-wraps traceback text as nested `RuntimeError`/`<Exc>: Traceback ...`.
   - New regressions:
     - `tests/vm.rs::exception_constructor_keyword_parity_matches_cpython`
@@ -112,6 +123,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::traceback_caret_infers_identifier_span_without_keyword_noise`
     - `tests/vm.rs::traceback_caret_skips_statement_keyword_ranges`
     - `tests/vm.rs::keyerror_single_arg_string_uses_repr_semantics`
+    - `tests/vm.rs::rejects_return_outside_function_with_syntax_message`
+    - `tests/vm.rs::rejects_yield_outside_function_with_syntax_message`
+    - `tests/vm.rs::rejects_await_outside_async_function_with_syntax_message`
+    - `tests/vm.rs::rejects_async_generator_return_with_value_with_syntax_message`
     - `tests/pyc_translate.rs::translates_cpython_linetable_into_instruction_ranges`.
     - `tests/differential_cpython.rs::differential_traceback_context_chain_matches_cpython_shape`
     - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
@@ -135,6 +150,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_pyc_traceback_suppressed_context_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_pyc_traceback_direct_cause_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_pyc_traceback_mixed_cause_and_context_chain_matches_cpython_shape`.
+    - `tests/differential_cpython.rs::differential_semantic_syntax_return_outside_function_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_break_outside_loop_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_continue_outside_loop_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_await_outside_function_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_yield_outside_function_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_yield_from_outside_function_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_return_with_value_in_async_generator_matches_cpython`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,

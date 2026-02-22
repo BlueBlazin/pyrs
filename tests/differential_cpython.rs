@@ -236,6 +236,11 @@ fn traceback_lines_without_source_carets(text: &str) -> Vec<String> {
             if line.starts_with("    ") && !line.trim_start().starts_with("File ") {
                 return None;
             }
+            if trimmed.starts_with("  File \"")
+                && let Some(rest) = trimmed.split_once("\", line ").map(|(_, rest)| rest)
+            {
+                return Some(format!("  File \"<FILE>\", line {rest}"));
+            }
             Some(trimmed.to_string())
         })
         .collect()
@@ -1172,4 +1177,147 @@ except Exception:
         "pyc mixed cause/context traceback shape mismatch"
     );
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn differential_semantic_syntax_return_outside_function_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "return";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
+    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(py.contains("SyntaxError: 'return' outside function"), "{}", py);
+    assert!(ours.contains("SyntaxError: 'return' outside function"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic return-outside-function syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_break_outside_loop_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "break";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
+    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(py.contains("SyntaxError: 'break' outside loop"), "{}", py);
+    assert!(ours.contains("SyntaxError: 'break' outside loop"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic break-outside-loop syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_continue_outside_loop_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "continue";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
+    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(py.contains("SyntaxError: 'continue' not properly in loop"), "{}", py);
+    assert!(
+        ours.contains("SyntaxError: 'continue' not properly in loop"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic continue-outside-loop syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_await_outside_function_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "await 1";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
+    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(py.contains("SyntaxError: 'await' outside function"), "{}", py);
+    assert!(ours.contains("SyntaxError: 'await' outside function"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic await-outside-function syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_yield_outside_function_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "yield 1";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
+    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(py.contains("SyntaxError: 'yield' outside function"), "{}", py);
+    assert!(ours.contains("SyntaxError: 'yield' outside function"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic yield-outside-function syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_yield_from_outside_function_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "yield from []";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
+    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(py.contains("SyntaxError: 'yield from' outside function"), "{}", py);
+    assert!(
+        ours.contains("SyntaxError: 'yield from' outside function"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic yield-from-outside-function syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_return_with_value_in_async_generator_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "async def f():\n    yield 1\n    return 2\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError: 'return' with value in async generator"), "{}", py);
+    assert!(
+        ours.contains("SyntaxError: 'return' with value in async generator"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic async-generator return syntax mismatch"
+    );
 }

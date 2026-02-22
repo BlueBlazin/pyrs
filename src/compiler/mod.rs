@@ -14,12 +14,21 @@ use crate::runtime::Value;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileError {
     pub message: String,
+    pub span: Option<Span>,
 }
 
 impl CompileError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            span: None,
+        }
+    }
+
+    pub fn with_span(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            message: message.into(),
+            span: Some(span),
         }
     }
 }
@@ -1665,6 +1674,14 @@ impl Compiler {
                 compiler.compile_decorated_stmt(decorators, stmt)
             }
             StmtKind::Return { value } => {
+                if !matches!(compiler.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+                    return Err(compiler.syntax_error_here("'return' outside function"));
+                }
+                if compiler.code.is_async_generator && value.is_some() {
+                    return Err(
+                        compiler.syntax_error_here("'return' with value in async generator")
+                    );
+                }
                 if let Some(expr) = value {
                     compiler.compile_expr(expr)?;
                 } else {
@@ -1884,6 +1901,9 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::Yield { value } => {
+                if !matches!(compiler.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+                    return Err(compiler.syntax_error_here("'yield' outside function"));
+                }
                 if let Some(value) = value {
                     compiler.compile_expr(value)?;
                 } else {
@@ -1893,11 +1913,17 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::YieldFrom { value } => {
+                if !matches!(compiler.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+                    return Err(compiler.syntax_error_here("'yield from' outside function"));
+                }
                 compiler.compile_expr(value)?;
                 compiler.emit(Opcode::YieldFrom, None);
                 Ok(())
             }
             ExprKind::Await { value } => {
+                if !compiler.code.is_coroutine && !compiler.code.is_async_generator {
+                    return Err(compiler.syntax_error_here("'await' outside function"));
+                }
                 compiler.compile_expr(value)?;
                 compiler.emit(Opcode::GetAwaitable, None);
                 compiler.emit(Opcode::YieldFrom, None);
@@ -2093,6 +2119,10 @@ impl Compiler {
         let result = f(self);
         self.current_span = prev;
         result
+    }
+
+    fn syntax_error_here(&self, message: impl Into<String>) -> CompileError {
+        CompileError::with_span(message, self.current_span)
     }
 
     fn ensure_local_name(&mut self, name: &str) {
@@ -4435,26 +4465,24 @@ impl Compiler {
         let break_cleanup_pops = self
             .loop_stack
             .last()
-            .ok_or_else(|| CompileError::new("break outside loop"))?
+            .ok_or_else(|| self.syntax_error_here("'break' outside loop"))?
             .break_cleanup_pops;
         for _ in 0..break_cleanup_pops {
             self.emit(Opcode::PopTop, None);
         }
         let jump = self.emit_jump(Opcode::Jump);
-        let ctx = self
-            .loop_stack
-            .last_mut()
-            .ok_or_else(|| CompileError::new("break outside loop"))?;
+        let Some(ctx) = self.loop_stack.last_mut() else {
+            return Err(self.syntax_error_here("'break' outside loop"));
+        };
         ctx.breaks.push(jump);
         Ok(())
     }
 
     fn compile_continue(&mut self) -> Result<(), CompileError> {
         let jump = self.emit_jump(Opcode::Jump);
-        let ctx = self
-            .loop_stack
-            .last_mut()
-            .ok_or_else(|| CompileError::new("continue outside loop"))?;
+        let Some(ctx) = self.loop_stack.last_mut() else {
+            return Err(self.syntax_error_here("'continue' not properly in loop"));
+        };
         ctx.continues.push(jump);
         Ok(())
     }

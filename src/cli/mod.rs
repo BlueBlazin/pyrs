@@ -132,7 +132,7 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
         .map_err(|err| format_syntax_error(path, &source, &err))?;
 
     let code = compiler::compile_module_with_filename(&module, path)
-        .map_err(|err| format!("compile error: {}", err.message))?;
+        .map_err(|err| format_compile_error(path, &source, &err))?;
 
     let exec_result = vm.execute(&code);
     let shutdown_result = vm.run_shutdown_hooks();
@@ -151,7 +151,7 @@ fn run_command(source: &str, import_site: bool) -> Result<(), String> {
         .map_err(|err| format_syntax_error("<string>", source, &err))?;
 
     let code = compiler::compile_module_with_filename(&module, "<string>")
-        .map_err(|err| format!("compile error: {}", err.message))?;
+        .map_err(|err| format_compile_error("<string>", source, &err))?;
 
     let exec_result = vm.execute(&code);
     let shutdown_result = vm.run_shutdown_hooks();
@@ -163,12 +163,40 @@ fn run_command(source: &str, import_site: bool) -> Result<(), String> {
 
 pub(super) fn format_syntax_error(filename: &str, source: &str, err: &ParseError) -> String {
     let diagnostic = classify_syntax_error(source, err);
+    render_syntax_diagnostic(filename, source, &diagnostic, true)
+}
+
+pub(super) fn format_compile_error(
+    filename: &str,
+    source: &str,
+    err: &compiler::CompileError,
+) -> String {
+    let span = err.span.unwrap_or(crate::ast::Span::new(1, 1));
+    let diagnostic = SyntaxDiagnostic {
+        error_type: "SyntaxError",
+        message: err.message.clone(),
+        line: span.line.max(1),
+        column: span.column.max(1),
+    };
+    // CPython omits source+caret for semantic compile errors in `-c` mode.
+    let include_source = filename != "<string>";
+    render_syntax_diagnostic(filename, source, &diagnostic, include_source)
+}
+
+fn render_syntax_diagnostic(
+    filename: &str,
+    source: &str,
+    diagnostic: &SyntaxDiagnostic,
+    include_source: bool,
+) -> String {
     let mut output = String::new();
     output.push_str(&format!(
         "  File \"{}\", line {}\n",
         filename, diagnostic.line
     ));
-    if let Some((source_line, caret_start)) = source_line_and_caret_start(source, &diagnostic) {
+    if include_source
+        && let Some((source_line, caret_start)) = source_line_and_caret_start(source, diagnostic)
+    {
         output.push_str("    ");
         output.push_str(&source_line);
         output.push('\n');

@@ -22,7 +22,7 @@ use crate::compiler;
 use crate::parser::{self, ParseError};
 use crate::runtime::{Object, Value};
 use crate::vm::Vm;
-use super::format_syntax_error;
+use super::{format_compile_error, format_syntax_error};
 
 const HISTORY_CAPACITY: usize = 10_000;
 const INDENT_WIDTH: usize = 4;
@@ -353,6 +353,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                         if let Err(err) = execute_parsed_module_with_timing(
                             vm,
                             &module,
+                            &pending,
                             "<stdin>",
                             true,
                             timing_enabled,
@@ -1795,7 +1796,7 @@ fn execute_module_source(
 ) -> Result<(), String> {
     vm.cache_source_text(filename, source);
     let module = parser::parse_module(source).map_err(|err| format_parse_error(source, filename, &err))?;
-    execute_parsed_module(vm, &module, filename, echo_expression_result)
+    execute_parsed_module(vm, &module, source, filename, echo_expression_result)
 }
 
 fn execute_with_optional_timing(
@@ -1827,7 +1828,7 @@ fn execute_timeit_command(
     let module = parser::parse_module(&request.source)
         .map_err(|err| format_parse_error(&request.source, filename, &err))?;
     let code = compiler::compile_module_with_filename(&module, filename)
-        .map_err(|err| format!("compile error: {}", err.message))?;
+        .map_err(|err| format_compile_error(filename, &request.source, &err))?;
     let loops = if let Some(loops) = request.loops {
         loops
     } else {
@@ -1901,12 +1902,13 @@ fn format_duration(seconds: f64) -> String {
 fn execute_parsed_module_with_timing(
     vm: &mut Vm,
     module: &Module,
+    source: &str,
     filename: &str,
     echo_expression_result: bool,
     timing_enabled: bool,
 ) -> Result<(), String> {
     let started = Instant::now();
-    let result = execute_parsed_module(vm, module, filename, echo_expression_result);
+    let result = execute_parsed_module(vm, module, source, filename, echo_expression_result);
     if timing_enabled {
         let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
         eprintln!("[timing] {elapsed_ms:.3} ms");
@@ -1917,6 +1919,7 @@ fn execute_parsed_module_with_timing(
 fn execute_parsed_module(
     vm: &mut Vm,
     module: &Module,
+    source: &str,
     filename: &str,
     echo_expression_result: bool,
 ) -> Result<(), String> {
@@ -1925,7 +1928,7 @@ fn execute_parsed_module(
         && let StmtKind::Expr(expr) = &module.body[0].node
     {
         let code = compiler::compile_expression_with_filename(expr, filename)
-            .map_err(|err| format!("compile error: {}", err.message))?;
+            .map_err(|err| format_compile_error(filename, source, &err))?;
         let value = vm
             .execute(&code)
             .map_err(|err| format!("runtime error: {}", err.message))?;
@@ -1939,7 +1942,7 @@ fn execute_parsed_module(
     }
 
     let code = compiler::compile_module_with_filename(module, filename)
-        .map_err(|err| format!("compile error: {}", err.message))?;
+        .map_err(|err| format_compile_error(filename, source, &err))?;
     vm.execute(&code)
         .map_err(|err| format!("runtime error: {}", err.message))?;
     Ok(())

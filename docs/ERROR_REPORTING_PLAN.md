@@ -58,6 +58,22 @@ Status: in progress (started 2026-02-22).
   - final exception-line rendering now follows CPython `KeyError` display semantics when args are
     available (single-arg `KeyError` displays `repr(arg)` in traceback footer).
   - runtime `str(KeyError(<arg>))` now follows CPython single-arg display semantics (`repr(arg)`).
+  - compile-time semantic syntax checks now raise CPython-style `SyntaxError` diagnostics (instead
+    of generic compile errors) for:
+    - `'return' outside function`,
+    - `'break' outside loop`,
+    - `'continue' not properly in loop`,
+    - `'await' outside function`,
+    - `'yield' outside function`,
+    - `'yield from' outside function`,
+    - `'return' with value in async generator`.
+  - CLI/REPL compile diagnostics now render in `SyntaxError` shape; `-c` mode follows CPython by
+    omitting source+caret for semantic compile errors, while file/stdin paths still include line
+    source and caret when span data is available.
+  - differential gates added for semantic compile-error parity against CPython:
+    - return/break/continue outside valid scope,
+    - await/yield/yield-from outside function scope,
+    - async-generator return-with-value.
   - indentation diagnostics now include CPython-style parity for:
     - top-level `unexpected indent` (no caret line),
     - `unindent does not match any outer indentation level` with end-of-line caret.
