@@ -21,7 +21,11 @@ Status: in progress (started 2026-02-22).
     user-facing classes/messages where applicable:
     - `expected ...`/unexpected-token parser diagnostics -> `SyntaxError: invalid syntax`,
     - indent/dedent parser diagnostics -> `IndentationError` variants,
-    - unclosed delimiter detection -> `SyntaxError: '<delimiter>' was never closed`.
+    - unmatched/mismatched delimiter detection -> CPython-style messages
+      (`unmatched ']'`, `closing parenthesis ... does not match ...`),
+    - unclosed delimiter detection -> `SyntaxError: '<delimiter>' was never closed`,
+    - unterminated triple-quoted string detection -> CPython-style
+      `unterminated triple-quoted string literal (detected at line N)`.
 - Phase 3 complete:
   - location metadata upgraded to `start+end` ranges in bytecode location model.
   - default source-compiler locations now mark end columns unknown until explicit ranges are
@@ -37,7 +41,8 @@ Status: in progress (started 2026-02-22).
   - differential syntax-error gate now checks CPython-shape parity for compile-time failures
     (`File "<string>", line ...`, source line, caret row, `SyntaxError:` prefix).
   - differential syntax gates now also cover invalid-syntax span parity, unclosed-delimiter shape,
-    and indentation-error shape against CPython output.
+    indentation-error shape, unmatched/mismatched closing delimiters, and unterminated
+    triple-quoted strings against CPython output.
   - next gate: expand golden traceback-shape tests against CPython output for nested chains.
 
 ## Scope
