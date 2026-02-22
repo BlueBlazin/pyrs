@@ -70,6 +70,10 @@ impl Vm {
         self.configure_bootstrap_ast_class("stmt", &[], &[]);
         self.configure_bootstrap_ast_class("expr", &[], &[]);
         self.configure_bootstrap_ast_class("expr_context", &[], &[]);
+        self.configure_bootstrap_ast_class("operator", &[], &[]);
+        self.configure_bootstrap_ast_class("unaryop", &[], &[]);
+        self.configure_bootstrap_ast_class("boolop", &[], &[]);
+        self.configure_bootstrap_ast_class("cmpop", &[], &[]);
 
         self.configure_bootstrap_ast_class("Module", &["body", "type_ignores"], &[]);
         self.configure_bootstrap_ast_class("Expression", &["body"], &[]);
@@ -439,6 +443,69 @@ impl Vm {
                     }
                 }
             }
+        }
+    }
+
+    fn wire_ast_class_hierarchy(&mut self) {
+        let _ = self.set_module_class_bases("_ast", "mod", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "stmt", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "expr", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "expr_context", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "operator", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "unaryop", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "boolop", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "cmpop", &["AST"]);
+
+        let _ = self.set_module_class_bases("_ast", "Module", &["mod"]);
+        let _ = self.set_module_class_bases("_ast", "Expression", &["mod"]);
+
+        for class_name in ["Assign", "Return", "Expr", "Pass"] {
+            let _ = self.set_module_class_bases("_ast", class_name, &["stmt"]);
+        }
+
+        for class_name in [
+            "Name",
+            "Call",
+            "Attribute",
+            "Subscript",
+            "Tuple",
+            "List",
+            "Dict",
+            "Constant",
+            "Starred",
+            "Slice",
+            "BinOp",
+            "UnaryOp",
+            "Compare",
+            "BoolOp",
+            "IfExp",
+            "NamedExpr",
+            "Interpolation",
+            "TemplateStr",
+        ] {
+            let _ = self.set_module_class_bases("_ast", class_name, &["expr"]);
+        }
+        let _ = self.set_module_class_bases("_ast", "keyword", &["AST"]);
+
+        for class_name in ["Load", "Store", "Del"] {
+            let _ = self.set_module_class_bases("_ast", class_name, &["expr_context"]);
+        }
+        for class_name in [
+            "Add", "Sub", "Mult", "MatMult", "Div", "FloorDiv", "Mod", "Pow", "LShift", "RShift",
+            "BitAnd", "BitOr", "BitXor",
+        ] {
+            let _ = self.set_module_class_bases("_ast", class_name, &["operator"]);
+        }
+        for class_name in ["UAdd", "USub", "Invert", "Not"] {
+            let _ = self.set_module_class_bases("_ast", class_name, &["unaryop"]);
+        }
+        for class_name in ["And", "Or"] {
+            let _ = self.set_module_class_bases("_ast", class_name, &["boolop"]);
+        }
+        for class_name in [
+            "Eq", "NotEq", "Lt", "LtE", "Gt", "GtE", "In", "NotIn", "Is", "IsNot",
+        ] {
+            let _ = self.set_module_class_bases("_ast", class_name, &["cmpop"]);
         }
     }
 
@@ -3769,6 +3836,26 @@ impl Vm {
                         .alloc_class(ClassObject::new("expr_context".to_string(), Vec::new())),
                 ),
                 (
+                    "operator",
+                    self.heap
+                        .alloc_class(ClassObject::new("operator".to_string(), Vec::new())),
+                ),
+                (
+                    "unaryop",
+                    self.heap
+                        .alloc_class(ClassObject::new("unaryop".to_string(), Vec::new())),
+                ),
+                (
+                    "boolop",
+                    self.heap
+                        .alloc_class(ClassObject::new("boolop".to_string(), Vec::new())),
+                ),
+                (
+                    "cmpop",
+                    self.heap
+                        .alloc_class(ClassObject::new("cmpop".to_string(), Vec::new())),
+                ),
+                (
                     "Expr",
                     self.heap
                         .alloc_class(ClassObject::new("Expr".to_string(), Vec::new())),
@@ -4054,6 +4141,7 @@ impl Vm {
             ],
         );
         self.configure_bootstrap_ast_metadata();
+        self.wire_ast_class_hierarchy();
         self.install_builtin_module(
             "_opcode",
             &[

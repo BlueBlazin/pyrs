@@ -1071,6 +1071,28 @@ fn compile_only_ast_covers_binop_compare_and_slice_shapes() {
 }
 
 #[test]
+fn compile_only_ast_honors_core_ast_hierarchy() {
+    let source = "import _ast\nnode = compile('x = f()', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nstmt = node.body[0]\nexpr = stmt.value\nok = isinstance(node, _ast.mod) and isinstance(node, _ast.AST) and isinstance(stmt, _ast.stmt) and isinstance(expr, _ast.expr) and isinstance(expr.func, _ast.Name) and isinstance(expr.func.ctx, _ast.expr_context) and isinstance(expr.func.ctx, _ast.Load)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_only_ast_honors_operator_hierarchy() {
+    let source = "import _ast\nexpr = compile('not a or b + c < d', '<ast>', 'eval', _ast.PyCF_ONLY_AST).body\ncmp_op = expr.values[1].ops[0]\nbin_op = expr.values[1].left.op\nunary_op = expr.values[0].op\nok = isinstance(expr, _ast.BoolOp) and isinstance(expr.op, _ast.boolop) and isinstance(cmp_op, _ast.cmpop) and isinstance(bin_op, _ast.operator) and isinstance(unary_op, _ast.unaryop)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

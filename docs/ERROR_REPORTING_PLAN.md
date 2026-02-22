@@ -124,6 +124,9 @@ Status: in progress (started 2026-02-22).
       `BinOp`, `Compare`, `UnaryOp`, `BoolOp`, `IfExp`, `NamedExpr`, `Slice`.
     - added required operator/comparator classes in `_ast` bootstrap inventory:
       `And`, `Or`, `Not`, `Is`, `IsNot`, `In`, `NotIn` (plus `BoolOp`, `IfExp`, `NamedExpr`).
+  - `_ast` class-hierarchy wiring now maps core abstract and concrete node families to CPython-like
+    inheritance roots (e.g. `expr`, `stmt`, `operator`, `cmpop`) so `isinstance(...)` and
+    positional pattern matching semantics align with stdlib traceback/ast consumers.
   - native codec keyword-path parity was tightened for traceback stdlib flows:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs and
       enforce duplicate/unexpected-keyword checks.
@@ -141,6 +144,8 @@ Status: in progress (started 2026-02-22).
   - VM regressions added for AST class-pattern and expression-shape coverage:
     - `compile_only_ast_supports_positional_match_patterns`
     - `compile_only_ast_covers_binop_compare_and_slice_shapes`.
+    - `compile_only_ast_honors_core_ast_hierarchy`
+    - `compile_only_ast_honors_operator_hierarchy`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

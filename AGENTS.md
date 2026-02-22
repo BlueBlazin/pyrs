@@ -142,6 +142,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `_ast` bootstrap class inventory now includes missing operator/comparator/context nodes
     required by those conversion paths (`And`, `Or`, `Not`, `Is`, `IsNot`, `In`, `NotIn`,
     `BoolOp`, `IfExp`, `NamedExpr`).
+  - `_ast` hierarchy wiring now mirrors CPython base-class structure for core abstract roots:
+    - `mod`/`stmt`/`expr`/`expr_context`/`operator`/`unaryop`/`boolop`/`cmpop` now inherit from `AST`,
+    - concrete nodes are wired to their abstract families (e.g. `Assign -> stmt`,
+      `Name/Call/BinOp/Compare/... -> expr`, `Add/Sub/... -> operator`, `Eq/Lt/... -> cmpop`).
+  - additional AST hierarchy regressions are now covered:
+    - `tests/vm.rs::compile_only_ast_honors_core_ast_hierarchy`
+    - `tests/vm.rs::compile_only_ast_honors_operator_hierarchy`.
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.
