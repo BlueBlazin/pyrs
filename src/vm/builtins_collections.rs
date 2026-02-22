@@ -3067,7 +3067,16 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        unary_predicate(args, kwargs, |_value| false)
+        unary_predicate(args, kwargs, |value| match value {
+            Value::Instance(obj) => match &*obj.kind() {
+                Object::Instance(instance_data) => matches!(
+                    instance_data.attrs.get("__pyrs_traceback_marker__"),
+                    Some(Value::Bool(true))
+                ),
+                _ => false,
+            },
+            _ => false,
+        })
     }
 
     pub(super) fn builtin_inspect_isframe(

@@ -22,6 +22,7 @@ use super::{
     slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
     value_to_int, value_to_optional_index,
 };
+use crate::bytecode::Location;
 use crate::runtime::{ExceptionTracebackFrame, SliceValue};
 
 unsafe extern "C" {
@@ -2008,7 +2009,9 @@ impl Vm {
                                 .as_ref()
                                 .map(|context| Value::Exception(Box::new((**context).clone())))
                                 .unwrap_or(Value::None),
-                            "__traceback__" => Value::None,
+                            "__traceback__" => {
+                                self.traceback_value_from_frames(&exception.traceback_frames)
+                            }
                             "__suppress_context__" => Value::Bool(exception.suppress_context),
                             "exceptions" => {
                                 let members = exception
@@ -7065,6 +7068,180 @@ impl Vm {
                 name: frame.name.clone(),
             })
             .collect()
+    }
+
+    pub(super) fn traceback_value_from_frames(
+        &mut self,
+        frames: &[ExceptionTracebackFrame],
+    ) -> Value {
+        if frames.is_empty() {
+            return Value::None;
+        }
+        let traceback_class = if let Some(class) = self.types_module_class("TracebackType") {
+            class
+        } else {
+            match self
+                .heap
+                .alloc_class(ClassObject::new("traceback".to_string(), Vec::new()))
+            {
+                Value::Class(class) => class,
+                _ => unreachable!(),
+            }
+        };
+        let frame_class = if let Some(class) = self.types_module_class("FrameType") {
+            class
+        } else {
+            match self
+                .heap
+                .alloc_class(ClassObject::new("frame".to_string(), Vec::new()))
+            {
+                Value::Class(class) => class,
+                _ => unreachable!(),
+            }
+        };
+        let mut next = Value::None;
+        for frame in frames.iter().rev() {
+            let mut code = CodeObject::new(frame.name.clone(), frame.filename.clone());
+            code.instructions.push(Instruction::new(Opcode::Nop, None));
+            code.locations.push(Location::with_end(
+                frame.line,
+                frame.column,
+                frame.end_line,
+                frame.end_column,
+            ));
+            let code_value = Value::Code(Rc::new(code));
+
+            let mut frame_instance = InstanceObject::new(frame_class.clone());
+            frame_instance
+                .attrs
+                .insert("f_code".to_string(), code_value);
+            frame_instance
+                .attrs
+                .insert("f_globals".to_string(), self.heap.alloc_dict(Vec::new()));
+            frame_instance
+                .attrs
+                .insert("f_locals".to_string(), self.heap.alloc_dict(Vec::new()));
+            frame_instance
+                .attrs
+                .insert("f_lineno".to_string(), Value::Int(frame.line as i64));
+            frame_instance.attrs.insert("f_back".to_string(), Value::None);
+            let frame_value = self.heap.alloc_instance(frame_instance);
+
+            let mut instance = InstanceObject::new(traceback_class.clone());
+            instance
+                .attrs
+                .insert("__pyrs_traceback_marker__".to_string(), Value::Bool(true));
+            instance.attrs.insert(
+                "__pyrs_tb_filename__".to_string(),
+                Value::Str(frame.filename.clone()),
+            );
+            instance
+                .attrs
+                .insert("__pyrs_tb_name__".to_string(), Value::Str(frame.name.clone()));
+            instance.attrs.insert(
+                "__pyrs_tb_column__".to_string(),
+                Value::Int(frame.column as i64),
+            );
+            instance.attrs.insert(
+                "__pyrs_tb_end_line__".to_string(),
+                Value::Int(frame.end_line as i64),
+            );
+            instance.attrs.insert(
+                "__pyrs_tb_end_column__".to_string(),
+                Value::Int(frame.end_column as i64),
+            );
+            instance
+                .attrs
+                .insert("tb_lineno".to_string(), Value::Int(frame.line as i64));
+            instance
+                .attrs
+                .insert("tb_lasti".to_string(), Value::Int(-1));
+            instance.attrs.insert("tb_frame".to_string(), frame_value);
+            instance.attrs.insert("tb_next".to_string(), next.clone());
+            next = self.heap.alloc_instance(instance);
+        }
+        next
+    }
+
+    pub(super) fn traceback_frames_from_value(
+        &self,
+        value: Value,
+    ) -> Result<Option<Vec<ExceptionTracebackFrame>>, RuntimeError> {
+        match value {
+            Value::None => Ok(None),
+            Value::Instance(instance) => {
+                let mut frames = Vec::new();
+                let mut current = Some(instance);
+                let mut seen_ids = HashSet::new();
+                while let Some(node) = current {
+                    let node_id = node.id();
+                    if !seen_ids.insert(node_id) {
+                        return Err(RuntimeError::type_error(
+                            "__traceback__ must be a traceback or None",
+                        ));
+                    }
+                    let node_ref = node.kind();
+                    let Object::Instance(node_data) = &*node_ref else {
+                        return Err(RuntimeError::type_error(
+                            "__traceback__ must be a traceback or None",
+                        ));
+                    };
+                    match node_data.attrs.get("__pyrs_traceback_marker__") {
+                        Some(Value::Bool(true)) => {}
+                        _ => {
+                            return Err(RuntimeError::type_error(
+                                "__traceback__ must be a traceback or None",
+                            ));
+                        }
+                    }
+                    let filename = match node_data.attrs.get("__pyrs_tb_filename__") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => "<unknown>".to_string(),
+                    };
+                    let name = match node_data.attrs.get("__pyrs_tb_name__") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => "<module>".to_string(),
+                    };
+                    let line = match node_data.attrs.get("tb_lineno") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                        _ => 0,
+                    };
+                    let column = match node_data.attrs.get("__pyrs_tb_column__") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                        _ => 0,
+                    };
+                    let end_line = match node_data.attrs.get("__pyrs_tb_end_line__") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                        _ => 0,
+                    };
+                    let end_column = match node_data.attrs.get("__pyrs_tb_end_column__") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                        _ => 0,
+                    };
+                    frames.push(ExceptionTracebackFrame {
+                        filename,
+                        line,
+                        column,
+                        end_line,
+                        end_column,
+                        name,
+                    });
+                    current = match node_data.attrs.get("tb_next") {
+                        Some(Value::None) | None => None,
+                        Some(Value::Instance(next)) => Some(next.clone()),
+                        _ => {
+                            return Err(RuntimeError::type_error(
+                                "__traceback__ must be a traceback or None",
+                            ));
+                        }
+                    };
+                }
+                Ok(Some(frames))
+            }
+            _ => Err(RuntimeError::type_error(
+                "__traceback__ must be a traceback or None",
+            )),
+        }
     }
 
     fn unwind_exception_internal(

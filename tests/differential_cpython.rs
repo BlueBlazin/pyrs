@@ -1307,6 +1307,64 @@ boom()
 }
 
 #[test]
+fn differential_traceback_with_traceback_restores_supplied_chain() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    1 / 0
+except Exception as exc:
+    tb = exc.__traceback__
+    raise RuntimeError("x").with_traceback(tb)
+"#;
+    let py = run_cpython_traceback(source).expect("CPython traceback should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs traceback should run");
+    assert_eq!(traceback_heading_count(&py), 2, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
+    assert!(py.contains("ZeroDivisionError"), "{}", py);
+    assert!(ours.contains("ZeroDivisionError"), "{}", ours);
+    assert!(py.contains("RuntimeError: x"), "{}", py);
+    assert!(ours.contains("RuntimeError: x"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "with_traceback traceback shape mismatch"
+    );
+}
+
+#[test]
+fn differential_pyc_traceback_with_traceback_restores_supplied_chain() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    1 / 0
+except Exception as exc:
+    tb = exc.__traceback__
+    raise RuntimeError("x").with_traceback(tb)
+"#;
+    let (base, pyc_path) = compile_temp_pyc(source, "traceback_with_traceback_pyc")
+        .expect("compile pyc should succeed");
+    let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
+        .expect("CPython .pyc traceback should run");
+    let ours =
+        run_traceback_via_pyc_file(&pyrs_bin_path().expect("pyrs binary not found"), &pyc_path)
+            .expect("pyrs .pyc traceback should run");
+    assert_eq!(traceback_heading_count(&py), 2, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
+    assert!(py.contains("ZeroDivisionError"), "{}", py);
+    assert!(ours.contains("ZeroDivisionError"), "{}", ours);
+    assert!(py.contains("RuntimeError: x"), "{}", py);
+    assert!(ours.contains("RuntimeError: x"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "pyc with_traceback traceback shape mismatch"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn differential_semantic_syntax_return_outside_function_matches_cpython() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;

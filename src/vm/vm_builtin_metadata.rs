@@ -2655,7 +2655,8 @@ impl Vm {
                 )),
             },
             "__traceback__" => {
-                // Traceback objects are not modelled yet; accept writes for contextlib paths.
+                let frames = self.traceback_frames_from_value(value)?;
+                exception.traceback_frames = frames.unwrap_or_default();
                 Ok(())
             }
             _ => {

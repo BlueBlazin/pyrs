@@ -110,6 +110,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       `Opcode::Reraise` (instead of `Raise 1`) for CPython traceback-line parity.
   - explicit `raise exc` now preserves existing traceback chains while appending the current
     raise site (CPython ordering parity for both source and `.pyc` execution paths).
+  - exception `__traceback__` is now materialized as a runtime traceback object chain
+    (`tb_next`/`tb_lineno`/`tb_lasti`/`tb_frame`) instead of always `None`, and
+    `with_traceback(...)` / direct `__traceback__` writes now apply CPython traceback-or-None
+    type contracts.
+    - compatibility note: runtime traceback objects currently use `tb_lasti = -1` fallback and
+      synthesized frame metadata; `tb_lasti`+`co_positions` precision closure remains tracked.
   - traceback footer exception formatting now resolves display text from exception `args` where
     available and applies CPython KeyError single-arg `repr(arg)` behavior.
   - compiler now enforces CPython semantic syntax errors (with span-backed diagnostics):
@@ -174,6 +180,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_pyc_traceback_reraise_preserves_original_fault_line`.
     - `tests/differential_cpython.rs::differential_traceback_raise_exc_keeps_original_traceback_chain`.
     - `tests/differential_cpython.rs::differential_pyc_traceback_raise_exc_keeps_original_traceback_chain`.
+    - `tests/differential_cpython.rs::differential_traceback_with_traceback_restores_supplied_chain`.
+    - `tests/differential_cpython.rs::differential_pyc_traceback_with_traceback_restores_supplied_chain`.
     - `tests/differential_cpython.rs::differential_semantic_syntax_return_outside_function_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_break_outside_loop_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_continue_outside_loop_matches_cpython`

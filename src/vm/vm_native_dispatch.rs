@@ -4195,13 +4195,16 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("with_traceback() expects one argument"));
                 }
-                let receiver_kind = receiver.kind();
-                let Object::Module(module_data) = &*receiver_kind else {
+                let traceback_frames = self.traceback_frames_from_value(args.remove(0))?;
+                let mut receiver_kind = receiver.kind_mut();
+                let Object::Module(module_data) = &mut *receiver_kind else {
                     return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
-                let Some(Value::Exception(exception)) = module_data.globals.get("exception") else {
+                let Some(Value::Exception(exception)) = module_data.globals.get_mut("exception")
+                else {
                     return Err(RuntimeError::type_error("exception receiver is invalid"));
                 };
+                exception.traceback_frames = traceback_frames.unwrap_or_default();
                 Ok(NativeCallResult::Value(Value::Exception(exception.clone())))
             }
             NativeMethodKind::ExceptionAddNote => {

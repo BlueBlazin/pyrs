@@ -98,7 +98,18 @@ Status: in progress (started 2026-02-22).
     the current raise site, matching CPython ordering for source and `.pyc` execution:
     - `differential_traceback_raise_exc_keeps_original_traceback_chain`
     - `differential_pyc_traceback_raise_exc_keeps_original_traceback_chain`.
-  - next gate: expand traceback parity for `with_traceback(...)`/manual traceback mutation flows.
+  - exception `__traceback__` is now a real runtime object (instead of always `None`) with a
+    CPython-compatible surface needed by stdlib traceback formatting paths:
+    - linked `tb_next` chain,
+    - `tb_lineno` / `tb_lasti` / `tb_frame` fields,
+    - `tb_frame.f_code` + basic frame metadata for traceback walkers.
+  - `BaseException.with_traceback(...)` and direct `__traceback__` assignment now parse/apply
+    traceback chains with CPython type contracts (`traceback` or `None`).
+  - differential traceback gates now cover `with_traceback(...)` parity for source and `.pyc`:
+    - `differential_traceback_with_traceback_restores_supplied_chain`
+    - `differential_pyc_traceback_with_traceback_restores_supplied_chain`.
+  - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
+    fallback with `tb_lasti = -1` for runtime traceback objects).
 
 ## Scope
 

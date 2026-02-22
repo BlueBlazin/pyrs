@@ -9170,7 +9170,9 @@ impl Vm {
                     .as_ref()
                     .map(|context| Value::Exception(Box::new((**context).clone())))
                     .unwrap_or(Value::None)),
-                "__traceback__" => Ok(Value::None),
+                "__traceback__" => {
+                    Ok(self.traceback_value_from_frames(&exception.traceback_frames))
+                }
                 "__suppress_context__" => Ok(Value::Bool(exception.suppress_context)),
                 "exceptions" => {
                     let members = exception
