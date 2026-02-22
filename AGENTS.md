@@ -87,6 +87,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       and suppresses keyword-only highlights (e.g. no caret under bare `raise` keyword lines).
   - CLI/REPL parser failures now emit `SyntaxError`-style diagnostics (`File/line/source/caret`)
     instead of raw parser offset strings.
+    - parse-error diagnostics now map parser-internal expectation wording to CPython-style
+      user-facing classes/messages for core syntax cases (`invalid syntax`, indentation class,
+      unclosed delimiter message).
   - Exception objects now retain propagated traceback-frame metadata (`traceback_frames`) so
     chained exceptions (`__context__` / `__cause__`) can render separate traceback blocks.
   - chained exception output now follows CPython flow:
@@ -104,6 +107,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_traceback_identifier_caret_span_matches_cpython`.
     - `tests/differential_cpython.rs::differential_syntax_error_shape_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_invalid_syntax_span_matches_cpython`
+    - `tests/differential_cpython.rs::differential_unclosed_delimiter_shape_matches_cpython`
+    - `tests/differential_cpython.rs::differential_indentation_error_shape_matches_cpython`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,
