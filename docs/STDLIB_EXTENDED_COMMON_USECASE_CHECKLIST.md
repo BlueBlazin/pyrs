@@ -76,7 +76,7 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 ## Shim and Probe Notes
 - Default runtime behavior now uses CPython `Lib/enum.py`.
 - Local `enum` shim has been retired (`shims/enum.py` removed).
-- Local shim fallback remains allowlist-restricted (`importlib.resources` only) and is enabled by default; set `PYRS_DISABLE_LOCAL_SHIMS=1` to force-disable fallback.
+- Local shim fallback is now `_ctypes`-only and is enabled by default; set `PYRS_DISABLE_LOCAL_SHIMS=1` to force-disable fallback.
 
 ## Refresh Procedure
 1. Regenerate `perf/stdlib_compat_extended_latest.json` with the extended stdlib probe command.

@@ -644,8 +644,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - startup pyc-preference note: exception-table execution baseline is now active for translated `.pyc`; with `PYRS_IMPORT_PREFER_PYC=1`, `import site` no longer depends on source fallback for this gap. Remaining `.pyc` work is long-tail opcode/state parity closure.
   - startup benchmark checkpoint: `scripts/bench_startup_gate.sh` now uses wall-clock timing (`python3` `perf_counter`) instead of coarse `/usr/bin/time -p` user-time quantization; latest local run (`20` iterations, warmup `1`) is `pass(site)=0.0097s`, `pass(-S)=0.0055s`, `import-bundle=0.0663s`.
   - local validation checkpoint: `cargo test -q --test pyc_translate`, `cargo test -q --test pyc_exec`, `cargo test -q --test cpython_harness runs_cpython_import_suite`, and `cargo test -q --test cpython_harness runs_cpython_language_suite` are green in this wave.
-  - local shim retirement checkpoint: `shims/pyexpat.py` and `shims/pkgutil.py` are removed; native runtime fallbacks now cover `pyexpat` and `pkgutil` surfaces.
-  - allowlist-restricted local shim fallback remains enabled by default (opt-out via `PYRS_DISABLE_LOCAL_SHIMS=1`) for `importlib.resources` only.
+  - local shim retirement checkpoint: `shims/pyexpat.py`, `shims/pkgutil.py`, and `shims/importlib/resources.py` are removed; native runtime fallbacks now cover `pyexpat` and `pkgutil`, and `importlib.resources` resolves only through CPython stdlib when available.
+  - function annotation parity checkpoint: function `__annotate__` now exposes a callable default path (instead of `None`), restoring CPython stdlib `functools.singledispatch` plain `@register` annotation flow used by `importlib.resources`.
   - REPL checkpoint: no-arg CLI path now starts an interactive `reedline` REPL (`RSPYTHON` banner, Python syntax highlighting, Tab=4-space indentation, Shift-Tab/Ctrl-Space completion menu, dotted member completion, multiline, `%time` one-shot timing, `:paste`/`:timing`/`:reset` controls, optional startup script `~/.pyrsrc`/`PYRS_REPL_INIT`), while non-interactive no-arg runs consume stdin as script input (CPython-like `python < file.py` behavior).
   - REPL expression echo now routes through Python-level `repr(...)` protocol (instead of raw `format_repr` fallback), so extension-backed objects display CPython-style repr text in interactive output.
   - builtin type-repr checkpoint: `repr(type(7))`, `repr(int)`, and `repr(type)` now match CPython class-style formatting (`<class 'int'>`, `<class 'type'>`) instead of generic `<builtin>`.
@@ -669,7 +669,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
 - Local shim policy:
   - CPython `Lib/enum.py` path is now the default.
   - local `enum` shim has been retired (`shims/enum.py` removed); enum behavior now always follows CPython `Lib/enum.py` when stdlib is present.
-  - local shim fallback is allowlist-restricted to `importlib.resources`; fallback is enabled by default and can be disabled with `PYRS_DISABLE_LOCAL_SHIMS=1`.
+  - local shim fallback is now `_ctypes`-only; fallback is enabled by default and can be disabled with `PYRS_DISABLE_LOCAL_SHIMS=1`.
   - `pkgutil` and `pyexpat` stdlib-less fallback now use native runtime modules (no filesystem shim).
   - CPython enum probe regression: `tests/vm.rs::cpython_enum_path_supports_member_value_and_name`.
 - Keep docs updated in the same checkpoint as behavior changes.
