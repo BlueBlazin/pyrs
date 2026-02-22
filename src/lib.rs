@@ -7,7 +7,6 @@ pub mod compiler;
 pub mod extensions;
 pub mod parser;
 pub mod runtime;
-pub mod stdlib;
 pub mod vm;
 
 /// Public version for CLI and diagnostics.

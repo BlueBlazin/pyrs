@@ -21,7 +21,6 @@ use crate::ast::{Module, StmtKind};
 use crate::compiler;
 use crate::parser::{self, ParseError};
 use crate::runtime::{Object, Value};
-use crate::stdlib;
 use crate::vm::Vm;
 
 const HISTORY_CAPACITY: usize = 10_000;
@@ -155,7 +154,6 @@ fn repl_module_updates_completions(module: &Module) -> bool {
 fn build_vm(import_site: bool, interactive: bool) -> Result<Vm, String> {
     let mut vm = Vm::new();
     super::configure_vm_for_command(&mut vm, import_site)?;
-    stdlib::initialize();
     vm.set_sys_interactive_flag(interactive);
     Ok(vm)
 }

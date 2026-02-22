@@ -10,7 +10,6 @@ use crate::VERSION;
 use crate::compiler;
 use crate::parser;
 use crate::runtime::Value;
-use crate::stdlib;
 use crate::vm::Vm;
 
 const HELP: &str = "pyrs (CPython 3.14 compatible)\n\nUsage:\n  pyrs                    Start interactive REPL (or read from stdin when piped)\n  pyrs <file.py>          Run a Python file\n  pyrs <file.pyc>         Run a CPython .pyc file\n  pyrs -S <file.py>       Run without importing site on startup\n  pyrs --ast <file.py>    Print parsed AST\n  pyrs --bytecode <file.py>  Print bytecode disassembly\n  pyrs --version          Print version\n  pyrs --help             Show help\n";
@@ -127,8 +126,6 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
     let source =
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
 
-    stdlib::initialize();
-
     let module = parser::parse_module(&source).map_err(|err| {
         format!(
             "parse error at {} (line {}, column {}): {}",
@@ -150,8 +147,6 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
 fn run_command(source: &str, import_site: bool) -> Result<(), String> {
     let mut vm = Vm::new();
     configure_vm_for_command(&mut vm, import_site)?;
-
-    stdlib::initialize();
 
     let module = parser::parse_module(source).map_err(|err| {
         format!(
