@@ -1027,6 +1027,17 @@ fn code_object_co_positions_and_co_lines_iterators_have_expected_shape() {
 }
 
 #[test]
+fn compile_only_ast_returns_assign_and_call_shape() {
+    let source = "import _ast\nnode = compile('x = f()', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nstmt = node.body[0]\nok = hasattr(node, 'body') and isinstance(stmt, _ast.Assign) and isinstance(stmt.value, _ast.Call) and isinstance(stmt.value.func, _ast.Name)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

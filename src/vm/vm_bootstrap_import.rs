@@ -3628,6 +3628,11 @@ impl Vm {
                         .alloc_class(ClassObject::new("Expression".to_string(), Vec::new())),
                 ),
                 (
+                    "Module",
+                    self.heap
+                        .alloc_class(ClassObject::new("Module".to_string(), Vec::new())),
+                ),
+                (
                     "mod",
                     self.heap
                         .alloc_class(ClassObject::new("mod".to_string(), Vec::new())),
@@ -3648,9 +3653,29 @@ impl Vm {
                         .alloc_class(ClassObject::new("expr_context".to_string(), Vec::new())),
                 ),
                 (
+                    "Expr",
+                    self.heap
+                        .alloc_class(ClassObject::new("Expr".to_string(), Vec::new())),
+                ),
+                (
+                    "Assign",
+                    self.heap
+                        .alloc_class(ClassObject::new("Assign".to_string(), Vec::new())),
+                ),
+                (
+                    "Return",
+                    self.heap
+                        .alloc_class(ClassObject::new("Return".to_string(), Vec::new())),
+                ),
+                (
                     "Constant",
                     self.heap
                         .alloc_class(ClassObject::new("Constant".to_string(), Vec::new())),
+                ),
+                (
+                    "Pass",
+                    self.heap
+                        .alloc_class(ClassObject::new("Pass".to_string(), Vec::new())),
                 ),
                 (
                     "Tuple",

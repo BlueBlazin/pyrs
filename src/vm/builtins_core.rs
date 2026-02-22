@@ -23,6 +23,10 @@ use super::{
     value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
     with_bytes_like_source, xor_values,
 };
+use crate::ast::{
+    AssignTarget, CallArg, Constant as AstConstant, DictEntry, Expr, ExprKind, Module as AstModule,
+    Stmt, StmtKind,
+};
 use crate::runtime::value_lookup_hash;
 
 impl Vm {
@@ -3671,6 +3675,327 @@ impl Vm {
         Ok(value_from_bigint(value))
     }
 
+    fn ast_module_class(&self, class_name: &str) -> Option<ObjRef> {
+        let module = self.modules.get("_ast")?.clone();
+        let module_kind = module.kind();
+        let module_data = match &*module_kind {
+            Object::Module(module_data) => module_data,
+            _ => return None,
+        };
+        match module_data.globals.get(class_name) {
+            Some(Value::Class(class_ref)) => Some(class_ref.clone()),
+            _ => None,
+        }
+    }
+
+    fn build_ast_node(
+        &mut self,
+        class_name: &str,
+        location: Option<(usize, usize)>,
+        attrs: Vec<(&str, Value)>,
+    ) -> Result<Value, RuntimeError> {
+        let class_ref = self.ast_module_class(class_name).ok_or_else(|| {
+            RuntimeError::new(format!("compile() missing _ast.{} support", class_name))
+        })?;
+        let mut instance = InstanceObject::new(class_ref);
+        for (name, value) in attrs {
+            instance.attrs.insert(name.to_string(), value);
+        }
+        if let Some((lineno, column)) = location {
+            let col_offset = column.saturating_sub(1) as i64;
+            instance
+                .attrs
+                .insert("lineno".to_string(), Value::Int(lineno as i64));
+            instance
+                .attrs
+                .insert("col_offset".to_string(), Value::Int(col_offset));
+            instance
+                .attrs
+                .insert("end_lineno".to_string(), Value::Int(lineno as i64));
+            instance
+                .attrs
+                .insert("end_col_offset".to_string(), Value::Int(col_offset + 1));
+        }
+        Ok(self.heap.alloc_instance(instance))
+    }
+
+    fn build_ast_context_node(&mut self, class_name: &str) -> Result<Value, RuntimeError> {
+        self.build_ast_node(class_name, None, Vec::new())
+    }
+
+    fn convert_ast_constant(&self, constant: &AstConstant) -> Value {
+        match constant {
+            AstConstant::None => Value::None,
+            AstConstant::Bool(flag) => Value::Bool(*flag),
+            AstConstant::Int(value) => Value::Int(*value),
+            AstConstant::Float(value) => Value::Float(value.value()),
+            AstConstant::Str(text) => Value::Str(text.clone()),
+        }
+    }
+
+    fn convert_assign_target_to_ast_expr(
+        &mut self,
+        target: &AssignTarget,
+    ) -> Result<Value, RuntimeError> {
+        match target {
+            AssignTarget::Name(name) => {
+                let ctx = self.build_ast_context_node("Store")?;
+                self.build_ast_node(
+                    "Name",
+                    None,
+                    vec![("id", Value::Str(name.clone())), ("ctx", ctx)],
+                )
+            }
+            AssignTarget::Starred(inner) => {
+                let value = self.convert_assign_target_to_ast_expr(inner)?;
+                let ctx = self.build_ast_context_node("Store")?;
+                self.build_ast_node("Starred", None, vec![("value", value), ("ctx", ctx)])
+            }
+            AssignTarget::Tuple(items) => {
+                let mut converted = Vec::with_capacity(items.len());
+                for item in items {
+                    converted.push(self.convert_assign_target_to_ast_expr(item)?);
+                }
+                let ctx = self.build_ast_context_node("Store")?;
+                self.build_ast_node(
+                    "Tuple",
+                    None,
+                    vec![("elts", self.heap.alloc_list(converted)), ("ctx", ctx)],
+                )
+            }
+            AssignTarget::List(items) => {
+                let mut converted = Vec::with_capacity(items.len());
+                for item in items {
+                    converted.push(self.convert_assign_target_to_ast_expr(item)?);
+                }
+                let ctx = self.build_ast_context_node("Store")?;
+                self.build_ast_node(
+                    "List",
+                    None,
+                    vec![("elts", self.heap.alloc_list(converted)), ("ctx", ctx)],
+                )
+            }
+            AssignTarget::Subscript { value, index } => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                let index_node = self.convert_expr_to_ast_node(index)?;
+                let ctx = self.build_ast_context_node("Store")?;
+                self.build_ast_node(
+                    "Subscript",
+                    None,
+                    vec![("value", value_node), ("slice", index_node), ("ctx", ctx)],
+                )
+            }
+            AssignTarget::Attribute { value, name } => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                let ctx = self.build_ast_context_node("Store")?;
+                self.build_ast_node(
+                    "Attribute",
+                    None,
+                    vec![
+                        ("value", value_node),
+                        ("attr", Value::Str(name.clone())),
+                        ("ctx", ctx),
+                    ],
+                )
+            }
+        }
+    }
+
+    fn convert_expr_to_ast_node(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
+        let location = Some((expr.span.line, expr.span.column));
+        match &expr.node {
+            ExprKind::Name(name) => {
+                let ctx = self.build_ast_context_node("Load")?;
+                self.build_ast_node(
+                    "Name",
+                    location,
+                    vec![("id", Value::Str(name.clone())), ("ctx", ctx)],
+                )
+            }
+            ExprKind::Constant(value) => self.build_ast_node(
+                "Constant",
+                location,
+                vec![("value", self.convert_ast_constant(value))],
+            ),
+            ExprKind::Call { func, args } => {
+                let mut positional = Vec::new();
+                let mut keywords = Vec::new();
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value) => {
+                            positional.push(self.convert_expr_to_ast_node(value)?);
+                        }
+                        CallArg::Keyword { name, value } => {
+                            let converted = self.convert_expr_to_ast_node(value)?;
+                            keywords.push(self.build_ast_node(
+                                "keyword",
+                                None,
+                                vec![("arg", Value::Str(name.clone())), ("value", converted)],
+                            )?);
+                        }
+                        CallArg::Star(value) => {
+                            let converted = self.convert_expr_to_ast_node(value)?;
+                            let ctx = self.build_ast_context_node("Load")?;
+                            positional.push(self.build_ast_node(
+                                "Starred",
+                                None,
+                                vec![("value", converted), ("ctx", ctx)],
+                            )?);
+                        }
+                        CallArg::DoubleStar(value) => {
+                            let converted = self.convert_expr_to_ast_node(value)?;
+                            keywords.push(self.build_ast_node(
+                                "keyword",
+                                None,
+                                vec![("arg", Value::None), ("value", converted)],
+                            )?);
+                        }
+                    }
+                }
+                let func_value = self.convert_expr_to_ast_node(func)?;
+                self.build_ast_node(
+                    "Call",
+                    location,
+                    vec![
+                        ("func", func_value),
+                        ("args", self.heap.alloc_list(positional)),
+                        ("keywords", self.heap.alloc_list(keywords)),
+                    ],
+                )
+            }
+            ExprKind::Attribute { value, name } => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                let ctx = self.build_ast_context_node("Load")?;
+                self.build_ast_node(
+                    "Attribute",
+                    location,
+                    vec![
+                        ("value", value_node),
+                        ("attr", Value::Str(name.clone())),
+                        ("ctx", ctx),
+                    ],
+                )
+            }
+            ExprKind::Tuple(items) => {
+                let mut converted = Vec::with_capacity(items.len());
+                for item in items {
+                    converted.push(self.convert_expr_to_ast_node(item)?);
+                }
+                let ctx = self.build_ast_context_node("Load")?;
+                self.build_ast_node(
+                    "Tuple",
+                    location,
+                    vec![("elts", self.heap.alloc_list(converted)), ("ctx", ctx)],
+                )
+            }
+            ExprKind::List(items) => {
+                let mut converted = Vec::with_capacity(items.len());
+                for item in items {
+                    converted.push(self.convert_expr_to_ast_node(item)?);
+                }
+                let ctx = self.build_ast_context_node("Load")?;
+                self.build_ast_node(
+                    "List",
+                    location,
+                    vec![("elts", self.heap.alloc_list(converted)), ("ctx", ctx)],
+                )
+            }
+            ExprKind::Dict(entries) => {
+                let mut keys = Vec::new();
+                let mut values = Vec::new();
+                for entry in entries {
+                    match entry {
+                        DictEntry::Pair(key, value) => {
+                            keys.push(self.convert_expr_to_ast_node(key)?);
+                            values.push(self.convert_expr_to_ast_node(value)?);
+                        }
+                        DictEntry::Unpack(value) => {
+                            keys.push(Value::None);
+                            values.push(self.convert_expr_to_ast_node(value)?);
+                        }
+                    }
+                }
+                self.build_ast_node(
+                    "Dict",
+                    location,
+                    vec![
+                        ("keys", self.heap.alloc_list(keys)),
+                        ("values", self.heap.alloc_list(values)),
+                    ],
+                )
+            }
+            ExprKind::Subscript { value, index } => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                let index_node = self.convert_expr_to_ast_node(index)?;
+                let ctx = self.build_ast_context_node("Load")?;
+                self.build_ast_node(
+                    "Subscript",
+                    location,
+                    vec![("value", value_node), ("slice", index_node), ("ctx", ctx)],
+                )
+            }
+            _ => self.build_ast_node("Constant", location, vec![("value", Value::None)]),
+        }
+    }
+
+    fn convert_stmt_to_ast_node(&mut self, stmt: &Stmt) -> Result<Value, RuntimeError> {
+        let location = Some((stmt.span.line, stmt.span.column));
+        match &stmt.node {
+            StmtKind::Assign { targets, value } => {
+                let mut converted_targets = Vec::with_capacity(targets.len());
+                for target in targets {
+                    converted_targets.push(self.convert_assign_target_to_ast_expr(target)?);
+                }
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                self.build_ast_node(
+                    "Assign",
+                    location,
+                    vec![
+                        ("targets", self.heap.alloc_list(converted_targets)),
+                        ("value", value_node),
+                        ("type_comment", Value::None),
+                    ],
+                )
+            }
+            StmtKind::Return { value } => {
+                let value_node = match value {
+                    Some(value) => self.convert_expr_to_ast_node(value)?,
+                    None => Value::None,
+                };
+                self.build_ast_node("Return", location, vec![("value", value_node)])
+            }
+            StmtKind::Expr(value) => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                self.build_ast_node("Expr", location, vec![("value", value_node)])
+            }
+            StmtKind::Pass => self.build_ast_node("Pass", location, Vec::new()),
+            _ => self.build_ast_node("Pass", location, Vec::new()),
+        }
+    }
+
+    fn convert_module_to_ast_node(
+        &mut self,
+        module_ast: &AstModule,
+    ) -> Result<Value, RuntimeError> {
+        let mut body = Vec::with_capacity(module_ast.body.len());
+        for stmt in &module_ast.body {
+            body.push(self.convert_stmt_to_ast_node(stmt)?);
+        }
+        self.build_ast_node(
+            "Module",
+            None,
+            vec![
+                ("body", self.heap.alloc_list(body)),
+                ("type_ignores", self.heap.alloc_list(Vec::new())),
+            ],
+        )
+    }
+
+    fn convert_expression_to_ast_node(&mut self, expr_ast: &Expr) -> Result<Value, RuntimeError> {
+        let body = self.convert_expr_to_ast_node(expr_ast)?;
+        self.build_ast_node("Expression", None, vec![("body", body)])
+    }
+
     pub(super) fn builtin_compile(
         &mut self,
         mut args: Vec<Value>,
@@ -3760,12 +4085,14 @@ impl Vm {
             return Err(RuntimeError::new("compile() expected at most 6 arguments"));
         }
 
-        let _ = value_to_int(flags_value)?;
+        const PYCF_ONLY_AST: i64 = 1024;
+        let flags = value_to_int(flags_value)?;
         let _ = self.truthy_from_value(&dont_inherit_value)?;
         let _ = value_to_int(optimize_value)?;
         if let Some(value) = feature_kw {
             let _ = value_to_int(value)?;
         }
+        let request_ast = (flags & PYCF_ONLY_AST) != 0;
 
         let source_text = match source_arg {
             Value::Str(value) => value,
@@ -3789,25 +4116,34 @@ impl Vm {
             ));
         }
         self.cache_source_text(&filename, &source_text);
-        let code = if mode == "eval" {
+        if mode == "eval" {
             let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
                 RuntimeError::new(format!(
                     "compile() parse error at {}: {}",
                     err.offset, err.message
                 ))
             })?;
-            compiler::compile_expression_with_filename(&expr_ast, &filename)
-                .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?
-        } else {
-            let module_ast = parser::parse_module(&source_text).map_err(|err| {
-                RuntimeError::new(format!(
-                    "compile() parse error at {}: {}",
-                    err.offset, err.message
-                ))
-            })?;
-            compiler::compile_module_with_filename(&module_ast, &filename)
-                .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?
-        };
+            if request_ast {
+                return self.convert_expression_to_ast_node(&expr_ast);
+            }
+            let code = compiler::compile_expression_with_filename(&expr_ast, &filename)
+                .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?;
+            return Ok(Value::Code(Rc::new(code)));
+        }
+
+        let module_ast = parser::parse_module(&source_text).map_err(|err| {
+            RuntimeError::new(format!(
+                "compile() parse error at {}: {}",
+                err.offset, err.message
+            ))
+        })?;
+        if request_ast {
+            return self.convert_module_to_ast_node(&module_ast);
+        }
+        let code = compiler::compile_module_with_filename(&module_ast, &filename)
+            .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?;
+        // `single` currently reuses module-compilation shape until REPL-specific
+        // code object semantics are modeled separately.
         Ok(Value::Code(Rc::new(code)))
     }
 

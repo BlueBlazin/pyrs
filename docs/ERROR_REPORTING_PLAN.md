@@ -107,6 +107,11 @@ Status: in progress (started 2026-02-22).
     - `code.co_positions()` returns per-instruction `(start_line, end_line, start_col, end_col)`
       tuples,
     - `code.co_lines()` returns per-instruction `(start_offset, end_offset, line)` tuples.
+  - `compile(..., flags=_ast.PyCF_ONLY_AST)` now returns `_ast` node objects for `exec` and
+    `eval` modes in the core traceback-heurstic shapes (`Module`/`Assign`/`Return`/`Expr` and
+    `Call`/`Name` expression surfaces with location attrs).
+  - `_ast` bootstrap class surface now includes missing statement roots used in those flows
+    (`Module`, `Assign`, `Return`, `Expr`, `Pass`).
   - native codec keyword-path parity was tightened for traceback stdlib flows:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs and
       enforce duplicate/unexpected-keyword checks.
@@ -118,9 +123,11 @@ Status: in progress (started 2026-02-22).
   - VM regressions added for new location API surface:
     - `code_object_co_positions_and_co_lines_iterators_have_expected_shape`
     - `traceback_helpers_can_read_exception_traceback_attr`.
+  - VM regression added for AST-compile surface:
+    - `compile_only_ast_returns_assign_and_call_shape`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
-    fallback with `tb_lasti = -1` for runtime traceback objects) and implement
-    `compile(..., PyCF_ONLY_AST)` parity needed by stdlib traceback caret heuristics.
+    fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
+    coverage beyond current traceback-focused node set.
 
 ## Scope
 

@@ -121,6 +121,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       `(start_line, end_line, start_col, end_col)`,
     - `code.co_lines()` now returns an iterator of 3-tuples
       `(start_offset, end_offset, line)`.
+  - `compile(..., flags=_ast.PyCF_ONLY_AST)` baseline now materializes `_ast` node objects
+    for `exec`/`eval` modes, including statement/expression shapes used by traceback caret
+    heuristics (`Module`, `Assign`, `Return`, `Expr`, `Call`, `Name`, and context nodes).
+  - `_ast` bootstrap surface was expanded with missing node classes consumed by stdlib `ast.py`
+    and traceback matching paths (`Module`, `Assign`, `Return`, `Expr`, `Pass`).
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.
@@ -148,6 +153,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::traceback_output_preserves_exception_type_without_traceback_rewrap`
     - `tests/vm.rs::code_object_co_positions_and_co_lines_iterators_have_expected_shape`
     - `tests/vm.rs::traceback_helpers_can_read_exception_traceback_attr`
+    - `tests/vm.rs::compile_only_ast_returns_assign_and_call_shape`
     - `tests/vm.rs::traceback_caret_infers_identifier_span_without_keyword_noise`
     - `tests/vm.rs::traceback_caret_skips_statement_keyword_ranges`
     - `tests/vm.rs::keyerror_single_arg_string_uses_repr_semantics`
