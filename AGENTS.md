@@ -92,6 +92,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       unclosed delimiter message).
     - delimiter diagnostics now include CPython-style unmatched/mismatch forms and triple-quote
       unterminated-string message shape.
+    - unclosed `(`/`[` followed by `:` now emits CPython-style `invalid syntax` at the
+      colon position (instead of always reporting `'<delimiter>' was never closed`).
   - Exception objects now retain propagated traceback-frame metadata (`traceback_frames`) so
     chained exceptions (`__context__` / `__cause__`) can render separate traceback blocks.
   - chained exception output now follows CPython flow:
@@ -116,7 +118,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_mismatched_closing_delimiter_matches_cpython`
     - `tests/differential_cpython.rs::differential_unterminated_triple_quoted_string_matches_cpython`
     - `tests/differential_cpython.rs::differential_unexpected_indent_matches_cpython`
-    - `tests/differential_cpython.rs::differential_unindent_mismatch_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_unindent_mismatch_matches_cpython`
+    - `tests/differential_cpython.rs::differential_class_header_colon_inside_unclosed_paren_is_invalid_syntax`
+    - `tests/differential_cpython.rs::differential_function_header_colon_inside_unclosed_paren_is_invalid_syntax`
+    - `tests/differential_cpython.rs::differential_open_bracket_with_colon_is_invalid_syntax`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,

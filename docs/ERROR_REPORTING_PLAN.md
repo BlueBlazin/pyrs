@@ -24,6 +24,8 @@ Status: in progress (started 2026-02-22).
     - unmatched/mismatched delimiter detection -> CPython-style messages
       (`unmatched ']'`, `closing parenthesis ... does not match ...`),
     - unclosed delimiter detection -> `SyntaxError: '<delimiter>' was never closed`,
+    - colon-in-unclosed `(`/`[` headers now resolve to CPython-style
+      `SyntaxError: invalid syntax` with colon-position caret (e.g. `class A(:`, `def f(:`, `[1:`),
     - unterminated triple-quoted string detection -> CPython-style
       `unterminated triple-quoted string literal (detected at line N)`.
 - Phase 3 complete:
