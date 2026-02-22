@@ -234,6 +234,11 @@ Recent Lane A slice:
   - behavior is smoke-covered for tracemalloc track/update/untrack domain handling,
     unique-ref transitions across INCREF/DECREF boundaries, temporary-uniqueness rejection for
     C-created objects, and deterministic deferred-refcount policy in GIL mode.
+  - supported-scope policy in current runtime:
+    - `PyTraceMalloc_*` currently uses a process-level `(domain, ptr) -> size` registry with
+      deterministic update/untrack semantics (not yet wired to stdlib `tracemalloc.start/stop`).
+    - `PyUnstable_Object_IsUniqueReferencedTemporary` currently uses top-frame identity presence
+      checks as the temporary-uniqueness contract.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`

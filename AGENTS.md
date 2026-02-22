@@ -138,6 +138,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - observability/unstable API parity updates:
     - `PyTraceMalloc_Track`/`PyTraceMalloc_Untrack` now maintain a VM process-level trace table
       keyed by `(domain, ptr)` with update+idempotent-untrack semantics.
+      - current policy: this substrate is deterministic and always-on; it is not yet coupled to
+        stdlib `tracemalloc.start/stop` toggles.
     - `PyUnstable_Object_IsUniquelyReferenced` now resolves refcount-based uniqueness while
       suppressing effectively-immortal runtime values.
     - `PyUnstable_Object_IsUniqueReferencedTemporary` now gates unique-ref checks on top-frame
