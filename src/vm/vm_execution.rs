@@ -6271,7 +6271,7 @@ impl Vm {
                                     frame.code.filename, line, column, frame.code.name
                                 ))
                             })?;
-                        self.raise_exception(value)?;
+                        self.reraise_exception(value)?;
                     }
                     1 => {
                         let value = self.pop_value()?;
@@ -6325,7 +6325,7 @@ impl Vm {
                     }
                 }
                 let exc = self.normalize_exception_value(exc)?;
-                self.unwind_exception(exc)?;
+                self.unwind_exception_preserving_traceback(exc)?;
             }
             Opcode::MatchException => {
                 let handler_type = self.pop_value()?;
@@ -7024,6 +7024,11 @@ impl Vm {
         self.raise_exception_with_cause(value, None)
     }
 
+    fn reraise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
+        let exc = self.normalize_exception_value(value)?;
+        self.unwind_exception_preserving_traceback(exc)
+    }
+
     fn exception_handler_for_ip(
         frame: &Frame,
         instruction_ip: usize,
@@ -7036,8 +7041,45 @@ impl Vm {
             .map(|entry| (entry.target, entry.depth, entry.push_lasti))
     }
 
-    fn unwind_exception(&mut self, mut exc: Value) -> Result<(), RuntimeError> {
-        let mut traceback = Vec::new();
+    fn unwind_exception(&mut self, exc: Value) -> Result<(), RuntimeError> {
+        self.unwind_exception_internal(exc, false)
+    }
+
+    fn unwind_exception_preserving_traceback(&mut self, exc: Value) -> Result<(), RuntimeError> {
+        self.unwind_exception_internal(exc, true)
+    }
+
+    fn existing_traceback_frames(exception_value: &Value) -> Vec<TraceFrame> {
+        let Value::Exception(exception) = exception_value else {
+            return Vec::new();
+        };
+        exception
+            .traceback_frames
+            .iter()
+            .rev()
+            .map(|frame| TraceFrame {
+                filename: frame.filename.clone(),
+                line: frame.line,
+                column: frame.column,
+                end_line: frame.end_line,
+                end_column: frame.end_column,
+                name: frame.name.clone(),
+            })
+            .collect()
+    }
+
+    fn unwind_exception_internal(
+        &mut self,
+        mut exc: Value,
+        preserve_existing_traceback: bool,
+    ) -> Result<(), RuntimeError> {
+        let mut traceback = if preserve_existing_traceback {
+            Self::existing_traceback_frames(&exc)
+        } else {
+            Vec::new()
+        };
+        let mut skip_current_frame_trace =
+            preserve_existing_traceback && !traceback.is_empty();
         loop {
             let frame_depth = self.frames.len();
             let Some(frame) = self.frames.last_mut() else {
@@ -7045,8 +7087,12 @@ impl Vm {
                 return Err(self.runtime_error_from_unhandled_exception(message, &exc));
             };
 
-            traceback.push(Self::frame_trace(frame));
-            Self::attach_traceback_to_exception(&mut exc, &traceback);
+            if skip_current_frame_trace {
+                skip_current_frame_trace = false;
+            } else {
+                traceback.push(Self::frame_trace(frame));
+                Self::attach_traceback_to_exception(&mut exc, &traceback);
+            }
 
             if let Some(stop_depth) = self.run_stop_depth
                 && frame_depth <= stop_depth

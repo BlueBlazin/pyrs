@@ -4957,7 +4957,7 @@ impl Compiler {
         self.patch_jump(jump_if_not_suppressed, reraise_target)?;
         self.emit(Opcode::ClearException, None);
         self.emit_load_name(&exc_temp)?;
-        self.emit(Opcode::Raise, Some(1));
+        self.emit(Opcode::Reraise, Some(0));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
@@ -5385,7 +5385,7 @@ impl Compiler {
             self.compile_stmt(stmt)?;
         }
         self.emit_load_name(&finally_exc_name)?;
-        self.emit(Opcode::Raise, Some(1));
+        self.emit(Opcode::Reraise, Some(0));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
@@ -5422,7 +5422,7 @@ impl Compiler {
             self.compile_stmt(stmt)?;
         }
         self.emit_load_name(&finally_exc_name)?;
-        self.emit(Opcode::Raise, Some(1));
+        self.emit(Opcode::Reraise, Some(0));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;
@@ -5462,7 +5462,7 @@ impl Compiler {
             self.compile_stmt(stmt)?;
         }
         self.emit_load_name(&finally_exc_name)?;
-        self.emit(Opcode::Raise, Some(1));
+        self.emit(Opcode::Reraise, Some(0));
 
         let end_target = self.current_ip();
         self.patch_jump(jump_to_end, end_target)?;

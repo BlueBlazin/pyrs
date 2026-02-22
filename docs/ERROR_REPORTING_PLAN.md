@@ -55,6 +55,11 @@ Status: in progress (started 2026-02-22).
   - traceback capture now uses `reraise_lasti_override` when available so reraised exceptions
     in exception-table cleanup paths preserve the original fault line (avoids line-0 fallback
     in `.pyc` context-chain traces).
+  - reraised-exception traceback preservation is now enforced in VM unwind paths:
+    - bare `raise` and `RERAISE` now preserve existing traceback frame stacks instead of
+      re-rooting at synthetic cleanup/handler lines.
+    - compiler-generated rethrow paths in `with`/`try-finally` cleanup now emit `RERAISE`
+      instead of `Raise 1`, aligning source-compiled cleanup behavior with CPython.
   - final exception-line rendering now follows CPython `KeyError` display semantics when args are
     available (single-arg `KeyError` displays `repr(arg)` in traceback footer).
   - runtime `str(KeyError(<arg>))` now follows CPython single-arg display semantics (`repr(arg)`).
@@ -85,7 +90,12 @@ Status: in progress (started 2026-02-22).
   - indentation diagnostics now include CPython-style parity for:
     - top-level `unexpected indent` (no caret line),
     - `unindent does not match any outer indentation level` with end-of-line caret.
-  - next gate: expand golden traceback-shape tests against CPython output for nested chains.
+  - differential traceback gates now also cover reraised traceback line-fidelity parity for both
+    source and `.pyc` execution paths:
+    - `differential_traceback_reraise_preserves_original_fault_line`
+    - `differential_pyc_traceback_reraise_preserves_original_fault_line`.
+  - next gate: expand traceback parity coverage for explicit `raise exc` (non-bare rethrow) line
+    fidelity and chained-cause interactions in mixed source/`.pyc` paths.
 
 ## Scope
 

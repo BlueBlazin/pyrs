@@ -103,6 +103,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - traceback frame capture now honors `reraise_lasti_override` when set, preserving original
     source line fidelity for reraised exceptions in exception-table cleanup flows
     (fixes line-0 fallback in `.pyc` context-chain tracebacks).
+  - VM unwind paths now preserve existing traceback frame stacks for reraises:
+    - bare `raise` and opcode `RERAISE` now keep prior traceback frames instead of
+      re-rooting at cleanup handler lines.
+    - compiler-generated rethrows in `with` and `try/finally` cleanup now emit
+      `Opcode::Reraise` (instead of `Raise 1`) for CPython traceback-line parity.
   - traceback footer exception formatting now resolves display text from exception `args` where
     available and applies CPython KeyError single-arg `repr(arg)` behavior.
   - compiler now enforces CPython semantic syntax errors (with span-backed diagnostics):
@@ -163,6 +168,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_pyc_traceback_suppressed_context_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_pyc_traceback_direct_cause_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_pyc_traceback_mixed_cause_and_context_chain_matches_cpython_shape`.
+    - `tests/differential_cpython.rs::differential_traceback_reraise_preserves_original_fault_line`.
+    - `tests/differential_cpython.rs::differential_pyc_traceback_reraise_preserves_original_fault_line`.
     - `tests/differential_cpython.rs::differential_semantic_syntax_return_outside_function_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_break_outside_loop_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_continue_outside_loop_matches_cpython`
@@ -192,6 +199,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::statistics_mean_supports_basic_int_dataset`.
     - `tests/vm.rs::from_import_reads_attribute_from_replaced_sys_modules_entry`
     - `tests/vm.rs::from_import_star_raises_when_all_contains_missing_name`.
+    - `tests/differential_cpython.rs::differential_from_import_reads_attribute_from_replaced_sys_modules_entry`
+    - `tests/differential_cpython.rs::differential_from_import_star_missing_all_entry_raises_attribute_error`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,
