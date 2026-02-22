@@ -152,6 +152,9 @@ Status: in progress (started 2026-02-22).
     - `compile_only_ast_honors_core_ast_hierarchy`
     - `compile_only_ast_honors_operator_hierarchy`.
     - `compile_only_ast_covers_common_statement_nodes`.
+  - differential CPython gates now verify key `PyCF_ONLY_AST` parity surfaces:
+    - assign-node `_fields` / `__match_args__` and abstract-base membership parity,
+    - operator/comparator/unary abstract-family membership parity.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

@@ -154,6 +154,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::compile_only_ast_honors_core_ast_hierarchy`
     - `tests/vm.rs::compile_only_ast_honors_operator_hierarchy`.
     - `tests/vm.rs::compile_only_ast_covers_common_statement_nodes`.
+  - differential CPython parity gates were expanded for AST-compile surfaces:
+    - `tests/differential_cpython.rs::differential_compile_only_ast_assign_fields_and_match_args`
+    - `tests/differential_cpython.rs::differential_compile_only_ast_operator_hierarchy_parity`.
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.

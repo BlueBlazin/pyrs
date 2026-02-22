@@ -1917,3 +1917,47 @@ finally:
         "from-import-* exception footer mismatch"
     );
 }
+
+#[test]
+fn differential_compile_only_ast_assign_fields_and_match_args() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+node = compile("x = f()", "<ast>", "exec", _ast.PyCF_ONLY_AST)
+stmt = node.body[0]
+result = {
+    "fields": list(stmt._fields),
+    "match_args": list(stmt.__match_args__),
+    "stmt_type": type(stmt).__name__,
+    "is_stmt": isinstance(stmt, _ast.stmt),
+    "value_type": type(stmt.value).__name__,
+    "value_is_expr": isinstance(stmt.value, _ast.expr),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
+fn differential_compile_only_ast_operator_hierarchy_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+expr = compile("not a or b + c < d", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
+result = {
+    "expr_type": type(expr).__name__,
+    "boolop_is_base": isinstance(expr.op, _ast.boolop),
+    "cmpop_is_base": isinstance(expr.values[1].ops[0], _ast.cmpop),
+    "binop_is_base": isinstance(expr.values[1].left.op, _ast.operator),
+    "unary_is_base": isinstance(expr.values[0].op, _ast.unaryop),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
