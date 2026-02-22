@@ -6496,13 +6496,16 @@ run(PyObject *self, PyObject *args) {
 
     int audit_ok = (PySys_AuditTuple("batch44.event", 0) == 0
                     && PySys_Audit("batch44.event", "s", "payload") == 0) ? 1 : 0;
+    PyErr_SetString(PyExc_ValueError, "batch44 unraisable");
+    PyErr_WriteUnraisable(0);
+    int unraisable_cleared = (PyErr_Occurred() == 0) ? 1 : 0;
 
     PySys_WriteStdout("batch44 stdout %d\n", 7);
     PySys_WriteStderr("batch44 stderr %s\n", "ok");
     PySys_FormatStdout("batch44 format stdout %d\n", 8);
     PySys_FormatStderr("batch44 format stderr %d\n", 9);
 
-    return Py_BuildValue("(iiiii)", argv_ok, path_ok, warn_empty, warn_added, audit_ok);
+    return Py_BuildValue("(iiiiii)", argv_ok, path_ok, warn_empty, warn_added, audit_ok, unraisable_cleared);
 }
 
 static PyMethodDef module_methods[] = {
@@ -6546,7 +6549,7 @@ PyInit_cpython_api_batch44_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import sys\nrecords=[]\ndef hook(event, args):\n    if event == 'batch44.event':\n        records.append(args)\nsys.addaudithook(hook)\nimport cpython_api_batch44_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1)\nassert records == [(), ('payload',)]",
+        "import sys\nrecords=[]\nunraisable=[]\ndef hook(event, args):\n    if event == 'batch44.event':\n        records.append(args)\ndef capture(info):\n    unraisable.append((info.exc_type, info.err_msg, info.object))\nsys.addaudithook(hook)\nsys.unraisablehook = capture\nimport cpython_api_batch44_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1)\nassert records == [(), ('payload',)]\nassert len(unraisable) == 1\nassert unraisable[0][0] is ValueError\nassert unraisable[0][1] is None\nassert unraisable[0][2] is None",
     )
     .expect("cpython api batch44 extension import should succeed");
 

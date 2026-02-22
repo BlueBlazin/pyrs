@@ -1076,6 +1076,7 @@ int PyErr_WarnExplicit(
 int PyErr_ResourceWarning(PyObject *source, long long stack_level, const char *format);
 int PyErr_BadArgument(void);
 void PyErr_BadInternalCall(void);
+void PyErr_WriteUnraisable(PyObject *obj);
 void PyErr_PrintEx(int set_sys_last_vars);
 void PyErr_Display(PyObject *unused, PyObject *value, PyObject *tb);
 void PyErr_DisplayException(PyObject *exc);

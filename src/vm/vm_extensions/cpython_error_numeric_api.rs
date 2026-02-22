@@ -2,7 +2,7 @@ use std::backtrace::Backtrace;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 
-use crate::runtime::{BuiltinFunction, Object, Value};
+use crate::runtime::{BuiltinFunction, ExceptionObject, Object, Value};
 
 use super::{
     _Py_NoneStruct, ACTIVE_CPYTHON_INIT_CONTEXT, CPY_EXCEPTION_TYPE_PTR_ATTR, CpythonComplexValue,
@@ -2440,7 +2440,40 @@ pub unsafe extern "C" fn PyErr_ResourceWarning(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyErr_WriteUnraisable(_object: *mut c_void) {}
+pub unsafe extern "C" fn PyErr_WriteUnraisable(object: *mut c_void) {
+    let _ = with_active_cpython_context_mut(|context| {
+        let fallback_message = context
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "unraisable exception".to_string());
+        let state = context.fetch_error_state();
+        if context.vm.is_null() {
+            return;
+        }
+        let exception = if !state.pvalue.is_null() {
+            context.cpython_value_from_ptr_or_proxy(state.pvalue)
+        } else if !state.ptype.is_null() {
+            context.cpython_value_from_ptr_or_proxy(state.ptype)
+        } else {
+            None
+        }
+        .unwrap_or_else(|| {
+            Value::Exception(Box::new(ExceptionObject::new(
+                "RuntimeError",
+                Some(fallback_message),
+            )))
+        });
+        let unraisable_object = if object.is_null() {
+            None
+        } else {
+            context.cpython_value_from_ptr_or_proxy(object)
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        vm.emit_unraisable_exception(exception, unraisable_object, None);
+        context.clear_error();
+    });
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_Print() {

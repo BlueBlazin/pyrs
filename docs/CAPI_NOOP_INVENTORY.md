@@ -17,7 +17,6 @@ It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those a
 | Symbol | File | Current behavior | Closure criteria |
 |---|---|---|---|
 | `PyObject_ClearWeakRefs` | `src/vm/vm_extensions/cpython_weakref_api.rs` | no-op | Implement weakref-list clear parity for deallocation paths (including callback suppression/order) and add extension regression coverage. |
-| `PyErr_WriteUnraisable` | `src/vm/vm_extensions/cpython_error_numeric_api.rs` | no-op | Route through CPython-compatible unraisable reporting (`sys.unraisablehook` contract) with typed payload + tests. |
 | `PyObject_GC_Track` | `src/vm/vm_extensions/cpython_gc_alloc_api.rs` | no-op | Wire into explicit GC-tracked state model for C-API objects and ensure `IsTracked/IsFinalized` parity. |
 | `PyObject_GC_UnTrack` | `src/vm/vm_extensions/cpython_gc_alloc_api.rs` | no-op | Same closure as `PyObject_GC_Track`; must preserve safe transitions and no-UAF invariants. |
 | `PyGILState_Release` | `src/vm/vm_extensions/cpython_eval_os_marshal_api.rs` | no-op | Implement GIL-state token release semantics consistent with `PyGILState_Ensure` and thread-state lifecycle. |

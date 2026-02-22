@@ -2230,7 +2230,7 @@ impl Vm {
         Value::Exception(Box::new(self.runtime_error_to_exception_object(err)))
     }
 
-    fn emit_unraisable_exception(
+    pub(crate) fn emit_unraisable_exception(
         &mut self,
         exception: Value,
         object: Option<Value>,
