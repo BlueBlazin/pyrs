@@ -561,3 +561,24 @@ fn differential_traceback_identifier_caret_span_matches_cpython() {
     let ours_caret = caret_line_after_source(&ours, "    x = foo").expect("pyrs caret");
     assert_eq!(py_caret, ours_caret, "identifier caret mismatch");
 }
+
+#[test]
+fn differential_syntax_error_shape_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "x =";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
+    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(py.contains("File \"<string>\", line 1"), "{}", py);
+    assert!(ours.contains("File \"<string>\", line 1"), "{}", ours);
+    assert!(py.contains("\n    x =\n"), "{}", py);
+    assert!(ours.contains("\n    x =\n"), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    x =").expect("python syntax caret");
+    let ours_caret = caret_line_after_source(&ours, "    x =").expect("pyrs syntax caret");
+    assert_eq!(py_caret, ours_caret, "syntax caret mismatch");
+    assert!(py.contains("SyntaxError:"), "{}", py);
+    assert!(ours.contains("SyntaxError:"), "{}", ours);
+}

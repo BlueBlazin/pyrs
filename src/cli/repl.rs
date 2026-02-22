@@ -22,6 +22,7 @@ use crate::compiler;
 use crate::parser::{self, ParseError};
 use crate::runtime::{Object, Value};
 use crate::vm::Vm;
+use super::format_syntax_error;
 
 const HISTORY_CAPACITY: usize = 10_000;
 const INDENT_WIDTH: usize = 4;
@@ -366,7 +367,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                         if repl_input_is_incomplete(&pending, &parse_err) {
                             continue;
                         }
-                        eprintln!("{}", format_parse_error(&parse_err));
+                        eprintln!("{}", format_parse_error(&pending, "<stdin>", &parse_err));
                         pending.clear();
                     }
                 }
@@ -1793,7 +1794,7 @@ fn execute_module_source(
     echo_expression_result: bool,
 ) -> Result<(), String> {
     vm.cache_source_text(filename, source);
-    let module = parser::parse_module(source).map_err(|err| format_parse_error(&err))?;
+    let module = parser::parse_module(source).map_err(|err| format_parse_error(source, filename, &err))?;
     execute_parsed_module(vm, &module, filename, echo_expression_result)
 }
 
@@ -1823,7 +1824,8 @@ fn execute_timeit_command(
     const MAX_CALIBRATION_LOOPS: u64 = 1_000_000_000;
 
     vm.cache_source_text(filename, &request.source);
-    let module = parser::parse_module(&request.source).map_err(|err| format_parse_error(&err))?;
+    let module = parser::parse_module(&request.source)
+        .map_err(|err| format_parse_error(&request.source, filename, &err))?;
     let code = compiler::compile_module_with_filename(&module, filename)
         .map_err(|err| format!("compile error: {}", err.message))?;
     let loops = if let Some(loops) = request.loops {
@@ -1943,11 +1945,8 @@ fn execute_parsed_module(
     Ok(())
 }
 
-fn format_parse_error(err: &ParseError) -> String {
-    format!(
-        "parse error at {} (line {}, column {}): {}",
-        err.offset, err.line, err.column, err.message
-    )
+fn format_parse_error(source: &str, filename: &str, err: &ParseError) -> String {
+    format_syntax_error(filename, source, err)
 }
 
 fn repl_input_is_incomplete(source: &str, err: &ParseError) -> bool {
@@ -2045,10 +2044,9 @@ mod tests {
     fn parse_error_is_human_readable() {
         let source = "def f(\n";
         let err = parser::parse_module(source).expect_err("parse should fail");
-        let rendered = format_parse_error(&err);
-        assert!(rendered.contains("parse error at"));
-        assert!(rendered.contains("line"));
-        assert!(rendered.contains("column"));
+        let rendered = format_parse_error(source, "<stdin>", &err);
+        assert!(rendered.contains("SyntaxError:"));
+        assert!(rendered.contains("File \"<stdin>\", line"));
     }
 
     #[test]

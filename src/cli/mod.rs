@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::VERSION;
 use crate::compiler;
 use crate::parser;
+use crate::parser::ParseError;
 use crate::runtime::Value;
 use crate::vm::Vm;
 
@@ -127,12 +128,8 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
     vm.cache_source_text(path, &source);
 
-    let module = parser::parse_module(&source).map_err(|err| {
-        format!(
-            "parse error at {} (line {}, column {}): {}",
-            err.offset, err.line, err.column, err.message
-        )
-    })?;
+    let module = parser::parse_module(&source)
+        .map_err(|err| format_syntax_error(path, &source, &err))?;
 
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
@@ -150,12 +147,8 @@ fn run_command(source: &str, import_site: bool) -> Result<(), String> {
     configure_vm_for_command(&mut vm, import_site)?;
     vm.cache_source_text("<string>", source);
 
-    let module = parser::parse_module(source).map_err(|err| {
-        format!(
-            "parse error at {} (line {}, column {}): {}",
-            err.offset, err.line, err.column, err.message
-        )
-    })?;
+    let module = parser::parse_module(source)
+        .map_err(|err| format_syntax_error("<string>", source, &err))?;
 
     let code = compiler::compile_module_with_filename(&module, "<string>")
         .map_err(|err| format!("compile error: {}", err.message))?;
@@ -166,6 +159,32 @@ fn run_command(source: &str, import_site: bool) -> Result<(), String> {
     shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
 
     Ok(())
+}
+
+pub(super) fn format_syntax_error(filename: &str, source: &str, err: &ParseError) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("  File \"{}\", line {}\n", filename, err.line));
+    if err.line > 0
+        && let Some(source_line) = source
+            .lines()
+            .nth(err.line.saturating_sub(1))
+            .map(|line| line.trim_end_matches('\r'))
+    {
+        output.push_str("    ");
+        output.push_str(source_line);
+        output.push('\n');
+        if err.column > 0 {
+            let char_count = source_line.chars().count();
+            let start = err.column.saturating_sub(1).min(char_count);
+            output.push_str("    ");
+            output.push_str(&" ".repeat(start));
+            output.push('^');
+            output.push('\n');
+        }
+    }
+    output.push_str("SyntaxError: ");
+    output.push_str(&err.message);
+    output
 }
 
 fn configure_vm_for_execution(
