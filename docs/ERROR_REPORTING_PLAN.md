@@ -2,6 +2,26 @@
 
 Status: in progress (started 2026-02-22).
 
+## Progress Checkpoint (2026-02-23)
+
+- Phase 1 complete:
+  - exception-constructor kwargs parity landed for `AttributeError`, `NameError`,
+    `ImportError`, and `ModuleNotFoundError`.
+  - invalid kwargs now raise typed `TypeError` with CPython-style messages.
+- Phase 2 mostly complete:
+  - source text cache wired for file, `-c`, REPL, import, `exec`, `eval`, and `compile`.
+  - traceback output now includes CPython-style file/line/function rows plus source and caret.
+  - exception chaining now renders separate traceback blocks for `__context__` / `__cause__`
+    instead of flattening into message-only chain text.
+- Phase 3 complete:
+  - location metadata upgraded to `start+end` ranges in bytecode location model.
+- Phase 4 complete:
+  - CPython 3.14 `co_linetable` decoding added for translated `.pyc` bytecode.
+- Phase 5 in progress:
+  - regression coverage added for constructor kwargs parity, linetable-range decoding, and
+    traceback no-rewrap behavior.
+  - next gate: expand golden traceback-shape tests against CPython output for nested chains.
+
 ## Scope
 
 Bring uncaught exception reporting and traceback location fidelity to CPython 3.14 semantics, with explicit alignment to:

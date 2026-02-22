@@ -83,6 +83,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - Traceback formatting now includes source lines and caret spans when source text is available:
     - source text cache added to VM and wired for file/`-c`/REPL/import/eval/exec/compile paths.
     - frame lines now render in CPython shape (`File "...", line N, in ...`) with caret.
+  - Exception objects now retain propagated traceback-frame metadata (`traceback_frames`) so
+    chained exceptions (`__context__` / `__cause__`) can render separate traceback blocks.
+  - chained exception output now follows CPython flow:
+    - context/cause sections render independent `Traceback (most recent call last):` blocks with
+      delimiter text (`During handling...` / `The above exception was the direct cause...`).
   - CPython `.pyc` `co_linetable` decoding now maps instruction ranges into `Location {line,column,end_line,end_column}`.
   - Unhandled exception propagation no longer re-wraps traceback text as nested `RuntimeError`/`<Exc>: Traceback ...`.
   - New regressions:
