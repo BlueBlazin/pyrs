@@ -171,7 +171,11 @@ impl<'a> Translator<'a> {
 
         let instructions = self.translate_instructions()?;
         result.instructions = instructions;
-        result.locations = vec![crate::bytecode::Location::unknown(); result.instructions.len()];
+        result.locations = decode_cpython_linetable_locations(
+            &self.code.linetable,
+            self.code.firstlineno,
+            result.instructions.len(),
+        )?;
         result.exception_handlers =
             parse_exception_table(&self.code.exceptiontable, result.instructions.len())?;
         if std::env::var_os("PYRS_TRACE_EXCEPTION_TABLE").is_some() {
@@ -912,6 +916,146 @@ impl<'a> Translator<'a> {
                 oparg, idx
             ))),
         }
+    }
+}
+
+const PY_CODE_LOCATION_INFO_ONE_LINE0: u8 = 10;
+const PY_CODE_LOCATION_INFO_ONE_LINE2: u8 = 12;
+const PY_CODE_LOCATION_INFO_NO_COLUMNS: u8 = 13;
+const PY_CODE_LOCATION_INFO_LONG: u8 = 14;
+const PY_CODE_LOCATION_INFO_NONE: u8 = 15;
+
+fn decode_cpython_linetable_locations(
+    linetable: &[u8],
+    firstlineno: i32,
+    instruction_count: usize,
+) -> Result<Vec<crate::bytecode::Location>, CpythonError> {
+    let mut locations = vec![crate::bytecode::Location::unknown(); instruction_count];
+    let mut cursor = 0usize;
+    let mut instruction_index = 0usize;
+    let mut computed_line = firstlineno;
+
+    while cursor < linetable.len() && instruction_index < instruction_count {
+        let first = linetable[cursor];
+        if (first & 0x80) == 0 {
+            return Err(CpythonError::new(
+                "invalid linetable: expected entry marker byte",
+            ));
+        }
+        cursor += 1;
+
+        let code_units = ((first & 0x07) as usize) + 1;
+        let info_kind = (first >> 3) & 0x0F;
+
+        let (start_line, start_column, end_line, end_column) = match info_kind {
+            PY_CODE_LOCATION_INFO_NONE => (-1, -1, -1, -1),
+            PY_CODE_LOCATION_INFO_LONG => {
+                let line_delta = read_signed_varint_from_linetable(linetable, &mut cursor)?;
+                computed_line += line_delta;
+                let start_line = computed_line;
+                let end_line_delta = read_varint_from_linetable(linetable, &mut cursor)?;
+                let start_column = read_varint_from_linetable(linetable, &mut cursor)? - 1;
+                let end_column = read_varint_from_linetable(linetable, &mut cursor)? - 1;
+                (start_line, start_column, start_line + end_line_delta, end_column)
+            }
+            PY_CODE_LOCATION_INFO_NO_COLUMNS => {
+                let line_delta = read_signed_varint_from_linetable(linetable, &mut cursor)?;
+                computed_line += line_delta;
+                (computed_line, -1, computed_line, -1)
+            }
+            PY_CODE_LOCATION_INFO_ONE_LINE0..=PY_CODE_LOCATION_INFO_ONE_LINE2 => {
+                let line_delta = (info_kind as i32) - 10;
+                computed_line += line_delta;
+                let start_column = read_byte_from_linetable(linetable, &mut cursor)?;
+                let end_column = read_byte_from_linetable(linetable, &mut cursor)?;
+                (computed_line, start_column, computed_line, end_column)
+            }
+            _ => {
+                let second = read_byte_from_linetable(linetable, &mut cursor)?;
+                if (second & 0x80) != 0 {
+                    return Err(CpythonError::new(
+                        "invalid linetable: short-form payload overlaps entry marker",
+                    ));
+                }
+                let start_column = ((info_kind as i32) << 3) | ((second >> 4) as i32);
+                let end_column = start_column + ((second & 0x0F) as i32);
+                (computed_line, start_column, computed_line, end_column)
+            }
+        };
+
+        let entry_end = instruction_index
+            .saturating_add(code_units)
+            .min(instruction_count);
+        let location = if start_line < 0 {
+            crate::bytecode::Location::unknown()
+        } else {
+            let start_column_one_based = if start_column < 0 {
+                0
+            } else {
+                (start_column as usize).saturating_add(1)
+            };
+            let end_column_one_based = if end_column < 0 {
+                0
+            } else {
+                (end_column as usize).saturating_add(1)
+            };
+            let start_line_usize = start_line.max(0) as usize;
+            let end_line_usize = end_line.max(0) as usize;
+            crate::bytecode::Location::with_end(
+                start_line_usize,
+                start_column_one_based,
+                end_line_usize,
+                end_column_one_based,
+            )
+        };
+        for slot in &mut locations[instruction_index..entry_end] {
+            *slot = location;
+        }
+        instruction_index = entry_end;
+    }
+
+    Ok(locations)
+}
+
+fn read_byte_from_linetable(linetable: &[u8], cursor: &mut usize) -> Result<i32, CpythonError> {
+    if *cursor >= linetable.len() {
+        return Err(CpythonError::new(
+            "invalid linetable: truncated payload while reading byte",
+        ));
+    }
+    let value = linetable[*cursor];
+    *cursor += 1;
+    Ok(value as i32)
+}
+
+fn read_varint_from_linetable(linetable: &[u8], cursor: &mut usize) -> Result<i32, CpythonError> {
+    let mut shift = 0u32;
+    let mut value = 0u32;
+    loop {
+        if *cursor >= linetable.len() {
+            return Err(CpythonError::new(
+                "invalid linetable: truncated payload while reading varint",
+            ));
+        }
+        let read = linetable[*cursor];
+        *cursor += 1;
+        value |= ((read & 0x3F) as u32) << shift;
+        if (read & 0x40) == 0 {
+            return Ok(value as i32);
+        }
+        shift = shift.saturating_add(6);
+    }
+}
+
+fn read_signed_varint_from_linetable(
+    linetable: &[u8],
+    cursor: &mut usize,
+) -> Result<i32, CpythonError> {
+    let value = read_varint_from_linetable(linetable, cursor)? as u32;
+    if (value & 1) == 1 {
+        Ok(-((value >> 1) as i32))
+    } else {
+        Ok((value >> 1) as i32)
     }
 }
 

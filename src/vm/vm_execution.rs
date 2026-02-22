@@ -6970,7 +6970,7 @@ impl Vm {
             let frame_depth = self.frames.len();
             let Some(frame) = self.frames.last_mut() else {
                 let message = self.format_traceback(&traceback, &exc);
-                return Err(RuntimeError::new(message));
+                return Err(self.runtime_error_from_unhandled_exception(message, &exc));
             };
 
             traceback.push(Self::frame_trace(frame));
@@ -6983,7 +6983,7 @@ impl Vm {
                 // pending exception back to the outer run loop.
                 frame.active_exception = Some(exc.clone());
                 let message = self.format_traceback(&traceback, &exc);
-                return Err(RuntimeError::new(message));
+                return Err(self.runtime_error_from_unhandled_exception(message, &exc));
             }
 
             if let Some(block) = frame.blocks.pop() {
@@ -7063,6 +7063,19 @@ impl Vm {
         }
     }
 
+    fn runtime_error_from_unhandled_exception(
+        &self,
+        message: String,
+        exception_value: &Value,
+    ) -> RuntimeError {
+        let exception = match exception_value {
+            Value::Exception(exception) => Some(Box::new((**exception).clone())),
+            Value::ExceptionType(name) => Some(Box::new(ExceptionObject::new(name.clone(), None))),
+            _ => None,
+        };
+        RuntimeError { message, exception }
+    }
+
     pub(super) fn raise_exception_with_cause(
         &mut self,
         value: Value,
@@ -7132,6 +7145,9 @@ impl Vm {
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
+        if self.frames.is_empty() {
+            return Err(err);
+        }
         let RuntimeError { message, exception } = err;
         if self.trace_flags.import_pending {
             let active = self
@@ -7512,35 +7528,51 @@ impl Vm {
         args: &[Value],
         kwargs: &HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        let mut call_args = args.to_vec();
+        let call_args = args.to_vec();
+        let mut remaining_kwargs = kwargs.clone();
         let mut import_error_name = Value::None;
         let mut import_error_path = Value::None;
-        if is_import_error_family(name) {
-            let mut remaining_kwargs = kwargs.clone();
-            if let Some(msg_kw) = remaining_kwargs.remove("msg") {
-                if call_args.is_empty() {
-                    call_args.push(msg_kw);
-                } else {
-                    return Err(RuntimeError::new(
-                        "ImportError.__init__() got multiple values for argument 'msg'",
-                    ));
-                }
-            }
+        let mut name_error_name = Value::None;
+        let mut attribute_error_name = Value::None;
+        let mut attribute_error_obj = Value::None;
+
+        let allows_named_kwargs = if is_import_error_family(name) {
             if let Some(value) = remaining_kwargs.remove("name") {
                 import_error_name = value;
             }
             if let Some(value) = remaining_kwargs.remove("path") {
                 import_error_path = value;
             }
-            if !remaining_kwargs.is_empty() {
-                return Err(RuntimeError::new(
-                    "BaseException.__init__() takes no keyword arguments",
-                ));
+            true
+        } else if self.exception_inherits(name, "NameError") {
+            if let Some(value) = remaining_kwargs.remove("name") {
+                name_error_name = value;
             }
-        } else if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "BaseException.__init__() takes no keyword arguments",
-            ));
+            true
+        } else if self.exception_inherits(name, "AttributeError") {
+            if let Some(value) = remaining_kwargs.remove("name") {
+                attribute_error_name = value;
+            }
+            if let Some(value) = remaining_kwargs.remove("obj") {
+                attribute_error_obj = value;
+            }
+            true
+        } else {
+            false
+        };
+
+        if !remaining_kwargs.is_empty() {
+            let mut unexpected = remaining_kwargs.keys().cloned().collect::<Vec<_>>();
+            unexpected.sort();
+            let message = if allows_named_kwargs {
+                format!(
+                    "{name}() got an unexpected keyword argument '{}'",
+                    unexpected[0]
+                )
+            } else {
+                format!("{name}() takes no keyword arguments")
+            };
+            return Err(RuntimeError::type_error(message));
         }
 
         if self.exception_inherits(name, "BaseExceptionGroup") {
@@ -7593,6 +7625,13 @@ impl Vm {
                 attrs.insert("name".to_string(), import_error_name);
                 attrs.insert("path".to_string(), import_error_path);
             }
+            if self.exception_inherits(name, "NameError") {
+                attrs.insert("name".to_string(), name_error_name);
+            }
+            if self.exception_inherits(name, "AttributeError") {
+                attrs.insert("name".to_string(), attribute_error_name);
+                attrs.insert("obj".to_string(), attribute_error_obj);
+            }
         }
         Ok(Value::Exception(Box::new(exception)))
     }
@@ -7641,21 +7680,43 @@ impl Vm {
         let location = frame.code.locations.get(frame.last_ip);
         let line = location.map(|loc| loc.line).unwrap_or(0);
         let column = location.map(|loc| loc.column).unwrap_or(0);
+        let end_line = location.map(|loc| loc.end_line).unwrap_or(0);
+        let end_column = location.map(|loc| loc.end_column).unwrap_or(0);
         TraceFrame {
             filename: frame.code.filename.clone(),
             line,
             column,
+            end_line,
+            end_column,
             name: frame.code.name.clone(),
         }
     }
 
-    pub(super) fn format_traceback(&self, frames: &[TraceFrame], exc: &Value) -> String {
+    pub(super) fn format_traceback(&mut self, frames: &[TraceFrame], exc: &Value) -> String {
         let mut output = String::from("Traceback (most recent call last):\n");
         for frame in frames.iter().rev() {
             output.push_str(&format!(
-                "  File \"{}\", line {}, column {}, in {}\n",
-                frame.filename, frame.line, frame.column, frame.name
+                "  File \"{}\", line {}, in {}\n",
+                frame.filename, frame.line, frame.name
             ));
+            if frame.line > 0
+                && let Some(source_line) = self.traceback_source_line(&frame.filename, frame.line)
+            {
+                output.push_str("    ");
+                output.push_str(&source_line);
+                output.push('\n');
+                if let Some(caret_line) = render_traceback_caret_line(
+                    &source_line,
+                    frame.line,
+                    frame.column,
+                    frame.end_line,
+                    frame.end_column,
+                ) {
+                    output.push_str("    ");
+                    output.push_str(&caret_line);
+                    output.push('\n');
+                }
+            }
         }
         match exc {
             Value::Exception(exception) => {
@@ -11905,4 +11966,35 @@ impl Vm {
             _ => None,
         }
     }
+}
+
+fn render_traceback_caret_line(
+    source_line: &str,
+    start_line: usize,
+    start_column: usize,
+    end_line: usize,
+    end_column: usize,
+) -> Option<String> {
+    if source_line.is_empty() || start_column == 0 {
+        return None;
+    }
+    if end_line != 0 && start_line != 0 && end_line < start_line {
+        return None;
+    }
+    let char_count = source_line.chars().count();
+    if char_count == 0 {
+        return None;
+    }
+    let start = start_column.saturating_sub(1).min(char_count.saturating_sub(1));
+    let mut end_exclusive = if end_column > 0 {
+        end_column.saturating_sub(1)
+    } else {
+        start.saturating_add(1)
+    };
+    if end_exclusive <= start {
+        end_exclusive = start.saturating_add(1);
+    }
+    end_exclusive = end_exclusive.min(char_count);
+    let width = end_exclusive.saturating_sub(start).max(1);
+    Some(format!("{}{}", " ".repeat(start), "^".repeat(width)))
 }

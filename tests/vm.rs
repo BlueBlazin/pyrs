@@ -14894,6 +14894,98 @@ ok = (
 }
 
 #[test]
+fn exception_constructor_keyword_parity_matches_cpython() {
+    let source = r#"attr = AttributeError("boom", name="missing", obj=42)
+name_err = NameError("bad", name="symbol")
+imp = ImportError("oops", name="pkg.mod", path="/tmp/pkg/mod.py")
+mod = ModuleNotFoundError(name="pkg.missing")
+try:
+    AttributeError("boom", foo=1)
+except TypeError as exc:
+    attr_bad_kw = ("unexpected keyword argument 'foo'" in str(exc))
+else:
+    attr_bad_kw = False
+try:
+    NameError("boom", foo=1)
+except TypeError as exc:
+    name_bad_kw = ("unexpected keyword argument 'foo'" in str(exc))
+else:
+    name_bad_kw = False
+try:
+    ImportError("boom", foo=1)
+except TypeError as exc:
+    import_bad_kw = ("unexpected keyword argument 'foo'" in str(exc))
+else:
+    import_bad_kw = False
+try:
+    ImportError("boom", msg="x")
+except TypeError as exc:
+    import_msg_bad_kw = ("unexpected keyword argument 'msg'" in str(exc))
+else:
+    import_msg_bad_kw = False
+try:
+    RuntimeError(x=1)
+except TypeError as exc:
+    runtime_kw = ("RuntimeError() takes no keyword arguments" in str(exc))
+else:
+    runtime_kw = False
+ok = (
+    attr.name == "missing"
+    and attr.obj == 42
+    and attr.args == ("boom",)
+    and name_err.name == "symbol"
+    and name_err.args == ("bad",)
+    and imp.name == "pkg.mod"
+    and imp.path == "/tmp/pkg/mod.py"
+    and imp.msg == "oops"
+    and mod.name == "pkg.missing"
+    and mod.path is None
+    and mod.msg is None
+    and attr_bad_kw
+    and name_bad_kw
+    and import_bad_kw
+    and import_msg_bad_kw
+    and runtime_kw
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn traceback_output_preserves_exception_type_without_traceback_rewrap() {
+    let source = r#"try:
+    raise AttributeError("one\n two")
+except Exception:
+    raise AttributeError("three\n four")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module_with_filename(&module, "<traceback-test>")
+        .expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.cache_source_text("<traceback-test>", source);
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("Traceback (most recent call last):"));
+    assert!(err.message.contains("File \"<traceback-test>\", line 4, in <module>"));
+    assert!(err.message.contains("raise AttributeError(\"three\\n four\")"));
+    assert!(err.message.contains("AttributeError: one"));
+    assert!(err.message.contains("AttributeError: three"));
+    assert!(
+        !err.message.contains("RuntimeError: Traceback"),
+        "unexpected traceback rewrap: {}",
+        err.message
+    );
+    assert!(
+        !err.message.contains("AttributeError: Traceback"),
+        "unexpected exception rewrap: {}",
+        err.message
+    );
+}
+
+#[test]
 fn module_not_found_error_populates_name_for_missing_import() {
     let source = r#"ok = False
 try:

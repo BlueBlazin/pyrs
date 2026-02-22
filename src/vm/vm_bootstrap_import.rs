@@ -228,6 +228,8 @@ impl Vm {
         }
         let source = std::fs::read_to_string(source_path)
             .map_err(|err| RuntimeError::new(format!("failed to read module '{name}': {err}")))?;
+        let source_filename = source_path.to_string_lossy().to_string();
+        self.cache_source_text(&source_filename, &source);
 
         let module_ast = parser::parse_module(&source).map_err(|err| {
             RuntimeError::new(format!(
@@ -235,11 +237,10 @@ impl Vm {
                 err.offset, err.message
             ))
         })?;
-        let code =
-            compiler::compile_module_with_filename(&module_ast, &source_path.to_string_lossy())
-                .map_err(|err| {
-                    RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
-                })?;
+        let code = compiler::compile_module_with_filename(&module_ast, &source_filename)
+            .map_err(|err| {
+                RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
+            })?;
         self.mark_module_initializing(module);
         let code = Rc::new(code);
         let cells = self.build_cells(&code, Vec::new());

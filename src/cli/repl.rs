@@ -348,6 +348,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                 match parser::parse_module(&pending) {
                     Ok(module) => {
                         let completion_plan = repl_module_completion_plan(&module);
+                        vm.cache_source_text("<stdin>", &pending);
                         if let Err(err) = execute_parsed_module_with_timing(
                             vm,
                             &module,
@@ -1791,6 +1792,7 @@ fn execute_module_source(
     filename: &str,
     echo_expression_result: bool,
 ) -> Result<(), String> {
+    vm.cache_source_text(filename, source);
     let module = parser::parse_module(source).map_err(|err| format_parse_error(&err))?;
     execute_parsed_module(vm, &module, filename, echo_expression_result)
 }
@@ -1820,6 +1822,7 @@ fn execute_timeit_command(
     const TARGET_SECONDS: f64 = 0.2;
     const MAX_CALIBRATION_LOOPS: u64 = 1_000_000_000;
 
+    vm.cache_source_text(filename, &request.source);
     let module = parser::parse_module(&request.source).map_err(|err| format_parse_error(&err))?;
     let code = compiler::compile_module_with_filename(&module, filename)
         .map_err(|err| format!("compile error: {}", err.message))?;

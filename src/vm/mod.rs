@@ -88,6 +88,8 @@ struct TraceFrame {
     filename: String,
     line: usize,
     column: usize,
+    end_line: usize,
+    end_column: usize,
     name: String,
 }
 
@@ -981,6 +983,7 @@ pub struct Vm {
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
     module_source_positive_cache: HashMap<(PathBuf, String), ModuleSourceInfo>,
+    source_text_cache: HashMap<String, Vec<String>>,
     import_dir_cache: HashMap<PathBuf, ImportDirCacheEntry>,
     preferred_filesystem_module_cache: HashMap<String, bool>,
     import_sys_path_signature: u64,
@@ -1233,6 +1236,7 @@ impl Vm {
             main_module,
             module_paths,
             module_source_positive_cache: HashMap::new(),
+            source_text_cache: HashMap::new(),
             import_dir_cache: HashMap::new(),
             preferred_filesystem_module_cache: HashMap::new(),
             import_sys_path_signature: 0,
@@ -3030,6 +3034,32 @@ impl Vm {
     pub(crate) fn clear_host_error_indicators(&mut self) {
         self.clear_active_exception();
         vm_extensions::cpython_clear_thread_error_indicator();
+    }
+
+    pub fn cache_source_text(&mut self, filename: &str, source: &str) {
+        if filename.is_empty() {
+            return;
+        }
+        let mut lines = Vec::new();
+        for line in source.lines() {
+            lines.push(line.trim_end_matches('\r').to_string());
+        }
+        self.source_text_cache.insert(filename.to_string(), lines);
+    }
+
+    pub(super) fn traceback_source_line(&mut self, filename: &str, line: usize) -> Option<String> {
+        if filename.is_empty() || line == 0 {
+            return None;
+        }
+        if !self.source_text_cache.contains_key(filename) && !filename.starts_with('<')
+            && let Ok(source) = fs::read_to_string(filename)
+        {
+            self.cache_source_text(filename, &source);
+        }
+        self.source_text_cache
+            .get(filename)
+            .and_then(|lines| lines.get(line.saturating_sub(1)))
+            .cloned()
     }
 
     pub fn execute(&mut self, code: &CodeObject) -> Result<Value, RuntimeError> {

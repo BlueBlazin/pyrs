@@ -173,15 +173,41 @@ impl Instruction {
 pub struct Location {
     pub line: usize,
     pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
 }
 
 impl Location {
     pub fn new(line: usize, column: usize) -> Self {
-        Self { line, column }
+        let end_column = if column == 0 {
+            0
+        } else {
+            column.saturating_add(1)
+        };
+        Self {
+            line,
+            column,
+            end_line: line,
+            end_column,
+        }
+    }
+
+    pub fn with_end(line: usize, column: usize, end_line: usize, end_column: usize) -> Self {
+        Self {
+            line,
+            column,
+            end_line,
+            end_column,
+        }
     }
 
     pub fn unknown() -> Self {
-        Self { line: 0, column: 0 }
+        Self {
+            line: 0,
+            column: 0,
+            end_line: 0,
+            end_column: 0,
+        }
     }
 }
 

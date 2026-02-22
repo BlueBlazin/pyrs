@@ -261,6 +261,38 @@ fn translates_build_slice_with_two_operands() {
 }
 
 #[test]
+fn translates_cpython_linetable_into_instruction_ranges() {
+    let mut code = test_code(vec![op("LOAD_CONST"), 0, op("RETURN_VALUE"), 0]);
+    // Entry 1: short form, one code unit, same line.
+    // start_col=1 (0-based), end_col=3 (0-based, exclusive-ish).
+    // Entry 2: one-line form (+1 line), one code unit.
+    // start_col=4, end_col=8.
+    code.linetable = vec![
+        0x80, // marker | short-form code=0 | length=1 code unit
+        0x12, // start=1, width=2 => end=3
+        0xD8, // marker | one-line-form code=11 (line +1) | length=1
+        0x04, // start col
+        0x08, // end col
+    ];
+
+    let mut heap = Heap::new();
+    let translated = translate_code(&code, &mut heap).expect("translation should succeed");
+    assert_eq!(translated.locations.len(), translated.instructions.len());
+
+    let first = translated.locations[0];
+    assert_eq!(first.line, 1);
+    assert_eq!(first.column, 2);
+    assert_eq!(first.end_line, 1);
+    assert_eq!(first.end_column, 4);
+
+    let second = translated.locations[1];
+    assert_eq!(second.line, 2);
+    assert_eq!(second.column, 5);
+    assert_eq!(second.end_line, 2);
+    assert_eq!(second.end_column, 9);
+}
+
+#[test]
 fn translates_exception_table_and_with_except_opcodes() {
     let mut code = test_code(vec![
         op("LOAD_CONST"),

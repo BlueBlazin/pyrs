@@ -72,7 +72,7 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
             Some(path) => match run_bytecode(&path) {
                 Ok(()) => 0,
                 Err(err) => {
-                    eprintln!("error: {err}");
+                    eprintln!("{err}");
                     2
                 }
             },
@@ -89,7 +89,7 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
             Some(source) => match run_command(&source, import_site) {
                 Ok(()) => 0,
                 Err(err) => {
-                    eprintln!("error: {err}");
+                    eprintln!("{err}");
                     2
                 }
             },
@@ -101,7 +101,7 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
         Some(path) => match run_file(&path, import_site) {
             Ok(()) => 0,
             Err(err) => {
-                eprintln!("error: {err}");
+                eprintln!("{err}");
                 2
             }
         },
@@ -118,13 +118,14 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
     if path.ends_with(".pyc") {
         let exec_result = vm.execute_pyc_file(path);
         let shutdown_result = vm.run_shutdown_hooks();
-        exec_result.map_err(|err| format!("runtime error: {}", err.message))?;
+        exec_result.map_err(|err| err.message)?;
         shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
         return Ok(());
     }
 
     let source =
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
+    vm.cache_source_text(path, &source);
 
     let module = parser::parse_module(&source).map_err(|err| {
         format!(
@@ -138,7 +139,7 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
 
     let exec_result = vm.execute(&code);
     let shutdown_result = vm.run_shutdown_hooks();
-    exec_result.map_err(|err| format!("runtime error: {}", err.message))?;
+    exec_result.map_err(|err| err.message)?;
     shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
 
     Ok(())
@@ -147,6 +148,7 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
 fn run_command(source: &str, import_site: bool) -> Result<(), String> {
     let mut vm = Vm::new();
     configure_vm_for_command(&mut vm, import_site)?;
+    vm.cache_source_text("<string>", source);
 
     let module = parser::parse_module(source).map_err(|err| {
         format!(
@@ -160,7 +162,7 @@ fn run_command(source: &str, import_site: bool) -> Result<(), String> {
 
     let exec_result = vm.execute(&code);
     let shutdown_result = vm.run_shutdown_hooks();
-    exec_result.map_err(|err| format!("runtime error: {}", err.message))?;
+    exec_result.map_err(|err| err.message)?;
     shutdown_result.map_err(|err| format!("shutdown error: {}", err.message))?;
 
     Ok(())

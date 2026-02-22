@@ -1647,6 +1647,7 @@ impl Vm {
         let code = match source {
             Value::Code(code) => code,
             Value::Str(source) => {
+                self.cache_source_text("<exec>", &source);
                 let module_ast = parser::parse_module(&source).map_err(|err| {
                     RuntimeError::new(format!(
                         "exec() parse error at {}: {}",
@@ -1839,6 +1840,7 @@ impl Vm {
                             .map_err(|_| RuntimeError::new("eval() source is not valid UTF-8"))?
                     }
                 };
+                self.cache_source_text("<eval>", &source_text);
                 let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
                     RuntimeError::new(format!(
                         "eval() parse error at {}: {}",
@@ -3757,6 +3759,7 @@ impl Vm {
                 "compile() mode must be 'exec', 'eval', or 'single'",
             ));
         }
+        self.cache_source_text(&filename, &source_text);
         let code = if mode == "eval" {
             let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
                 RuntimeError::new(format!(
