@@ -7,12 +7,12 @@ Last updated: 2026-02-22
 
 ## Re-check Snapshot
 
-- Empty-body rows: `1`
-- Placeholder rows: `4`
-- Total rows: `5`
-- Total symbols represented: `7`
+- Empty-body rows: `0`
+- Placeholder rows: `3`
+- Total rows: `3`
+- Total symbols represented: `5`
 
-Note: Batch 1 through Batch 4 symbols are now closed and removed from the no-op
+Note: Batch 1 through Batch 5 symbols are now closed and removed from the no-op
 inventory.
 
 ## Ordered Checklist
@@ -53,10 +53,10 @@ inventory.
 - [x] `PyType_Modified`
 - [x] `PyType_ClearCache`
 
-### Batch 5: Interpreter Lifecycle
+### Batch 5: Interpreter Lifecycle ✅ complete
 
-- [ ] `Py_NewInterpreter`
-- [ ] `Py_EndInterpreter`
+- [x] `Py_NewInterpreter`
+- [x] `Py_EndInterpreter`
 
 ### Batch 6: Observability + Unstable APIs
 

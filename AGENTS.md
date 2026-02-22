@@ -119,6 +119,17 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       non-zero version tag.
   - extension smoke regressions were updated for this closure:
     - `tests/extension_smoke.rs::cpython_compat_type_cache_coherence_abi_batch71_apis_work`.
+  - Batch 5 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
+    - `Py_NewInterpreter`, `Py_EndInterpreter`.
+  - interpreter-lifecycle parity updates:
+    - `Py_NewInterpreter` now creates a distinct interpreter state + thread state and swaps
+      current thread state to the new subinterpreter state.
+    - `Py_EndInterpreter` now enforces current-thread-state precondition, tears down all thread
+      states bound to the target interpreter, and then deletes interpreter state.
+    - `PyInterpreterState_Get` and `PyThreadState_GetInterpreter` now return interpreter pointers
+      derived from thread-state ownership instead of always returning main-interpreter token.
+  - extension smoke regressions were updated for this closure:
+    - `tests/extension_smoke.rs::cpython_compat_interpreter_lifecycle_abi_batch72_apis_work`.
 - C-API lifetime-model checkpoint (2026-02-22, latest):
   - owned-pointer free path now clears active thread-state exception pointers when they
     alias the freed pointer (`current_exception`, `exc_info.exc_value`, `exc_state.exc_value`).

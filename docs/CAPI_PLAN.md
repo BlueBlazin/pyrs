@@ -221,6 +221,13 @@ Recent Lane A slice:
 - Added Stable-ABI exports and lifecycle semantics for type-cache coherence APIs (`batch71`):
   - `PyType_{Modified,ClearCache}`
   - type-cache coherence behavior is smoke-covered for non-zero advancing `PyType_ClearCache` tags and type-modification coherence for post-update method resolution.
+- Added Stable-ABI exports and lifecycle semantics for interpreter-lifecycle APIs (`batch72`):
+  - `Py_{NewInterpreter,EndInterpreter}` with current-thread switch + teardown flow.
+  - interpreter-lifecycle behavior is smoke-covered for:
+    - current thread-state switching on `Py_NewInterpreter`,
+    - distinct subinterpreter identity (`PyInterpreterState_Get`/`PyThreadState_GetInterpreter`),
+    - teardown of auxiliary thread states owned by the subinterpreter,
+    - deterministic rejection when `Py_EndInterpreter` is called with a non-current thread state.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`
@@ -383,6 +390,7 @@ Recent Lane A slice:
     - `tests/extension_smoke.rs::cpython_compat_runtime_unicode_abi_batch69_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_gc_weakref_lifecycle_abi_batch70_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_type_cache_coherence_abi_batch71_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_interpreter_lifecycle_abi_batch72_apis_work`
 - Added Stable-ABI exports and semantics for error/file APIs:
   - `PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`
   - `PyFile_{GetLine,WriteObject,WriteString}`
