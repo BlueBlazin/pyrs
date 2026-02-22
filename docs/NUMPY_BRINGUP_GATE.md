@@ -92,12 +92,25 @@ python3 scripts/probe_numpy_gate.py \
   - `import numpy as np`
   - `np.dtype('int8')`
   - `np.random.default_rng()` construction
+  - `np.random.default_rng().random()` execution
+  - `np.random.default_rng().integers(0, 2, size=4)`
+  - `np.random.default_rng().integers(0, 2, 4)`
   - `callable(np.random.default_rng().integers)` is `True`
   - `repr(np.random.default_rng().integers)` now renders without unresolved format markers
     (`%U` / `%V`) and matches cyfunction-style output.
 - Lifetime stability update:
   - repeated subprocess runs of `import numpy as np; np.random.default_rng()` are now stable
     in debug mode (20/20 local runs, no segfault).
+  - escaped compat-object pinning now preserves `ob_type` children, preventing freed type-pointer
+    reuse in NumPy random context-manager paths.
+  - `_thread` lock substrate now reuses a heap-cached lock class instead of allocating a new class
+    object per lock instance, removing a core source of stale type-pointer churn.
+- Latest direct scientific-stack probe (`perf/numpy_gate_direct_latest.json`):
+  - `scipy_import`: `PASS`
+  - `pandas_import`: `FAIL`
+  - `pandas_series_sum`: `FAIL`
+  - `matplotlib_import`: `FAIL`
+  - `matplotlib_pyplot_smoke`: `FAIL`
 - Lifetime substrate is in active migration (`docs/CAPI_LIFETIME_MODEL.md`):
   - VM-global pointer registry is authoritative for pointer provenance/liveness.
   - Per-context owned-pointer shadow set has been removed.
@@ -105,16 +118,14 @@ python3 scripts/probe_numpy_gate.py \
 
 ## Current P0 Blockers
 
-1. NumPy proxy callable/slot parity is still incomplete in direct mode.
-   - Current surface failures:
-     - proxy slot-backed dunder exposure is incomplete (`__iter__`, `__lt__`, scalar unary/getitem dunders).
-     - arrayprint/repr paths still hit `TypeError: call args must be tuple` in some probes.
-2. `numpy.random.Generator.integers` execution is still regressed in direct mode.
-   - `rng.integers(0, 2, size=4)` currently raises unexpected-keyword `TypeError`.
-   - `rng.integers(0, 2, 4)` currently unwinds with `TypeError: raise: exception class must be a subclass of BaseException`
-     after an internal `IndexError` path (`index 4 is out of bounds for axis 0 with size 4`).
-   - active root-cause lane: Cython/native `tp_call` keyword/exception-state parity for cyfunction paths.
-3. Scientific-stack optional probes (`scipy`/`pandas`/`matplotlib`) remain red behind Lane-B C-API/runtime parity gaps.
+1. Pandas import path still fails in direct mode.
+   - `pandas_import` and `pandas_series_sum` currently fail during chained extension init in
+     `pandas._libs._cyutility` with `proxy object is not callable`.
+   - active root-cause lane: proxy-call/vectorcall parity in nested extension init.
+2. Matplotlib import path still fails in direct mode.
+   - `matplotlib_import` / `matplotlib_pyplot_smoke` currently fail with repeated tuple-unpack
+     shape errors (`expected at least 256`) and a later `attempted to call non-function`.
+   - active root-cause lane: extension call-arg/value materialization parity for Cython-heavy modules.
 
 ## Operating Rules
 

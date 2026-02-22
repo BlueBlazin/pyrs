@@ -24,6 +24,10 @@ use super::{
 };
 use crate::runtime::SliceValue;
 
+unsafe extern "C" {
+    fn PyErr_Clear();
+}
+
 impl Vm {
     #[inline]
     fn write_fast_local_slot(slot: &mut Option<Value>, value: Value) {
@@ -365,12 +369,36 @@ impl Vm {
         receiver: &Value,
         method_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
+        let trace = std::env::var_os("PYRS_TRACE_LOAD_SPECIAL").is_some();
+        if trace && method_name == "__exit__" {
+            eprintln!(
+                "[load-special] start receiver_type={}",
+                self.value_type_name_for_error(receiver)
+            );
+        }
         let Some(class_ref) = self.class_of_value(receiver) else {
+            if trace && method_name == "__exit__" {
+                eprintln!("[load-special] no class");
+            }
             return Ok(None);
         };
         let Some(method) = class_attr_lookup(&class_ref, method_name) else {
+            if Self::cpython_proxy_raw_ptr_from_value(receiver).is_some()
+                && let Some(method) = self.load_cpython_proxy_attr_for_value(receiver, method_name)
+            {
+                if trace && method_name == "__exit__" {
+                    eprintln!("[load-special] proxy attr hit");
+                }
+                return Ok(Some(method));
+            }
+            if trace && method_name == "__exit__" {
+                eprintln!("[load-special] miss");
+            }
             return Ok(None);
         };
+        if trace && method_name == "__exit__" {
+            eprintln!("[load-special] class attr hit");
+        }
         let bound = self.bind_descriptor_method(method.clone(), receiver)?;
         if let Some(bound) = bound {
             Ok(Some(bound))
@@ -5119,9 +5147,16 @@ impl Vm {
                                     )?;
                                 }
                                 _ => {
-                                    return Err(RuntimeError::new(
-                                        "attempted to call non-function",
-                                    ));
+                                    match self.call_internal(
+                                        Value::BoundMethod(method.clone()),
+                                        args,
+                                        kwargs,
+                                    )? {
+                                        InternalCallOutcome::Value(value) => {
+                                            self.push_value(value);
+                                        }
+                                        InternalCallOutcome::CallerExceptionHandled => {}
+                                    }
                                 }
                             }
                         }
@@ -5275,9 +5310,16 @@ impl Vm {
                                     )?;
                                 }
                                 _ => {
-                                    return Err(RuntimeError::new(
-                                        "attempted to call non-function",
-                                    ));
+                                    match self.call_internal(
+                                        Value::BoundMethod(method.clone()),
+                                        args,
+                                        kwargs,
+                                    )? {
+                                        InternalCallOutcome::Value(value) => {
+                                            self.push_value(value);
+                                        }
+                                        InternalCallOutcome::CallerExceptionHandled => {}
+                                    }
                                 }
                             }
                         }
@@ -5401,9 +5443,16 @@ impl Vm {
                                     )?;
                                 }
                                 _ => {
-                                    return Err(RuntimeError::new(
-                                        "attempted to call non-function",
-                                    ));
+                                    match self.call_internal(
+                                        Value::BoundMethod(method.clone()),
+                                        args,
+                                        kwargs,
+                                    )? {
+                                        InternalCallOutcome::Value(value) => {
+                                            self.push_value(value);
+                                        }
+                                        InternalCallOutcome::CallerExceptionHandled => {}
+                                    }
                                 }
                             }
                         }
@@ -5528,9 +5577,16 @@ impl Vm {
                                 )?;
                             }
                             _ => {
-                                return Err(RuntimeError::type_error(
-                                    "attempted to call non-function",
-                                ));
+                                match self.call_internal(
+                                    Value::BoundMethod(method.clone()),
+                                    args,
+                                    kwargs,
+                                )? {
+                                    InternalCallOutcome::Value(value) => {
+                                        self.push_value(value);
+                                    }
+                                    InternalCallOutcome::CallerExceptionHandled => {}
+                                }
                             }
                         }
                     }
@@ -9497,7 +9553,12 @@ impl Vm {
                         self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)?;
                     }
                     BoundDispatchKind::Generic => {
-                        self.call_bound_method_via_call_internal(function, receiver, args)?;
+                        self.call_bound_method_via_call_internal(
+                            function,
+                            receiver,
+                            args,
+                            HashMap::new(),
+                        )?;
                     }
                 }
             }
@@ -9700,46 +9761,102 @@ impl Vm {
     }
 
     #[inline]
+    pub(crate) fn cpython_proxy_callable_has_bound_self(&mut self, callable: &Value) -> bool {
+        if Self::cpython_proxy_raw_ptr_from_value(callable).is_none() {
+            return false;
+        }
+        let saved_active_exception = self
+            .frames
+            .last()
+            .and_then(|frame| frame.active_exception.clone());
+        let resolved = self.load_cpython_proxy_attr_for_value(callable, "__self__");
+        if resolved.is_none() {
+            if let Some(frame) = self.frames.last_mut() {
+                frame.active_exception = saved_active_exception;
+            }
+            // Optional `__self__` probe: clear both VM-side and C-API error state when absent.
+            unsafe { PyErr_Clear() };
+        }
+        resolved.is_some_and(|value| !matches!(value, Value::None))
+    }
+
+    #[inline]
+    pub(crate) fn bind_cpython_proxy_descriptor_callable(
+        &mut self,
+        callable: &Value,
+        receiver: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        if Self::cpython_proxy_raw_ptr_from_value(callable).is_none()
+            || Self::cpython_proxy_raw_ptr_from_value(receiver).is_none()
+            || self.value_type_name_for_error(callable) != "cython_function_or_method"
+        {
+            return Ok(None);
+        }
+        let Some(getter) = self.load_cpython_proxy_attr_for_value(callable, "__get__") else {
+            // Optional descriptor probe: clear error state when attribute is absent.
+            self.clear_active_exception();
+            unsafe { PyErr_Clear() };
+            return Ok(None);
+        };
+        let owner = self
+            .class_of_value(receiver)
+            .map(Value::Class)
+            .unwrap_or(Value::None);
+        match self.call_internal(getter, vec![receiver.clone(), owner], HashMap::new())? {
+            InternalCallOutcome::Value(bound_callable) => Ok(Some(bound_callable)),
+            InternalCallOutcome::CallerExceptionHandled => Ok(None),
+        }
+    }
+
+    #[inline]
     fn call_bound_method_via_call_internal(
         &mut self,
         function: ObjRef,
         receiver: ObjRef,
         mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
     ) -> Result<(), RuntimeError> {
-        let Some(callable) = value_from_object_ref(function) else {
+        let Some(callable) = value_from_object_ref(function.clone()) else {
             return Err(RuntimeError::type_error("attempted to call non-function"));
         };
         let receiver_value = self.receiver_value(&receiver)?;
         let callable_is_proxy = Self::cpython_proxy_raw_ptr_from_value(&callable).is_some();
         let receiver_is_proxy = Self::cpython_proxy_raw_ptr_from_value(&receiver_value).is_some();
         let callable_type_name = self.value_type_name_for_error(&callable);
+        let callable_has_bound_self =
+            callable_is_proxy && self.cpython_proxy_callable_has_bound_self(&callable);
         if callable_is_proxy
             && receiver_is_proxy
             && callable_type_name == "cython_function_or_method"
-            && let Some(getter) = self.lookup_bound_special_method(&callable, "__get__")?
+            && let Some(bound_callable) =
+                self.bind_cpython_proxy_descriptor_callable(&callable, &receiver_value)?
         {
-            let owner = self
-                .class_of_value(&receiver_value)
-                .map(Value::Class)
-                .unwrap_or(Value::None);
-            if let InternalCallOutcome::Value(bound_callable) =
-                self.call_internal(getter, vec![receiver_value.clone(), owner], HashMap::new())?
-            {
-                match self.call_internal(bound_callable, args, HashMap::new())? {
-                    InternalCallOutcome::Value(value) => {
-                        self.push_value(value);
-                        return Ok(());
-                    }
-                    InternalCallOutcome::CallerExceptionHandled => return Ok(()),
+            match self.call_internal(bound_callable, args, kwargs)? {
+                InternalCallOutcome::Value(value) => {
+                    self.push_value(value);
+                    return Ok(());
                 }
+                InternalCallOutcome::CallerExceptionHandled => return Ok(()),
             }
         }
         let proxy_callable_is_already_bound = callable_is_proxy
             && receiver_is_proxy
-            && matches!(
+            && (matches!(
                 callable_type_name.as_str(),
                 "builtin_function_or_method" | "method"
+            ) || callable_has_bound_self);
+        if std::env::var_os("PYRS_TRACE_PROXY_BOUND_CALL").is_some() {
+            eprintln!(
+                "[proxy-bound-call] helper callable_type={} callable_is_proxy={} receiver_is_proxy={} has_bound_self={} already_bound={} args={} kwargs={}",
+                callable_type_name,
+                callable_is_proxy,
+                receiver_is_proxy,
+                callable_has_bound_self,
+                proxy_callable_is_already_bound,
+                args.len(),
+                kwargs.len()
             );
+        }
         let call_args = if proxy_callable_is_already_bound {
             args
         } else {
@@ -9748,7 +9865,7 @@ impl Vm {
             bound_args.append(&mut args);
             bound_args
         };
-        match self.call_internal(callable, call_args, HashMap::new())? {
+        match self.call_internal(callable, call_args, kwargs)? {
             InternalCallOutcome::Value(value) => {
                 self.push_value(value);
                 Ok(())
@@ -9801,7 +9918,12 @@ impl Vm {
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
             BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(function, receiver, Vec::new())
+                self.call_bound_method_via_call_internal(
+                    function,
+                    receiver,
+                    Vec::new(),
+                    HashMap::new(),
+                )
             }
         }
     }
@@ -9851,7 +9973,12 @@ impl Vm {
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
             BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(function, receiver, vec![arg0])
+                self.call_bound_method_via_call_internal(
+                    function,
+                    receiver,
+                    vec![arg0],
+                    HashMap::new(),
+                )
             }
         }
     }
@@ -9906,7 +10033,12 @@ impl Vm {
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
             BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(function, receiver, vec![arg0, arg1])
+                self.call_bound_method_via_call_internal(
+                    function,
+                    receiver,
+                    vec![arg0, arg1],
+                    HashMap::new(),
+                )
             }
         }
     }
@@ -9966,7 +10098,12 @@ impl Vm {
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
             BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(function, receiver, vec![arg0, arg1, arg2])
+                self.call_bound_method_via_call_internal(
+                    function,
+                    receiver,
+                    vec![arg0, arg1, arg2],
+                    HashMap::new(),
+                )
             }
         }
     }

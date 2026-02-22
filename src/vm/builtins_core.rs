@@ -6645,8 +6645,7 @@ impl Vm {
             && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
         let right_proxy_class = matches!(right, Value::Class(_))
             && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
-        if !left_proxy_class
-            && !right_proxy_class
+        if !(left_proxy_class && right_proxy_class)
             && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_EQ)
         {
             return result;
@@ -6703,8 +6702,7 @@ impl Vm {
             && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
         let right_proxy_class = matches!(right, Value::Class(_))
             && Self::cpython_proxy_raw_ptr_from_value(&right).is_some();
-        if !left_proxy_class
-            && !right_proxy_class
+        if !(left_proxy_class && right_proxy_class)
             && let Some(result) = self.cpython_proxy_richcmp_value(&left, &right, PY_NE)
         {
             return result;

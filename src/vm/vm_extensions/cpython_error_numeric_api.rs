@@ -831,6 +831,17 @@ pub unsafe extern "C" fn PyErr_SetString(_exception: *mut c_void, message: *cons
                     );
                 });
             }
+            if message == "__exit__" && std::env::var_os("PYRS_TRACE_CPY_ATTR_EXIT").is_some() {
+                let incoming_type = cpython_exception_class_name_from_ptr(_exception)
+                    .unwrap_or_else(|| cpython_type_name_for_object_ptr(_exception));
+                eprintln!(
+                    "[cpy-attr-exit] path=PyErr_SetString exc={:p} type={} message={} bt={:?}",
+                    _exception,
+                    incoming_type,
+                    message,
+                    Backtrace::force_capture()
+                );
+            }
             let ptype = if _exception.is_null() {
                 unsafe { PyExc_RuntimeError }
             } else {
@@ -2489,11 +2500,18 @@ pub unsafe extern "C" fn Py_GenericAlias(origin: *mut c_void, _args: *mut c_void
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_void) {
     let _ = with_active_cpython_context_mut(|context| {
-        let ptype = if _exception.is_null() {
+        let mut ptype = if _exception.is_null() {
             unsafe { PyExc_RuntimeError }
         } else {
             _exception
         };
+        // CPython accepts either an exception *class* or *instance* as the first
+        // argument. Internally the error indicator stores the exception class in
+        // `ptype`, so normalize early when callers hand us an instance pointer.
+        let derived_ptype = cpython_exception_type_ptr(ptype);
+        if !derived_ptype.is_null() {
+            ptype = derived_ptype;
+        }
         let value_obj = context.cpython_value_from_ptr_or_proxy(value);
         if std::env::var_os("PYRS_TRACE_CPY_UFUNC_ERRORS").is_some() {
             let exception_name = cpython_exception_class_name_from_ptr(ptype)
@@ -2517,21 +2535,25 @@ pub unsafe extern "C" fn PyErr_SetObject(_exception: *mut c_void, value: *mut c_
         } else {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *context.vm };
-            match context.cpython_value_from_ptr_or_proxy(ptype) {
-                Some(Value::Class(class_obj)) => {
-                    let proxy_ptr_matches =
-                        ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&Value::Class(
-                            class_obj.clone(),
-                        ))
-                        .is_none_or(|raw| raw == ptype);
-                    proxy_ptr_matches && vm.class_is_exception_class(&class_obj)
+            if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(ptype as usize)
+            {
+                vm.exception_inherits(&name, "BaseException")
+            } else {
+                match context.cpython_value_from_ptr_or_proxy(ptype) {
+                    Some(Value::Class(class_obj)) => {
+                        let proxy_ptr_matches =
+                            ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&Value::Class(
+                                class_obj.clone(),
+                            ))
+                            .is_none_or(|raw| raw == ptype);
+                        proxy_ptr_matches && vm.class_is_exception_class(&class_obj)
+                    }
+                    Some(Value::ExceptionType(name)) => {
+                        vm.exception_inherits(&name, "BaseException")
+                    }
+                    Some(_) => false,
+                    None => false,
                 }
-                Some(Value::ExceptionType(name)) => vm.exception_inherits(&name, "BaseException"),
-                Some(_) => false,
-                None => matches!(
-                    cpython_exception_value_from_ptr(ptype as usize),
-                    Some(Value::ExceptionType(_))
-                ),
             }
         };
         if safe_to_normalize_ptype

@@ -14237,16 +14237,79 @@ print(ok)
 }
 
 #[test]
+fn numpy_random_default_rng_random_path_preserves_context_manager_specials() {
+    let source = r#"import numpy as np
+rng = np.random.default_rng()
+lock = rng.bit_generator.lock
+ok = (
+    hasattr(lock, "__enter__")
+    and hasattr(lock, "__exit__")
+)
+with lock:
+    first = rng.random()
+second = rng.random()
+ok = ok and isinstance(first, float) and isinstance(second, float)
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
 fn numpy_random_generator_integers_keyword_size_path_works() {
     let source = r#"import numpy as np
 rng = np.random.default_rng()
 text = repr(rng.integers)
 ok = (
-    "<cyfunction Generator.integers" in text
+    "<bound method " in text
     and "%U" not in text
     and "%V" not in text
 )
 print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_seedsequence_generate_state_bound_call_matches_unbound_call() {
+    let source = r#"import numpy as np
+s = np.random.SeedSequence()
+bound = s.generate_state(8)
+unbound = np.random.SeedSequence.generate_state(s, 8)
+ok = (
+    isinstance(bound, np.ndarray)
+    and isinstance(unbound, np.ndarray)
+    and bound.shape == (8,)
+    and unbound.shape == (8,)
+    and (bound == unbound).all()
+)
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_random_generator_integers_no_longer_hits_non_function_dispatch_errors() {
+    let source = r#"import numpy as np
+rng = np.random.default_rng()
+
+kw_ok = False
+pos_ok = False
+
+try:
+    rng.integers(0, 10, size=5)
+except Exception as exc:
+    kw_ok = "attempted to call non-function" not in str(exc)
+else:
+    kw_ok = True
+
+try:
+    rng.integers(0, 10, 5)
+except Exception as exc:
+    pos_ok = "attempted to call non-function" not in str(exc)
+else:
+    pos_ok = True
+
+print(kw_ok and pos_ok)
 "#;
     run_numpy_probe_subprocess(source);
 }

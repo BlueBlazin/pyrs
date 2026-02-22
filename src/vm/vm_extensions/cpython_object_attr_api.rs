@@ -49,6 +49,9 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
         );
     let trace_exit_lookup =
         cpython_trace_flag_enabled("PYRS_TRACE_ATTR_EXIT_LOOKUP") && name == "__exit__";
+    if trace_exit_lookup {
+        eprintln!("[cpy-attr-exit-lookup] enter object={:p}", object);
+    }
     let trace_seed_attrs = cpython_trace_flag_enabled("PYRS_TRACE_NUMPY_SEED_ATTRS")
         && matches!(
             name.as_str(),
@@ -292,6 +295,12 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if trace_exit_lookup {
+                eprintln!(
+                    "[cpy-attr-exit-lookup] native-result object={:p} result={:p}",
+                    object, result
+                );
+            }
             if trace_seed_attrs {
                 const MIN_VALID_PTR: usize = 0x1_0000_0000;
                 let valid_result_ptr = !result.is_null()
@@ -458,6 +467,14 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
         vec![object_value, Value::Str(name.clone())],
     ) {
         Ok(value) => {
+            if std::env::var_os("PYRS_TRACE_GETATTR_RESULT").is_some() {
+                eprintln!(
+                    "[cpy-getattr-result] object={:p} attr={} value={}",
+                    object,
+                    name,
+                    cpython_value_debug_tag(&value)
+                );
+            }
             let ptr = cpython_new_ptr_for_value(value);
             if trace_seed_attrs {
                 let (tag, proxy_ptr) = with_active_cpython_context_mut(|context| {
@@ -556,6 +573,20 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
+    let trace_exit_lookup = cpython_trace_flag_enabled("PYRS_TRACE_ATTR_EXIT_LOOKUP")
+        && with_active_cpython_context_mut(|context| {
+            context
+                .cpython_value_from_borrowed_ptr(name)
+                .and_then(|value| match value {
+                    Value::Str(text) if text == "__exit__" => Some(()),
+                    _ => None,
+                })
+                .is_some()
+        })
+        .unwrap_or(false);
+    if trace_exit_lookup {
+        eprintln!("[cpy-attr-exit-lookup] get-attr enter object={:p}", object);
+    }
     let trace_seed_getattr = if std::env::var_os("PYRS_TRACE_NUMPY_SEED_ATTRS").is_some() {
         with_active_cpython_context_mut(|context| {
             context
@@ -710,6 +741,12 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if trace_exit_lookup {
+                eprintln!(
+                    "[cpy-attr-exit-lookup] get-attr native-result object={:p} result={:p}",
+                    object, result
+                );
+            }
             if let Some(attr_name) = trace_seed_getattr.as_deref() {
                 let (tag, proxy_ptr) = with_active_cpython_context_mut(|context| {
                     let value_tag = context
@@ -874,6 +911,12 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                     name_debug_for_err,
                     err,
                     Backtrace::force_capture()
+                );
+            }
+            if trace_exit_lookup {
+                eprintln!(
+                    "[cpy-attr-exit-lookup] get-attr error object={:p} err={}",
+                    object, err
                 );
             }
             cpython_set_error(err);

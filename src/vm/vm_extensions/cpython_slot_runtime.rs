@@ -127,6 +127,40 @@ unsafe fn cpython_richcompare_slot(
     Some(unsafe { std::mem::transmute(raw) })
 }
 
+fn cpython_swapped_compare_op(op: i32) -> Option<i32> {
+    match op {
+        0 => Some(4),
+        1 => Some(5),
+        2 => Some(2),
+        3 => Some(3),
+        4 => Some(0),
+        5 => Some(1),
+        _ => None,
+    }
+}
+
+unsafe fn cpython_find_richcompare_slot(
+    type_ptr: *mut CpythonTypeObject,
+) -> Option<unsafe extern "C" fn(*mut c_void, *mut c_void, i32) -> *mut c_void> {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if !cpython_valid_type_ptr(current) {
+            return None;
+        }
+        // SAFETY: `current` is validated at each step above.
+        if let Some(slot) = unsafe { cpython_richcompare_slot(current) } {
+            return Some(slot);
+        }
+        // SAFETY: `current` is a valid type pointer and `tp_base` is read-only metadata.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    None
+}
+
 pub(super) fn cpython_try_richcompare_slot(
     left: *mut c_void,
     right: *mut c_void,
@@ -180,11 +214,12 @@ pub(super) fn cpython_try_richcompare_slot(
             "[cpy-rich-slot] begin op={op} left={left:p}({left_name}) right={right:p}({right_name})"
         );
     }
+    let swapped_op = cpython_swapped_compare_op(op)?;
     // SAFETY: type pointers are non-null and read-only inspected.
-    let slotv = unsafe { cpython_richcompare_slot(left_type) };
+    let slotv = unsafe { cpython_find_richcompare_slot(left_type) };
     // SAFETY: type pointers are non-null and read-only inspected.
     let mut slotw = if right_type != left_type {
-        unsafe { cpython_richcompare_slot(right_type) }
+        unsafe { cpython_find_richcompare_slot(right_type) }
     } else {
         None
     };
@@ -202,13 +237,15 @@ pub(super) fn cpython_try_richcompare_slot(
         return None;
     }
     let not_implemented = std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>();
+    let mut checked_reverse = false;
     if let Some(slotv_fn) = slotv {
         if let Some(slotw_fn) = slotw
             // SAFETY: type pointers are valid for subtype test.
             && unsafe { PyType_IsSubtype(right_type.cast(), left_type.cast()) != 0 }
         {
+            checked_reverse = true;
             // SAFETY: richcompare slot ABI matches richcmpfunc.
-            let result = unsafe { slotw_fn(left, right, op) };
+            let result = unsafe { slotw_fn(right, left, swapped_op) };
             if result.is_null() {
                 if trace {
                     eprintln!("[cpy-rich-slot] subtype-right slot returned error");
@@ -245,9 +282,9 @@ pub(super) fn cpython_try_richcompare_slot(
         // SAFETY: slot returned new reference to NotImplemented.
         unsafe { Py_DecRef(result) };
     }
-    if let Some(slotw_fn) = slotw {
+    if !checked_reverse && let Some(slotw_fn) = slotw {
         // SAFETY: richcompare slot ABI matches richcmpfunc.
-        let result = unsafe { slotw_fn(left, right, op) };
+        let result = unsafe { slotw_fn(right, left, swapped_op) };
         if result.is_null() {
             if trace {
                 eprintln!("[cpy-rich-slot] right slot returned error");

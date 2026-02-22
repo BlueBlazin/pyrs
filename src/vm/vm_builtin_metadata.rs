@@ -3161,27 +3161,50 @@ impl Vm {
                         if callable_is_proxy
                             && receiver_is_proxy
                             && callable_type_name == "cython_function_or_method"
-                            && let Some(getter) =
-                                self.lookup_bound_special_method(&callable, "__get__")?
+                            && let Some(bound_callable) = self
+                                .bind_cpython_proxy_descriptor_callable(&callable, &receiver_value)?
                         {
-                            let owner = self
-                                .class_of_value(&receiver_value)
-                                .map(Value::Class)
-                                .unwrap_or(Value::None);
-                            if let InternalCallOutcome::Value(bound_callable) = self.call_internal(
-                                getter,
-                                vec![receiver_value.clone(), owner],
-                                HashMap::new(),
-                            )? {
-                                return self.call_internal(bound_callable, args, kwargs);
-                            }
+                            return self.call_internal(bound_callable, args, kwargs);
                         }
                         let proxy_callable_is_already_bound = callable_is_proxy
                             && receiver_is_proxy
-                            && matches!(
+                            && (matches!(
                                 callable_type_name.as_str(),
                                 "builtin_function_or_method" | "method"
+                            ) || self.cpython_proxy_callable_has_bound_self(&callable));
+                        if std::env::var_os("PYRS_TRACE_PROXY_BOUND_CALL").is_some() {
+                            let receiver_tag = format_repr(&receiver_value);
+                            let receiver_type = self.value_type_name_for_error(&receiver_value);
+                            let receiver_ptr = Vm::cpython_proxy_raw_ptr_from_value(&receiver_value)
+                                .map(|ptr| format!("{:p}", ptr))
+                                .unwrap_or_else(|| "<none>".to_string());
+                            let callable_repr = format_repr(&callable);
+                            let callable_ptr = Vm::cpython_proxy_raw_ptr_from_value(&callable)
+                                .map(|ptr| format!("{:p}", ptr))
+                                .unwrap_or_else(|| "<none>".to_string());
+                            let callable_name = self
+                                .load_cpython_proxy_attr_for_value(&callable, "__qualname__")
+                                .map(|value| format_repr(&value))
+                                .unwrap_or_else(|| "<missing>".to_string());
+                            let callable_has_self =
+                                self.cpython_proxy_callable_has_bound_self(&callable);
+                            eprintln!(
+                                "[proxy-bound-call] inline callable_type={} callable_is_proxy={} receiver_is_proxy={} already_bound={} args={} kwargs={} receiver_type={} receiver_ptr={} receiver_tag={} callable_ptr={} callable_repr={} callable_qualname={} callable_has_self={}",
+                                callable_type_name,
+                                callable_is_proxy,
+                                receiver_is_proxy,
+                                proxy_callable_is_already_bound,
+                                args.len(),
+                                kwargs.len(),
+                                receiver_type,
+                                receiver_ptr,
+                                receiver_tag,
+                                callable_ptr,
+                                callable_repr,
+                                callable_name,
+                                callable_has_self
                             );
+                        }
                         let call_args = if proxy_callable_is_already_bound {
                             args
                         } else {

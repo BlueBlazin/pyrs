@@ -6205,6 +6205,7 @@ impl Vm {
                             || err.message.contains("index out of range")
                             || err.message.contains("out of bounds for axis")
                         {
+                            self.clear_active_exception();
                             unsafe { PyErr_Clear() };
                             return Ok(None);
                         }
@@ -6215,6 +6216,7 @@ impl Vm {
                             || err.message.contains("index out of range")
                             || err.message.contains("out of bounds for axis")
                         {
+                            self.clear_active_exception();
                             unsafe { PyErr_Clear() };
                             return Ok(None);
                         }
@@ -6244,6 +6246,7 @@ impl Vm {
                                 || err.message.contains("index out of range")
                                 || err.message.contains("out of bounds for axis");
                             if treat_as_end {
+                                self.clear_active_exception();
                                 unsafe { PyErr_Clear() };
                                 return Ok(None);
                             }
@@ -6268,6 +6271,7 @@ impl Vm {
                             || err.message.contains("index out of range")
                             || err.message.contains("out of bounds for axis");
                         if treat_as_end {
+                            self.clear_active_exception();
                             unsafe { PyErr_Clear() };
                             return Ok(None);
                         }

@@ -1171,6 +1171,7 @@ pub struct Heap {
     immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
     ellipsis_class: RefCell<Option<ObjRef>>,
     ellipsis_instance: RefCell<Option<ObjRef>>,
+    thread_lock_class: RefCell<Option<ObjRef>>,
     allocation_count: Cell<usize>,
 }
 
@@ -1217,6 +1218,7 @@ impl Heap {
             immediate_ids: RefCell::new(HashMap::new()),
             ellipsis_class: RefCell::new(None),
             ellipsis_instance: RefCell::new(None),
+            thread_lock_class: RefCell::new(None),
             allocation_count: Cell::new(0),
         }
     }
@@ -1287,6 +1289,41 @@ impl Heap {
             .cloned()
             .expect("ellipsis class initialized");
         Value::Class(class)
+    }
+
+    pub fn thread_lock_type(&self) -> ObjRef {
+        if let Some(class) = self.thread_lock_class.borrow().as_ref().cloned() {
+            return class;
+        }
+        let class = match self.alloc_class(ClassObject::new("_thread.lock".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.attrs.insert(
+                "__enter__".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadLockEnter),
+            );
+            class_data.attrs.insert(
+                "__exit__".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadLockExit),
+            );
+            class_data.attrs.insert(
+                "acquire".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadLockAcquire),
+            );
+            class_data.attrs.insert(
+                "release".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadLockRelease),
+            );
+            class_data.attrs.insert(
+                "locked".to_string(),
+                Value::Builtin(BuiltinFunction::ThreadLockLocked),
+            );
+        }
+        *self.thread_lock_class.borrow_mut() = Some(class.clone());
+        class
     }
 
     pub fn alloc_set(&self, values: Vec<Value>) -> Value {
@@ -4581,34 +4618,7 @@ impl BuiltinFunction {
                 if !args.is_empty() {
                     return Err(RuntimeError::new("RLock() expects no arguments"));
                 }
-                let class = match heap
-                    .alloc_class(ClassObject::new("_thread.lock".to_string(), Vec::new()))
-                {
-                    Value::Class(obj) => obj,
-                    _ => unreachable!(),
-                };
-                if let Object::Class(class_data) = &mut *class.kind_mut() {
-                    class_data.attrs.insert(
-                        "__enter__".to_string(),
-                        Value::Builtin(BuiltinFunction::ThreadLockEnter),
-                    );
-                    class_data.attrs.insert(
-                        "__exit__".to_string(),
-                        Value::Builtin(BuiltinFunction::ThreadLockExit),
-                    );
-                    class_data.attrs.insert(
-                        "acquire".to_string(),
-                        Value::Builtin(BuiltinFunction::ThreadLockAcquire),
-                    );
-                    class_data.attrs.insert(
-                        "release".to_string(),
-                        Value::Builtin(BuiltinFunction::ThreadLockRelease),
-                    );
-                    class_data.attrs.insert(
-                        "locked".to_string(),
-                        Value::Builtin(BuiltinFunction::ThreadLockLocked),
-                    );
-                }
+                let class = heap.thread_lock_type();
                 let instance = match heap.alloc_instance(InstanceObject::new(class)) {
                     Value::Instance(instance) => instance,
                     _ => unreachable!(),
@@ -7227,6 +7237,26 @@ fn format_bytes(values: &[u8], mutable: bool) -> String {
     out
 }
 
+fn bound_method_fallback_name(function: &ObjRef) -> Option<String> {
+    match &*function.kind() {
+        Object::Instance(instance) => {
+            if let Some(Value::Str(name)) = instance.attrs.get("__qualname__") {
+                return Some(name.clone());
+            }
+            if let Some(Value::Str(name)) = instance.attrs.get("__name__") {
+                return Some(name.clone());
+            }
+            match &*instance.class.kind() {
+                Object::Class(class) => Some(class.name.clone()),
+                _ => None,
+            }
+        }
+        Object::Class(class) => Some(class.name.clone()),
+        Object::Module(module) => Some(module.name.clone()),
+        _ => None,
+    }
+}
+
 pub fn format_value(value: &Value) -> String {
     match value {
         Value::None => "None".to_string(),
@@ -7642,7 +7672,13 @@ pub fn format_value(value: &Value) -> String {
                         "<bound method codecs.incrementaldecoder.setstate>".to_string()
                     }
                 },
-                _ => "<bound method ?>".to_string(),
+                _ => {
+                    if let Some(name) = bound_method_fallback_name(&method.function) {
+                        format!("<bound method {name}>")
+                    } else {
+                        "<bound method ?>".to_string()
+                    }
+                }
             },
             _ => "<bound method ?>".to_string(),
         },

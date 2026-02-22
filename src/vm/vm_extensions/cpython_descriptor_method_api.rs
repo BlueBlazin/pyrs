@@ -6,7 +6,8 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     _Py_NoneStruct, CPY_PROXY_PTR_ATTR, CPYTHON_DESCRIPTOR_REGISTRY, CpythonCFunctionCompatObject,
-    CpythonCMethodCompatObject, CpythonDescriptorKind, CpythonGetSetDef, CpythonMemberDef,
+    CpythonCMethodCompatObject, CpythonDescriptorKind, CpythonGetSetDef,
+    CpythonMethodCompatObject, CpythonMemberDef,
     CpythonMethodDef, CpythonObjectHead, CpythonTypeObject, METH_FASTCALL, METH_KEYWORDS,
     METH_METHOD, METH_NOARGS, METH_O, METH_VARARGS, ModuleCapiContext, PY_MEMBER_READONLY,
     PY_MEMBER_RELATIVE_OFFSET, PY_MEMBER_T_BOOL, PY_MEMBER_T_BYTE, PY_MEMBER_T_CHAR,
@@ -23,7 +24,7 @@ use super::{
     PyMethod_New, PyMethodDescr_Type, PyObject_Call, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem,
     PyType_IsSubtype, PyType_Type, PyUnicode_FromString, PyUnicode_FromStringAndSize,
     PyUnicode_InternFromString, TRACE_NUMPY_TYPEDICT_PTR, c_name_to_string, cpython_call_builtin,
-    cpython_call_internal_in_context, cpython_debug_compare_value,
+    cpython_call_internal_in_context, cpython_call_object, cpython_debug_compare_value,
     cpython_debug_ufunc_attr_summary, cpython_exception_traceback_ptr_for_value,
     cpython_exception_type_ptr_for_value, cpython_getattr_in_context, cpython_is_type_object_ptr,
     cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
@@ -1787,6 +1788,78 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_cfunction_tp_call(
             positional,
             keyword_args,
         )
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_tp_call(
+    callable: *mut c_void,
+    args: *mut c_void,
+    kwargs: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if callable.is_null() {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        }
+        // SAFETY: caller provides a candidate method-object pointer.
+        let Some(method) = (unsafe { callable.cast::<CpythonMethodCompatObject>().as_ref() })
+        else {
+            unsafe { PyErr_BadInternalCall() };
+            return std::ptr::null_mut();
+        };
+        let positional = match cpython_positional_args_from_tuple_object(args) {
+            Ok(values) => values,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let keyword_args = match cpython_keyword_args_from_dict_object(kwargs) {
+            Ok(values) => values,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        if method.im_func.is_null() {
+            context.set_error("method call missing function");
+            return std::ptr::null_mut();
+        }
+        if method.im_self.is_null() {
+            context.set_error("method call missing bound self");
+            return std::ptr::null_mut();
+        }
+        let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+        if method.im_func == none_ptr {
+            if let Some(Value::BoundMethod(bound_obj)) = context.cpython_value_from_ptr(callable) {
+                let call_result = match cpython_call_internal_in_context(
+                    context,
+                    Value::BoundMethod(bound_obj),
+                    positional,
+                    keyword_args,
+                ) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        context.set_error(err);
+                        return std::ptr::null_mut();
+                    }
+                };
+                return context.alloc_cpython_ptr_for_value(call_result);
+            }
+            context.set_error("method call missing function");
+            return std::ptr::null_mut();
+        }
+        let mut positional = positional;
+        let Some(self_value) = context.cpython_value_from_ptr_or_proxy(method.im_self) else {
+            context.set_error("method call failed to decode bound self");
+            return std::ptr::null_mut();
+        };
+        positional.insert(0, self_value);
+        cpython_call_object(method.im_func, positional, keyword_args)
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);

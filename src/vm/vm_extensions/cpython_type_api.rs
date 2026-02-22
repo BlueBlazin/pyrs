@@ -7,9 +7,10 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     _PyObject_New, _PyObject_NewVar, CpythonAsyncMethods, CpythonBufferProcs, CpythonHeapTypeInfo,
-    CpythonMappingMethods, CpythonMethodDef, CpythonNumberMethods, CpythonObjectHead,
-    CpythonSequenceMethods, CpythonTypeObject, CpythonTypeSpec, InternalCallOutcome,
-    ModuleCapiContext, PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS,
+    CpythonMappingMethods, CpythonMemberDef, CpythonMethodDef, CpythonNumberMethods,
+    CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, CpythonTypeSpec,
+    InternalCallOutcome, ModuleCapiContext, PY_MEMBER_RELATIVE_OFFSET, PY_TPFLAGS_BASETYPE,
+    PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS,
     PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS,
     PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY, PY_TPFLAGS_TUPLE_SUBCLASS,
     PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS, PY_TYPE_SLOT_AM_AITER,
@@ -41,12 +42,14 @@ use super::{
     PY_TYPE_SLOT_TP_STR, PY_TYPE_SLOT_TP_TOKEN, PY_TYPE_SLOT_TP_TRAVERSE,
     PY_TYPE_SLOT_TP_VECTORCALL, Py_DecRef, Py_IncRef, Py_XIncRef, PyBaseObject_Type, PyBool_Type,
     PyByteArray_Type, PyBytes_Type, PyComplex_Type, PyDescr_NewClassMethod, PyDescr_NewMethod,
-    PyDict_DelItemString, PyDict_GetItemString, PyDict_New, PyDict_SetItem, PyDict_SetItemString,
-    PyDict_Type, PyErr_BadInternalCall, PyExc_AttributeError, PyExc_MemoryError, PyExc_SystemError,
-    PyExc_TypeError, PyFloat_Type, PyFrozenSet_Type, PyList_Type, PyLong_Type, PyMemoryView_Type,
-    PyModule_GetState, PyObject_Free, PyProperty_Type, PyRange_Type, PySet_Type, PySlice_Type,
+    PyDict_DelItemString, PyDict_GetItemString, PyDict_GetItemWithError, PyDict_New, PyDict_SetItem,
+    PyDict_SetItemString, PyDict_Type, PyErr_BadInternalCall, PyErr_Clear, PyErr_Occurred,
+    PyExc_AttributeError, PyExc_MemoryError, PyExc_SystemError, PyExc_TypeError, PyFloat_Type,
+    PyFrozenSet_Type, PyList_Type, PyLong_Type, PyMemoryView_Type, PyModule_GetState,
+    PyObject_Free, PyObject_RichCompareBool, PyProperty_Type, PyRange_Type, PySet_Type, PySlice_Type,
     PyTuple_GetItem, PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyTuple_Type, PyType_Type,
-    PyUnicode_Type, c_name_to_string, cpython_builtin_type_ptr_for_class_name,
+    PyUnicode_Type, c_name_to_string,
+    cpython_builtin_type_ptr_for_class_name,
     cpython_heap_type_registry, cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_set_error, cpython_set_typed_error,
     cpython_value_debug_tag, cpython_value_from_ptr, free, with_active_cpython_context_mut,
@@ -58,6 +61,21 @@ unsafe extern "C" {
 
 const METH_CLASS: c_int = 0x0010;
 const TP_INIT_WRAPPER_NAME: &[u8; 9] = b"__init__\0";
+const SPECIAL_MEMBER_VECTORCALL_OFFSET: &str = "__vectorcalloffset__";
+const SPECIAL_MEMBER_DICT_OFFSET: &str = "__dictoffset__";
+const SPECIAL_MEMBER_WEAKLIST_OFFSET: &str = "__weaklistoffset__";
+
+fn align_up(value: usize, alignment: usize) -> usize {
+    if alignment == 0 {
+        return value;
+    }
+    let remainder = value % alignment;
+    if remainder == 0 {
+        value
+    } else {
+        value + (alignment - remainder)
+    }
+}
 
 unsafe extern "C" fn cpython_type_tp_init_wrapper_method(
     self_obj: *mut c_void,
@@ -2257,8 +2275,20 @@ fn cpython_type_from_spec_impl(
     type_value.ob_type = metaclass_ptr;
     type_value.ob_size = 0;
     type_value.tp_name = owned_name.as_ptr();
+    let mut type_data_offset = 0isize;
     if spec.basicsize > 0 {
         type_value.tp_basicsize = spec.basicsize as isize;
+    } else if spec.basicsize < 0 {
+        // CPython allows negative basicsize for "extends base" layouts used with
+        // Py_RELATIVE_OFFSET member definitions.
+        // Align with pointer width so member offsets stay ABI-compatible.
+        let base_size = unsafe { (*base).tp_basicsize.max(0) as usize };
+        let extension_size = (-spec.basicsize) as usize;
+        let alignment = align_of::<usize>();
+        let aligned_base = align_up(base_size, alignment);
+        let aligned_extension = align_up(extension_size, alignment);
+        type_data_offset = aligned_base as isize;
+        type_value.tp_basicsize = (aligned_base + aligned_extension) as isize;
     }
     if spec.itemsize >= 0 {
         type_value.tp_itemsize = spec.itemsize as isize;
@@ -2306,6 +2336,47 @@ fn cpython_type_from_spec_impl(
             cpython_set_typed_error(
                 unsafe { PyExc_SystemError },
                 "type slot table is not terminated",
+            );
+            return std::ptr::null_mut();
+        }
+    }
+
+    if !type_value.tp_members.is_null() {
+        let mut member = type_value.tp_members.cast::<CpythonMemberDef>();
+        let mut guard = 0usize;
+        while guard < 8192 {
+            // SAFETY: tp_members is expected to point at a NULL-terminated PyMemberDef array.
+            let member_def = unsafe { &*member };
+            if member_def.name.is_null() {
+                break;
+            }
+            let member_name = unsafe { c_name_to_string(member_def.name) }
+                .unwrap_or_else(|_| "<invalid>".to_string());
+            let mut resolved_offset = member_def.offset;
+            if (member_def.flags & PY_MEMBER_RELATIVE_OFFSET) != 0 {
+                if spec.basicsize >= 0 {
+                    cpython_set_typed_error(
+                        unsafe { PyExc_SystemError },
+                        "With Py_RELATIVE_OFFSET, basicsize must be negative.",
+                    );
+                    return std::ptr::null_mut();
+                }
+                resolved_offset += type_data_offset;
+            }
+            match member_name.as_str() {
+                SPECIAL_MEMBER_VECTORCALL_OFFSET => type_value.tp_vectorcall_offset = resolved_offset,
+                SPECIAL_MEMBER_DICT_OFFSET => type_value.tp_dictoffset = resolved_offset,
+                SPECIAL_MEMBER_WEAKLIST_OFFSET => type_value.tp_weaklistoffset = resolved_offset,
+                _ => {}
+            }
+            // SAFETY: move to next member definition in contiguous table.
+            member = unsafe { member.add(1) };
+            guard += 1;
+        }
+        if guard == 8192 {
+            cpython_set_typed_error(
+                unsafe { PyExc_SystemError },
+                "type members table is not terminated",
             );
             return std::ptr::null_mut();
         }
@@ -2527,25 +2598,283 @@ pub unsafe extern "C" fn _PyType_Lookup(ty: *mut c_void, name: *mut c_void) -> *
         return std::ptr::null_mut();
     }
     with_active_cpython_context_mut(|context| {
-        let Some(name_value) = context.cpython_value_from_ptr_or_proxy(name) else {
-            unsafe { PyErr_BadInternalCall() };
-            return std::ptr::null_mut();
-        };
-        let Value::Str(attr_name) = name_value else {
-            unsafe { PyErr_BadInternalCall() };
-            return std::ptr::null_mut();
-        };
+        fn descriptor_or_attr_ptr_for_runtime_value(
+            context: &mut ModuleCapiContext,
+            owner_type: *mut CpythonTypeObject,
+            value: Value,
+        ) -> *mut c_void {
+            if let Value::Builtin(builtin) = &value {
+                let method_def = context.ensure_builtin_method_def(*builtin);
+                if !method_def.is_null() {
+                    // SAFETY: owner type + method def pointers are C-ABI metadata for descriptors.
+                    let descriptor = unsafe {
+                        PyDescr_NewMethod(owner_type.cast::<c_void>(), method_def.cast::<c_void>())
+                    };
+                    if !descriptor.is_null() {
+                        return descriptor;
+                    }
+                    if std::env::var_os("PYRS_TRACE_TYPE_LOOKUP_EXIT").is_some() {
+                        let error = context
+                            .last_error
+                            .clone()
+                            .unwrap_or_else(|| "<none>".to_string());
+                        eprintln!(
+                            "[type-lookup] descriptor-create-failed owner={:p} method_def={:p} builtin={:?} error={}",
+                            owner_type,
+                            method_def,
+                            builtin,
+                            error
+                        );
+                    }
+                }
+            }
+            if let Some(raw_ptr) = ModuleCapiContext::cpython_proxy_raw_ptr_from_value(&value) {
+                return raw_ptr;
+            }
+            context.alloc_cpython_ptr_for_value(value)
+        }
+
+        fn lookup_runtime_mro_with_attr_name(
+            context: &mut ModuleCapiContext,
+            ty: *mut c_void,
+            attr_name: &str,
+        ) -> *mut c_void {
+            let mut current = ty.cast::<CpythonTypeObject>();
+            for _ in 0..64 {
+                if current.is_null() {
+                    break;
+                }
+                if let Some(Value::Class(class_obj)) =
+                    context.cpython_value_from_ptr_or_proxy(current.cast::<c_void>())
+                    && let Object::Class(class_data) = &*class_obj.kind()
+                    && let Some(attr_value) = class_data.attrs.get(attr_name).cloned()
+                {
+                    return descriptor_or_attr_ptr_for_runtime_value(context, current, attr_value);
+                }
+                // SAFETY: `current` points to a type object; `tp_base` is read-only metadata.
+                let next = unsafe { (*current).tp_base };
+                if next.is_null() || next == current {
+                    break;
+                }
+                current = next;
+            }
+            std::ptr::null_mut()
+        }
+
+        fn lookup_tp_dict_chain_with_name_object(
+            ty: *mut c_void,
+            name: *mut c_void,
+        ) -> *mut c_void {
+            let mut current = ty.cast::<CpythonTypeObject>();
+            for _ in 0..64 {
+                if current.is_null() {
+                    break;
+                }
+                // SAFETY: `current` is a candidate type object pointer; dictionary lookup helpers
+                // perform their own validation and suppress lookup misses.
+                let dict_ptr = unsafe { (*current).tp_dict };
+                if !dict_ptr.is_null() {
+                    // SAFETY: dictionary/key pointers are forwarded to CPython-compatible API.
+                    let value = unsafe { PyDict_GetItemWithError(dict_ptr, name) };
+                    if !value.is_null() {
+                        return value;
+                    }
+                    // _PyType_Lookup must not leak incidental lookup errors.
+                    if unsafe { !PyErr_Occurred().is_null() } {
+                        unsafe { PyErr_Clear() };
+                    }
+                }
+                // SAFETY: `tp_base` is read-only metadata for candidate type objects.
+                let next = unsafe { (*current).tp_base };
+                if next.is_null() || next == current {
+                    break;
+                }
+                current = next;
+            }
+            std::ptr::null_mut()
+        }
+
+        fn lookup_runtime_mro_with_name_object(
+            context: &mut ModuleCapiContext,
+            ty: *mut c_void,
+            name: *mut c_void,
+        ) -> *mut c_void {
+            let mut current = ty.cast::<CpythonTypeObject>();
+            for _ in 0..64 {
+                if current.is_null() {
+                    break;
+                }
+                if let Some(Value::Class(class_obj)) =
+                    context.cpython_value_from_ptr_or_proxy(current.cast::<c_void>())
+                    && let Object::Class(class_data) = &*class_obj.kind()
+                {
+                    for (attr_key, attr_value) in &class_data.attrs {
+                        let key_ptr = context.alloc_cpython_ptr_for_value(Value::Str(attr_key.clone()));
+                        if key_ptr.is_null() {
+                            continue;
+                        }
+                        // SAFETY: both pointers are live for the active context.
+                        let matches = unsafe { PyObject_RichCompareBool(name, key_ptr, 2) };
+                        if matches == 1 {
+                            return descriptor_or_attr_ptr_for_runtime_value(
+                                context,
+                                current,
+                                attr_value.clone(),
+                            );
+                        }
+                        if matches < 0 {
+                            // _PyType_Lookup must not leak comparison errors.
+                            unsafe { PyErr_Clear() };
+                        }
+                    }
+                }
+                // SAFETY: `current` points to a type object; `tp_base` is read-only metadata.
+                let next = unsafe { (*current).tp_base };
+                if next.is_null() || next == current {
+                    break;
+                }
+                current = next;
+            }
+            std::ptr::null_mut()
+        }
+
+        let name_value = context.cpython_value_from_ptr_or_proxy(name);
+        let trace_exit_lookup = std::env::var_os("PYRS_TRACE_TYPE_LOOKUP_EXIT").is_some();
+        if trace_exit_lookup {
+            let type_name = unsafe {
+                let type_ptr = ty.cast::<CpythonTypeObject>();
+                if type_ptr.is_null() {
+                    "<unnamed>".to_string()
+                } else {
+                    c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<unnamed>".to_string())
+                }
+            };
+            let type_tag = context
+                .cpython_value_from_ptr_or_proxy(ty)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unmapped>".to_string());
+            let name_desc = match &name_value {
+                Some(Value::Str(text)) => text.clone(),
+                Some(other) => format!("<{}>", cpython_value_debug_tag(other)),
+                None => format!("<unmapped:{name:p}>"),
+            };
+            if name_desc == "__exit__" || name_desc.starts_with("<unmapped") {
+                let (tp_dict, tp_base, tp_getattro, tp_flags, tp_basicsize) = unsafe {
+                    let type_ptr = ty.cast::<CpythonTypeObject>();
+                    if type_ptr.is_null() {
+                        (
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut::<CpythonTypeObject>(),
+                            std::ptr::null_mut(),
+                            0usize,
+                            0isize,
+                        )
+                    } else {
+                        (
+                            (*type_ptr).tp_dict,
+                            (*type_ptr).tp_base,
+                            (*type_ptr).tp_getattro,
+                            (*type_ptr).tp_flags,
+                            (*type_ptr).tp_basicsize,
+                        )
+                    }
+                };
+                let (registry_alive, registry_live_or_pending, registry_freed) =
+                    if context.vm.is_null() {
+                        (false, false, false)
+                    } else {
+                        // SAFETY: VM pointer is valid for the active C-API context.
+                        let vm = unsafe { &mut *context.vm };
+                        (
+                            vm.capi_registry_contains_alive(ty as usize),
+                            vm.capi_registry_contains_live_or_pending(ty as usize),
+                            vm.capi_registry_is_freed(ty as usize),
+                        )
+                    };
+                eprintln!(
+                    "[type-lookup] enter type={:p} name_ptr={:p} type_name={} type_tag={} name={} tp_dict={:p} tp_base={:p} tp_getattro={:p} tp_flags=0x{:x} tp_basicsize={} registry_alive={} registry_live_or_pending={} registry_freed={}",
+                    ty,
+                    name,
+                    type_name,
+                    type_tag,
+                    name_desc,
+                    tp_dict,
+                    tp_base,
+                    tp_getattro,
+                    tp_flags,
+                    tp_basicsize,
+                    registry_alive,
+                    registry_live_or_pending,
+                    registry_freed
+                );
+            }
+        }
         // _PyType_Lookup() must not leave a new error behind when lookup misses.
         let saved_current_error = context.current_error;
         let saved_last_error = context.last_error.clone();
         let saved_first_error = context.first_error.clone();
-        let result = context
-            .lookup_type_attr_via_tp_dict(ty, &attr_name)
-            .or_else(|| context.lookup_type_attr_via_runtime_mro(ty, &attr_name))
-            .unwrap_or(std::ptr::null_mut());
+        let dict_chain_result = lookup_tp_dict_chain_with_name_object(ty, name);
+        let result = if !dict_chain_result.is_null() {
+            dict_chain_result
+        } else {
+            match &name_value {
+            Some(Value::Str(attr_name)) => context
+                .lookup_type_attr_via_tp_dict(ty, &attr_name)
+                .or_else(|| {
+                    let runtime_attr = lookup_runtime_mro_with_attr_name(context, ty, attr_name);
+                    (!runtime_attr.is_null()).then_some(runtime_attr)
+                })
+                .unwrap_or(std::ptr::null_mut()),
+            Some(_) => {
+                unsafe { PyErr_BadInternalCall() };
+                std::ptr::null_mut()
+            }
+            None => lookup_runtime_mro_with_name_object(context, ty, name),
+            }
+        };
         context.current_error = saved_current_error;
         context.last_error = saved_last_error;
         context.first_error = saved_first_error;
+        if trace_exit_lookup {
+            let name_desc = match &name_value {
+                Some(Value::Str(text)) => text.clone(),
+                Some(other) => format!("<{}>", cpython_value_debug_tag(other)),
+                None => format!("<unmapped:{name:p}>"),
+            };
+            if name_desc == "__exit__" || name_desc.starts_with("<unmapped") {
+                let (result_type_name, result_descr_get, result_tag) = if result.is_null() {
+                    ("<null>".to_string(), std::ptr::null_mut(), "<none>".to_string())
+                } else {
+                    unsafe {
+                        let result_type = result
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .unwrap_or(std::ptr::null_mut());
+                        let type_name = if result_type.is_null() {
+                            "<unknown>".to_string()
+                        } else {
+                            c_name_to_string((*result_type).tp_name)
+                                .unwrap_or_else(|_| "<invalid>".to_string())
+                        };
+                        let descr_get = if result_type.is_null() {
+                            std::ptr::null_mut()
+                        } else {
+                            (*result_type).tp_descr_get
+                        };
+                        let tag = context
+                            .cpython_value_from_ptr_or_proxy(result)
+                            .map(|value| cpython_value_debug_tag(&value))
+                            .unwrap_or_else(|| "<unmapped>".to_string());
+                        (type_name, descr_get, tag)
+                    }
+                };
+                eprintln!(
+                    "[type-lookup] result name={} result={:p} result_type={} result_descr_get={:p} result_tag={}",
+                    name_desc, result, result_type_name, result_descr_get, result_tag
+                );
+            }
+        }
         result
     })
     .unwrap_or_else(|err| {

@@ -20,7 +20,7 @@ use crate::extensions::{
 };
 use crate::runtime::{
     BigInt, BoundMethod, BuiltinFunction, ClassObject, InstanceObject, NativeMethodKind,
-    NativeMethodObject, Object, RuntimeError, Value,
+    NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
 };
 use crate::vm::ExtensionModuleStateEntry;
 
@@ -161,7 +161,7 @@ use self::cpython_descriptor_method_api::{
     PyDescr_NewMethod, PyMember_GetOne, PyMember_SetOne, PySlice_AdjustIndices, PySlice_GetIndices,
     PySlice_GetIndicesEx, PySlice_New, PySlice_Unpack, PyStaticMethod_New, PyWrapper_New,
     cpython_cfunction_tp_call, cpython_cfunction_tp_descr_get, cpython_cfunction_tp_getattro,
-    cpython_function_tp_descr_get, cpython_invoke_method_from_values,
+    cpython_function_tp_descr_get, cpython_invoke_method_from_values, cpython_method_tp_call,
     cpython_method_descriptor_tp_call, cpython_method_descriptor_tp_descr_get,
 };
 use self::cpython_dict_api::{
@@ -1056,6 +1056,17 @@ fn cpython_unicode_state(kind: u32, compact: bool, ascii: bool) -> u32 {
 }
 
 #[inline]
+fn cpython_unicode_precomputed_hash(text: &str) -> isize {
+    let hash_bits = value_lookup_hash(&Value::Str(text.to_string())).unwrap_or(0);
+    let hash = hash_bits as i64;
+    if hash == -1 {
+        -2isize
+    } else {
+        hash as isize
+    }
+}
+
+#[inline]
 fn cpython_long_storage_bytes(ndigits: usize) -> usize {
     std::mem::size_of::<CpythonObjectHead>()
         .saturating_add(std::mem::size_of::<usize>())
@@ -1130,17 +1141,28 @@ unsafe fn cpython_resolve_vectorcall(callable: *mut c_void) -> Option<CpythonVec
     {
         return None;
     }
+    let trace_vectorcall_resolve = std::env::var_os("PYRS_TRACE_CPY_VECTORCALL_RESOLVE").is_some();
     // SAFETY: `type_ptr` is non-null and points to a type object header.
     let mut raw = unsafe { (*type_ptr).tp_vectorcall };
-    if raw.is_null() {
-        // SAFETY: `type_ptr` is valid for metadata reads.
-        let offset = unsafe { (*type_ptr).tp_vectorcall_offset };
-        if offset > 0 {
-            // SAFETY: CPython stores vectorcall function pointer at object+offset.
-            let slot_ptr =
-                unsafe { callable.cast::<u8>().add(offset as usize) }.cast::<*mut c_void>();
-            // SAFETY: slot address computed from object + valid offset.
-            raw = unsafe { *slot_ptr };
+    // SAFETY: `type_ptr` is valid for metadata reads.
+    let offset = unsafe { (*type_ptr).tp_vectorcall_offset };
+    let mut slot_raw = std::ptr::null_mut();
+    if raw.is_null() && offset > 0 {
+        // SAFETY: CPython stores vectorcall function pointer at object+offset.
+        let slot_ptr = unsafe { callable.cast::<u8>().add(offset as usize) }.cast::<*mut c_void>();
+        // SAFETY: slot address computed from object + valid offset.
+        slot_raw = unsafe { *slot_ptr };
+        raw = slot_raw;
+    }
+    if trace_vectorcall_resolve {
+        // SAFETY: `type_ptr` is valid for name access.
+        let type_name =
+            unsafe { c_name_to_string((*type_ptr).tp_name).unwrap_or_else(|_| "<invalid>".to_string()) };
+        if type_name.contains("cython_function_or_method") {
+            eprintln!(
+                "[cpy-vectorcall-resolve] callable={:p} type={:p}({}) tp_vectorcall={:p} tp_vectorcall_offset={} slot_raw={:p} resolved={:p}",
+                callable, type_ptr, type_name, unsafe { (*type_ptr).tp_vectorcall }, offset, slot_raw, raw
+            );
         }
     }
     if raw.is_null() {
@@ -1721,10 +1743,8 @@ unsafe fn ensure_cpython_exception_symbol(
             (*allocated).tp_name = tp_name;
             (*allocated).tp_basicsize = std::mem::size_of::<CpythonObjectHead>() as isize;
             (*allocated).tp_itemsize = 0;
-            (*allocated).tp_flags = PY_TPFLAGS_BASETYPE
-                | PY_TPFLAGS_READY
-                | PY_TPFLAGS_TYPE_SUBCLASS
-                | PY_TPFLAGS_BASE_EXC_SUBCLASS;
+            (*allocated).tp_flags =
+                PY_TPFLAGS_BASETYPE | PY_TPFLAGS_READY | PY_TPFLAGS_BASE_EXC_SUBCLASS;
             *slot = allocated.cast::<c_void>();
         }
         allocated
@@ -1741,10 +1761,7 @@ unsafe fn ensure_cpython_exception_symbol(
 
     // SAFETY: `raw` points to initialized exception-type storage.
     unsafe {
-        (*raw).tp_flags |= PY_TPFLAGS_BASETYPE
-            | PY_TPFLAGS_READY
-            | PY_TPFLAGS_TYPE_SUBCLASS
-            | PY_TPFLAGS_BASE_EXC_SUBCLASS;
+        (*raw).tp_flags |= PY_TPFLAGS_BASETYPE | PY_TPFLAGS_READY | PY_TPFLAGS_BASE_EXC_SUBCLASS;
         (*raw).tp_base = base_ptr;
         if (*raw).tp_getattro.is_null() {
             (*raw).tp_getattro = PyObject_GenericGetAttr as *mut c_void;
@@ -1774,7 +1791,7 @@ fn cpython_slot_richcompare_method_def(attr_name: &str) -> Option<*mut CpythonMe
     match attr_name {
         "__lt__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_LT_METHOD_DEF)),
         "__le__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_LE_METHOD_DEF)),
-        "__eq__" => None,
+        "__eq__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_EQ_METHOD_DEF)),
         "__ne__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_NE_METHOD_DEF)),
         "__gt__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_GT_METHOD_DEF)),
         "__ge__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_GE_METHOD_DEF)),
@@ -2986,6 +3003,7 @@ fn initialize_cpython_compat_type_objects() {
         PyClassMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
         PyClassMethodDescr_Type.tp_descr_get =
             cpython_method_descriptor_tp_descr_get as *mut c_void;
+        PyMethod_Type.tp_call = cpython_method_tp_call as *mut c_void;
         PyFloat_Type.tp_new = cpython_float_tp_new as *mut c_void;
         PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
 
@@ -3925,6 +3943,10 @@ impl ModuleCapiContext {
             let Some(head_ref) = head.as_ref() else {
                 return;
             };
+            // Keep the dynamic type object alive whenever an escaped compat object is pinned.
+            // Without this, objects that survive across active C-API contexts can end up with a
+            // dangling `ob_type` pointer once the owning context frees heap-type allocations.
+            self.pin_owned_child_pointer_for_vm(vm, head_ref.ob_type);
             if head_ref.ob_type == std::ptr::addr_of_mut!(PyTuple_Type).cast() {
                 let len = (*raw.cast::<CpythonVarObjectHead>()).ob_size.max(0) as usize;
                 let items_ptr = cpython_tuple_items_ptr(raw.cast());
@@ -4185,11 +4207,9 @@ impl ModuleCapiContext {
         }
 
         if self.value_ptr_is_exception_instance(pvalue) {
-            if ptype.is_null() {
-                let derived = cpython_exception_type_ptr(pvalue);
-                if !derived.is_null() {
-                    ptype = derived;
-                }
+            let derived = cpython_exception_type_ptr(pvalue);
+            if !derived.is_null() {
+                ptype = derived;
             }
             return (ptype, pvalue);
         }
@@ -4482,7 +4502,19 @@ impl ModuleCapiContext {
                 );
             }
         }
-        let (ptype, pvalue) = self.normalize_exception_state_type_and_value(ptype, pvalue);
+        let (mut ptype, pvalue) = self.normalize_exception_state_type_and_value(ptype, pvalue);
+        if !pvalue.is_null() {
+            let derived = cpython_exception_type_ptr(pvalue);
+            if !derived.is_null() {
+                ptype = derived;
+            }
+        }
+        if !ptype.is_null() {
+            let derived = cpython_exception_type_ptr(ptype);
+            if !derived.is_null() {
+                ptype = derived;
+            }
+        }
         self.current_error = Some(CpythonErrorState {
             ptype,
             pvalue,
@@ -4990,6 +5022,7 @@ impl ModuleCapiContext {
             }
             raw_long.cast::<CpythonCompatObject>()
         } else if let Some(text) = str_payload.as_ref() {
+            let precomputed_hash = cpython_unicode_precomputed_hash(text);
             if text.is_ascii() {
                 let storage_bytes = std::mem::size_of::<CpythonAsciiUnicodeCompatObject>()
                     .saturating_add(text.len())
@@ -5009,7 +5042,7 @@ impl ModuleCapiContext {
                             ob_type,
                         },
                         length: text.len() as isize,
-                        hash: -1,
+                        hash: precomputed_hash,
                         state: cpython_unicode_state(1, true, true),
                     });
                     let data = raw_unicode
@@ -5046,7 +5079,7 @@ impl ModuleCapiContext {
                                 ob_type,
                             },
                             length: codepoints.len() as isize,
-                            hash: -1,
+                            hash: precomputed_hash,
                             state: cpython_unicode_state(4, true, false),
                         },
                         utf8_length: 0,
@@ -5433,6 +5466,15 @@ impl ModuleCapiContext {
                     vectorcall: std::ptr::null_mut(),
                 });
             }
+            if std::env::var_os("PYRS_TRACE_BOUND_METHOD_PTR").is_some() {
+                eprintln!(
+                    "[bound-method-ptr] alloc handle={} method_ptr={:p} im_func={:p} im_self={:p}",
+                    handle,
+                    raw_method.cast::<c_void>(),
+                    function_ptr,
+                    receiver_ptr
+                );
+            }
             raw_method.cast::<CpythonCompatObject>()
         } else {
             let tuple_len = tuple_items.as_ref().map_or(0, Vec::len);
@@ -5666,6 +5708,8 @@ impl ModuleCapiContext {
     }
 
     fn alloc_cpython_ptr_for_value(&mut self, value: Value) -> *mut c_void {
+        let trace_bound_ptr = std::env::var_os("PYRS_TRACE_BOUND_METHOD_PTR").is_some();
+        let is_bound_method = matches!(value, Value::BoundMethod(_));
         if let Value::ExceptionType(name) = &value {
             if let Some(ptr) = cpython_exception_ptr_for_name(name) {
                 return ptr;
@@ -5728,11 +5772,27 @@ impl ModuleCapiContext {
                 .get(&object_id)
                 .copied()
             {
+                if trace_bound_ptr && is_bound_method {
+                    eprintln!(
+                        "[bound-method-ptr] object_id={} cached_ptr={:p} pinned={} has_value={}",
+                        object_id,
+                        raw_ptr as *mut c_void,
+                        vm.capi_owned_ptr_is_pinned(raw_ptr),
+                        vm.extension_cpython_ptr_values.contains_key(&raw_ptr)
+                    );
+                }
                 if vm.capi_owned_ptr_is_pinned(raw_ptr)
                     && vm.extension_cpython_ptr_values.contains_key(&raw_ptr)
                 {
                     vm.extension_cpython_ptr_values
                         .insert(raw_ptr, value.clone());
+                    if trace_bound_ptr && is_bound_method {
+                        eprintln!(
+                            "[bound-method-ptr] reuse object_id={} ptr={:p}",
+                            object_id,
+                            raw_ptr as *mut c_void
+                        );
+                    }
                     return raw_ptr as *mut c_void;
                 }
                 vm.extension_cpython_ptr_by_object_id.remove(&object_id);
@@ -5896,6 +5956,18 @@ impl ModuleCapiContext {
             self.sync_value_from_cpython_storage(handle, object);
             self.refresh_external_proxy_instance_type(handle, object);
             if let Some(value) = self.object_value(handle) {
+                if std::env::var_os("PYRS_TRACE_METHOD_MAP_SOURCE").is_some()
+                    && matches!(value, Value::BoundMethod(_))
+                {
+                    let type_name = cpython_type_name_for_object_ptr(object);
+                    eprintln!(
+                        "[method-map] source=handle ptr={:p} handle={} type={} value={}",
+                        object,
+                        handle,
+                        type_name,
+                        cpython_value_debug_tag(&value)
+                    );
+                }
                 if self.external_proxy_mapping_is_stale(&value, object) {
                     if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
                         eprintln!(
@@ -5916,6 +5988,14 @@ impl ModuleCapiContext {
                         // SAFETY: VM pointer is valid for active C-API context lifetime.
                         let vm = unsafe { &mut *self.vm };
                         vm.extension_cpython_ptr_values.remove(&(object as usize));
+                        if let Some(object_id) = Self::identity_object_id(&value)
+                            && vm
+                                .extension_cpython_ptr_by_object_id
+                                .get(&object_id)
+                                .is_some_and(|ptr| *ptr == object as usize)
+                        {
+                            vm.extension_cpython_ptr_by_object_id.remove(&object_id);
+                        }
                     }
                     return self.cpython_value_from_ptr_or_proxy(object);
                 }
@@ -5927,6 +6007,17 @@ impl ModuleCapiContext {
             // SAFETY: VM pointer is valid for active C-API context lifetime.
             let vm = unsafe { &mut *self.vm };
             if let Some(value) = vm.extension_cpython_ptr_values.get(&raw).cloned() {
+                if std::env::var_os("PYRS_TRACE_METHOD_MAP_SOURCE").is_some()
+                    && matches!(value, Value::BoundMethod(_))
+                {
+                    let type_name = cpython_type_name_for_object_ptr(object);
+                    eprintln!(
+                        "[method-map] source=vm-cache ptr={:p} type={} value={}",
+                        object,
+                        type_name,
+                        cpython_value_debug_tag(&value)
+                    );
+                }
                 if self.external_proxy_mapping_is_stale(&value, object) {
                     if std::env::var_os("PYRS_TRACE_CPY_PROXY_PTRS").is_some() {
                         eprintln!(
@@ -5936,6 +6027,14 @@ impl ModuleCapiContext {
                         );
                     }
                     vm.extension_cpython_ptr_values.remove(&raw);
+                    if let Some(object_id) = Self::identity_object_id(&value)
+                        && vm
+                            .extension_cpython_ptr_by_object_id
+                            .get(&object_id)
+                            .is_some_and(|ptr| *ptr == raw)
+                    {
+                        vm.extension_cpython_ptr_by_object_id.remove(&object_id);
+                    }
                 } else {
                     return Some(value);
                 }
@@ -6092,7 +6191,21 @@ impl ModuleCapiContext {
             }
             Value::BoundMethod(_) => {
                 let expected_type_ptr = std::ptr::addr_of_mut!(PyMethod_Type).cast::<c_void>();
-                current_type_ptr != expected_type_ptr
+                if current_type_ptr != expected_type_ptr {
+                    return true;
+                }
+                let Some((current_func, current_self)) =
+                    Self::bound_method_payload_ptrs_from_raw_ptr(object)
+                else {
+                    return true;
+                };
+                let expected_pair = self.bound_method_payload_ptrs_from_value(value);
+                match expected_pair {
+                    Some((expected_func, expected_self)) => {
+                        current_func != expected_func || current_self != expected_self
+                    }
+                    None => true,
+                }
             }
             Value::Function(_) => {
                 let expected_type_ptr = std::ptr::addr_of_mut!(PyFunction_Type).cast::<c_void>();
@@ -6100,6 +6213,47 @@ impl ModuleCapiContext {
             }
             _ => false,
         }
+    }
+
+    fn cpython_existing_ptr_for_value(&self, value: &Value) -> Option<*mut c_void> {
+        if let Some(raw) = Self::cpython_proxy_raw_ptr_from_value(value) {
+            return Some(raw);
+        }
+        let object_id = Self::identity_object_id(value)?;
+        if let Some(handle) = self.cpython_object_handles_by_id.get(&object_id)
+            && let Some(ptr) = self.cpython_ptr_by_handle.get(handle).copied()
+        {
+            return Some(ptr);
+        }
+        if self.vm.is_null() {
+            return None;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &*self.vm };
+        vm.extension_cpython_ptr_by_object_id
+            .get(&object_id)
+            .copied()
+            .map(|raw| raw as *mut c_void)
+    }
+
+    fn bound_method_payload_ptrs_from_value(&self, value: &Value) -> Option<(*mut c_void, *mut c_void)> {
+        let Value::BoundMethod(bound_obj) = value else {
+            return None;
+        };
+        let Object::BoundMethod(bound_data) = &*bound_obj.kind() else {
+            return None;
+        };
+        let function_value = Self::value_from_objref_for_capi(&bound_data.function)?;
+        let receiver_value = Self::value_from_objref_for_capi(&bound_data.receiver)?;
+        let function_ptr = self.cpython_existing_ptr_for_value(&function_value)?;
+        let receiver_ptr = self.cpython_existing_ptr_for_value(&receiver_value)?;
+        Some((function_ptr, receiver_ptr))
+    }
+
+    fn bound_method_payload_ptrs_from_raw_ptr(object: *mut c_void) -> Option<(*mut c_void, *mut c_void)> {
+        // SAFETY: caller validates `object` as a candidate method object pointer.
+        let method = unsafe { object.cast::<CpythonMethodCompatObject>().as_ref() }?;
+        Some((method.im_func, method.im_self))
     }
 
     fn cpython_external_proxy_value(&mut self, object: *mut c_void) -> Option<Value> {
@@ -7463,6 +7617,56 @@ impl ModuleCapiContext {
         value_ptr
     }
 
+    fn bind_generic_descriptor_attr_ptr(
+        &mut self,
+        descriptor_ptr: *mut c_void,
+        object: *mut c_void,
+        object_type: *mut c_void,
+        is_type_object: bool,
+    ) -> Option<*mut c_void> {
+        if descriptor_ptr.is_null() {
+            return None;
+        }
+        // SAFETY: caller provides a candidate descriptor pointer.
+        let descriptor_type = unsafe {
+            descriptor_ptr
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if !Self::cpython_slot_table_ptr_is_valid(descriptor_type) {
+            return None;
+        }
+        // SAFETY: descriptor type layout validated above.
+        let descriptor_get = unsafe { (*descriptor_type).tp_descr_get };
+        if descriptor_get.is_null() {
+            return None;
+        }
+        let descriptor_get: unsafe extern "C" fn(
+            *mut c_void,
+            *mut c_void,
+            *mut c_void,
+        ) -> *mut c_void =
+            // SAFETY: `tp_descr_get` follows the descriptor-get ABI.
+            unsafe { std::mem::transmute(descriptor_get) };
+        let self_ptr = if is_type_object {
+            std::ptr::null_mut()
+        } else {
+            object
+        };
+        let owner_ptr = if is_type_object { object } else { object_type };
+        // SAFETY: mirrors CPython descriptor dispatch semantics.
+        let bound = unsafe { descriptor_get(descriptor_ptr, self_ptr, owner_ptr) };
+        if !bound.is_null() {
+            return Some(bound);
+        }
+        if unsafe { !PyErr_Occurred().is_null() } {
+            return Some(std::ptr::null_mut());
+        }
+        None
+    }
+
     fn lookup_type_attr_via_tp_dict(
         &mut self,
         object: *mut c_void,
@@ -7722,6 +7926,22 @@ impl ModuleCapiContext {
                     }
                     return Some(bound_ptr);
                 }
+                if let Some(raw_descriptor_ptr) = Self::cpython_proxy_raw_ptr_from_value(&value)
+                    && let Some(bound_ptr) = self.bind_generic_descriptor_attr_ptr(
+                        raw_descriptor_ptr,
+                        object,
+                        object_type.cast(),
+                        is_type_object,
+                    )
+                {
+                    if trace_lookup_branch {
+                        eprintln!(
+                            "[proxy-lookup-branch] attr={} branch=dict_generic_descriptor object={:p} current={:p} value_ptr={:p}",
+                            attr_name, object, current, bound_ptr
+                        );
+                    }
+                    return Some(bound_ptr);
+                }
                 if is_proxy_trace {
                     eprintln!(
                         "[cpy-proxy] tp_dict lookup hit current={:p} dict={:p} value_tag={}",
@@ -7739,6 +7959,23 @@ impl ModuleCapiContext {
                     );
                 }
                 let value_ptr = self.alloc_cpython_ptr_for_value(value.clone());
+                if !value_ptr.is_null()
+                    && !is_type_object
+                    && let Some(bound_ptr) = self.bind_generic_descriptor_attr_ptr(
+                        value_ptr,
+                        object,
+                        object_type.cast(),
+                        false,
+                    )
+                {
+                    if trace_lookup_branch {
+                        eprintln!(
+                            "[proxy-lookup-branch] attr={} branch=dict_value_generic_descriptor object={:p} current={:p} value_ptr={:p}",
+                            attr_name, object, current, bound_ptr
+                        );
+                    }
+                    return Some(bound_ptr);
+                }
                 if trace_lookup_branch {
                     eprintln!(
                         "[proxy-lookup-branch] attr={} branch=dict_value object={:p} current={:p} value_ptr={:p}",
