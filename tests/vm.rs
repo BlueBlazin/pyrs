@@ -3758,12 +3758,14 @@ ok = (
     and m.group(0) == 'aaa'
 )
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack("re-sre-surface-smoke", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -3782,12 +3784,14 @@ ok = (
     and hasattr(re, 'Pattern')
 )
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack("re-cpython-path-import", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -4997,12 +5001,14 @@ for proto in range(pickle.HIGHEST_PROTOCOL + 1):
     value = pickle.loads(pickle.dumps(collection, proto))
     ok = ok and isinstance(value, FrozenSetSubclass) and len(value) == 1 and (list(value)[0].attr is value)
 "#;
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(&lib_path);
-    vm.execute(&code).expect("execution should succeed");
-    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    run_with_large_stack("pickle-recursive-frozenset-subclass", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(&lib_path);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
 }
 
 #[test]
@@ -5663,25 +5669,19 @@ fn cpython_enum_path_supports_member_value_and_name() {
     };
     let source = "import enum\npath = getattr(enum, '__file__', '')\nnorm = path.replace('\\\\', '/')\nclass E(enum.Enum):\n    A = 1\nok_member = (E.A.value == 1 and E.A.name == 'A' and '/Lib/enum.py' in norm)\n";
     let lib_path_for_vm = lib_path.clone();
-    std::thread::Builder::new()
-        .name("enum-cpython-path-probe".to_string())
-        .stack_size(32 * 1024 * 1024)
-        .spawn(move || {
-            let module = parser::parse_module(source).expect("parse should succeed");
-            let code = compiler::compile_module(&module).expect("compile should succeed");
-            let mut vm = Vm::new();
-            vm.add_module_path(lib_path_for_vm);
-            vm.execute(&code).expect("enum probe should execute");
-            let enum_path = match vm.get_global("norm") {
-                Some(Value::Str(path)) => path,
-                other => panic!("expected enum probe path, got {other:?}"),
-            };
-            assert!(enum_path.contains("/Lib/enum.py"));
-            assert_eq!(vm.get_global("ok_member"), Some(Value::Bool(true)));
-        })
-        .expect("spawn enum cpython-path probe")
-        .join()
-        .expect("enum cpython-path probe thread should succeed");
+    run_with_large_stack("enum-cpython-path-probe", move || {
+        let module = parser::parse_module(source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib_path_for_vm);
+        vm.execute(&code).expect("enum probe should execute");
+        let enum_path = match vm.get_global("norm") {
+            Some(Value::Str(path)) => path,
+            other => panic!("expected enum probe path, got {other:?}"),
+        };
+        assert!(enum_path.contains("/Lib/enum.py"));
+        assert_eq!(vm.get_global("ok_member"), Some(Value::Bool(true)));
+    });
 
     let pyrs_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
     if !pyrs_bin.is_file() {
