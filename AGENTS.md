@@ -116,6 +116,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     type contracts.
     - compatibility note: runtime traceback objects currently use `tb_lasti = -1` fallback and
       synthesized frame metadata; `tb_lasti`+`co_positions` precision closure remains tracked.
+  - code-object location APIs landed for traceback/PEP alignment:
+    - `code.co_positions()` now returns an iterator of 4-tuples
+      `(start_line, end_line, start_col, end_col)`,
+    - `code.co_lines()` now returns an iterator of 3-tuples
+      `(start_offset, end_offset, line)`.
+  - native codec keyword-argument parity improved for traceback formatting paths:
+    - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
+      with duplicate/unexpected-keyword contract checks.
   - traceback footer exception formatting now resolves display text from exception `args` where
     available and applies CPython KeyError single-arg `repr(arg)` behavior.
   - compiler now enforces CPython semantic syntax errors (with span-backed diagnostics):
@@ -138,6 +146,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - New regressions:
     - `tests/vm.rs::exception_constructor_keyword_parity_matches_cpython`
     - `tests/vm.rs::traceback_output_preserves_exception_type_without_traceback_rewrap`
+    - `tests/vm.rs::code_object_co_positions_and_co_lines_iterators_have_expected_shape`
+    - `tests/vm.rs::traceback_helpers_can_read_exception_traceback_attr`
     - `tests/vm.rs::traceback_caret_infers_identifier_span_without_keyword_noise`
     - `tests/vm.rs::traceback_caret_skips_statement_keyword_ranges`
     - `tests/vm.rs::keyerror_single_arg_string_uses_repr_semantics`

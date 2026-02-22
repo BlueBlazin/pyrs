@@ -103,13 +103,24 @@ Status: in progress (started 2026-02-22).
     - linked `tb_next` chain,
     - `tb_lineno` / `tb_lasti` / `tb_frame` fields,
     - `tb_frame.f_code` + basic frame metadata for traceback walkers.
+  - code-object location iterators are now exposed:
+    - `code.co_positions()` returns per-instruction `(start_line, end_line, start_col, end_col)`
+      tuples,
+    - `code.co_lines()` returns per-instruction `(start_offset, end_offset, line)` tuples.
+  - native codec keyword-path parity was tightened for traceback stdlib flows:
+    - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs and
+      enforce duplicate/unexpected-keyword checks.
   - `BaseException.with_traceback(...)` and direct `__traceback__` assignment now parse/apply
     traceback chains with CPython type contracts (`traceback` or `None`).
   - differential traceback gates now cover `with_traceback(...)` parity for source and `.pyc`:
     - `differential_traceback_with_traceback_restores_supplied_chain`
     - `differential_pyc_traceback_with_traceback_restores_supplied_chain`.
+  - VM regressions added for new location API surface:
+    - `code_object_co_positions_and_co_lines_iterators_have_expected_shape`
+    - `traceback_helpers_can_read_exception_traceback_attr`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
-    fallback with `tb_lasti = -1` for runtime traceback objects).
+    fallback with `tb_lasti = -1` for runtime traceback objects) and implement
+    `compile(..., PyCF_ONLY_AST)` parity needed by stdlib traceback caret heuristics.
 
 ## Scope
 
