@@ -1995,10 +1995,6 @@ impl Vm {
         self.import_dir_cache.clear();
     }
 
-    pub fn enable_local_shim_fallback(&mut self) {
-        self.local_shim_fallback_enabled = true;
-    }
-
     pub fn import_module(&mut self, name: &str) -> Result<(), RuntimeError> {
         let _ = self.import_module_object(name)?;
         Ok(())

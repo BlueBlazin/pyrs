@@ -3833,7 +3833,13 @@ fn copyreg_imports_from_cpython_lib_without_shim_fallback() {
 import copyreg
 after = copyreg.__file__
 after_norm = after.replace("\\", "/")
-ok = ("/shims/" not in after_norm and after_norm.endswith("/copyreg.py"))
+ok = (
+    "/shims/" not in after_norm
+    and (
+        after_norm.endswith("/copyreg.py")
+        or after_norm.endswith("/copyreg.cpython-314.pyc")
+    )
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
