@@ -1,14 +1,20 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_double, c_int, c_long, c_ulong, c_void};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::bytecode::cpython::{marshal_dump_object, marshal_load_object};
 use crate::runtime::Value;
 
 use super::{
     Py_DecRef, PyEval_GetFrameGlobals, PyEval_GetFrameLocals, PyExc_SystemError, PyExc_ValueError,
-    PyFrame_GetCode, PyObject_Call, PyThreadState_Get, cpython_main_interpreter_state_ptr,
-    cpython_marshal_object_to_value, cpython_set_error, cpython_set_typed_error,
-    value_to_cpython_marshal_object, with_active_cpython_context_mut,
+    PyFrame_GetCode, PyObject_Call, PyThreadState_Get, cpython_current_thread_state_ptr,
+    cpython_current_thread_state_ptr_unchecked, cpython_gil_acquire_for_current_thread,
+    cpython_gil_current_thread_holds, cpython_gil_release_for_current_thread,
+    cpython_is_known_thread_state_ptr, cpython_main_interpreter_state_ptr,
+    cpython_mark_thread_runtime_initialized, cpython_marshal_object_to_value,
+    cpython_set_current_thread_state_ptr, cpython_set_error, cpython_set_typed_error,
+    cpython_thread_runtime_initialized, value_to_cpython_marshal_object,
+    with_active_cpython_context_mut,
 };
 
 unsafe extern "C" {
@@ -17,6 +23,10 @@ unsafe extern "C" {
     fn strtod(string: *const c_char, endptr: *mut *mut c_char) -> c_double;
 }
 
+const PY_GILSTATE_LOCKED: i32 = 0;
+const PY_GILSTATE_UNLOCKED: i32 = 1;
+const PY_MUTEX_LOCKED_BIT: u8 = 0x01;
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_CheckSignals() -> i32 {
     0
@@ -24,35 +34,104 @@ pub unsafe extern "C" fn PyErr_CheckSignals() -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyGILState_Ensure() -> i32 {
-    0
+    cpython_mark_thread_runtime_initialized();
+    let had_gil = cpython_gil_current_thread_holds();
+    let state = cpython_current_thread_state_ptr();
+    if state == 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyGILState_Ensure could not resolve current thread state",
+        );
+        return PY_GILSTATE_UNLOCKED;
+    }
+    cpython_set_current_thread_state_ptr(state);
+    cpython_gil_acquire_for_current_thread();
+    if had_gil {
+        PY_GILSTATE_LOCKED
+    } else {
+        PY_GILSTATE_UNLOCKED
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyGILState_GetThisThreadState() -> *mut c_void {
-    unsafe { PyThreadState_Get() }
+    cpython_current_thread_state_ptr_unchecked() as *mut c_void
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyGILState_Release(_state: i32) {}
+pub unsafe extern "C" fn PyGILState_Release(_state: i32) {
+    if !cpython_gil_release_for_current_thread() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyGILState_Release called without matching PyGILState_Ensure",
+        );
+    }
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyEval_AcquireLock() {}
+pub unsafe extern "C" fn PyEval_AcquireLock() {
+    cpython_mark_thread_runtime_initialized();
+    let state = cpython_current_thread_state_ptr();
+    if state != 0 {
+        cpython_set_current_thread_state_ptr(state);
+    }
+    cpython_gil_acquire_for_current_thread();
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyEval_ReleaseLock() {}
+pub unsafe extern "C" fn PyEval_ReleaseLock() {
+    let _ = cpython_gil_release_for_current_thread();
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyEval_AcquireThread(_state: *mut c_void) {}
+pub unsafe extern "C" fn PyEval_AcquireThread(state: *mut c_void) {
+    if state.is_null() || !cpython_is_known_thread_state_ptr(state as usize) {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_AcquireThread received unknown thread state",
+        );
+        return;
+    }
+    cpython_mark_thread_runtime_initialized();
+    cpython_set_current_thread_state_ptr(state as usize);
+    cpython_gil_acquire_for_current_thread();
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyEval_ReleaseThread(_state: *mut c_void) {}
+pub unsafe extern "C" fn PyEval_ReleaseThread(state: *mut c_void) {
+    if state.is_null() || !cpython_is_known_thread_state_ptr(state as usize) {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_ReleaseThread received unknown thread state",
+        );
+        return;
+    }
+    let current = cpython_current_thread_state_ptr_unchecked();
+    if current != 0 && current != state as usize {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_ReleaseThread called with non-current thread state",
+        );
+        return;
+    }
+    cpython_set_current_thread_state_ptr(state as usize);
+    if !cpython_gil_release_for_current_thread() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_ReleaseThread called while thread does not own the GIL",
+        );
+    }
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyEval_InitThreads() {}
+pub unsafe extern "C" fn PyEval_InitThreads() {
+    // PyEval_InitThreads() is a compatibility no-op in CPython 3.14.
+    cpython_mark_thread_runtime_initialized();
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyEval_ThreadsInitialized() -> i32 {
-    1
+    i32::from(cpython_thread_runtime_initialized())
 }
 
 #[unsafe(no_mangle)]
@@ -208,11 +287,37 @@ pub unsafe extern "C" fn PyEval_EvalFrameEx(frame: *mut c_void, _throwflag: i32)
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyEval_SaveThread() -> *mut c_void {
-    std::ptr::null_mut()
+    let state = cpython_current_thread_state_ptr();
+    if state == 0 {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_SaveThread missing current thread state",
+        );
+        return std::ptr::null_mut();
+    }
+    if !cpython_gil_release_for_current_thread() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_SaveThread called while thread does not own the GIL",
+        );
+        return std::ptr::null_mut();
+    }
+    state as *mut c_void
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyEval_RestoreThread(_state: *mut c_void) {}
+pub unsafe extern "C" fn PyEval_RestoreThread(state: *mut c_void) {
+    if state.is_null() || !cpython_is_known_thread_state_ptr(state as usize) {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "PyEval_RestoreThread received unknown thread state",
+        );
+        return;
+    }
+    cpython_mark_thread_runtime_initialized();
+    cpython_set_current_thread_state_ptr(state as usize);
+    cpython_gil_acquire_for_current_thread();
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInterpreterState_Main() -> *mut c_void {
@@ -220,10 +325,61 @@ pub unsafe extern "C" fn PyInterpreterState_Main() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyMutex_Lock(_mutex: *mut c_void) {}
+pub unsafe extern "C" fn PyMutex_Lock(mutex: *mut c_void) {
+    if mutex.is_null() {
+        return;
+    }
+    let bits = mutex.cast::<AtomicU8>();
+    let mut spins: usize = 0;
+    loop {
+        // SAFETY: caller provides a valid pointer to PyMutex-compatible storage.
+        let observed = unsafe { (*bits).load(Ordering::Acquire) };
+        if observed & PY_MUTEX_LOCKED_BIT == 0 {
+            let desired = observed | PY_MUTEX_LOCKED_BIT;
+            // SAFETY: caller provides a valid pointer to PyMutex-compatible storage.
+            let acquired = unsafe {
+                (*bits)
+                    .compare_exchange_weak(observed, desired, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            };
+            if acquired {
+                return;
+            }
+            continue;
+        }
+        spins = spins.saturating_add(1);
+        if spins.is_multiple_of(64) {
+            std::thread::yield_now();
+        } else {
+            std::hint::spin_loop();
+        }
+    }
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyMutex_Unlock(_mutex: *mut c_void) {}
+pub unsafe extern "C" fn PyMutex_Unlock(mutex: *mut c_void) {
+    if mutex.is_null() {
+        return;
+    }
+    let bits = mutex.cast::<AtomicU8>();
+    loop {
+        // SAFETY: caller provides a valid pointer to PyMutex-compatible storage.
+        let observed = unsafe { (*bits).load(Ordering::Acquire) };
+        if observed & PY_MUTEX_LOCKED_BIT == 0 {
+            return;
+        }
+        let desired = observed & !PY_MUTEX_LOCKED_BIT;
+        // SAFETY: caller provides a valid pointer to PyMutex-compatible storage.
+        let released = unsafe {
+            (*bits)
+                .compare_exchange_weak(observed, desired, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        };
+        if released {
+            return;
+        }
+    }
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyOS_strtol(

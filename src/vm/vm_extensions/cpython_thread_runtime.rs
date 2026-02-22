@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_void;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, OnceLock};
 
 use crate::runtime::{Object, Value};
 
 use super::{
     CPYTHON_ARGC, CPYTHON_ARGV, CPYTHON_ATEXIT_CALLBACKS, CPYTHON_HEAP_TYPE_REGISTRY,
     CPYTHON_INTERNED_UNICODE_REGISTRY, CPYTHON_INTERPRETER_STATE_ALLOCATIONS,
-    CPYTHON_PENDING_CALLS, CPYTHON_STRUCTSEQ_TYPE_REGISTRY, CPYTHON_THREAD_LOCK_REGISTRY,
+    CPYTHON_IS_INITIALIZED, CPYTHON_PENDING_CALLS, CPYTHON_STRUCTSEQ_TYPE_REGISTRY,
+    CPYTHON_THREAD_LOCK_REGISTRY, CPYTHON_THREAD_RUNTIME_INITIALIZED,
     CPYTHON_THREAD_STATE_ALLOCATIONS, CPYTHON_THREAD_TLS_KEY_REGISTRY, CPYTHON_THREAD_TLS_VALUES,
     CPYTHON_THREAD_TSS_REGISTRY, CPYTHON_THREAD_TSS_VALUES, CURRENT_THREAD_STATE_PTR,
     CpythonHeapTypeInfo, CpythonInternedUnicodeRegistry, CpythonPendingCall,
@@ -16,6 +17,19 @@ use super::{
     MAIN_THREAD_STATE_STORAGE, cpython_string_to_wide_units, cpython_sys_module_obj,
     vm_current_thread_ident, with_active_cpython_context_mut,
 };
+
+#[derive(Default)]
+struct CpythonGilRuntimeState {
+    owner_thread_id: Option<u64>,
+    recursion_depth: usize,
+}
+
+struct CpythonGilRuntime {
+    state: Mutex<CpythonGilRuntimeState>,
+    condvar: Condvar,
+}
+
+static CPYTHON_GIL_RUNTIME: OnceLock<CpythonGilRuntime> = OnceLock::new();
 
 pub(super) fn cpython_init_thread_state_compat(
     state: *mut CpythonThreadStateCompat,
@@ -278,6 +292,14 @@ pub(super) fn cpython_current_thread_state_ptr() -> usize {
     CURRENT_THREAD_STATE_PTR.load(Ordering::Relaxed)
 }
 
+pub(super) fn cpython_current_thread_state_ptr_unchecked() -> usize {
+    CURRENT_THREAD_STATE_PTR.load(Ordering::Relaxed)
+}
+
+pub(super) fn cpython_set_current_thread_state_ptr(state: usize) {
+    CURRENT_THREAD_STATE_PTR.store(state, Ordering::Relaxed);
+}
+
 pub(super) fn cpython_is_known_thread_state_ptr(ptr: usize) -> bool {
     if ptr == 0 || ptr == cpython_main_thread_state_ptr() {
         return ptr != 0;
@@ -295,4 +317,81 @@ pub(super) fn cpython_current_thread_ident_u64() -> u64 {
     } else {
         ident.unsigned_abs()
     }
+}
+
+fn cpython_gil_runtime() -> &'static CpythonGilRuntime {
+    CPYTHON_GIL_RUNTIME.get_or_init(|| CpythonGilRuntime {
+        state: Mutex::new(CpythonGilRuntimeState {
+            owner_thread_id: Some(cpython_current_thread_ident_u64()),
+            recursion_depth: 1,
+        }),
+        condvar: Condvar::new(),
+    })
+}
+
+pub(super) fn cpython_mark_thread_runtime_initialized() {
+    CPYTHON_THREAD_RUNTIME_INITIALIZED.store(1, Ordering::Relaxed);
+}
+
+pub(super) fn cpython_thread_runtime_initialized() -> bool {
+    CPYTHON_IS_INITIALIZED.load(Ordering::Relaxed) != 0
+        && CPYTHON_THREAD_RUNTIME_INITIALIZED.load(Ordering::Relaxed) != 0
+}
+
+pub(super) fn cpython_gil_current_thread_holds() -> bool {
+    let thread_id = cpython_current_thread_ident_u64();
+    cpython_gil_runtime()
+        .state
+        .lock()
+        .ok()
+        .is_some_and(|state| state.owner_thread_id == Some(thread_id) && state.recursion_depth > 0)
+}
+
+pub(super) fn cpython_gil_acquire_for_current_thread() {
+    cpython_mark_thread_runtime_initialized();
+    let thread_id = cpython_current_thread_ident_u64();
+    let runtime = cpython_gil_runtime();
+    let mut state = match runtime.state.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    loop {
+        match state.owner_thread_id {
+            None => {
+                state.owner_thread_id = Some(thread_id);
+                state.recursion_depth = 1;
+                return;
+            }
+            Some(owner) if owner == thread_id => {
+                state.recursion_depth = state.recursion_depth.saturating_add(1);
+                return;
+            }
+            Some(_) => {
+                state = match runtime.condvar.wait(state) {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+            }
+        }
+    }
+}
+
+pub(super) fn cpython_gil_release_for_current_thread() -> bool {
+    let thread_id = cpython_current_thread_ident_u64();
+    let runtime = cpython_gil_runtime();
+    let mut state = match runtime.state.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if state.owner_thread_id != Some(thread_id) || state.recursion_depth == 0 {
+        return false;
+    }
+    if state.recursion_depth > 1 {
+        state.recursion_depth -= 1;
+        return true;
+    }
+    state.recursion_depth = 0;
+    state.owner_thread_id = None;
+    runtime.condvar.notify_one();
+    true
 }

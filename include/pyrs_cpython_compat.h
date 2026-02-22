@@ -811,6 +811,8 @@ PyObject *PyEval_EvalCodeEx(
 );
 PyObject *PyEval_EvalFrame(void *frame);
 PyObject *PyEval_EvalFrameEx(void *frame, int throwflag);
+void *PyEval_SaveThread(void);
+void PyEval_RestoreThread(void *state);
 void *PyEval_GetFrame(void);
 PyObject *PyEval_GetGlobals(void);
 PyObject *PyEval_GetLocals(void);
@@ -879,6 +881,13 @@ void PyEval_AcquireThread(void *state);
 void PyEval_ReleaseThread(void *state);
 void PyEval_InitThreads(void);
 int PyEval_ThreadsInitialized(void);
+
+typedef struct {
+    uint8_t _bits;
+} PyMutex;
+
+void PyMutex_Lock(PyMutex *mutex);
+void PyMutex_Unlock(PyMutex *mutex);
 int Py_AddPendingCall(int (*func)(void *), void *arg);
 int Py_MakePendingCalls(void);
 int Py_AtExit(void (*func)(void));

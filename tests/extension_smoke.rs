@@ -4445,10 +4445,31 @@ PyInit_cpython_api_batch27_probe(void) {
 
     PyEval_InitThreads();
     int threads_initialized = PyEval_ThreadsInitialized();
-    PyEval_AcquireLock();
-    PyEval_ReleaseLock();
-    PyEval_AcquireThread(0);
-    PyEval_ReleaseThread(0);
+    void *tstate = PyThreadState_Get();
+    int save_restore_ok = 0;
+    int acquire_release_ok = 0;
+    int lock_cycle_ok = 0;
+    int mutex_lock_ok = 0;
+    int mutex_unlock_ok = 0;
+    if (tstate) {
+        void *saved = PyEval_SaveThread();
+        save_restore_ok = (saved == tstate) ? 1 : 0;
+        PyEval_RestoreThread(saved);
+
+        PyEval_ReleaseThread(tstate);
+        PyEval_AcquireThread(tstate);
+        acquire_release_ok = 1;
+
+        PyEval_ReleaseLock();
+        PyEval_AcquireLock();
+        lock_cycle_ok = 1;
+
+        PyMutex mutex = {0};
+        PyMutex_Lock((void *)&mutex);
+        mutex_lock_ok = ((mutex._bits & 0x01u) != 0) ? 1 : 0;
+        PyMutex_Unlock((void *)&mutex);
+        mutex_unlock_ok = ((mutex._bits & 0x01u) == 0) ? 1 : 0;
+    }
 
     Py_XDECREF(method_result);
     Py_XDECREF(sample);
@@ -4464,7 +4485,12 @@ PyInit_cpython_api_batch27_probe(void) {
     if (PyModule_AddIntConstant(module, "CALL_OBJECT_OK", call_object_ok) != 0 ||
         PyModule_AddIntConstant(module, "CALL_FUNCTION_OK", call_function_ok) != 0 ||
         PyModule_AddIntConstant(module, "CALL_METHOD_OK", call_method_ok) != 0 ||
-        PyModule_AddIntConstant(module, "THREADS_INIT_OK", threads_initialized == 1 ? 1 : 0) != 0) {
+        PyModule_AddIntConstant(module, "THREADS_INIT_OK", threads_initialized == 1 ? 1 : 0) != 0 ||
+        PyModule_AddIntConstant(module, "THREAD_STATE_SAVE_RESTORE_OK", save_restore_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREAD_ACQUIRE_RELEASE_OK", acquire_release_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREAD_LOCK_CYCLE_OK", lock_cycle_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PYMUTEX_LOCK_OK", mutex_lock_ok) != 0 ||
+        PyModule_AddIntConstant(module, "PYMUTEX_UNLOCK_OK", mutex_unlock_ok) != 0) {
         return 0;
     }
     return module;
@@ -4482,7 +4508,7 @@ PyInit_cpython_api_batch27_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch27_probe as m\nassert m.CALL_OBJECT_OK == 1\nassert m.CALL_FUNCTION_OK == 1\nassert m.CALL_METHOD_OK == 1\nassert m.THREADS_INIT_OK == 1",
+        "import cpython_api_batch27_probe as m\nassert m.CALL_OBJECT_OK == 1\nassert m.CALL_FUNCTION_OK == 1\nassert m.CALL_METHOD_OK == 1\nassert m.THREADS_INIT_OK == 1\nassert m.THREAD_STATE_SAVE_RESTORE_OK == 1\nassert m.THREAD_ACQUIRE_RELEASE_OK == 1\nassert m.THREAD_LOCK_CYCLE_OK == 1\nassert m.PYMUTEX_LOCK_OK == 1\nassert m.PYMUTEX_UNLOCK_OK == 1",
     )
     .expect("cpython api batch27 extension import should succeed");
 
@@ -4812,20 +4838,32 @@ PyInit_cpython_api_batch30_probe(void) {
     }
 
     void *before = PyGILState_GetThisThreadState();
-    int state = PyGILState_Ensure();
+    void *saved = PyEval_SaveThread();
+    int saved_nonnull_ok = saved != 0 ? 1 : 0;
+
+    int state_unlocked = PyGILState_Ensure();
     void *during = PyGILState_GetThisThreadState();
-    PyGILState_Release(state);
+    PyGILState_Release(state_unlocked);
+
+    PyEval_RestoreThread(saved);
+    int state_locked = PyGILState_Ensure();
+    PyGILState_Release(state_locked);
     void *after = PyGILState_GetThisThreadState();
 
     int before_ok = before != 0 ? 1 : 0;
     int during_ok = during != 0 ? 1 : 0;
     int after_ok = after != 0 ? 1 : 0;
     int stable_ok = (before == during && during == after) ? 1 : 0;
+    int unlocked_token_ok = (state_unlocked == 1) ? 1 : 0;
+    int locked_token_ok = (state_locked == 0) ? 1 : 0;
 
     if (PyModule_AddIntConstant(module, "THREADSTATE_BEFORE_OK", before_ok) != 0 ||
         PyModule_AddIntConstant(module, "THREADSTATE_DURING_OK", during_ok) != 0 ||
         PyModule_AddIntConstant(module, "THREADSTATE_AFTER_OK", after_ok) != 0 ||
-        PyModule_AddIntConstant(module, "THREADSTATE_STABLE_OK", stable_ok) != 0) {
+        PyModule_AddIntConstant(module, "THREADSTATE_STABLE_OK", stable_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREADSTATE_SAVE_NON_NULL_OK", saved_nonnull_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREADSTATE_UNLOCKED_TOKEN_OK", unlocked_token_ok) != 0 ||
+        PyModule_AddIntConstant(module, "THREADSTATE_LOCKED_TOKEN_OK", locked_token_ok) != 0) {
         return 0;
     }
     return module;
@@ -4843,7 +4881,7 @@ PyInit_cpython_api_batch30_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch30_probe as m\nassert m.THREADSTATE_BEFORE_OK == 1\nassert m.THREADSTATE_DURING_OK == 1\nassert m.THREADSTATE_AFTER_OK == 1\nassert m.THREADSTATE_STABLE_OK == 1",
+        "import cpython_api_batch30_probe as m\nassert m.THREADSTATE_BEFORE_OK == 1\nassert m.THREADSTATE_DURING_OK == 1\nassert m.THREADSTATE_AFTER_OK == 1\nassert m.THREADSTATE_STABLE_OK == 1\nassert m.THREADSTATE_SAVE_NON_NULL_OK == 1\nassert m.THREADSTATE_UNLOCKED_TOKEN_OK == 1\nassert m.THREADSTATE_LOCKED_TOKEN_OK == 1",
     )
     .expect("cpython api batch30 extension import should succeed");
 
@@ -7638,6 +7676,8 @@ run(PyObject *self, PyObject *args) {
     (void)args;
 
     PyThread_init_thread();
+    PyThread_init_thread();
+    int init_idempotent_ok = 1;
     int ident_ok = (PyThread_get_thread_ident() != 0 &&
                     PyThread_get_thread_native_id() != 0) ? 1 : 0;
 
@@ -7658,10 +7698,13 @@ run(PyObject *self, PyObject *args) {
     }
 
     int tls_ok = 0;
+    int tls_reinit_ok = 0;
     int key = PyThread_create_key();
     if (key > 0 &&
         PyThread_set_key_value(key, (void *)0x1234) == 0 &&
         PyThread_get_key_value(key) == (void *)0x1234) {
+        PyThread_ReInitTLS();
+        tls_reinit_ok = (PyThread_get_key_value(key) == (void *)0x1234) ? 1 : 0;
         PyThread_delete_key_value(key);
         tls_ok = (PyThread_get_key_value(key) == 0) ? 1 : 0;
         PyThread_delete_key(key);
@@ -7695,14 +7738,16 @@ run(PyObject *self, PyObject *args) {
     int start_ok = spawned != (unsigned long)-1 ? 1 : 0;
 
     return Py_BuildValue(
-        "(iiiiiii)",
+        "(iiiiiiiii)",
         ident_ok,
         lock_ok,
         tls_ok,
         tss_ok,
         stack_ok,
         info_ok,
-        start_ok
+        start_ok,
+        init_idempotent_ok,
+        tls_reinit_ok
     );
 }
 
@@ -7747,7 +7792,7 @@ PyInit_cpython_api_batch53_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch53_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1)",
+        "import cpython_api_batch53_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1)",
     )
     .expect("cpython api batch53 extension import should succeed");
 

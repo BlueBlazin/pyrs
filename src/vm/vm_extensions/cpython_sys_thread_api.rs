@@ -11,10 +11,10 @@ use super::{
     CPYTHON_THREAD_NEXT_IDENT, CPYTHON_THREAD_STACK_SIZE, CPYTHON_THREAD_TLS_NEXT_KEY,
     CpythonThreadLock, CpythonThreadTss, Cwchar, ModuleCapiContext, PyExc_SystemError,
     PyExc_TypeError, PyExc_ValueError, c_name_to_string, c_wide_name_to_string,
-    cpython_current_thread_ident_u64, cpython_set_error, cpython_set_typed_error,
-    cpython_store_argv_wide, cpython_thread_lock_registry, cpython_thread_tls_key_registry,
-    cpython_thread_tls_values, cpython_thread_tss_registry, cpython_thread_tss_values,
-    with_active_cpython_context_mut,
+    cpython_current_thread_ident_u64, cpython_mark_thread_runtime_initialized, cpython_set_error,
+    cpython_set_typed_error, cpython_store_argv_wide, cpython_thread_lock_registry,
+    cpython_thread_tls_key_registry, cpython_thread_tls_values, cpython_thread_tss_registry,
+    cpython_thread_tss_values, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -529,7 +529,9 @@ fn cpython_thread_lock_is_known(ptr: usize) -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyThread_init_thread() {}
+pub unsafe extern "C" fn PyThread_init_thread() {
+    cpython_mark_thread_runtime_initialized();
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThread_start_new_thread(
@@ -806,7 +808,15 @@ pub unsafe extern "C" fn PyThread_delete_key_value(key: c_int) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyThread_ReInitTLS() {}
+pub unsafe extern "C" fn PyThread_ReInitTLS() {
+    let current = cpython_current_thread_ident_u64();
+    if let Ok(mut map) = cpython_thread_tls_values().lock() {
+        map.retain(|(thread_id, _), _| *thread_id == current);
+    }
+    if let Ok(mut map) = cpython_thread_tss_values().lock() {
+        map.retain(|(thread_id, _), _| *thread_id == current);
+    }
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyThread_tss_alloc() -> *mut c_void {

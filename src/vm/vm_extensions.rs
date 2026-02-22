@@ -405,17 +405,20 @@ use self::cpython_thread_interp_api::{
 };
 use self::cpython_thread_runtime::{
     cpython_atexit_callbacks, cpython_collect_sys_argv, cpython_current_thread_ident_u64,
-    cpython_current_thread_state_ptr, cpython_get_or_init_constant_ptr,
-    cpython_get_or_init_wide_storage, cpython_heap_type_registry, cpython_init_thread_state_compat,
-    cpython_interpreter_state_allocations, cpython_is_interned_unicode_ptr,
-    cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
-    cpython_lookup_interned_unicode_ptr, cpython_lookup_interned_unicode_text,
-    cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr, cpython_pending_calls,
+    cpython_current_thread_state_ptr, cpython_current_thread_state_ptr_unchecked,
+    cpython_get_or_init_constant_ptr, cpython_get_or_init_wide_storage,
+    cpython_gil_acquire_for_current_thread, cpython_gil_current_thread_holds,
+    cpython_gil_release_for_current_thread, cpython_heap_type_registry,
+    cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
+    cpython_is_interned_unicode_ptr, cpython_is_known_interpreter_state_ptr,
+    cpython_is_known_thread_state_ptr, cpython_lookup_interned_unicode_ptr,
+    cpython_lookup_interned_unicode_text, cpython_main_interpreter_state_ptr,
+    cpython_main_thread_state_ptr, cpython_mark_thread_runtime_initialized, cpython_pending_calls,
     cpython_read_sys_path_string, cpython_read_sys_string, cpython_register_interned_unicode,
-    cpython_set_wide_storage, cpython_store_argv_wide, cpython_structseq_registry,
-    cpython_thread_lock_registry, cpython_thread_state_allocations,
-    cpython_thread_tls_key_registry, cpython_thread_tls_values, cpython_thread_tss_registry,
-    cpython_thread_tss_values,
+    cpython_set_current_thread_state_ptr, cpython_set_wide_storage, cpython_store_argv_wide,
+    cpython_structseq_registry, cpython_thread_lock_registry, cpython_thread_runtime_initialized,
+    cpython_thread_state_allocations, cpython_thread_tls_key_registry, cpython_thread_tls_values,
+    cpython_thread_tss_registry, cpython_thread_tss_values,
 };
 use self::cpython_tuple_api::{
     PyTuple_GetItem, PyTuple_GetSlice, PyTuple_New, PyTuple_SetItem, PyTuple_Size,
@@ -3274,6 +3277,7 @@ static mut MAIN_THREAD_STATE_STORAGE: CpythonThreadStateCompat = CpythonThreadSt
         - (256 + std::mem::size_of::<CpythonErrStackItemCompat>())],
 };
 static CURRENT_THREAD_STATE_PTR: AtomicUsize = AtomicUsize::new(0);
+static CPYTHON_THREAD_RUNTIME_INITIALIZED: AtomicUsize = AtomicUsize::new(1);
 static CPYTHON_THREAD_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_THREAD_LOCK_REGISTRY: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
 static CPYTHON_THREAD_STACK_SIZE: AtomicUsize = AtomicUsize::new(0);
