@@ -10658,6 +10658,117 @@ PyInit_cpython_api_batch72_probe(void) {
 }
 
 #[test]
+fn cpython_compat_observability_unstable_abi_batch73_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch73 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch73 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch73");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch73_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *list_obj = PyList_New(0);
+    if (!list_obj) {
+        return 0;
+    }
+
+    int unique_new_ok = (PyUnstable_Object_IsUniquelyReferenced(list_obj) == 1) ? 1 : 0;
+    Py_INCREF(list_obj);
+    int unique_shared_ok = (PyUnstable_Object_IsUniquelyReferenced(list_obj) == 0) ? 1 : 0;
+    Py_DECREF(list_obj);
+
+    int unique_temporary_ok = (PyUnstable_Object_IsUniqueReferencedTemporary(list_obj) == 0) ? 1 : 0;
+    int deferred_refcount_policy_ok = (PyUnstable_Object_EnableDeferredRefcount(list_obj) == 0) ? 1 : 0;
+
+    uintptr_t ptr = (uintptr_t)list_obj;
+    int track_ok_1 = (PyTraceMalloc_Track(73, ptr, 16) == 0) ? 1 : 0;
+    int track_ok_2 = (PyTraceMalloc_Track(73, ptr, 32) == 0) ? 1 : 0;
+    int track_other_domain_ok = (PyTraceMalloc_Track(74, ptr, 64) == 0) ? 1 : 0;
+    int untrack_ok_1 = (PyTraceMalloc_Untrack(73, ptr) == 0) ? 1 : 0;
+    int untrack_ok_2 = (PyTraceMalloc_Untrack(73, ptr) == 0) ? 1 : 0;
+    int untrack_other_domain_ok = (PyTraceMalloc_Untrack(74, ptr) == 0) ? 1 : 0;
+
+    Py_DECREF(list_obj);
+
+    return Py_BuildValue(
+        "(iiiiiiiii)",
+        unique_new_ok,
+        unique_shared_ok,
+        unique_temporary_ok,
+        deferred_refcount_policy_ok,
+        track_ok_1,
+        track_ok_2,
+        track_other_domain_ok,
+        untrack_ok_1 && untrack_ok_2,
+        untrack_other_domain_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe observability + unstable APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch73_probe",
+    "cpython api batch73 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch73_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch73_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch73 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch73_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch73 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
