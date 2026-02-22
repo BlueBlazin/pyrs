@@ -100,6 +100,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - context/cause sections render independent `Traceback (most recent call last):` blocks with
       delimiter text (`During handling...` / `The above exception was the direct cause...`).
   - CPython `.pyc` `co_linetable` decoding now maps instruction ranges into `Location {line,column,end_line,end_column}`.
+  - traceback frame capture now honors `reraise_lasti_override` when set, preserving original
+    source line fidelity for reraised exceptions in exception-table cleanup flows
+    (fixes line-0 fallback in `.pyc` context-chain tracebacks).
   - Unhandled exception propagation no longer re-wraps traceback text as nested `RuntimeError`/`<Exc>: Traceback ...`.
   - New regressions:
     - `tests/vm.rs::exception_constructor_keyword_parity_matches_cpython`
@@ -122,6 +125,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_class_header_colon_inside_unclosed_paren_is_invalid_syntax`
     - `tests/differential_cpython.rs::differential_function_header_colon_inside_unclosed_paren_is_invalid_syntax`
     - `tests/differential_cpython.rs::differential_open_bracket_with_colon_is_invalid_syntax`.
+    - `tests/differential_cpython.rs::differential_pyc_traceback_identifier_caret_span_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_pyc_traceback_context_chain_matches_cpython_shape`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,

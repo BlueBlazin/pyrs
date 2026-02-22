@@ -145,6 +145,64 @@ fn run_traceback_via_file(bin: &PathBuf, source: &str) -> Result<String, String>
     Ok(String::from_utf8_lossy(&output.stderr).to_string())
 }
 
+fn compile_temp_pyc(source: &str, module_name: &str) -> Result<(PathBuf, PathBuf), String> {
+    let bin = cpython_bin_or_panic();
+    if bin.as_os_str().is_empty() {
+        return Err("CPython binary not found".to_string());
+    }
+    let mut base = std::env::temp_dir();
+    base.push(format!(
+        "pyrs_diff_pyc_{module_name}_{}_{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("thread")
+    ));
+    std::fs::create_dir_all(&base).map_err(|err| format!("failed to create temp dir: {err}"))?;
+    let py_path = base.join(format!("{module_name}.py"));
+    std::fs::write(&py_path, source).map_err(|err| format!("failed to write temp source: {err}"))?;
+    let output = Command::new(&bin)
+        .arg("-m")
+        .arg("py_compile")
+        .arg(&py_path)
+        .output()
+        .map_err(|err| format!("failed to launch CPython py_compile: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "CPython py_compile failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    let cache_dir = base.join("__pycache__");
+    let entries = std::fs::read_dir(&cache_dir)
+        .map_err(|err| format!("failed to read __pycache__: {err}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("failed to read __pycache__ entry: {err}"))?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("pyc")
+            && path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .starts_with(module_name)
+        {
+            return Ok((base, path));
+        }
+    }
+    Err("compiled .pyc not found".to_string())
+}
+
+fn run_traceback_via_pyc_file(bin: &PathBuf, pyc_path: &PathBuf) -> Result<String, String> {
+    let output = Command::new(bin)
+        .arg(pyc_path)
+        .output()
+        .map_err(|err| format!("failed to launch interpreter: {err}"))?;
+    if output.status.success() {
+        return Err("expected .pyc execution to fail with traceback".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stderr).to_string())
+}
+
 fn run_cpython_traceback_file(source: &str) -> Result<String, String> {
     let bin = cpython_bin_or_panic();
     if bin.as_os_str().is_empty() {
@@ -799,4 +857,70 @@ fn differential_open_bracket_with_colon_is_invalid_syntax() {
     let py_caret = caret_line_after_source(&py, "    [1:").expect("python list-colon caret");
     let ours_caret = caret_line_after_source(&ours, "    [1:").expect("pyrs list-colon caret");
     assert_eq!(py_caret, ours_caret, "list-colon caret mismatch");
+}
+
+#[test]
+fn differential_pyc_traceback_identifier_caret_span_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "x = foo\n";
+    let (base, pyc_path) =
+        compile_temp_pyc(source, "traceback_nameerror").expect("compile pyc should succeed");
+    let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
+        .expect("CPython .pyc traceback should run");
+    let ours = run_traceback_via_pyc_file(
+        &pyrs_bin_path().expect("pyrs binary not found"),
+        &pyc_path,
+    )
+    .expect("pyrs .pyc traceback should run");
+    assert!(py.contains("NameError"), "{}", py);
+    assert!(ours.contains("NameError"), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    x = foo").expect("python pyc caret");
+    let ours_caret = caret_line_after_source(&ours, "    x = foo").expect("pyrs pyc caret");
+    assert_eq!(py_caret, ours_caret, "pyc NameError caret mismatch");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn differential_pyc_traceback_context_chain_matches_cpython_shape() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    raise ValueError("inner")
+except Exception:
+    raise RuntimeError("outer")
+"#;
+    let (base, pyc_path) =
+        compile_temp_pyc(source, "traceback_context_chain").expect("compile pyc should succeed");
+    let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
+        .expect("CPython .pyc traceback should run");
+    let ours = run_traceback_via_pyc_file(
+        &pyrs_bin_path().expect("pyrs binary not found"),
+        &pyc_path,
+    )
+    .expect("pyrs .pyc traceback should run");
+    assert_eq!(traceback_heading_count(&py), 2, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
+    assert!(
+        py.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        ours
+    );
+    assert!(py.contains("ValueError: inner"), "{}", py);
+    assert!(py.contains("RuntimeError: outer"), "{}", py);
+    assert!(ours.contains("ValueError: inner"), "{}", ours);
+    assert!(ours.contains("RuntimeError: outer"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "pyc context traceback shape mismatch"
+    );
+    let _ = std::fs::remove_dir_all(&base);
 }

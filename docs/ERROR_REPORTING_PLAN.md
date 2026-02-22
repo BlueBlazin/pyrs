@@ -45,6 +45,12 @@ Status: in progress (started 2026-02-22).
   - differential syntax gates now also cover invalid-syntax span parity, unclosed-delimiter shape,
     indentation-error shape, unmatched/mismatched closing delimiters, and unterminated
     triple-quoted strings against CPython output.
+  - differential `.pyc` runtime traceback gates now compare pyrs vs CPython for:
+    - NameError identifier-caret span parity from compiled bytecode execution.
+    - `__context__` chain traceback-shape parity from compiled bytecode execution.
+  - traceback capture now uses `reraise_lasti_override` when available so reraised exceptions
+    in exception-table cleanup paths preserve the original fault line (avoids line-0 fallback
+    in `.pyc` context-chain traces).
   - indentation diagnostics now include CPython-style parity for:
     - top-level `unexpected indent` (no caret line),
     - `unindent does not match any outer indentation level` with end-of-line caret.

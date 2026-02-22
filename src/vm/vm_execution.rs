@@ -7695,7 +7695,8 @@ impl Vm {
     }
 
     pub(super) fn frame_trace(frame: &Frame) -> TraceFrame {
-        let location = frame.code.locations.get(frame.last_ip);
+        let trace_ip = frame.reraise_lasti_override.unwrap_or(frame.last_ip);
+        let location = frame.code.locations.get(trace_ip);
         let line = location.map(|loc| loc.line).unwrap_or(0);
         let column = location.map(|loc| loc.column).unwrap_or(0);
         let end_line = location.map(|loc| loc.end_line).unwrap_or(0);
