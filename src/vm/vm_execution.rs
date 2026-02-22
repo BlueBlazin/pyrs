@@ -497,6 +497,61 @@ impl Vm {
         Ok(values)
     }
 
+    fn import_from_resolve_attr(
+        &mut self,
+        module_obj: &ObjRef,
+        attr_name: &str,
+    ) -> Result<Value, RuntimeError> {
+        let requested_module_name = match &*module_obj.kind() {
+            Object::Module(module_data) => module_data.name.clone(),
+            _ => {
+                return Err(RuntimeError::new("import from expects module object"));
+            }
+        };
+        let mut current_module = module_obj.clone();
+        let mut retried_with_canonical = false;
+        loop {
+            if self.trace_flags.numpy_core_importfrom && requested_module_name == "numpy._core" {
+                eprintln!(
+                    "[numpy-core-importfrom] attr={} module={}",
+                    attr_name, requested_module_name
+                );
+            }
+            let attr = match self.load_attr_module(&current_module, attr_name) {
+                Ok(attr) => attr,
+                Err(load_err) => {
+                    if let Some(module) = self.load_submodule_with_error(&current_module, attr_name)? {
+                        Value::Module(module)
+                    } else if !retried_with_canonical
+                        && load_err.message.contains("has no attribute")
+                    {
+                        let canonical = self.canonical_imported_module_for_name(
+                            &requested_module_name,
+                            current_module.clone(),
+                        );
+                        if canonical.id() != current_module.id() {
+                            current_module = canonical;
+                            retried_with_canonical = true;
+                            continue;
+                        }
+                        return Err(RuntimeError::new(format!(
+                            "cannot import name '{}' from '{}'",
+                            attr_name, requested_module_name
+                        )));
+                    } else if load_err.message.contains("has no attribute") {
+                        return Err(RuntimeError::new(format!(
+                            "cannot import name '{}' from '{}'",
+                            attr_name, requested_module_name
+                        )));
+                    } else {
+                        return Err(load_err);
+                    }
+                }
+            };
+            return Ok(attr);
+        }
+    }
+
     fn bind_import_star_entries_to_caller(
         &mut self,
         caller_idx: usize,
@@ -5749,36 +5804,7 @@ impl Vm {
                             self.push_value_to_caller_frame(caller_idx, Value::None)?;
                             return Ok(None);
                         }
-
-                        let module_name = match &*module_obj.kind() {
-                            Object::Module(module_data) => module_data.name.clone(),
-                            _ => {
-                                return Err(RuntimeError::new("import from expects module object"));
-                            }
-                        };
-                        if self.trace_flags.numpy_core_importfrom && module_name == "numpy._core" {
-                            eprintln!(
-                                "[numpy-core-importfrom] attr={} module={}",
-                                attr_name, module_name
-                            );
-                        }
-                        let attr = match self.load_attr_module(&module_obj, &attr_name) {
-                            Ok(attr) => attr,
-                            Err(load_err) => {
-                                if let Some(module) =
-                                    self.load_submodule_with_error(&module_obj, &attr_name)?
-                                {
-                                    Value::Module(module)
-                                } else if load_err.message.contains("has no attribute") {
-                                    return Err(RuntimeError::new(format!(
-                                        "cannot import name '{}' from '{}'",
-                                        attr_name, module_name
-                                    )));
-                                } else {
-                                    return Err(load_err);
-                                }
-                            }
-                        };
+                        let attr = self.import_from_resolve_attr(&module_obj, &attr_name)?;
                         self.push_value_to_caller_frame(caller_idx, attr)?;
                     }
                     _ => {
