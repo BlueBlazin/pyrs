@@ -14801,6 +14801,26 @@ ok = (
 }
 
 #[test]
+fn module_not_found_error_populates_name_for_missing_import() {
+    let source = r#"ok = False
+try:
+    import __pyrs_missing_module__
+except ModuleNotFoundError as exc:
+    ok = (
+        exc.name == "__pyrs_missing_module__"
+        and exc.path is None
+        and isinstance(exc.msg, str)
+        and "__pyrs_missing_module__" in exc.msg
+    )
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn user_class_module_builtin_attrs_are_not_descriptor_bound() {
     let source = r#"import gc
 import os

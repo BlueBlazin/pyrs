@@ -8035,7 +8035,30 @@ impl RuntimeError {
     }
 
     pub fn with_exception(name: impl Into<String>, message: Option<String>) -> Self {
-        let exception = ExceptionObject::new(name, message);
+        let name = name.into();
+        let exception = ExceptionObject::new(name.clone(), message.clone());
+        if is_import_error_family(name.as_str()) {
+            let mut attrs = exception.attrs.borrow_mut();
+            if !attrs.contains_key("msg") {
+                attrs.insert(
+                    "msg".to_string(),
+                    message.clone().map(Value::Str).unwrap_or(Value::None),
+                );
+            }
+            if !attrs.contains_key("name") {
+                attrs.insert(
+                    "name".to_string(),
+                    message
+                        .as_deref()
+                        .and_then(extract_import_error_name)
+                        .map(Value::Str)
+                        .unwrap_or(Value::None),
+                );
+            }
+            if !attrs.contains_key("path") {
+                attrs.insert("path".to_string(), Value::None);
+            }
+        }
         Self::from_exception(exception)
     }
 

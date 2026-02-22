@@ -183,3 +183,39 @@ fn cli_preserves_pythonpath_entries_that_are_not_stdlib_roots() {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     assert_eq!(code, 0, "stderr:\n{stderr}");
 }
+
+#[test]
+fn cli_site_startup_ignores_missing_sitecustomize_and_usercustomize() {
+    let root = temp_root("cli_site_customize_missing");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(
+        stdlib.join("site.py"),
+        r#"import sys
+for _name in ("sitecustomize", "usercustomize"):
+    try:
+        __import__(_name)
+    except ImportError as exc:
+        if getattr(exc, "name", None) != _name:
+            print(f"Error in {_name}", file=sys.stderr)
+            raise
+"#,
+    )
+    .expect("write site.py");
+
+    let script = root.join("main.py");
+    fs::write(&script, "print('ok')\n").expect("write script");
+
+    let script_arg = script.to_string_lossy();
+    let (code, stdout, stderr) = run_pyrs(
+        &root,
+        &[script_arg.as_ref()],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert_eq!(stdout.trim(), "ok");
+    assert!(
+        stderr.trim().is_empty(),
+        "site startup should be silent when custom modules are absent, got: {stderr}"
+    );
+}

@@ -13,14 +13,14 @@ use super::{
     SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings,
     bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
     decode_call_counts, deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value, dict_set_value_checked, ensure_hashable, env_var_present_cached,
-    exception_message_from_call_args, floor_div_values, format_repr, format_value,
-    is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
-    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
-    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
-    module_globals_version, pos_value, pow_values, rshift_values, runtime_error_matches_exception,
-    slice_bounds_for_step_one, slice_indices, slot_names_from_value, source_path_from_cache_path,
-    value_from_bigint, value_from_object_ref, value_to_int, value_to_optional_index,
+    dict_set_value, dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
+    floor_div_values, format_repr, format_value, is_comprehension_code, is_import_error_family,
+    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
+    memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
+    mod_values, module_globals_version, pos_value, pow_values, rshift_values,
+    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
+    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
+    value_to_int, value_to_optional_index,
 };
 use crate::runtime::SliceValue;
 
@@ -126,7 +126,7 @@ impl Vm {
                 &origin_path.to_string_lossy(),
             ));
             if source_path.is_file() {
-                let runtime_reason = if env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE") {
+                let runtime_reason = if self.trace_flags.import_perf_verbose {
                     self.frames
                         .last()
                         .and_then(|f| f.active_exception.as_ref())
@@ -142,7 +142,7 @@ impl Vm {
                         .pyc_load_fallback_to_source
                         .saturating_add(1);
                 }
-                if env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE") {
+                if self.trace_flags.import_perf_verbose {
                     let reason = runtime_reason.unwrap_or_else(|| "runtime exception".to_string());
                     eprintln!(
                         "[import-perf] pyc-runtime-fallback module={} pyc={} source={} reason={}",
@@ -253,7 +253,7 @@ impl Vm {
             )
             .ok();
         if let Some(keys_callable) = keys_callable {
-            if env_var_present_cached("PYRS_TRACE_DICT_MERGE") {
+            if self.trace_flags.dict_merge {
                 eprintln!(
                     "[dict-merge] keys() path for {}",
                     self.value_type_name_for_error(&source)
@@ -929,7 +929,7 @@ impl Vm {
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing local argument"))?
                     as usize;
-                if env_var_present_cached("PYRS_TRACE_FAST_CELL")
+                if self.trace_flags.fast_cell
                     && let Some(frame) = self.frames.last()
                     && frame.code.name == "deprecated"
                     && frame.code.filename.ends_with("_py_warnings.py")
@@ -1611,7 +1611,7 @@ impl Vm {
                 let caller_idx = self.frames.len().saturating_sub(1);
                 let site_index = self.current_site_index();
                 let value = self.pop_value()?;
-                if env_var_present_cached("PYRS_TRACE_STARTSWITH_ATTR")
+                if self.trace_flags.startswith_attr
                     && attr_name == "startswith"
                     && let Some(frame) = self.frames.last()
                 {
@@ -2220,7 +2220,7 @@ impl Vm {
                         self.store_attr_builtin(builtin, &attr_name, value)?
                     }
                     _ => {
-                        if env_var_present_cached("PYRS_TRACE_STORE_ATTR") {
+                        if self.trace_flags.store_attr {
                             if let Some(frame) = self.frames.last() {
                                 let location = frame.code.locations.get(frame.last_ip);
                                 eprintln!(
@@ -2290,7 +2290,7 @@ impl Vm {
                         self.store_attr_builtin(builtin, &attr_name, value)?
                     }
                     _ => {
-                        if env_var_present_cached("PYRS_TRACE_STORE_ATTR") {
+                        if self.trace_flags.store_attr {
                             if let Some(frame) = self.frames.last() {
                                 let location = frame.code.locations.get(frame.last_ip);
                                 eprintln!(
@@ -2376,7 +2376,7 @@ impl Vm {
                         self.delete_attr_builtin(builtin, &attr_name)?;
                     }
                     _ => {
-                        if env_var_present_cached("PYRS_TRACE_DELETE_ATTR") {
+                        if self.trace_flags.delete_attr {
                             if let Some(frame) = self.frames.last() {
                                 let location = frame.code.locations.get(frame.last_ip);
                                 eprintln!(
@@ -3340,7 +3340,7 @@ impl Vm {
                     return Err(RuntimeError::new("DICT_MERGE expects oparg >= 1"));
                 }
                 let update = self.pop_value()?;
-                if env_var_present_cached("PYRS_TRACE_DICT_MERGE") {
+                if self.trace_flags.dict_merge {
                     eprintln!(
                         "[dict-merge] oparg={} source={}",
                         oparg,
@@ -3388,7 +3388,7 @@ impl Vm {
             Opcode::Subscript => {
                 let index = self.pop_value()?;
                 let value = self.pop_value()?;
-                let trace_subscript_error = env_var_present_cached("PYRS_TRACE_SUBSCRIPT_ERROR");
+                let trace_subscript_error = self.trace_flags.subscript_error;
                 let trace_value = if trace_subscript_error {
                     Some(value.clone())
                 } else {
@@ -3399,7 +3399,7 @@ impl Vm {
                 } else {
                     None
                 };
-                if env_var_present_cached("PYRS_TRACE_SUBSCRIPT")
+                if self.trace_flags.subscript
                     && matches!(value, Value::Tuple(_))
                     && matches!(index, Value::Tuple(_))
                 {
@@ -3631,7 +3631,7 @@ impl Vm {
                                 dict_set_value_checked(&backing_dict, index, value)?;
                                 self.push_value(Value::Instance(instance));
                             } else {
-                                if env_var_present_cached("PYRS_TRACE_STORE_SUBSCRIPT") {
+                                if self.trace_flags.store_subscript {
                                     let target_value = Value::Instance(instance.clone());
                                     eprintln!(
                                         "[store-subscript] unsupported instance target_type={} index_type={} value_type={} target={} index={} value={}",
@@ -4042,7 +4042,7 @@ impl Vm {
                                 proxy_result?;
                                 self.push_value(target_value);
                             } else {
-                                if env_var_present_cached("PYRS_TRACE_STORE_SUBSCRIPT") {
+                                if self.trace_flags.store_subscript {
                                     eprintln!(
                                         "[store-subscript] unsupported target_type={} index_type={} value_type={} target={} index={} value={}",
                                         self.value_type_name_for_error(&target),
@@ -4388,7 +4388,7 @@ impl Vm {
                     _ => return Err(RuntimeError::new("class bases must be a tuple")),
                 };
                 let orig_bases_tuple = self.heap.alloc_tuple(bases.clone());
-                let trace_build_class = env_var_present_cached("PYRS_TRACE_BUILD_CLASS");
+                let trace_build_class = self.trace_flags.build_class;
                 let trace_this_class = trace_build_class && class_name == "_TagInfo";
                 let mut resolved_bases = Vec::new();
                 for base in bases {
@@ -4453,7 +4453,7 @@ impl Vm {
                     match self.class_from_base_value(base.clone()) {
                         Ok(class) => base_classes.push(class),
                         Err(err) => {
-                            if env_var_present_cached("PYRS_TRACE_CLASS_BASE")
+                            if self.trace_flags.class_base
                                 && runtime_error_matches_exception(&err, "TypeError")
                                 && let Some(frame) = self.frames.last()
                             {
@@ -5727,9 +5727,7 @@ impl Vm {
                                 return Err(RuntimeError::new("import from expects module object"));
                             }
                         };
-                        if env_var_present_cached("PYRS_TRACE_NUMPY_CORE_IMPORTFROM")
-                            && module_name == "numpy._core"
-                        {
+                        if self.trace_flags.numpy_core_importfrom && module_name == "numpy._core" {
                             eprintln!(
                                 "[numpy-core-importfrom] attr={} module={}",
                                 attr_name, module_name
@@ -5998,7 +5996,7 @@ impl Vm {
                         }
                     }
                     _ => {
-                        if env_var_present_cached("PYRS_TRACE_FOR_ITER_FAIL") {
+                        if self.trace_flags.for_iter_fail {
                             let (filename, function_name, line, column, ip) = self
                                 .frames
                                 .last()
@@ -6247,7 +6245,7 @@ impl Vm {
                     }
                     let frame = self.frames.last_mut().expect("frame exists");
                     frame.reraise_lasti_override = Some(lasti as usize);
-                    if env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE") {
+                    if self.trace_flags.exception_table {
                         eprintln!(
                             "[reraise] oparg={} lasti={} current_last_ip={} next_ip={}",
                             oparg, lasti, frame.last_ip, frame.ip
@@ -6278,7 +6276,7 @@ impl Vm {
                         }
                     }
                 }
-                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
+                if self.trace_flags.check_exc {
                     let active_tag = active_exception
                         .as_ref()
                         .map(|value| self.value_type_name_for_error(value))
@@ -6337,7 +6335,7 @@ impl Vm {
                 {
                     *top = exception.clone();
                 }
-                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
+                if self.trace_flags.check_exc {
                     eprintln!(
                         "[match-exc-before] exception={} handler={}",
                         self.value_type_name_for_error(&exception),
@@ -6536,7 +6534,7 @@ impl Vm {
                         }
                     }
                 }
-                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
+                if self.trace_flags.check_exc {
                     let active_tag = active_exception
                         .as_ref()
                         .map(|value| self.value_type_name_for_error(value))
@@ -6581,7 +6579,7 @@ impl Vm {
                 {
                     exception = recovered;
                 }
-                if env_var_present_cached("PYRS_TRACE_CHECK_EXC") {
+                if self.trace_flags.check_exc {
                     eprintln!(
                         "[check-exc-before-match] exception={} handler={}",
                         self.value_type_name_for_error(&exception),
@@ -6589,7 +6587,7 @@ impl Vm {
                     );
                 }
                 let matches = self.exception_matches(&exception, &handler_type)?;
-                if env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE") {
+                if self.trace_flags.exception_table {
                     eprintln!(
                         "[check-exc-match] exception={} handler={} -> {}",
                         self.value_type_name_for_error(&exception),
@@ -7016,7 +7014,7 @@ impl Vm {
             if let Some((target, depth, push_lasti)) =
                 Self::exception_handler_for_ip(frame, frame.last_ip)
             {
-                if env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE") {
+                if self.trace_flags.exception_table {
                     eprintln!(
                         "[exc-table] last_ip={} ip={} -> target={} depth={} push_lasti={} stack_len={}",
                         frame.last_ip,
@@ -7071,7 +7069,7 @@ impl Vm {
         explicit_cause: Option<Value>,
     ) -> Result<(), RuntimeError> {
         let mut exc = self.normalize_exception_value(value)?;
-        if env_var_present_cached("PYRS_TRACE_ASSERT_RAISE") {
+        if self.trace_flags.assert_raise {
             let is_assertion = match &exc {
                 Value::Exception(exception) => exception.name == "AssertionError",
                 Value::ExceptionType(name) => name == "AssertionError",
@@ -7135,7 +7133,7 @@ impl Vm {
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
         let RuntimeError { message, exception } = err;
-        if env_var_present_cached("PYRS_TRACE_IMPORT_PENDING") {
+        if self.trace_flags.import_pending {
             let active = self
                 .frames
                 .last()
@@ -7823,7 +7821,7 @@ impl Vm {
                 }
                 return Ok(ClassBuildOutcome::Value(class_value));
             };
-            if env_var_present_cached("PYRS_TRACE_BUILD_CLASS") && name == "_TagInfo" {
+            if self.trace_flags.build_class && name == "_TagInfo" {
                 let base_debug = bases
                     .iter()
                     .map(|base| match &*base.kind() {
@@ -7904,7 +7902,7 @@ impl Vm {
         class: &ObjRef,
         class_keywords: &HashMap<String, Value>,
     ) -> Result<bool, RuntimeError> {
-        let trace_init_subclass = env_var_present_cached("PYRS_TRACE_INIT_SUBCLASS");
+        let trace_init_subclass = self.trace_flags.init_subclass;
         let mro = self.class_mro_entries(class);
         let init_subclass = mro
             .into_iter()
@@ -8453,7 +8451,7 @@ impl Vm {
         };
 
         let value = value.ok_or_else(|| {
-            if env_var_present_cached("PYRS_TRACE_FAST_LOCAL_UNBOUND")
+            if self.trace_flags.fast_local_unbound
                 && let Some(frame) = self.frames.last()
             {
                 let location = frame.code.locations.get(frame.last_ip);
@@ -8599,7 +8597,7 @@ impl Vm {
     pub(super) fn take_fast_local(&mut self, idx: usize) -> Result<Value, RuntimeError> {
         let (name, value) = self.take_fast_local_optional(idx)?;
         value.ok_or_else(|| {
-            if env_var_present_cached("PYRS_TRACE_FAST_LOCAL_UNBOUND")
+            if self.trace_flags.fast_local_unbound
                 && let Some(frame) = self.frames.last()
             {
                 let location = frame.code.locations.get(frame.last_ip);

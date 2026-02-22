@@ -5,7 +5,7 @@
 This is the permanent, canonical optimization checklist for `pyrs`.
 Every optimization item must be tracked here with explicit status.
 
-Last updated: 2026-02-21
+Last updated: 2026-02-22
 
 ## Status Legend
 
@@ -141,3 +141,11 @@ Do not rely on stale point-in-time numbers in this document.
     - `source_compiles=30`, `pyc_fallbacks=29`
     - to `source_compiles=1`, `pyc_fallbacks=0`.
   - `BUILD_SLICE` runtime now follows CPython stack semantics for both `arg=2` and `arg=3`, closing the `del x[-2:]` pyc path regression and removing the remaining `re.*` fallback cluster.
+- 2026-02-22 fib-regression recovery wave:
+  - replaced VM env-flag probe mutex/hash hot path (`env_var_present_cached`) with lock-free startup-cached probe slots plus global fast-fail when no probes are enabled.
+  - hoisted execution-loop trace checks into `VmTraceFlags` (loaded once at VM startup), removing repeated env-probe overhead inside opcode dispatch.
+  - restored fib gate after regression:
+    - pre-fix baseline: `fib(29) avg user 0.1700s`, `fib(29)x5 avg user 0.8460s`.
+    - current checkpoint: `fib(29) avg user 0.1200s`, `fib(29)x5 avg user 0.5760s`.
+  - import-error attribute parity fix: `ImportError`/`ModuleNotFoundError` constructors now populate `msg`/`name`/`path` defaults from message content, eliminating noisy startup prints for missing optional `sitecustomize`/`usercustomize`.
+  - benchmark artifact for this checkpoint: `perf/fib_regression_recovery_2026-02-22.md`.

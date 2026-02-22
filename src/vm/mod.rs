@@ -36,8 +36,8 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};
@@ -539,6 +539,55 @@ fn env_var_present_once(name: &'static str, slot: &'static OnceLock<bool>) -> bo
     *slot.get_or_init(|| std::env::var_os(name).is_some())
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct VmTraceFlags {
+    import_perf_verbose: bool,
+    assert_raise: bool,
+    build_class: bool,
+    check_exc: bool,
+    class_base: bool,
+    delete_attr: bool,
+    dict_merge: bool,
+    exception_table: bool,
+    fast_cell: bool,
+    fast_local_unbound: bool,
+    for_iter_fail: bool,
+    import_pending: bool,
+    init_subclass: bool,
+    numpy_core_importfrom: bool,
+    startswith_attr: bool,
+    store_attr: bool,
+    store_subscript: bool,
+    subscript: bool,
+    subscript_error: bool,
+}
+
+impl VmTraceFlags {
+    fn from_env() -> Self {
+        Self {
+            import_perf_verbose: env_var_present_cached("PYRS_IMPORT_PERF_VERBOSE"),
+            assert_raise: env_var_present_cached("PYRS_TRACE_ASSERT_RAISE"),
+            build_class: env_var_present_cached("PYRS_TRACE_BUILD_CLASS"),
+            check_exc: env_var_present_cached("PYRS_TRACE_CHECK_EXC"),
+            class_base: env_var_present_cached("PYRS_TRACE_CLASS_BASE"),
+            delete_attr: env_var_present_cached("PYRS_TRACE_DELETE_ATTR"),
+            dict_merge: env_var_present_cached("PYRS_TRACE_DICT_MERGE"),
+            exception_table: env_var_present_cached("PYRS_TRACE_EXCEPTION_TABLE"),
+            fast_cell: env_var_present_cached("PYRS_TRACE_FAST_CELL"),
+            fast_local_unbound: env_var_present_cached("PYRS_TRACE_FAST_LOCAL_UNBOUND"),
+            for_iter_fail: env_var_present_cached("PYRS_TRACE_FOR_ITER_FAIL"),
+            import_pending: env_var_present_cached("PYRS_TRACE_IMPORT_PENDING"),
+            init_subclass: env_var_present_cached("PYRS_TRACE_INIT_SUBCLASS"),
+            numpy_core_importfrom: env_var_present_cached("PYRS_TRACE_NUMPY_CORE_IMPORTFROM"),
+            startswith_attr: env_var_present_cached("PYRS_TRACE_STARTSWITH_ATTR"),
+            store_attr: env_var_present_cached("PYRS_TRACE_STORE_ATTR"),
+            store_subscript: env_var_present_cached("PYRS_TRACE_STORE_SUBSCRIPT"),
+            subscript: env_var_present_cached("PYRS_TRACE_SUBSCRIPT"),
+            subscript_error: env_var_present_cached("PYRS_TRACE_SUBSCRIPT_ERROR"),
+        }
+    }
+}
+
 fn env_var_present_cached(name: &'static str) -> bool {
     static ANY_PROBE_ENABLED: OnceLock<bool> = OnceLock::new();
     let any_probe_enabled = *ANY_PROBE_ENABLED.get_or_init(|| {
@@ -918,6 +967,7 @@ pub struct Vm {
     import_meta_path_has_default_finder: bool,
     import_path_hooks_has_default_hook: bool,
     import_perf_enabled: bool,
+    trace_flags: VmTraceFlags,
     import_perf_counters: ImportPerfCounters,
     heap: Heap,
     random: Mt19937,
@@ -1141,6 +1191,7 @@ impl Vm {
         modules.insert("__main__".to_string(), main_module.clone());
 
         let module_paths = vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))];
+        let trace_flags = VmTraceFlags::from_env();
 
         let mut vm = Self {
             frames: Vec::with_capacity(128),
@@ -1161,6 +1212,7 @@ impl Vm {
             import_meta_path_has_default_finder: true,
             import_path_hooks_has_default_hook: true,
             import_perf_enabled: env_flag_enabled("PYRS_IMPORT_PERF"),
+            trace_flags,
             import_perf_counters: ImportPerfCounters::default(),
             heap,
             random: Mt19937::new(5489),
