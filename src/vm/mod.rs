@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};
@@ -474,19 +474,184 @@ fn env_flag_enabled_or_default(name: &str, default: bool) -> bool {
     }
 }
 
+const ENV_VAR_PRESENCE_PROBES: &[&str] = &[
+    "PYRS_IMPORT_PERF_VERBOSE",
+    "PYRS_TRACE_ASSERT_RAISE",
+    "PYRS_TRACE_BUILD_CLASS",
+    "PYRS_TRACE_CHECK_EXC",
+    "PYRS_TRACE_CLASS_BASE",
+    "PYRS_TRACE_CPY_COMPARE",
+    "PYRS_TRACE_CPY_COMPARE_ERRORS",
+    "PYRS_TRACE_CPY_RICH_VALUES",
+    "PYRS_TRACE_CPY_STRING_EQ",
+    "PYRS_TRACE_CPY_UNKNOWN_PTR",
+    "PYRS_TRACE_DELETE_ATTR",
+    "PYRS_TRACE_DICT_MERGE",
+    "PYRS_TRACE_EXCEPTION_TABLE",
+    "PYRS_TRACE_FAST_CELL",
+    "PYRS_TRACE_FAST_LOCAL_UNBOUND",
+    "PYRS_TRACE_FOR_ITER_FAIL",
+    "PYRS_TRACE_IMPORT_PENDING",
+    "PYRS_TRACE_INIT_SUBCLASS",
+    "PYRS_TRACE_NUMPY_CORE_IMPORTFROM",
+    "PYRS_TRACE_NUMPY_DTYPE_RESOLVE",
+    "PYRS_TRACE_STARTSWITH_ATTR",
+    "PYRS_TRACE_STORE_ATTR",
+    "PYRS_TRACE_STORE_SUBSCRIPT",
+    "PYRS_TRACE_SUBSCRIPT",
+    "PYRS_TRACE_SUBSCRIPT_ERROR",
+];
+
+#[inline]
+fn is_known_env_presence_probe(name: &'static str) -> bool {
+    matches!(
+        name,
+        "PYRS_IMPORT_PERF_VERBOSE"
+            | "PYRS_TRACE_ASSERT_RAISE"
+            | "PYRS_TRACE_BUILD_CLASS"
+            | "PYRS_TRACE_CHECK_EXC"
+            | "PYRS_TRACE_CLASS_BASE"
+            | "PYRS_TRACE_CPY_COMPARE"
+            | "PYRS_TRACE_CPY_COMPARE_ERRORS"
+            | "PYRS_TRACE_CPY_RICH_VALUES"
+            | "PYRS_TRACE_CPY_STRING_EQ"
+            | "PYRS_TRACE_CPY_UNKNOWN_PTR"
+            | "PYRS_TRACE_DELETE_ATTR"
+            | "PYRS_TRACE_DICT_MERGE"
+            | "PYRS_TRACE_EXCEPTION_TABLE"
+            | "PYRS_TRACE_FAST_CELL"
+            | "PYRS_TRACE_FAST_LOCAL_UNBOUND"
+            | "PYRS_TRACE_FOR_ITER_FAIL"
+            | "PYRS_TRACE_IMPORT_PENDING"
+            | "PYRS_TRACE_INIT_SUBCLASS"
+            | "PYRS_TRACE_NUMPY_CORE_IMPORTFROM"
+            | "PYRS_TRACE_NUMPY_DTYPE_RESOLVE"
+            | "PYRS_TRACE_STARTSWITH_ATTR"
+            | "PYRS_TRACE_STORE_ATTR"
+            | "PYRS_TRACE_STORE_SUBSCRIPT"
+            | "PYRS_TRACE_SUBSCRIPT"
+            | "PYRS_TRACE_SUBSCRIPT_ERROR"
+    )
+}
+
+#[inline]
+fn env_var_present_once(name: &'static str, slot: &'static OnceLock<bool>) -> bool {
+    *slot.get_or_init(|| std::env::var_os(name).is_some())
+}
+
 fn env_var_present_cached(name: &'static str) -> bool {
-    static CACHE: OnceLock<Mutex<HashMap<&'static str, bool>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(guard) = cache.lock()
-        && let Some(value) = guard.get(name)
-    {
-        return *value;
+    static ANY_PROBE_ENABLED: OnceLock<bool> = OnceLock::new();
+    let any_probe_enabled = *ANY_PROBE_ENABLED.get_or_init(|| {
+        ENV_VAR_PRESENCE_PROBES
+            .iter()
+            .any(|probe| std::env::var_os(probe).is_some())
+    });
+    if !any_probe_enabled && is_known_env_presence_probe(name) {
+        return false;
     }
-    let present = std::env::var_os(name).is_some();
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(name, present);
+    match name {
+        "PYRS_IMPORT_PERF_VERBOSE" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_ASSERT_RAISE" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_BUILD_CLASS" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_CHECK_EXC" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_CLASS_BASE" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_CPY_COMPARE" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_CPY_COMPARE_ERRORS" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_CPY_RICH_VALUES" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_CPY_STRING_EQ" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_CPY_UNKNOWN_PTR" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_DELETE_ATTR" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_DICT_MERGE" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_EXCEPTION_TABLE" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_FAST_CELL" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_FAST_LOCAL_UNBOUND" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_FOR_ITER_FAIL" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_IMPORT_PENDING" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_INIT_SUBCLASS" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_NUMPY_CORE_IMPORTFROM" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_NUMPY_DTYPE_RESOLVE" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_STARTSWITH_ATTR" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_STORE_ATTR" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_STORE_SUBSCRIPT" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_SUBSCRIPT" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        "PYRS_TRACE_SUBSCRIPT_ERROR" => {
+            static SLOT: OnceLock<bool> = OnceLock::new();
+            env_var_present_once(name, &SLOT)
+        }
+        _ => std::env::var_os(name).is_some(),
     }
-    present
 }
 
 struct Frame {
