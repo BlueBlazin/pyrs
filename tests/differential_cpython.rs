@@ -1961,3 +1961,41 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_compile_only_ast_function_class_and_type_param_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+mod = compile("@dec\ndef f[T](x, /, y=2, *args, z, **kw):\n    return x\n\n@dec\nclass C[T](B, metaclass=M, y=1):\n    pass\n", "<ast>", "exec", _ast.PyCF_ONLY_AST)
+fn = mod.body[0]
+cls = mod.body[1]
+result = {
+    "fn_type": type(fn).__name__,
+    "fn_fields": list(fn._fields),
+    "fn_stmt_base": isinstance(fn, _ast.stmt),
+    "fn_decorators": len(fn.decorator_list),
+    "fn_args_type": type(fn.args).__name__,
+    "fn_posonly": [a.arg for a in fn.args.posonlyargs],
+    "fn_args": [a.arg for a in fn.args.args],
+    "fn_vararg": None if fn.args.vararg is None else fn.args.vararg.arg,
+    "fn_kwonly": [a.arg for a in fn.args.kwonlyargs],
+    "fn_kwarg": None if fn.args.kwarg is None else fn.args.kwarg.arg,
+    "fn_defaults_len": len(fn.args.defaults),
+    "fn_type_params": [type(tp).__name__ for tp in fn.type_params],
+    "fn_type_param_base": all(isinstance(tp, _ast.type_param) for tp in fn.type_params),
+    "cls_type": type(cls).__name__,
+    "cls_stmt_base": isinstance(cls, _ast.stmt),
+    "cls_decorators": len(cls.decorator_list),
+    "cls_keyword_args": [(k.arg, type(k.value).__name__) for k in cls.keywords],
+    "cls_type_params": [type(tp).__name__ for tp in cls.type_params],
+    "withitem_attrs": list(_ast.withitem._attributes),
+    "arg_attrs": list(_ast.arg._attributes),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}

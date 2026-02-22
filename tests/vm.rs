@@ -1104,6 +1104,17 @@ fn compile_only_ast_covers_common_statement_nodes() {
 }
 
 #[test]
+fn compile_only_ast_covers_function_class_and_type_param_nodes() {
+    let source = "import _ast\nmod = compile('@dec\\ndef f[T](x, /, y=2, *args, z, **kw):\\n    return x\\n\\n@dec\\nclass C[T](B, metaclass=M, y=1):\\n    pass\\n', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nfn = mod.body[0]\ncls = mod.body[1]\nok = isinstance(fn, _ast.FunctionDef) and isinstance(fn, _ast.stmt) and isinstance(fn.args, _ast.arguments) and isinstance(fn.args.posonlyargs[0], _ast.arg) and isinstance(fn.args.args[0], _ast.arg) and isinstance(fn.type_params[0], _ast.TypeVar) and isinstance(fn.type_params[0], _ast.type_param) and isinstance(cls, _ast.ClassDef) and isinstance(cls, _ast.stmt) and isinstance(cls.keywords[0], _ast.keyword) and cls.keywords[0].arg == 'metaclass' and isinstance(cls.type_params[0], _ast.TypeVar) and isinstance(cls.type_params[0], _ast.type_param) and list(_ast.withitem._attributes) == [] and list(_ast.arg._attributes) == ['lineno', 'col_offset', 'end_lineno', 'end_col_offset']\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

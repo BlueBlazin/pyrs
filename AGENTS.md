@@ -150,13 +150,28 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `Delete`, `Raise`, `Assert`, `If`, `While`, `For`/`AsyncFor`, `With`/`AsyncWith`,
       `Try`/`TryStar`, `Import`/`ImportFrom`, `Global`/`Nonlocal`, `Break`, `Continue`,
       plus helper nodes `alias`, `withitem`, and `ExceptHandler`.
+  - `compile(..., PyCF_ONLY_AST)` conversion now includes function/class definition surfaces:
+    - `FunctionDef` / `AsyncFunctionDef` / `ClassDef`,
+    - `arguments` / `arg`,
+    - `type_param` / `TypeVar` / `ParamSpec` / `TypeVarTuple`,
+    - decorator propagation via `StmtKind::Decorated`.
+  - `_ast` metadata/hierarchy parity was extended for these node families:
+    - metadata now includes CPython-shaped `_fields` / `_attributes` for `FunctionDef`,
+      `AsyncFunctionDef`, `ClassDef`, `arguments`, `arg`, `type_param`, `TypeVar`,
+      `ParamSpec`, `TypeVarTuple`,
+    - hierarchy now wires `FunctionDef`/`AsyncFunctionDef`/`ClassDef -> stmt`,
+      `arguments`/`arg`/`type_param -> AST`,
+      `TypeVar`/`ParamSpec`/`TypeVarTuple -> type_param`,
+    - corrected `withitem._attributes` to CPython parity (`()`).
   - additional AST hierarchy regressions are now covered:
     - `tests/vm.rs::compile_only_ast_honors_core_ast_hierarchy`
     - `tests/vm.rs::compile_only_ast_honors_operator_hierarchy`.
     - `tests/vm.rs::compile_only_ast_covers_common_statement_nodes`.
+    - `tests/vm.rs::compile_only_ast_covers_function_class_and_type_param_nodes`.
   - differential CPython parity gates were expanded for AST-compile surfaces:
     - `tests/differential_cpython.rs::differential_compile_only_ast_assign_fields_and_match_args`
     - `tests/differential_cpython.rs::differential_compile_only_ast_operator_hierarchy_parity`.
+    - `tests/differential_cpython.rs::differential_compile_only_ast_function_class_and_type_param_parity`.
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.

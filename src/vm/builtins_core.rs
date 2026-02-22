@@ -26,7 +26,7 @@ use super::{
 use crate::ast::{
     AssignTarget, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg, Constant as AstConstant,
     DictEntry, ExceptHandler as AstExceptHandler, Expr, ExprKind, ImportAlias as AstImportAlias,
-    Module as AstModule, Stmt, StmtKind, UnaryOp as AstUnaryOp,
+    Module as AstModule, Parameter as AstParameter, Stmt, StmtKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -3853,6 +3853,133 @@ impl Vm {
         )
     }
 
+    fn convert_parameter_to_ast_arg_node(
+        &mut self,
+        parameter: &AstParameter,
+        location: Option<(usize, usize)>,
+    ) -> Result<Value, RuntimeError> {
+        let annotation = match &parameter.annotation {
+            Some(annotation) => self.convert_expr_to_ast_node(annotation)?,
+            None => Value::None,
+        };
+        self.build_ast_node(
+            "arg",
+            location,
+            vec![
+                ("arg", Value::Str(parameter.name.clone())),
+                ("annotation", annotation),
+                ("type_comment", Value::None),
+            ],
+        )
+    }
+
+    fn convert_type_params_to_ast_nodes(
+        &mut self,
+        type_params: &[String],
+        location: Option<(usize, usize)>,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        let mut nodes = Vec::with_capacity(type_params.len());
+        for param in type_params {
+            nodes.push(self.build_ast_node(
+                "TypeVar",
+                location,
+                vec![
+                    ("name", Value::Str(param.clone())),
+                    ("bound", Value::None),
+                    ("default_value", Value::None),
+                ],
+            )?);
+        }
+        Ok(nodes)
+    }
+
+    fn convert_function_arguments_to_ast_node(
+        &mut self,
+        posonly_params: &[AstParameter],
+        params: &[AstParameter],
+        vararg: &Option<AstParameter>,
+        kwonly_params: &[AstParameter],
+        kwarg: &Option<AstParameter>,
+        location: Option<(usize, usize)>,
+    ) -> Result<Value, RuntimeError> {
+        let mut posonlyargs = Vec::with_capacity(posonly_params.len());
+        for param in posonly_params {
+            posonlyargs.push(self.convert_parameter_to_ast_arg_node(param, location)?);
+        }
+        let mut args = Vec::with_capacity(params.len());
+        for param in params {
+            args.push(self.convert_parameter_to_ast_arg_node(param, location)?);
+        }
+        let vararg_node = match vararg {
+            Some(param) => self.convert_parameter_to_ast_arg_node(param, location)?,
+            None => Value::None,
+        };
+        let mut kwonlyargs = Vec::with_capacity(kwonly_params.len());
+        let mut kw_defaults = Vec::with_capacity(kwonly_params.len());
+        for param in kwonly_params {
+            kwonlyargs.push(self.convert_parameter_to_ast_arg_node(param, location)?);
+            kw_defaults.push(match &param.default {
+                Some(default) => self.convert_expr_to_ast_node(default)?,
+                None => Value::None,
+            });
+        }
+        let kwarg_node = match kwarg {
+            Some(param) => self.convert_parameter_to_ast_arg_node(param, location)?,
+            None => Value::None,
+        };
+        let mut defaults = Vec::new();
+        let positional_refs: Vec<&AstParameter> =
+            posonly_params.iter().chain(params.iter()).collect();
+        if let Some(first_default) = positional_refs
+            .iter()
+            .position(|param| param.default.is_some())
+        {
+            for param in positional_refs.into_iter().skip(first_default) {
+                defaults.push(match &param.default {
+                    Some(default) => self.convert_expr_to_ast_node(default)?,
+                    None => Value::None,
+                });
+            }
+        }
+        self.build_ast_node(
+            "arguments",
+            None,
+            vec![
+                ("posonlyargs", self.heap.alloc_list(posonlyargs)),
+                ("args", self.heap.alloc_list(args)),
+                ("vararg", vararg_node),
+                ("kwonlyargs", self.heap.alloc_list(kwonlyargs)),
+                ("kw_defaults", self.heap.alloc_list(kw_defaults)),
+                ("kwarg", kwarg_node),
+                ("defaults", self.heap.alloc_list(defaults)),
+            ],
+        )
+    }
+
+    fn apply_decorators_to_ast_node(
+        &mut self,
+        node: Value,
+        decorators: &[Expr],
+    ) -> Result<Value, RuntimeError> {
+        if decorators.is_empty() {
+            return Ok(node);
+        }
+        let mut decorator_nodes = Vec::with_capacity(decorators.len());
+        for decorator in decorators {
+            decorator_nodes.push(self.convert_expr_to_ast_node(decorator)?);
+        }
+        let list_value = self.heap.alloc_list(decorator_nodes);
+        if let Value::Instance(instance) = &node
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+            && instance_data.attrs.contains_key("decorator_list")
+        {
+            instance_data
+                .attrs
+                .insert("decorator_list".to_string(), list_value);
+        }
+        Ok(node)
+    }
+
     fn convert_assign_target_to_ast_expr(
         &mut self,
         target: &AssignTarget,
@@ -4159,6 +4286,105 @@ impl Vm {
     fn convert_stmt_to_ast_node(&mut self, stmt: &Stmt) -> Result<Value, RuntimeError> {
         let location = Some((stmt.span.line, stmt.span.column));
         match &stmt.node {
+            StmtKind::FunctionDef {
+                name,
+                type_params,
+                is_async,
+                posonly_params,
+                params,
+                vararg,
+                kwarg,
+                kwonly_params,
+                returns,
+                body,
+            } => {
+                let args_node = self.convert_function_arguments_to_ast_node(
+                    posonly_params,
+                    params,
+                    vararg,
+                    kwonly_params,
+                    kwarg,
+                    location,
+                )?;
+                let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
+                let returns_node = match returns {
+                    Some(expr) => self.convert_expr_to_ast_node(expr)?,
+                    None => Value::None,
+                };
+                let type_params_nodes =
+                    self.convert_type_params_to_ast_nodes(type_params, location)?;
+                let class_name = if *is_async {
+                    "AsyncFunctionDef"
+                } else {
+                    "FunctionDef"
+                };
+                self.build_ast_node(
+                    class_name,
+                    location,
+                    vec![
+                        ("name", Value::Str(name.clone())),
+                        ("args", args_node),
+                        ("body", self.heap.alloc_list(body_nodes)),
+                        ("decorator_list", self.heap.alloc_list(Vec::new())),
+                        ("returns", returns_node),
+                        ("type_comment", Value::None),
+                        ("type_params", self.heap.alloc_list(type_params_nodes)),
+                    ],
+                )
+            }
+            StmtKind::ClassDef {
+                name,
+                type_params,
+                bases,
+                metaclass,
+                keywords,
+                body,
+            } => {
+                let mut base_nodes = Vec::with_capacity(bases.len());
+                for base in bases {
+                    base_nodes.push(self.convert_expr_to_ast_node(base)?);
+                }
+                let mut keyword_nodes =
+                    Vec::with_capacity(keywords.len() + usize::from(metaclass.is_some()));
+                if let Some(meta) = metaclass {
+                    let meta_node = self.convert_expr_to_ast_node(meta)?;
+                    keyword_nodes.push(self.build_ast_node(
+                        "keyword",
+                        location,
+                        vec![
+                            ("arg", Value::Str("metaclass".to_string())),
+                            ("value", meta_node),
+                        ],
+                    )?);
+                }
+                for (name, value) in keywords {
+                    let keyword_value = self.convert_expr_to_ast_node(value)?;
+                    keyword_nodes.push(self.build_ast_node(
+                        "keyword",
+                        location,
+                        vec![("arg", Value::Str(name.clone())), ("value", keyword_value)],
+                    )?);
+                }
+                let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
+                let type_params_nodes =
+                    self.convert_type_params_to_ast_nodes(type_params, location)?;
+                self.build_ast_node(
+                    "ClassDef",
+                    location,
+                    vec![
+                        ("name", Value::Str(name.clone())),
+                        ("bases", self.heap.alloc_list(base_nodes)),
+                        ("keywords", self.heap.alloc_list(keyword_nodes)),
+                        ("body", self.heap.alloc_list(body_nodes)),
+                        ("decorator_list", self.heap.alloc_list(Vec::new())),
+                        ("type_params", self.heap.alloc_list(type_params_nodes)),
+                    ],
+                )
+            }
+            StmtKind::Decorated { decorators, stmt } => {
+                let base_node = self.convert_stmt_to_ast_node(stmt)?;
+                self.apply_decorators_to_ast_node(base_node, decorators)
+            }
             StmtKind::Assign { targets, value } => {
                 let mut converted_targets = Vec::with_capacity(targets.len());
                 for target in targets {

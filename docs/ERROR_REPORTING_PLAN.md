@@ -132,6 +132,19 @@ Status: in progress (started 2026-02-22).
     `With`/`AsyncWith`, `Try`/`TryStar`, `Import`/`ImportFrom`, `Global`/`Nonlocal`, and
     loop controls (`Break`/`Continue`), with helper-node materialization for
     `alias`, `withitem`, and `ExceptHandler`.
+  - `compile(..., PyCF_ONLY_AST)` conversion now includes function/class definition surfaces:
+    - `FunctionDef` / `AsyncFunctionDef` / `ClassDef`,
+    - `arguments` / `arg`,
+    - `type_param` / `TypeVar` / `ParamSpec` / `TypeVarTuple`,
+    - decorator-list propagation through `StmtKind::Decorated`.
+  - `_ast` metadata/hierarchy parity was extended for those nodes:
+    - class metadata now includes CPython-shaped `_fields`/`_attributes` for
+      `FunctionDef`, `AsyncFunctionDef`, `ClassDef`, `arguments`, `arg`,
+      `type_param`, `TypeVar`, `ParamSpec`, and `TypeVarTuple`,
+    - hierarchy wiring now maps `FunctionDef`/`AsyncFunctionDef`/`ClassDef -> stmt`,
+      `arguments`/`arg`/`type_param -> AST`, and
+      `TypeVar`/`ParamSpec`/`TypeVarTuple -> type_param`,
+    - corrected `withitem._attributes` to CPython parity (empty tuple).
   - native codec keyword-path parity was tightened for traceback stdlib flows:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs and
       enforce duplicate/unexpected-keyword checks.
@@ -155,6 +168,10 @@ Status: in progress (started 2026-02-22).
   - differential CPython gates now verify key `PyCF_ONLY_AST` parity surfaces:
     - assign-node `_fields` / `__match_args__` and abstract-base membership parity,
     - operator/comparator/unary abstract-family membership parity.
+    - function/class/type-param node-shape and hierarchy parity
+      (`differential_compile_only_ast_function_class_and_type_param_parity`).
+  - VM regressions added for expanded AST-conversion coverage:
+    - `compile_only_ast_covers_function_class_and_type_param_nodes`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

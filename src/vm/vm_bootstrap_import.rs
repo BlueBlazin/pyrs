@@ -78,6 +78,44 @@ impl Vm {
         self.configure_bootstrap_ast_class("Module", &["body", "type_ignores"], &[]);
         self.configure_bootstrap_ast_class("Expression", &["body"], &[]);
         self.configure_bootstrap_ast_class(
+            "FunctionDef",
+            &[
+                "name",
+                "args",
+                "body",
+                "decorator_list",
+                "returns",
+                "type_comment",
+                "type_params",
+            ],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
+            "AsyncFunctionDef",
+            &[
+                "name",
+                "args",
+                "body",
+                "decorator_list",
+                "returns",
+                "type_comment",
+                "type_params",
+            ],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
+            "ClassDef",
+            &[
+                "name",
+                "bases",
+                "keywords",
+                "body",
+                "decorator_list",
+                "type_params",
+            ],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
             "Assign",
             &["targets", "value", "type_comment"],
             &LOC_ATTRS,
@@ -125,11 +163,33 @@ impl Vm {
         self.configure_bootstrap_ast_class("excepthandler", &[], &[]);
         self.configure_bootstrap_ast_class("ExceptHandler", &["type", "name", "body"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("alias", &["name", "asname"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("withitem", &["context_expr", "optional_vars"], &[]);
         self.configure_bootstrap_ast_class(
-            "withitem",
-            &["context_expr", "optional_vars"],
+            "arguments",
+            &[
+                "posonlyargs",
+                "args",
+                "vararg",
+                "kwonlyargs",
+                "kw_defaults",
+                "kwarg",
+                "defaults",
+            ],
+            &[],
+        );
+        self.configure_bootstrap_ast_class(
+            "arg",
+            &["arg", "annotation", "type_comment"],
             &LOC_ATTRS,
         );
+        self.configure_bootstrap_ast_class("type_param", &[], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "TypeVar",
+            &["name", "bound", "default_value"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class("ParamSpec", &["name", "default_value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("TypeVarTuple", &["name", "default_value"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Name", &["id", "ctx"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Call", &["func", "args", "keywords"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("keyword", &["arg", "value"], &LOC_ATTRS);
@@ -506,6 +566,9 @@ impl Vm {
         let _ = self.set_module_class_bases("_ast", "Expression", &["mod"]);
 
         for class_name in [
+            "FunctionDef",
+            "AsyncFunctionDef",
+            "ClassDef",
             "Assign",
             "Delete",
             "Return",
@@ -556,6 +619,12 @@ impl Vm {
         let _ = self.set_module_class_bases("_ast", "keyword", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "alias", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "withitem", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "arguments", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "arg", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "type_param", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "TypeVar", &["type_param"]);
+        let _ = self.set_module_class_bases("_ast", "ParamSpec", &["type_param"]);
+        let _ = self.set_module_class_bases("_ast", "TypeVarTuple", &["type_param"]);
         let _ = self.set_module_class_bases("_ast", "ExceptHandler", &["excepthandler"]);
 
         for class_name in ["Load", "Store", "Del"] {
@@ -3887,6 +3956,21 @@ impl Vm {
                         .alloc_class(ClassObject::new("Module".to_string(), Vec::new())),
                 ),
                 (
+                    "FunctionDef",
+                    self.heap
+                        .alloc_class(ClassObject::new("FunctionDef".to_string(), Vec::new())),
+                ),
+                (
+                    "AsyncFunctionDef",
+                    self.heap
+                        .alloc_class(ClassObject::new("AsyncFunctionDef".to_string(), Vec::new())),
+                ),
+                (
+                    "ClassDef",
+                    self.heap
+                        .alloc_class(ClassObject::new("ClassDef".to_string(), Vec::new())),
+                ),
+                (
                     "mod",
                     self.heap
                         .alloc_class(ClassObject::new("mod".to_string(), Vec::new())),
@@ -3925,6 +4009,36 @@ impl Vm {
                     "cmpop",
                     self.heap
                         .alloc_class(ClassObject::new("cmpop".to_string(), Vec::new())),
+                ),
+                (
+                    "arguments",
+                    self.heap
+                        .alloc_class(ClassObject::new("arguments".to_string(), Vec::new())),
+                ),
+                (
+                    "arg",
+                    self.heap
+                        .alloc_class(ClassObject::new("arg".to_string(), Vec::new())),
+                ),
+                (
+                    "type_param",
+                    self.heap
+                        .alloc_class(ClassObject::new("type_param".to_string(), Vec::new())),
+                ),
+                (
+                    "TypeVar",
+                    self.heap
+                        .alloc_class(ClassObject::new("TypeVar".to_string(), Vec::new())),
+                ),
+                (
+                    "ParamSpec",
+                    self.heap
+                        .alloc_class(ClassObject::new("ParamSpec".to_string(), Vec::new())),
+                ),
+                (
+                    "TypeVarTuple",
+                    self.heap
+                        .alloc_class(ClassObject::new("TypeVarTuple".to_string(), Vec::new())),
                 ),
                 (
                     "Expr",
