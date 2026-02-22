@@ -15508,7 +15508,9 @@ except ValueError as exc:
 else:
     invalid_event = False
 m.set_events(2, events.LINE | events.BRANCH)
+events_set = (m.get_events(2) == (events.LINE | events.BRANCH_LEFT | events.BRANCH_RIGHT))
 m.set_local_events(2, code, events.LINE | events.BRANCH)
+local_events_set = (m.get_local_events(2, code) == (events.LINE | events.BRANCH_LEFT | events.BRANCH_RIGHT))
 m.restart_events()
 m.clear_tool_id(2)
 cleared = (m.get_tool(2) == "prof")
@@ -15533,7 +15535,13 @@ except TypeError as exc:
     code_error = ("code object" in str(exc))
 else:
     code_error = False
-ok = ok and bad_tool and tool_set and duplicate and callbacks and invalid_event and cleared and freed and set_events_error and set_local_error and code_error
+try:
+    m.set_local_events(99, 1, 0)
+except TypeError as exc:
+    code_precedence_error = ("code object" in str(exc))
+else:
+    code_precedence_error = False
+ok = ok and bad_tool and tool_set and duplicate and callbacks and invalid_event and events_set and local_events_set and cleared and freed and set_events_error and set_local_error and code_error and code_precedence_error
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
