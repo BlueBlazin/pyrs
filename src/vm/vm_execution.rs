@@ -9917,14 +9917,12 @@ impl Vm {
                     self.call_native_method(native_kind, receiver, Vec::new(), HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(
-                    function,
-                    receiver,
-                    Vec::new(),
-                    HashMap::new(),
-                )
-            }
+            BoundDispatchKind::Generic => self.call_bound_method_via_call_internal(
+                function,
+                receiver,
+                Vec::new(),
+                HashMap::new(),
+            ),
         }
     }
 
@@ -9972,14 +9970,12 @@ impl Vm {
                     self.call_native_method(native_kind, receiver, vec![arg0], HashMap::new());
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(
-                    function,
-                    receiver,
-                    vec![arg0],
-                    HashMap::new(),
-                )
-            }
+            BoundDispatchKind::Generic => self.call_bound_method_via_call_internal(
+                function,
+                receiver,
+                vec![arg0],
+                HashMap::new(),
+            ),
         }
     }
 
@@ -10032,14 +10028,12 @@ impl Vm {
                 );
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(
-                    function,
-                    receiver,
-                    vec![arg0, arg1],
-                    HashMap::new(),
-                )
-            }
+            BoundDispatchKind::Generic => self.call_bound_method_via_call_internal(
+                function,
+                receiver,
+                vec![arg0, arg1],
+                HashMap::new(),
+            ),
         }
     }
 
@@ -10097,14 +10091,12 @@ impl Vm {
                 );
                 self.finalize_native_opcode_call(caller_depth, caller_ip, call_result)
             }
-            BoundDispatchKind::Generic => {
-                self.call_bound_method_via_call_internal(
-                    function,
-                    receiver,
-                    vec![arg0, arg1, arg2],
-                    HashMap::new(),
-                )
-            }
+            BoundDispatchKind::Generic => self.call_bound_method_via_call_internal(
+                function,
+                receiver,
+                vec![arg0, arg1, arg2],
+                HashMap::new(),
+            ),
         }
     }
 

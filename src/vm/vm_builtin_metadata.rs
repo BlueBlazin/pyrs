@@ -3162,7 +3162,10 @@ impl Vm {
                             && receiver_is_proxy
                             && callable_type_name == "cython_function_or_method"
                             && let Some(bound_callable) = self
-                                .bind_cpython_proxy_descriptor_callable(&callable, &receiver_value)?
+                                .bind_cpython_proxy_descriptor_callable(
+                                    &callable,
+                                    &receiver_value,
+                                )?
                         {
                             return self.call_internal(bound_callable, args, kwargs);
                         }
@@ -3175,9 +3178,10 @@ impl Vm {
                         if std::env::var_os("PYRS_TRACE_PROXY_BOUND_CALL").is_some() {
                             let receiver_tag = format_repr(&receiver_value);
                             let receiver_type = self.value_type_name_for_error(&receiver_value);
-                            let receiver_ptr = Vm::cpython_proxy_raw_ptr_from_value(&receiver_value)
-                                .map(|ptr| format!("{:p}", ptr))
-                                .unwrap_or_else(|| "<none>".to_string());
+                            let receiver_ptr =
+                                Vm::cpython_proxy_raw_ptr_from_value(&receiver_value)
+                                    .map(|ptr| format!("{:p}", ptr))
+                                    .unwrap_or_else(|| "<none>".to_string());
                             let callable_repr = format_repr(&callable);
                             let callable_ptr = Vm::cpython_proxy_raw_ptr_from_value(&callable)
                                 .map(|ptr| format!("{:p}", ptr))

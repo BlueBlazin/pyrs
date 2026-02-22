@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use crate::bytecode::metadata::OpcodeMetadata;
 use crate::bytecode::pyc::{PycHeader, parse_pyc_header, write_pyc_header};
@@ -104,10 +105,28 @@ pub fn translate_code(code: &CpythonCode, heap: &mut Heap) -> Result<CodeObject,
     translator.translate()
 }
 
+fn default_opcode_map() -> Result<&'static HashMap<u8, String>, CpythonError> {
+    static CPYTHON_OPCODE_MAP: OnceLock<Result<HashMap<u8, String>, String>> = OnceLock::new();
+    let map_result = CPYTHON_OPCODE_MAP.get_or_init(|| {
+        let metadata = OpcodeMetadata::load_default().map_err(|err| err.message)?;
+        let mut map = HashMap::new();
+        for info in metadata.opcodes {
+            if info.code <= u8::MAX as u16 {
+                map.insert(info.code as u8, info.name);
+            }
+        }
+        Ok(map)
+    });
+    match map_result {
+        Ok(map) => Ok(map),
+        Err(message) => Err(CpythonError::new(message.clone())),
+    }
+}
+
 struct Translator<'a> {
     code: &'a CpythonCode,
     heap: &'a mut Heap,
-    opmap: HashMap<u8, String>,
+    opmap: &'static HashMap<u8, String>,
     names: Vec<String>,
     name_index: HashMap<String, u32>,
     locals_map: Vec<u32>,
@@ -120,14 +139,7 @@ struct Translator<'a> {
 
 impl<'a> Translator<'a> {
     fn new(code: &'a CpythonCode, heap: &'a mut Heap) -> Result<Self, CpythonError> {
-        let metadata =
-            OpcodeMetadata::load_default().map_err(|err| CpythonError::new(err.message))?;
-        let mut opmap = HashMap::new();
-        for info in metadata.opcodes {
-            if info.code <= u8::MAX as u16 {
-                opmap.insert(info.code as u8, info.name);
-            }
-        }
+        let opmap = default_opcode_map()?;
 
         Ok(Self {
             code,
@@ -149,7 +161,6 @@ impl<'a> Translator<'a> {
         self.constants = self.convert_constants(&self.code.consts)?;
 
         let mut result = CodeObject::new(self.code.name.clone(), self.code.filename.clone());
-        result.constants = self.constants.clone();
         result.names = self.names.clone();
         result.cellvars = self.cellvars.clone();
         result.freevars = self.freevars.clone();

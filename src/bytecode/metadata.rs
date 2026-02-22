@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpcodeInfo {
@@ -35,11 +36,17 @@ impl OpcodeMetadata {
     }
 
     pub fn load_default() -> Result<Self, MetadataError> {
-        let path = vendor_dir().join("opcode_table.csv");
-        if !path.exists() {
-            return Ok(Self::empty());
-        }
-        Self::load_from_csv(&path)
+        static DEFAULT_OPCODE_METADATA: OnceLock<Result<OpcodeMetadata, MetadataError>> =
+            OnceLock::new();
+        DEFAULT_OPCODE_METADATA
+            .get_or_init(|| {
+                let path = vendor_dir().join("opcode_table.csv");
+                if !path.exists() {
+                    return Ok(Self::empty());
+                }
+                Self::load_from_csv(&path)
+            })
+            .clone()
     }
 
     pub fn load_from_csv(path: &Path) -> Result<Self, MetadataError> {

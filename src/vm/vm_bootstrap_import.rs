@@ -1,14 +1,14 @@
 use super::{
     AtomicOrdering, BUILTIN_MODULE_LOADER, BuiltinFunction, ClassObject, DEFAULT_META_PATH_FINDER,
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
-    InstanceObject, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES, ModuleObject,
-    ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object, PURE_STDLIB_COLLECTIONS_MODULES,
-    PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES,
-    PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError,
-    SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER,
-    SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler,
-    cpython, dict_get_value, dict_remove_value, dict_set_value, matches_finder_kind,
-    parse_uuid_like_string, parser, source_path_from_cache_path,
+    ImportDirCacheEntry, InstanceObject, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES,
+    ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object,
+    PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES,
+    PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf,
+    Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM,
+    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
+    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
+    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -123,6 +123,69 @@ impl Vm {
             .and_then(|duration| u32::try_from(duration.as_secs()).ok())?;
         let size = u32::try_from(metadata.len()).ok()?;
         Some((timestamp, size))
+    }
+
+    fn directory_mtime_ns(path: &Path) -> Option<u128> {
+        let metadata = std::fs::metadata(path).ok()?;
+        let modified = metadata.modified().ok()?;
+        let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+        Some(duration.as_secs() as u128 * 1_000_000_000 + duration.subsec_nanos() as u128)
+    }
+
+    fn directory_contains_entry_cached(
+        &mut self,
+        directory: &Path,
+        entry: &std::ffi::OsStr,
+    ) -> bool {
+        let mtime_ns = Self::directory_mtime_ns(directory);
+        let refresh = self
+            .import_dir_cache
+            .get(directory)
+            .is_none_or(|cached| cached.mtime_ns != mtime_ns);
+        if refresh {
+            let entries = match std::fs::read_dir(directory) {
+                Ok(read_dir) => read_dir
+                    .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
+                    .collect::<HashSet<_>>(),
+                Err(_) => {
+                    self.import_dir_cache.remove(directory);
+                    return false;
+                }
+            };
+            self.import_dir_cache.insert(
+                directory.to_path_buf(),
+                ImportDirCacheEntry { mtime_ns, entries },
+            );
+        }
+        self.import_dir_cache
+            .get(directory)
+            .is_some_and(|cached| cached.entries.contains(entry))
+    }
+
+    fn cached_path_is_file(&mut self, path: &Path) -> bool {
+        let Some(file_name) = path.file_name() else {
+            return false;
+        };
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        if !self.directory_contains_entry_cached(parent, file_name) {
+            return false;
+        }
+        path.is_file()
+    }
+
+    fn cached_path_is_dir(&mut self, path: &Path) -> bool {
+        let Some(dir_name) = path.file_name() else {
+            return false;
+        };
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        if !self.directory_contains_entry_cached(parent, dir_name) {
+            return false;
+        }
+        path.is_dir()
     }
 
     fn pyc_matches_source(pyc_path: &Path, source_path: &Path) -> bool {
@@ -6013,6 +6076,7 @@ impl Vm {
         }
         self.module_paths = new_paths;
         self.module_source_positive_cache.clear();
+        self.import_dir_cache.clear();
         self.preferred_filesystem_module_cache.clear();
         self.maybe_prefer_cpython_pure_stdlib_modules();
     }
@@ -6786,6 +6850,16 @@ impl Vm {
         }
     }
 
+    fn cache_module_source_positive(
+        &mut self,
+        cache_key: &(PathBuf, String),
+        spec: ModuleSourceInfo,
+    ) -> ModuleSourceInfo {
+        self.module_source_positive_cache
+            .insert(cache_key.clone(), spec.clone());
+        spec
+    }
+
     pub(super) fn find_module_source_in_single_root(
         &mut self,
         module_name: &str,
@@ -6795,91 +6869,107 @@ impl Vm {
         if let Some(cached) = self.module_source_positive_cache.get(&cache_key) {
             return Some(cached.clone());
         }
-        let mut cache_positive = |spec: ModuleSourceInfo| {
-            self.module_source_positive_cache
-                .insert(cache_key.clone(), spec.clone());
-            Some(spec)
-        };
         let rel_name = module_name.replace('.', "/");
         let candidate = root.join(format!("{rel_name}.py"));
         let pyc_candidate = cached_module_path(root, &rel_name);
         let direct_pyc = root.join(format!("{rel_name}.pyc"));
-        if candidate.exists() {
+        if self.cached_path_is_file(&candidate) {
             if self.prefer_pyc_when_source_available
-                && pyc_candidate.exists()
+                && self.cached_path_is_file(&pyc_candidate)
                 && Self::pyc_matches_source(&pyc_candidate, &candidate)
             {
-                return cache_positive(ModuleSourceInfo {
-                    path: pyc_candidate,
+                return Some(self.cache_module_source_positive(
+                    &cache_key,
+                    ModuleSourceInfo {
+                        path: pyc_candidate,
+                        is_package: false,
+                        package_dirs: Vec::new(),
+                        is_namespace: false,
+                        is_bytecode: true,
+                        is_extension: false,
+                    },
+                ));
+            }
+            if self.prefer_pyc_when_source_available
+                && self.cached_path_is_file(&direct_pyc)
+                && Self::pyc_matches_source(&direct_pyc, &candidate)
+            {
+                return Some(self.cache_module_source_positive(
+                    &cache_key,
+                    ModuleSourceInfo {
+                        path: direct_pyc,
+                        is_package: false,
+                        package_dirs: Vec::new(),
+                        is_namespace: false,
+                        is_bytecode: true,
+                        is_extension: false,
+                    },
+                ));
+            }
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: candidate,
                     is_package: false,
                     package_dirs: Vec::new(),
                     is_namespace: false,
-                    is_bytecode: true,
+                    is_bytecode: false,
                     is_extension: false,
-                });
-            }
-            if self.prefer_pyc_when_source_available
-                && direct_pyc.exists()
-                && Self::pyc_matches_source(&direct_pyc, &candidate)
-            {
-                return cache_positive(ModuleSourceInfo {
+                },
+            ));
+        }
+        if self.cached_path_is_file(&direct_pyc) {
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
                     path: direct_pyc,
                     is_package: false,
                     package_dirs: Vec::new(),
                     is_namespace: false,
                     is_bytecode: true,
                     is_extension: false,
-                });
-            }
-            return cache_positive(ModuleSourceInfo {
-                path: candidate,
-                is_package: false,
-                package_dirs: Vec::new(),
-                is_namespace: false,
-                is_bytecode: false,
-                is_extension: false,
-            });
+                },
+            ));
         }
-        if direct_pyc.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: direct_pyc,
-                is_package: false,
-                package_dirs: Vec::new(),
-                is_namespace: false,
-                is_bytecode: true,
-                is_extension: false,
-            });
-        }
-        if pyc_candidate.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: pyc_candidate,
-                is_package: false,
-                package_dirs: Vec::new(),
-                is_namespace: false,
-                is_bytecode: true,
-                is_extension: false,
-            });
+        if self.cached_path_is_file(&pyc_candidate) {
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: pyc_candidate,
+                    is_package: false,
+                    package_dirs: Vec::new(),
+                    is_namespace: false,
+                    is_bytecode: true,
+                    is_extension: false,
+                },
+            ));
         }
         if let Some(library_candidate) = find_shared_library_for_module(root, &rel_name) {
-            return cache_positive(ModuleSourceInfo {
-                path: library_candidate,
-                is_package: false,
-                package_dirs: Vec::new(),
-                is_namespace: false,
-                is_bytecode: false,
-                is_extension: true,
-            });
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: library_candidate,
+                    is_package: false,
+                    package_dirs: Vec::new(),
+                    is_namespace: false,
+                    is_bytecode: false,
+                    is_extension: true,
+                },
+            ));
         }
         let extension_manifest = root.join(format!("{rel_name}{PYRS_EXTENSION_MANIFEST_SUFFIX}"));
-        if extension_manifest.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: extension_manifest,
-                is_package: false,
-                package_dirs: Vec::new(),
-                is_namespace: false,
-                is_bytecode: false,
-                is_extension: true,
-            });
+        if self.cached_path_is_file(&extension_manifest) {
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: extension_manifest,
+                    is_package: false,
+                    package_dirs: Vec::new(),
+                    is_namespace: false,
+                    is_bytecode: false,
+                    is_extension: true,
+                },
+            ));
         }
         let package_dir = root.join(&rel_name);
         let package_init = package_dir.join("__init__.py");
@@ -6887,85 +6977,106 @@ impl Vm {
             .join("__pycache__")
             .join("__init__.cpython-314.pyc");
         let direct_package_init_pyc = package_dir.join("__init__.pyc");
-        if package_init.exists() {
+        if self.cached_path_is_file(&package_init) {
             if self.prefer_pyc_when_source_available
-                && package_init_pyc.exists()
+                && self.cached_path_is_file(&package_init_pyc)
                 && Self::pyc_matches_source(&package_init_pyc, &package_init)
             {
-                return cache_positive(ModuleSourceInfo {
-                    path: package_init_pyc,
+                return Some(self.cache_module_source_positive(
+                    &cache_key,
+                    ModuleSourceInfo {
+                        path: package_init_pyc,
+                        is_package: true,
+                        package_dirs: vec![package_dir],
+                        is_namespace: false,
+                        is_bytecode: true,
+                        is_extension: false,
+                    },
+                ));
+            }
+            if self.prefer_pyc_when_source_available
+                && self.cached_path_is_file(&direct_package_init_pyc)
+                && Self::pyc_matches_source(&direct_package_init_pyc, &package_init)
+            {
+                return Some(self.cache_module_source_positive(
+                    &cache_key,
+                    ModuleSourceInfo {
+                        path: direct_package_init_pyc,
+                        is_package: true,
+                        package_dirs: vec![package_dir],
+                        is_namespace: false,
+                        is_bytecode: true,
+                        is_extension: false,
+                    },
+                ));
+            }
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: package_init,
                     is_package: true,
                     package_dirs: vec![package_dir],
                     is_namespace: false,
-                    is_bytecode: true,
+                    is_bytecode: false,
                     is_extension: false,
-                });
-            }
-            if self.prefer_pyc_when_source_available
-                && direct_package_init_pyc.exists()
-                && Self::pyc_matches_source(&direct_package_init_pyc, &package_init)
-            {
-                return cache_positive(ModuleSourceInfo {
+                },
+            ));
+        }
+        if self.cached_path_is_file(&direct_package_init_pyc) {
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
                     path: direct_package_init_pyc,
                     is_package: true,
                     package_dirs: vec![package_dir],
                     is_namespace: false,
                     is_bytecode: true,
                     is_extension: false,
-                });
-            }
-            return cache_positive(ModuleSourceInfo {
-                path: package_init,
-                is_package: true,
-                package_dirs: vec![package_dir],
-                is_namespace: false,
-                is_bytecode: false,
-                is_extension: false,
-            });
+                },
+            ));
         }
-        if direct_package_init_pyc.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: direct_package_init_pyc,
-                is_package: true,
-                package_dirs: vec![package_dir],
-                is_namespace: false,
-                is_bytecode: true,
-                is_extension: false,
-            });
-        }
-        if package_init_pyc.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: package_init_pyc,
-                is_package: true,
-                package_dirs: vec![package_dir],
-                is_namespace: false,
-                is_bytecode: true,
-                is_extension: false,
-            });
+        if self.cached_path_is_file(&package_init_pyc) {
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: package_init_pyc,
+                    is_package: true,
+                    package_dirs: vec![package_dir],
+                    is_namespace: false,
+                    is_bytecode: true,
+                    is_extension: false,
+                },
+            ));
         }
         if let Some(library_candidate) = find_shared_library_for_package(&package_dir) {
-            return cache_positive(ModuleSourceInfo {
-                path: library_candidate,
-                is_package: true,
-                package_dirs: vec![package_dir],
-                is_namespace: false,
-                is_bytecode: false,
-                is_extension: true,
-            });
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: library_candidate,
+                    is_package: true,
+                    package_dirs: vec![package_dir],
+                    is_namespace: false,
+                    is_bytecode: false,
+                    is_extension: true,
+                },
+            ));
         }
         let package_extension_manifest =
             package_dir.join(format!("__init__{PYRS_EXTENSION_MANIFEST_SUFFIX}"));
-        if package_extension_manifest.exists() {
-            return cache_positive(ModuleSourceInfo {
-                path: package_extension_manifest,
-                is_package: true,
-                package_dirs: vec![package_dir],
-                is_namespace: false,
-                is_bytecode: false,
-                is_extension: true,
-            });
+        if self.cached_path_is_file(&package_extension_manifest) {
+            return Some(self.cache_module_source_positive(
+                &cache_key,
+                ModuleSourceInfo {
+                    path: package_extension_manifest,
+                    is_package: true,
+                    package_dirs: vec![package_dir],
+                    is_namespace: false,
+                    is_bytecode: false,
+                    is_extension: true,
+                },
+            ));
         }
-        if package_dir.is_dir() {
+        if self.cached_path_is_dir(&package_dir) {
             return Some(ModuleSourceInfo {
                 path: package_dir.clone(),
                 is_package: true,

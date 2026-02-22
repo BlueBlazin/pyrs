@@ -22,7 +22,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
-use std::ffi::{CString, c_void};
+use std::ffi::{CString, OsString, c_void};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
@@ -134,6 +134,12 @@ struct ImportPerfCounters {
     fs_source_compiles: u64,
     pyc_load_attempts: u64,
     pyc_load_fallback_to_source: u64,
+}
+
+#[derive(Clone)]
+struct ImportDirCacheEntry {
+    mtime_ns: Option<u128>,
+    entries: HashSet<OsString>,
 }
 
 #[derive(Clone)]
@@ -739,6 +745,7 @@ pub struct Vm {
     main_module: ObjRef,
     module_paths: Vec<PathBuf>,
     module_source_positive_cache: HashMap<(PathBuf, String), ModuleSourceInfo>,
+    import_dir_cache: HashMap<PathBuf, ImportDirCacheEntry>,
     preferred_filesystem_module_cache: HashMap<String, bool>,
     import_sys_path_signature: u64,
     import_meta_path_signature: u64,
@@ -981,6 +988,7 @@ impl Vm {
             main_module,
             module_paths,
             module_source_positive_cache: HashMap::new(),
+            import_dir_cache: HashMap::new(),
             preferred_filesystem_module_cache: HashMap::new(),
             import_sys_path_signature: 0,
             import_meta_path_signature: 0,
@@ -1700,6 +1708,22 @@ impl Vm {
                 self.import_perf_counters.pyc_load_fallback_to_source,
             );
         }
+        if let Some(capi_perf) = self::vm_extensions::capi_perf_snapshot() {
+            eprintln!(
+                "[capi-perf] richcompare={} richcompare_bool={} richcompare_slot={} dunder_fallback={} value_from_ptr={} handle_from_ptr={}/{} py_incref={}/{} py_decref={}/{}",
+                capi_perf.richcompare_calls,
+                capi_perf.richcompare_bool_calls,
+                capi_perf.richcompare_slot_attempts,
+                capi_perf.richcompare_dunder_fallback_attempts,
+                capi_perf.value_from_ptr_calls,
+                capi_perf.handle_from_ptr_hits,
+                capi_perf.handle_from_ptr_calls,
+                capi_perf.py_incref_handle_hits,
+                capi_perf.py_incref_calls,
+                capi_perf.py_decref_handle_hits,
+                capi_perf.py_decref_calls,
+            );
+        }
         shutdown_result.map(|_| ())
     }
 
@@ -1710,6 +1734,7 @@ impl Vm {
         }
         self.module_paths.push(path);
         self.module_source_positive_cache.clear();
+        self.import_dir_cache.clear();
         self.preferred_filesystem_module_cache.clear();
         self.import_sys_path_signature = 0;
         self.sync_sys_path_from_module_paths();
@@ -1721,6 +1746,7 @@ impl Vm {
         self.module_paths.retain(|existing| existing != &path);
         self.module_paths.insert(0, path);
         self.module_source_positive_cache.clear();
+        self.import_dir_cache.clear();
         self.preferred_filesystem_module_cache.clear();
         self.import_sys_path_signature = 0;
         self.sync_sys_path_from_module_paths();
@@ -1745,6 +1771,7 @@ impl Vm {
     pub fn enable_source_bound_pyc_preference(&mut self) {
         self.prefer_pyc_when_source_available = true;
         self.module_source_positive_cache.clear();
+        self.import_dir_cache.clear();
     }
 
     pub fn enable_local_shim_fallback(&mut self) {

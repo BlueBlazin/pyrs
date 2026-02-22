@@ -22,6 +22,7 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 ## Command Execution Hygiene
 - Prefer direct command execution from the existing working directory (no wrapper like `zsh -lc 'cd ... && ...'` unless direct execution fails).
 - Prefer setting environment variables in a separate step before running commands; use inline `ENV=... cmd` only as a fallback when the direct approach is not viable.
+- Hard rule for this workspace: do not run commands in inline-env form (`ENV=... cmd`) when a separate environment setup step is possible.
 
 ## Active Execution Lock (2026-02-16)
 - Primary focus is C-API closure for native scientific-stack support.

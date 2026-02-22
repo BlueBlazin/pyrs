@@ -2,11 +2,14 @@ use std::ffi::{CStr, c_char, c_int, c_void};
 
 use super::{
     _PyObject_NewVar, CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead,
+    capi_perf_inc_py_decref_calls, capi_perf_inc_py_decref_handle_hits,
+    capi_perf_inc_py_incref_calls, capi_perf_inc_py_incref_handle_hits,
     cpython_is_interned_unicode_ptr, cpython_set_error, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_IncRef(object: *mut c_void) {
+    capi_perf_inc_py_incref_calls();
     if object.is_null() {
         return;
     }
@@ -19,14 +22,24 @@ pub unsafe extern "C" fn Py_IncRef(object: *mut c_void) {
         }
     }
     let _ = with_active_cpython_context_mut(|context| {
-        if let Some(handle) = context.cpython_handle_from_ptr(object) {
+        let object_key = object as usize;
+        if let Some(handle) = context.cpython_objects_by_ptr.get(&object_key).copied() {
             let _ = context.incref(handle);
+            capi_perf_inc_py_incref_handle_hits();
+            return;
+        }
+        if context.owns_cpython_allocation_ptr(object)
+            && let Some(handle) = context.cpython_handle_from_ptr(object)
+        {
+            let _ = context.incref(handle);
+            capi_perf_inc_py_incref_handle_hits();
         }
     });
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_DecRef(object: *mut c_void) {
+    capi_perf_inc_py_decref_calls();
     if object.is_null() {
         return;
     }
@@ -45,8 +58,17 @@ pub unsafe extern "C" fn Py_DecRef(object: *mut c_void) {
         if interned {
             return;
         }
-        if let Some(handle) = context.cpython_handle_from_ptr(object) {
+        let object_key = object as usize;
+        if let Some(handle) = context.cpython_objects_by_ptr.get(&object_key).copied() {
             let _ = context.decref(handle);
+            capi_perf_inc_py_decref_handle_hits();
+            return;
+        }
+        if context.owns_cpython_allocation_ptr(object)
+            && let Some(handle) = context.cpython_handle_from_ptr(object)
+        {
+            let _ = context.decref(handle);
+            capi_perf_inc_py_decref_handle_hits();
         }
     });
 }

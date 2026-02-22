@@ -13,6 +13,8 @@ use super::{
     ModuleCapiContext, Py_DecRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches,
     PyErr_Occurred, PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError, PyExc_TypeError,
     PyLong_AsSsize_t, PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string,
+    capi_perf_inc_richcompare_bool_calls, capi_perf_inc_richcompare_calls,
+    capi_perf_inc_richcompare_dunder_fallback_attempts, capi_perf_inc_richcompare_slot_attempts,
     cpython_call_builtin, cpython_call_object, cpython_error_message_indicates_missing_attribute,
     cpython_is_interned_unicode_ptr, cpython_lookup_interned_unicode_text,
     cpython_mapping_ass_subscript_slot, cpython_mapping_subscript_slot, cpython_new_ptr_for_value,
@@ -980,6 +982,7 @@ pub unsafe extern "C" fn PyObject_RichCompare(
     right: *mut c_void,
     op: i32,
 ) -> *mut c_void {
+    capi_perf_inc_richcompare_calls();
     if left.is_null() || right.is_null() {
         cpython_set_error("PyObject_RichCompare received null operand");
         return std::ptr::null_mut();
@@ -991,6 +994,7 @@ pub unsafe extern "C" fn PyObject_RichCompare(
     if (op == 2 || op == 3) && left == right {
         return cpython_new_ptr_for_value(Value::Bool(op == 2));
     }
+    capi_perf_inc_richcompare_slot_attempts();
     if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
         return result;
     }
@@ -1060,6 +1064,7 @@ pub unsafe extern "C" fn PyObject_RichCompare(
         Error,
     }
 
+    capi_perf_inc_richcompare_dunder_fallback_attempts();
     let try_call = |receiver_ptr: *mut c_void,
                     method_name: &std::ffi::CStr,
                     arg: Value|
@@ -1124,6 +1129,7 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
     right: *mut c_void,
     op: i32,
 ) -> i32 {
+    capi_perf_inc_richcompare_bool_calls();
     let trace_compare_errors = env_var_present_cached("PYRS_TRACE_CPY_COMPARE_ERRORS");
     if left == right {
         if op == 2 {
