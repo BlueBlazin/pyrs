@@ -2386,6 +2386,7 @@ pub enum BuiltinFunction {
     Property,
     ObjectNew,
     ObjectInit,
+    ObjectInitSubclass,
     ExceptionTypeInit,
     ObjectGetAttribute,
     ObjectFormat,
@@ -2433,6 +2434,18 @@ pub enum BuiltinFunction {
     SysGetRefCount,
     SysGetRecursionLimit,
     SysSetRecursionLimit,
+    SysAudit,
+    SysClearTypeDescriptors,
+    SysUnraisableHook,
+    SysBreakpointHook,
+    SysMonitoringGetTool,
+    SysMonitoringUseToolId,
+    SysMonitoringClearToolId,
+    SysMonitoringFreeToolId,
+    SysMonitoringRegisterCallback,
+    SysMonitoringSetEvents,
+    SysMonitoringSetLocalEvents,
+    SysMonitoringRestartEvents,
     SysStdoutWrite,
     SysStdoutBufferWrite,
     SysStdoutFlush,
@@ -5641,6 +5654,18 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetRefCount
             | BuiltinFunction::SysGetRecursionLimit
             | BuiltinFunction::SysSetRecursionLimit
+            | BuiltinFunction::SysAudit
+            | BuiltinFunction::SysClearTypeDescriptors
+            | BuiltinFunction::SysUnraisableHook
+            | BuiltinFunction::SysBreakpointHook
+            | BuiltinFunction::SysMonitoringGetTool
+            | BuiltinFunction::SysMonitoringUseToolId
+            | BuiltinFunction::SysMonitoringClearToolId
+            | BuiltinFunction::SysMonitoringFreeToolId
+            | BuiltinFunction::SysMonitoringRegisterCallback
+            | BuiltinFunction::SysMonitoringSetEvents
+            | BuiltinFunction::SysMonitoringSetLocalEvents
+            | BuiltinFunction::SysMonitoringRestartEvents
             | BuiltinFunction::SysStdoutWrite
             | BuiltinFunction::SysStdoutBufferWrite
             | BuiltinFunction::SysStdoutFlush
@@ -6196,6 +6221,7 @@ impl BuiltinFunction {
             | BuiltinFunction::WarningsReleaseLock
             | BuiltinFunction::ObjectNew
             | BuiltinFunction::ObjectInit
+            | BuiltinFunction::ObjectInitSubclass
             | BuiltinFunction::ExceptionTypeInit
             | BuiltinFunction::ObjectGetAttribute
             | BuiltinFunction::ObjectFormat

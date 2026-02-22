@@ -1104,7 +1104,7 @@ impl Vm {
             );
             class_data.attrs.insert(
                 "__init_subclass__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::ObjectInitSubclass),
             );
             class_data.attrs.insert(
                 "__getattribute__".to_string(),

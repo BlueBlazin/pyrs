@@ -437,6 +437,28 @@ const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
 const LOCAL_SHIM_MODULES: &[&str] = &["_ctypes"];
 const LOCAL_SHIM_PRECEDENCE_MODULES: &[&str] = &["_ctypes"];
+const MONITORING_MAX_USER_TOOL_ID: i64 = 5;
+const MONITORING_EVENT_PY_START: i64 = 1 << 0;
+const MONITORING_EVENT_PY_RESUME: i64 = 1 << 1;
+const MONITORING_EVENT_PY_RETURN: i64 = 1 << 2;
+const MONITORING_EVENT_PY_YIELD: i64 = 1 << 3;
+const MONITORING_EVENT_CALL: i64 = 1 << 4;
+const MONITORING_EVENT_LINE: i64 = 1 << 5;
+const MONITORING_EVENT_INSTRUCTION: i64 = 1 << 6;
+const MONITORING_EVENT_JUMP: i64 = 1 << 7;
+const MONITORING_EVENT_BRANCH_LEFT: i64 = 1 << 8;
+const MONITORING_EVENT_BRANCH_RIGHT: i64 = 1 << 9;
+const MONITORING_EVENT_STOP_ITERATION: i64 = 1 << 10;
+const MONITORING_EVENT_RAISE: i64 = 1 << 11;
+const MONITORING_EVENT_EXCEPTION_HANDLED: i64 = 1 << 12;
+const MONITORING_EVENT_PY_UNWIND: i64 = 1 << 13;
+const MONITORING_EVENT_PY_THROW: i64 = 1 << 14;
+const MONITORING_EVENT_RERAISE: i64 = 1 << 15;
+const MONITORING_EVENT_C_RETURN: i64 = 1 << 16;
+const MONITORING_EVENT_C_RAISE: i64 = 1 << 17;
+const MONITORING_EVENT_BRANCH: i64 = 1 << 18;
+const MONITORING_EVENT_SET_MAX: i64 = 1 << 19;
+const MONITORING_LOCAL_EVENT_SET_MAX: i64 = 1 << 11;
 
 thread_local! {
     static VM_THREAD_IDENT_OVERRIDE: Cell<Option<i64>> = const { Cell::new(None) };
@@ -980,6 +1002,10 @@ pub struct Vm {
     run_stop_depth: Option<usize>,
     pending_import_drain_depth: usize,
     signal_handlers: HashMap<i64, Value>,
+    monitoring_tool_names: HashMap<i64, String>,
+    monitoring_event_sets: HashMap<i64, i64>,
+    monitoring_local_event_sets: HashMap<(i64, usize), i64>,
+    monitoring_callbacks: HashMap<(i64, i64), Value>,
     socket_default_timeout: Option<f64>,
     open_files: HashMap<i64, fs::File>,
     fd_inheritable: HashMap<i64, bool>,
@@ -1225,6 +1251,10 @@ impl Vm {
             run_stop_depth: None,
             pending_import_drain_depth: 0,
             signal_handlers: HashMap::new(),
+            monitoring_tool_names: HashMap::new(),
+            monitoring_event_sets: HashMap::new(),
+            monitoring_local_event_sets: HashMap::new(),
+            monitoring_callbacks: HashMap::new(),
             socket_default_timeout: None,
             open_files: HashMap::new(),
             fd_inheritable: HashMap::new(),
@@ -3108,29 +3138,30 @@ impl Vm {
             );
             module_data.globals.insert(
                 "_clear_type_descriptors".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::SysClearTypeDescriptors),
             );
             module_data
                 .globals
                 .insert("intern".to_string(), Value::Builtin(BuiltinFunction::Str));
-            module_data
-                .globals
-                .insert("audit".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            module_data.globals.insert(
+                "audit".to_string(),
+                Value::Builtin(BuiltinFunction::SysAudit),
+            );
             module_data.globals.insert(
                 "unraisablehook".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::SysUnraisableHook),
             );
             module_data.globals.insert(
                 "__unraisablehook__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::SysUnraisableHook),
             );
             module_data.globals.insert(
                 "breakpointhook".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::SysBreakpointHook),
             );
             module_data.globals.insert(
                 "__breakpointhook__".to_string(),
-                Value::Builtin(BuiltinFunction::NoOp),
+                Value::Builtin(BuiltinFunction::SysBreakpointHook),
             );
             let build_stream = |name: &str,
                                 write_builtin: BuiltinFunction,
@@ -3323,37 +3354,76 @@ impl Vm {
                 if let Object::Module(events_data) = &mut *events.kind_mut() {
                     events_data
                         .globals
-                        .insert("PY_START".to_string(), Value::Int(1 << 0));
+                        .insert("NO_EVENTS".to_string(), Value::Int(0));
+                    events_data.globals.insert(
+                        "PY_START".to_string(),
+                        Value::Int(MONITORING_EVENT_PY_START),
+                    );
+                    events_data.globals.insert(
+                        "PY_RESUME".to_string(),
+                        Value::Int(MONITORING_EVENT_PY_RESUME),
+                    );
+                    events_data.globals.insert(
+                        "PY_RETURN".to_string(),
+                        Value::Int(MONITORING_EVENT_PY_RETURN),
+                    );
+                    events_data.globals.insert(
+                        "PY_YIELD".to_string(),
+                        Value::Int(MONITORING_EVENT_PY_YIELD),
+                    );
                     events_data
                         .globals
-                        .insert("PY_RESUME".to_string(), Value::Int(1 << 1));
+                        .insert("CALL".to_string(), Value::Int(MONITORING_EVENT_CALL));
                     events_data
                         .globals
-                        .insert("PY_THROW".to_string(), Value::Int(1 << 2));
+                        .insert("LINE".to_string(), Value::Int(MONITORING_EVENT_LINE));
+                    events_data.globals.insert(
+                        "INSTRUCTION".to_string(),
+                        Value::Int(MONITORING_EVENT_INSTRUCTION),
+                    );
                     events_data
                         .globals
-                        .insert("LINE".to_string(), Value::Int(1 << 3));
+                        .insert("JUMP".to_string(), Value::Int(MONITORING_EVENT_JUMP));
+                    events_data.globals.insert(
+                        "BRANCH_LEFT".to_string(),
+                        Value::Int(MONITORING_EVENT_BRANCH_LEFT),
+                    );
+                    events_data.globals.insert(
+                        "BRANCH_RIGHT".to_string(),
+                        Value::Int(MONITORING_EVENT_BRANCH_RIGHT),
+                    );
+                    events_data.globals.insert(
+                        "STOP_ITERATION".to_string(),
+                        Value::Int(MONITORING_EVENT_STOP_ITERATION),
+                    );
                     events_data
                         .globals
-                        .insert("JUMP".to_string(), Value::Int(1 << 4));
+                        .insert("RAISE".to_string(), Value::Int(MONITORING_EVENT_RAISE));
+                    events_data.globals.insert(
+                        "EXCEPTION_HANDLED".to_string(),
+                        Value::Int(MONITORING_EVENT_EXCEPTION_HANDLED),
+                    );
+                    events_data.globals.insert(
+                        "PY_UNWIND".to_string(),
+                        Value::Int(MONITORING_EVENT_PY_UNWIND),
+                    );
+                    events_data.globals.insert(
+                        "PY_THROW".to_string(),
+                        Value::Int(MONITORING_EVENT_PY_THROW),
+                    );
                     events_data
                         .globals
-                        .insert("PY_RETURN".to_string(), Value::Int(1 << 5));
+                        .insert("RERAISE".to_string(), Value::Int(MONITORING_EVENT_RERAISE));
+                    events_data.globals.insert(
+                        "C_RETURN".to_string(),
+                        Value::Int(MONITORING_EVENT_C_RETURN),
+                    );
                     events_data
                         .globals
-                        .insert("PY_YIELD".to_string(), Value::Int(1 << 6));
+                        .insert("C_RAISE".to_string(), Value::Int(MONITORING_EVENT_C_RAISE));
                     events_data
                         .globals
-                        .insert("PY_UNWIND".to_string(), Value::Int(1 << 7));
-                    events_data
-                        .globals
-                        .insert("RAISE".to_string(), Value::Int(1 << 8));
-                    events_data
-                        .globals
-                        .insert("STOP_ITERATION".to_string(), Value::Int(1 << 9));
-                    events_data
-                        .globals
-                        .insert("INSTRUCTION".to_string(), Value::Int(1 << 10));
+                        .insert("BRANCH".to_string(), Value::Int(MONITORING_EVENT_BRANCH));
                 }
                 monitoring_data
                     .globals
@@ -3363,38 +3433,47 @@ impl Vm {
                     .insert("DEBUGGER_ID".to_string(), Value::Int(0));
                 monitoring_data
                     .globals
+                    .insert("COVERAGE_ID".to_string(), Value::Int(1));
+                monitoring_data
+                    .globals
+                    .insert("PROFILER_ID".to_string(), Value::Int(2));
+                monitoring_data
+                    .globals
+                    .insert("OPTIMIZER_ID".to_string(), Value::Int(5));
+                monitoring_data
+                    .globals
                     .insert("DISABLE".to_string(), Value::Int(-1));
                 monitoring_data.globals.insert(
                     "get_tool".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringGetTool),
                 );
                 monitoring_data.globals.insert(
                     "use_tool_id".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringUseToolId),
                 );
                 monitoring_data.globals.insert(
                     "clear_tool_id".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringClearToolId),
                 );
                 monitoring_data.globals.insert(
                     "free_tool_id".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringFreeToolId),
                 );
                 monitoring_data.globals.insert(
                     "register_callback".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringRegisterCallback),
                 );
                 monitoring_data.globals.insert(
                     "set_events".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringSetEvents),
                 );
                 monitoring_data.globals.insert(
                     "set_local_events".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringSetLocalEvents),
                 );
                 monitoring_data.globals.insert(
                     "restart_events".to_string(),
-                    Value::Builtin(BuiltinFunction::NoOp),
+                    Value::Builtin(BuiltinFunction::SysMonitoringRestartEvents),
                 );
             }
             module_data

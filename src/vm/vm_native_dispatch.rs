@@ -6542,6 +6542,36 @@ impl Vm {
             BuiltinFunction::SysSetRecursionLimit => {
                 self.builtin_sys_setrecursionlimit(args, kwargs)
             }
+            BuiltinFunction::SysAudit => self.builtin_sys_audit(args, kwargs),
+            BuiltinFunction::SysClearTypeDescriptors => {
+                self.builtin_sys_clear_type_descriptors(args, kwargs)
+            }
+            BuiltinFunction::SysUnraisableHook => self.builtin_sys_unraisablehook(args, kwargs),
+            BuiltinFunction::SysBreakpointHook => self.builtin_sys_breakpointhook(args, kwargs),
+            BuiltinFunction::SysMonitoringGetTool => {
+                self.builtin_sys_monitoring_get_tool(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringUseToolId => {
+                self.builtin_sys_monitoring_use_tool_id(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringClearToolId => {
+                self.builtin_sys_monitoring_clear_tool_id(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringFreeToolId => {
+                self.builtin_sys_monitoring_free_tool_id(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringRegisterCallback => {
+                self.builtin_sys_monitoring_register_callback(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringSetEvents => {
+                self.builtin_sys_monitoring_set_events(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringSetLocalEvents => {
+                self.builtin_sys_monitoring_set_local_events(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringRestartEvents => {
+                self.builtin_sys_monitoring_restart_events(args, kwargs)
+            }
             BuiltinFunction::SysStdoutWrite => self.builtin_sys_stream_write(args, kwargs, false),
             BuiltinFunction::SysStdoutBufferWrite => {
                 self.builtin_sys_stream_buffer_write(args, kwargs, false)
@@ -6590,6 +6620,7 @@ impl Vm {
             BuiltinFunction::Property => self.builtin_property(args, kwargs),
             BuiltinFunction::ObjectNew => self.builtin_object_new(args, kwargs),
             BuiltinFunction::ObjectInit => self.builtin_object_init(args, kwargs),
+            BuiltinFunction::ObjectInitSubclass => self.builtin_object_init_subclass(args, kwargs),
             BuiltinFunction::ExceptionTypeInit => self.builtin_exception_type_init(args, kwargs),
             BuiltinFunction::ObjectGetAttribute => self.builtin_object_getattribute(args, kwargs),
             BuiltinFunction::ObjectFormat => self.builtin_object_format(args, kwargs),

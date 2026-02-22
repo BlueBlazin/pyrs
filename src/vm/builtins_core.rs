@@ -4,20 +4,23 @@ use super::{
     DICT_BACKING_STORAGE_ATTR, FLOAT_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Frame,
     GeneratorResumeKind, GeneratorResumeOutcome, HashMap, HashSet, INT_BACKING_STORAGE_ATTR,
     InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR,
-    ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object, Ordering, Rc, RuntimeError,
-    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR,
-    Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
-    call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, class_of_class, compare_ge,
-    compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
-    dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
-    encode_text_bytes, exception_type_is_subclass, format_float_hex, format_repr, format_value,
-    frame_cell_value, invert_value, is_import_error_family, is_missing_attribute_error,
-    is_os_error_family, is_runtime_type_name_marker, matmul_values, mul_values, neg_value,
-    normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
-    parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
-    runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
-    value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
-    with_bytes_like_source, xor_values,
+    MONITORING_EVENT_BRANCH, MONITORING_EVENT_BRANCH_LEFT, MONITORING_EVENT_BRANCH_RIGHT,
+    MONITORING_EVENT_C_RAISE, MONITORING_EVENT_C_RETURN, MONITORING_EVENT_CALL,
+    MONITORING_EVENT_SET_MAX, MONITORING_LOCAL_EVENT_SET_MAX, MONITORING_MAX_USER_TOOL_ID,
+    ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object, Ordering,
+    PY_TPFLAGS_HEAPTYPE, Rc, RuntimeError, SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR,
+    SuperObject, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, Write, add_values, bigint_from_bytes,
+    bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup, class_attr_walk,
+    class_of_class, compare_ge, compare_gt, compare_in, compare_le, compare_lt, compare_order,
+    compiler, decode_text_bytes, dedup_hashable_values, dict_remove_value, dict_set_value,
+    dict_set_value_checked, div_values, encode_text_bytes, exception_type_is_subclass,
+    format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
+    is_import_error_family, is_missing_attribute_error, is_os_error_family,
+    is_runtime_type_name_marker, matmul_values, mul_values, neg_value, normalize_codec_encoding,
+    normalize_codec_errors, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser,
+    pos_value, round_float_with_ndigits, runtime_error_matches_exception, sub_values,
+    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
+    weakref_target_id, weakref_target_object, with_bytes_like_source, xor_values,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -819,6 +822,560 @@ impl Vm {
             InternalCallOutcome::Value(value) => Ok(value),
             InternalCallOutcome::CallerExceptionHandled => Ok(Value::None),
         }
+    }
+
+    pub(super) fn builtin_object_init_subclass(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "object.__init_subclass__() takes no keyword arguments",
+            ));
+        }
+        match args.as_slice() {
+            [] => Ok(Value::None),
+            [Value::Class(_)] => Ok(Value::None),
+            [..] => Err(RuntimeError::type_error(format!(
+                "object.__init_subclass__() takes no arguments ({} given)",
+                args.len()
+            ))),
+        }
+    }
+
+    pub(super) fn builtin_sys_audit(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.audit() takes no keyword arguments",
+            ));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "audit expected at least 1 argument, got 0",
+            ));
+        }
+        let event = args.remove(0);
+        if !matches!(event, Value::Str(_)) {
+            return Err(RuntimeError::type_error(format!(
+                "audit() argument 1 must be str, not {}",
+                self.value_type_name_for_error(&event)
+            )));
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_clear_type_descriptors(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys._clear_type_descriptors() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys._clear_type_descriptors() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let target = args.remove(0);
+        let Value::Class(class) = target else {
+            return Err(RuntimeError::type_error(format!(
+                "_clear_type_descriptors() argument must be type, not {}",
+                self.value_type_name_for_error(&target)
+            )));
+        };
+        let class_id = class.id();
+        let class_kind = class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return Err(RuntimeError::type_error(
+                "_clear_type_descriptors() argument must be type",
+            ));
+        };
+        let flags = class_data
+            .attrs
+            .get("__flags__")
+            .and_then(|value| match value {
+                Value::Int(flags) => Some(*flags),
+                _ => None,
+            })
+            .unwrap_or(0);
+        drop(class_kind);
+        if (flags & PY_TPFLAGS_HEAPTYPE) == 0 {
+            return Err(RuntimeError::type_error("argument is immutable"));
+        }
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.attrs.remove("__dict__");
+            class_data.attrs.remove("__weakref__");
+        }
+        self.touch_class_attr_version_by_id(class_id);
+        Ok(Value::None)
+    }
+
+    fn runtime_warning(&mut self, message: String) -> Result<(), RuntimeError> {
+        eprintln!("RuntimeWarning: {message}");
+        Ok(())
+    }
+
+    pub(super) fn builtin_sys_breakpointhook(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let mut setting = std::env::var("PYTHONBREAKPOINT").unwrap_or_default();
+        if setting.is_empty() {
+            setting = "pdb.set_trace".to_string();
+        } else if setting == "0" {
+            return Ok(Value::None);
+        }
+
+        let (module_name, attr_name) = if let Some(last_dot) = setting.rfind('.') {
+            if last_dot == 0 {
+                let message = format!("Ignoring unimportable $PYTHONBREAKPOINT: \"{setting}\"");
+                self.runtime_warning(message)?;
+                return Ok(Value::None);
+            }
+            (&setting[..last_dot], &setting[last_dot + 1..])
+        } else {
+            ("builtins", setting.as_str())
+        };
+
+        let module = if module_name == "builtins" {
+            self.modules
+                .get("builtins")
+                .cloned()
+                .ok_or_else(|| RuntimeError::module_not_found_error("No module named 'builtins'"))?
+        } else {
+            match self.import_module_object(module_name) {
+                Ok(module) => module,
+                Err(err) => {
+                    if runtime_error_matches_exception(&err, "ImportError") {
+                        let message =
+                            format!("Ignoring unimportable $PYTHONBREAKPOINT: \"{setting}\"");
+                        self.runtime_warning(message)?;
+                        return Ok(Value::None);
+                    }
+                    return Err(err);
+                }
+            }
+        };
+
+        let hook = match self.load_attr_module(&module, attr_name) {
+            Ok(value) => value,
+            Err(err) => {
+                if runtime_error_matches_exception(&err, "AttributeError") {
+                    let message = format!("Ignoring unimportable $PYTHONBREAKPOINT: \"{setting}\"");
+                    self.runtime_warning(message)?;
+                    return Ok(Value::None);
+                }
+                return Err(err);
+            }
+        };
+
+        match self.call_internal(hook, args, kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self
+                    .runtime_error_from_active_exception("sys.breakpointhook() raised exception"))
+            }
+        }
+    }
+
+    fn unraisable_args_from_value(
+        &self,
+        value: &Value,
+    ) -> Result<(Value, Value, Value, Value, Value), RuntimeError> {
+        let Value::Module(module) = value else {
+            return Err(RuntimeError::type_error(
+                "sys.unraisablehook argument type must be UnraisableHookArgs",
+            ));
+        };
+        let module_kind = module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return Err(RuntimeError::type_error(
+                "sys.unraisablehook argument type must be UnraisableHookArgs",
+            ));
+        };
+        if module_data.name != "__unraisable__" {
+            return Err(RuntimeError::type_error(
+                "sys.unraisablehook argument type must be UnraisableHookArgs",
+            ));
+        }
+        let exc_type = module_data
+            .globals
+            .get("exc_type")
+            .cloned()
+            .ok_or_else(|| {
+                RuntimeError::type_error(
+                    "sys.unraisablehook argument type must be UnraisableHookArgs",
+                )
+            })?;
+        let exc_value = module_data
+            .globals
+            .get("exc_value")
+            .cloned()
+            .ok_or_else(|| {
+                RuntimeError::type_error(
+                    "sys.unraisablehook argument type must be UnraisableHookArgs",
+                )
+            })?;
+        let exc_traceback = module_data
+            .globals
+            .get("exc_traceback")
+            .cloned()
+            .ok_or_else(|| {
+                RuntimeError::type_error(
+                    "sys.unraisablehook argument type must be UnraisableHookArgs",
+                )
+            })?;
+        let err_msg = module_data.globals.get("err_msg").cloned().ok_or_else(|| {
+            RuntimeError::type_error("sys.unraisablehook argument type must be UnraisableHookArgs")
+        })?;
+        let object = module_data.globals.get("object").cloned().ok_or_else(|| {
+            RuntimeError::type_error("sys.unraisablehook argument type must be UnraisableHookArgs")
+        })?;
+        Ok((exc_type, exc_value, exc_traceback, err_msg, object))
+    }
+
+    fn unraisable_type_name(&self, exc_type: &Value) -> String {
+        match exc_type {
+            Value::ExceptionType(name) => name.clone(),
+            Value::Class(class) => match &*class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<unknown>".to_string(),
+            },
+            Value::Exception(exception) => exception.name.clone(),
+            _ => "<unknown>".to_string(),
+        }
+    }
+
+    pub(super) fn builtin_sys_unraisablehook(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.unraisablehook() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.unraisablehook() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let (exc_type, exc_value, _exc_traceback, err_msg, object) =
+            self.unraisable_args_from_value(&args[0])?;
+
+        if !matches!(object, Value::None) {
+            if !matches!(err_msg, Value::None) {
+                eprint!("{}: ", format_value(&err_msg));
+            } else {
+                eprint!("Exception ignored in: ");
+            }
+            eprintln!("{}", format_repr(&object));
+        } else if !matches!(err_msg, Value::None) {
+            eprintln!("{}:", format_value(&err_msg));
+        }
+
+        let type_name = self.unraisable_type_name(&exc_type);
+        if matches!(exc_value, Value::None) {
+            eprintln!("{type_name}");
+        } else {
+            eprintln!("{type_name}: {}", format_value(&exc_value));
+        }
+        Ok(Value::None)
+    }
+
+    fn sys_monitoring_parse_tool_id(&self, value: Value) -> Result<i64, RuntimeError> {
+        let tool_id = value_to_int(value)?;
+        if !(0..=MONITORING_MAX_USER_TOOL_ID).contains(&tool_id) {
+            return Err(RuntimeError::value_error(format!(
+                "invalid tool {tool_id} (must be between 0 and 5)"
+            )));
+        }
+        Ok(tool_id)
+    }
+
+    fn sys_monitoring_clear_tool_state(&mut self, tool_id: i64) {
+        self.monitoring_event_sets.remove(&tool_id);
+        self.monitoring_local_event_sets
+            .retain(|(stored_tool, _), _| *stored_tool != tool_id);
+        self.monitoring_callbacks
+            .retain(|(stored_tool, _), _| *stored_tool != tool_id);
+    }
+
+    pub(super) fn builtin_sys_monitoring_get_tool(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.get_tool() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.monitoring.get_tool() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        Ok(self
+            .monitoring_tool_names
+            .get(&tool_id)
+            .map(|name| Value::Str(name.clone()))
+            .unwrap_or(Value::None))
+    }
+
+    pub(super) fn builtin_sys_monitoring_use_tool_id(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.use_tool_id() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 2 {
+            return Err(RuntimeError::type_error(format!(
+                "use_tool_id expected 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::value_error("tool name must be a str")),
+        };
+        if self.monitoring_tool_names.contains_key(&tool_id) {
+            return Err(RuntimeError::value_error(format!(
+                "tool {tool_id} is already in use"
+            )));
+        }
+        self.monitoring_tool_names.insert(tool_id, name);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_monitoring_clear_tool_id(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.clear_tool_id() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.monitoring.clear_tool_id() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        if self.monitoring_tool_names.contains_key(&tool_id) {
+            self.sys_monitoring_clear_tool_state(tool_id);
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_monitoring_free_tool_id(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.free_tool_id() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.monitoring.free_tool_id() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        if self.monitoring_tool_names.contains_key(&tool_id) {
+            self.sys_monitoring_clear_tool_state(tool_id);
+        }
+        self.monitoring_tool_names.remove(&tool_id);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_monitoring_register_callback(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.register_callback() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 3 {
+            return Err(RuntimeError::type_error(format!(
+                "register_callback expected 3 arguments, got {}",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        let event = value_to_int(args.remove(0))?;
+        if event <= 0 || (event as u64).count_ones() != 1 {
+            return Err(RuntimeError::value_error(
+                "The callback can only be set for one event at a time",
+            ));
+        }
+        let event_id = (event as u64).trailing_zeros() as i64;
+        if !(0..19).contains(&event_id) {
+            return Err(RuntimeError::value_error(format!("invalid event {event}")));
+        }
+        let func = args.remove(0);
+        self.builtin_sys_audit(
+            vec![
+                Value::Str("sys.monitoring.register_callback".to_string()),
+                func.clone(),
+            ],
+            HashMap::new(),
+        )?;
+        let key = (tool_id, event_id);
+        let previous = self
+            .monitoring_callbacks
+            .get(&key)
+            .cloned()
+            .unwrap_or(Value::None);
+        if matches!(func, Value::None) {
+            self.monitoring_callbacks.remove(&key);
+        } else {
+            self.monitoring_callbacks.insert(key, func);
+        }
+        Ok(previous)
+    }
+
+    pub(super) fn builtin_sys_monitoring_set_events(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.set_events() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 2 {
+            return Err(RuntimeError::type_error(format!(
+                "set_events expected 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        let mut event_set = value_to_int(args.remove(0))?;
+        if !(0..MONITORING_EVENT_SET_MAX).contains(&event_set) {
+            return Err(RuntimeError::value_error(format!(
+                "invalid event set 0x{:x}",
+                event_set as u32
+            )));
+        }
+        let c_return_events = MONITORING_EVENT_C_RETURN | MONITORING_EVENT_C_RAISE;
+        let c_call_events = c_return_events | MONITORING_EVENT_CALL;
+        if (event_set & c_return_events) != 0 && (event_set & c_call_events) != c_call_events {
+            return Err(RuntimeError::value_error(
+                "cannot set C_RETURN or C_RAISE events independently",
+            ));
+        }
+        event_set &= !c_return_events;
+        if (event_set & MONITORING_EVENT_BRANCH) != 0 {
+            event_set &= !MONITORING_EVENT_BRANCH;
+            event_set |= MONITORING_EVENT_BRANCH_LEFT | MONITORING_EVENT_BRANCH_RIGHT;
+        }
+        if !self.monitoring_tool_names.contains_key(&tool_id) {
+            return Err(RuntimeError::value_error(format!(
+                "tool {tool_id} is not in use"
+            )));
+        }
+        self.monitoring_event_sets.insert(tool_id, event_set);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_monitoring_set_local_events(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.set_local_events() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 3 {
+            return Err(RuntimeError::type_error(format!(
+                "set_local_events expected 3 arguments, got {}",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        let code = args.remove(0);
+        let code_key = match code {
+            Value::Code(code_obj) => Rc::as_ptr(&code_obj) as usize,
+            _ => return Err(RuntimeError::type_error("code must be a code object")),
+        };
+        let mut event_set = value_to_int(args.remove(0))?;
+        let c_return_events = MONITORING_EVENT_C_RETURN | MONITORING_EVENT_C_RAISE;
+        let c_call_events = c_return_events | MONITORING_EVENT_CALL;
+        if (event_set & c_return_events) != 0 && (event_set & c_call_events) != c_call_events {
+            return Err(RuntimeError::value_error(
+                "cannot set C_RETURN or C_RAISE events independently",
+            ));
+        }
+        event_set &= !c_return_events;
+        if (event_set & MONITORING_EVENT_BRANCH) != 0 {
+            event_set &= !MONITORING_EVENT_BRANCH;
+            event_set |= MONITORING_EVENT_BRANCH_LEFT | MONITORING_EVENT_BRANCH_RIGHT;
+        }
+        if !(0..MONITORING_LOCAL_EVENT_SET_MAX).contains(&event_set) {
+            return Err(RuntimeError::value_error(format!(
+                "invalid local event set 0x{:x}",
+                event_set as u32
+            )));
+        }
+        if !self.monitoring_tool_names.contains_key(&tool_id) {
+            return Err(RuntimeError::value_error(format!(
+                "tool {tool_id} is not in use"
+            )));
+        }
+        self.monitoring_local_event_sets
+            .insert((tool_id, code_key), event_set);
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_monitoring_restart_events(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.restart_events() takes no keyword arguments",
+            ));
+        }
+        if !args.is_empty() {
+            return Err(RuntimeError::type_error(format!(
+                "sys.monitoring.restart_events() takes no arguments ({} given)",
+                args.len()
+            )));
+        }
+        Ok(Value::None)
     }
 
     pub(super) fn exec_namespace_map_from_dict(
