@@ -14993,6 +14993,38 @@ except Exception:
 }
 
 #[test]
+fn traceback_caret_infers_identifier_span_without_keyword_noise() {
+    let source = r#"x = foo
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module_with_filename(&module, "<caret-test>")
+        .expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.cache_source_text("<caret-test>", source);
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("x = foo"), "{}", err.message);
+    assert!(err.message.contains("^^^"), "{}", err.message);
+}
+
+#[test]
+fn traceback_caret_skips_statement_keyword_ranges() {
+    let source = r#"raise RuntimeError("boom")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module_with_filename(&module, "<caret-raise-test>")
+        .expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.cache_source_text("<caret-raise-test>", source);
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("raise RuntimeError(\"boom\")"));
+    assert!(
+        !err.message.contains("\n    ^"),
+        "unexpected keyword caret highlight:\n{}",
+        err.message
+    );
+}
+
+#[test]
 fn module_not_found_error_populates_name_for_missing_import() {
     let source = r#"ok = False
 try:

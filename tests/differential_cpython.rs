@@ -139,6 +139,19 @@ fn traceback_lines_without_source_carets(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn caret_line_after_source(text: &str, source_line: &str) -> Option<String> {
+    let lines = text.lines().collect::<Vec<_>>();
+    for (idx, line) in lines.iter().enumerate() {
+        if line.trim_end() == source_line
+            && let Some(next) = lines.get(idx + 1)
+            && next.trim_start().chars().all(|ch| ch == '^' || ch == '~')
+        {
+            return Some(next.trim().to_string());
+        }
+    }
+    None
+}
+
 fn normalize_jsonish(text: &str) -> String {
     text.chars()
         .filter(|ch| !ch.is_ascii_whitespace())
@@ -532,4 +545,19 @@ except Exception as exc:
         traceback_lines_without_source_carets(&ours),
         "direct-cause traceback shape mismatch"
     );
+}
+
+#[test]
+fn differential_traceback_identifier_caret_span_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "x = foo";
+    let py = run_cpython_traceback(source).expect("CPython traceback should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs traceback should run");
+    assert!(py.contains("NameError"), "{}", py);
+    assert!(ours.contains("NameError"), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    x = foo").expect("python caret");
+    let ours_caret = caret_line_after_source(&ours, "    x = foo").expect("pyrs caret");
+    assert_eq!(py_caret, ours_caret, "identifier caret mismatch");
 }

@@ -12065,15 +12065,116 @@ fn render_traceback_caret_line(
         return None;
     }
     let start = start_column.saturating_sub(1).min(char_count.saturating_sub(1));
+    let fallback = infer_traceback_caret_end(source_line, start);
     let mut end_exclusive = if end_column > 0 {
         end_column.saturating_sub(1)
     } else {
-        start.saturating_add(1)
+        match fallback {
+            CaretInference::Suppress => return None,
+            CaretInference::End(end) => end,
+            CaretInference::Unknown => start.saturating_add(1),
+        }
     };
+    if end_line > start_line && start_line != 0 {
+        end_exclusive = char_count;
+    }
     if end_exclusive <= start {
-        end_exclusive = start.saturating_add(1);
+        end_exclusive = match fallback {
+            CaretInference::End(end) if end > start => end,
+            _ => start.saturating_add(1),
+        };
     }
     end_exclusive = end_exclusive.min(char_count);
     let width = end_exclusive.saturating_sub(start).max(1);
     Some(format!("{}{}", " ".repeat(start), "^".repeat(width)))
+}
+
+enum CaretInference {
+    Suppress,
+    End(usize),
+    Unknown,
+}
+
+fn infer_traceback_caret_end(source_line: &str, start: usize) -> CaretInference {
+    let chars: Vec<char> = source_line.chars().collect();
+    if start >= chars.len() {
+        return CaretInference::Unknown;
+    }
+    let ch = chars[start];
+    if ch.is_whitespace() {
+        return CaretInference::Unknown;
+    }
+    if is_identifier_start(ch) {
+        let mut idx = start + 1;
+        while idx < chars.len() && is_identifier_continue(chars[idx]) {
+            idx += 1;
+        }
+        let first_ident: String = chars[start..idx].iter().collect();
+        if is_statement_keyword(&first_ident) {
+            return CaretInference::Suppress;
+        }
+        // Keep dotted names together: e.g. np.float
+        loop {
+            if idx >= chars.len() || chars[idx] != '.' {
+                break;
+            }
+            let next = idx + 1;
+            if next >= chars.len() || !is_identifier_start(chars[next]) {
+                break;
+            }
+            idx = next + 1;
+            while idx < chars.len() && is_identifier_continue(chars[idx]) {
+                idx += 1;
+            }
+        }
+        return CaretInference::End(idx);
+    }
+    let mut idx = start + 1;
+    while idx < chars.len() {
+        let current = chars[idx];
+        if current.is_whitespace() || current == ',' || current == ';' || current == '#' {
+            break;
+        }
+        idx += 1;
+    }
+    CaretInference::End(idx)
+}
+
+fn is_identifier_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn is_statement_keyword(word: &str) -> bool {
+    matches!(
+        word,
+        "raise"
+            | "return"
+            | "import"
+            | "from"
+            | "def"
+            | "class"
+            | "for"
+            | "while"
+            | "if"
+            | "elif"
+            | "else"
+            | "try"
+            | "except"
+            | "finally"
+            | "with"
+            | "yield"
+            | "assert"
+            | "del"
+            | "pass"
+            | "break"
+            | "continue"
+            | "global"
+            | "nonlocal"
+            | "async"
+            | "await"
+    )
 }

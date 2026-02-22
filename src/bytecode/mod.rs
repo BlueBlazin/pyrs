@@ -179,16 +179,11 @@ pub struct Location {
 
 impl Location {
     pub fn new(line: usize, column: usize) -> Self {
-        let end_column = if column == 0 {
-            0
-        } else {
-            column.saturating_add(1)
-        };
         Self {
             line,
             column,
-            end_line: line,
-            end_column,
+            end_line: 0,
+            end_column: 0,
         }
     }
 
