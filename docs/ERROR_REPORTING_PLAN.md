@@ -15,6 +15,8 @@ Status: in progress (started 2026-02-22).
     instead of flattening into message-only chain text.
   - caret fallback now infers identifier spans when end-columns are unavailable
     (e.g. `NameError` on `foo` highlights `^^^`), and suppresses statement-keyword carets.
+  - CLI/REPL parse-error output now emits `SyntaxError`-style diagnostics with file/line/source/caret
+    formatting instead of raw parser offset messages.
 - Phase 3 complete:
   - location metadata upgraded to `start+end` ranges in bytecode location model.
   - default source-compiler locations now mark end columns unknown until explicit ranges are
@@ -27,6 +29,8 @@ Status: in progress (started 2026-02-22).
   - differential traceback-shape gates now compare pyrs vs CPython for both
     `__context__` and `__cause__` chain formatting, normalized to ignore source/caret
     rendering differences while preserving traceback-block and delimiter parity.
+  - differential syntax-error gate now checks CPython-shape parity for compile-time failures
+    (`File "<string>", line ...`, source line, caret row, `SyntaxError:` prefix).
   - next gate: expand golden traceback-shape tests against CPython output for nested chains.
 
 ## Scope

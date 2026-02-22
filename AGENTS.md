@@ -85,6 +85,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - frame lines now render in CPython shape (`File "...", line N, in ...`) with caret.
     - caret fallback now infers identifier-span highlights when end columns are unavailable
       and suppresses keyword-only highlights (e.g. no caret under bare `raise` keyword lines).
+  - CLI/REPL parser failures now emit `SyntaxError`-style diagnostics (`File/line/source/caret`)
+    instead of raw parser offset strings.
   - Exception objects now retain propagated traceback-frame metadata (`traceback_frames`) so
     chained exceptions (`__context__` / `__cause__`) can render separate traceback blocks.
   - chained exception output now follows CPython flow:
@@ -101,6 +103,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_traceback_context_chain_matches_cpython_shape`
     - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_traceback_identifier_caret_span_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_syntax_error_shape_matches_cpython`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,
