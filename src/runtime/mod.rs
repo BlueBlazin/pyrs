@@ -2068,6 +2068,7 @@ pub struct ExceptionObject {
     pub object_id: u64,
     pub name: String,
     pub message: Option<String>,
+    pub traceback_frames: Vec<ExceptionTracebackFrame>,
     pub notes: Vec<String>,
     pub exceptions: Vec<ExceptionObject>,
     pub cause: Option<Box<ExceptionObject>>,
@@ -2076,12 +2077,23 @@ pub struct ExceptionObject {
     pub attrs: Rc<RefCell<HashMap<String, Value>>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExceptionTracebackFrame {
+    pub filename: String,
+    pub line: usize,
+    pub column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub name: String,
+}
+
 impl ExceptionObject {
     pub fn new(name: impl Into<String>, message: Option<String>) -> Self {
         Self {
             object_id: next_exception_object_id(),
             name: name.into(),
             message,
+            traceback_frames: Vec::new(),
             notes: Vec::new(),
             exceptions: Vec::new(),
             cause: None,
@@ -2100,6 +2112,7 @@ impl ExceptionObject {
             object_id: next_exception_object_id(),
             name: name.into(),
             message,
+            traceback_frames: Vec::new(),
             notes: Vec::new(),
             exceptions: members,
             cause: None,

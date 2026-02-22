@@ -14969,8 +14969,15 @@ except Exception:
     vm.cache_source_text("<traceback-test>", source);
     let err = vm.execute(&code).expect_err("execution should fail");
     assert!(err.message.contains("Traceback (most recent call last):"));
+    let traceback_count = err
+        .message
+        .matches("Traceback (most recent call last):")
+        .count();
+    assert_eq!(traceback_count, 2, "{}", err.message);
     assert!(err.message.contains("File \"<traceback-test>\", line 4, in <module>"));
+    assert!(err.message.contains("File \"<traceback-test>\", line 2, in <module>"));
     assert!(err.message.contains("raise AttributeError(\"three\\n four\")"));
+    assert!(err.message.contains("raise AttributeError(\"one\\n two\")"));
     assert!(err.message.contains("AttributeError: one"));
     assert!(err.message.contains("AttributeError: three"));
     assert!(

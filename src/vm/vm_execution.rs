@@ -22,7 +22,7 @@ use super::{
     slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
     value_to_int, value_to_optional_index,
 };
-use crate::runtime::SliceValue;
+use crate::runtime::{ExceptionTracebackFrame, SliceValue};
 
 unsafe extern "C" {
     fn PyErr_Clear();
@@ -6964,7 +6964,7 @@ impl Vm {
             .map(|entry| (entry.target, entry.depth, entry.push_lasti))
     }
 
-    fn unwind_exception(&mut self, exc: Value) -> Result<(), RuntimeError> {
+    fn unwind_exception(&mut self, mut exc: Value) -> Result<(), RuntimeError> {
         let mut traceback = Vec::new();
         loop {
             let frame_depth = self.frames.len();
@@ -6974,6 +6974,7 @@ impl Vm {
             };
 
             traceback.push(Self::frame_trace(frame));
+            Self::attach_traceback_to_exception(&mut exc, &traceback);
 
             if let Some(stop_depth) = self.run_stop_depth
                 && frame_depth <= stop_depth
@@ -7074,6 +7075,23 @@ impl Vm {
             _ => None,
         };
         RuntimeError { message, exception }
+    }
+
+    fn attach_traceback_to_exception(exception_value: &mut Value, frames: &[TraceFrame]) {
+        let Value::Exception(exception) = exception_value else {
+            return;
+        };
+        exception.traceback_frames = frames
+            .iter()
+            .map(|frame| ExceptionTracebackFrame {
+                filename: frame.filename.clone(),
+                line: frame.line,
+                column: frame.column,
+                end_line: frame.end_line,
+                end_column: frame.end_column,
+                name: frame.name.clone(),
+            })
+            .collect();
     }
 
     pub(super) fn raise_exception_with_cause(
@@ -7693,61 +7711,122 @@ impl Vm {
     }
 
     pub(super) fn format_traceback(&mut self, frames: &[TraceFrame], exc: &Value) -> String {
-        let mut output = String::from("Traceback (most recent call last):\n");
-        for frame in frames.iter().rev() {
-            output.push_str(&format!(
-                "  File \"{}\", line {}, in {}\n",
-                frame.filename, frame.line, frame.name
-            ));
-            if frame.line > 0
-                && let Some(source_line) = self.traceback_source_line(&frame.filename, frame.line)
-            {
-                output.push_str("    ");
-                output.push_str(&source_line);
-                output.push('\n');
-                if let Some(caret_line) = render_traceback_caret_line(
-                    &source_line,
-                    frame.line,
-                    frame.column,
-                    frame.end_line,
-                    frame.end_column,
-                ) {
-                    output.push_str("    ");
-                    output.push_str(&caret_line);
-                    output.push('\n');
-                }
-            }
-        }
         match exc {
-            Value::Exception(exception) => {
-                output.push_str(&self.format_exception_chain(exception, 0))
+            Value::Exception(exception) => self.format_exception_chain(exception, 0, Some(frames)),
+            _ => {
+                let mut output = String::from("Traceback (most recent call last):\n");
+                self.append_traceback_frames(&mut output, frames);
+                output.push_str(&format_value(exc));
+                output
             }
-            _ => output.push_str(&format_value(exc)),
         }
-        output
     }
 
-    fn format_exception_chain(&self, exception: &ExceptionObject, depth: usize) -> String {
+    fn format_exception_chain(
+        &mut self,
+        exception: &ExceptionObject,
+        depth: usize,
+        fallback_frames: Option<&[TraceFrame]>,
+    ) -> String {
         // Guard against pathological __context__/__cause__ cycles.
         if depth >= 32 {
-            return self.format_exception_object(exception);
+            return self.format_exception_with_traceback(exception, fallback_frames);
         }
         let mut output = String::new();
         if let Some(cause) = &exception.cause {
-            output.push_str(&self.format_exception_chain(cause, depth + 1));
+            output.push_str(&self.format_exception_chain(cause, depth + 1, None));
             output.push_str(
-                "\nThe above exception was the direct cause of the following exception:\n",
+                "\n\nThe above exception was the direct cause of the following exception:\n\n",
             );
         } else if !exception.suppress_context
             && let Some(context) = &exception.context
         {
-            output.push_str(&self.format_exception_chain(context, depth + 1));
+            output.push_str(&self.format_exception_chain(context, depth + 1, None));
             output.push_str(
-                "\nDuring handling of the above exception, another exception occurred:\n",
+                "\n\nDuring handling of the above exception, another exception occurred:\n\n",
             );
+        }
+        output.push_str(&self.format_exception_with_traceback(exception, fallback_frames));
+        output
+    }
+
+    fn format_exception_with_traceback(
+        &mut self,
+        exception: &ExceptionObject,
+        fallback_frames: Option<&[TraceFrame]>,
+    ) -> String {
+        let has_exception_frames = !exception.traceback_frames.is_empty();
+        let has_fallback_frames = fallback_frames.is_some_and(|frames| !frames.is_empty());
+        let mut output = String::new();
+        if has_exception_frames || has_fallback_frames {
+            output.push_str("Traceback (most recent call last):\n");
+            if has_exception_frames {
+                self.append_exception_traceback_frames(&mut output, exception);
+            } else if let Some(frames) = fallback_frames {
+                self.append_traceback_frames(&mut output, frames);
+            }
         }
         output.push_str(&self.format_exception_object(exception));
         output
+    }
+
+    fn append_exception_traceback_frames(
+        &mut self,
+        output: &mut String,
+        exception: &ExceptionObject,
+    ) {
+        for frame in exception.traceback_frames.iter().rev() {
+            self.append_traceback_frame_line(
+                output,
+                &frame.filename,
+                frame.line,
+                frame.column,
+                frame.end_line,
+                frame.end_column,
+                &frame.name,
+            );
+        }
+    }
+
+    fn append_traceback_frames(&mut self, output: &mut String, frames: &[TraceFrame]) {
+        for frame in frames.iter().rev() {
+            self.append_traceback_frame_line(
+                output,
+                &frame.filename,
+                frame.line,
+                frame.column,
+                frame.end_line,
+                frame.end_column,
+                &frame.name,
+            );
+        }
+    }
+
+    fn append_traceback_frame_line(
+        &mut self,
+        output: &mut String,
+        filename: &str,
+        line: usize,
+        column: usize,
+        end_line: usize,
+        end_column: usize,
+        name: &str,
+    ) {
+        output.push_str(&format!("  File \"{}\", line {}, in {}\n", filename, line, name));
+        if line > 0
+            && let Some(source_line) = self.traceback_source_line(filename, line)
+        {
+            output.push_str("    ");
+            output.push_str(&source_line);
+            output.push('\n');
+            if let Some(caret_line) =
+                render_traceback_caret_line(&source_line, line, column, end_line, end_column)
+            {
+                output.push_str("    ");
+                output.push_str(&caret_line);
+                output.push('\n');
+            }
+        }
     }
 
     pub(super) fn format_exception_object(&self, exception: &ExceptionObject) -> String {
