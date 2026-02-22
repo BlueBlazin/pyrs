@@ -794,6 +794,9 @@ PyObject *PyObject_CallObject(PyObject *callable, PyObject *args);
 PyObject *PyObject_CallFunctionObjArgs(PyObject *callable, ...);
 PyObject *PyObject_CallMethodObjArgs(PyObject *object, PyObject *name, ...);
 PyObject *PyObject_CallNoArgs(PyObject *callable);
+int PyUnstable_Object_IsUniquelyReferenced(PyObject *object);
+int PyUnstable_Object_IsUniqueReferencedTemporary(PyObject *object);
+int PyUnstable_Object_EnableDeferredRefcount(PyObject *object);
 PyObject *PyEval_CallObjectWithKeywords(PyObject *callable, PyObject *args, PyObject *kwargs);
 PyObject *PyEval_CallFunction(PyObject *callable, const char *format, ...);
 PyObject *PyEval_CallMethod(PyObject *object, const char *name, const char *format, ...);
@@ -883,6 +886,8 @@ void PyEval_AcquireThread(void *state);
 void PyEval_ReleaseThread(void *state);
 void PyEval_InitThreads(void);
 int PyEval_ThreadsInitialized(void);
+int PyTraceMalloc_Track(unsigned int domain, uintptr_t ptr, size_t size);
+int PyTraceMalloc_Untrack(unsigned int domain, uintptr_t ptr);
 
 typedef struct {
     uint8_t _bits;

@@ -12,11 +12,11 @@ use super::{
     CPYTHON_STRUCTSEQ_TYPE_REGISTRY, CPYTHON_THREAD_LOCK_REGISTRY,
     CPYTHON_THREAD_RUNTIME_INITIALIZED, CPYTHON_THREAD_STATE_ALLOCATIONS,
     CPYTHON_THREAD_TLS_KEY_REGISTRY, CPYTHON_THREAD_TLS_VALUES, CPYTHON_THREAD_TSS_REGISTRY,
-    CPYTHON_THREAD_TSS_VALUES, CURRENT_THREAD_STATE_PTR, CpythonHeapTypeInfo,
-    CpythonInternedUnicodeRegistry, CpythonPendingCall, CpythonStructSeqTypeInfo,
-    CpythonThreadStateCompat, Cwchar, MAIN_INTERPRETER_STATE_TOKEN, MAIN_THREAD_STATE_STORAGE,
-    cpython_string_to_wide_units, cpython_sys_module_obj, vm_current_thread_ident,
-    with_active_cpython_context_mut,
+    CPYTHON_THREAD_TSS_VALUES, CPYTHON_TRACEMALLOC_TRACES, CURRENT_THREAD_STATE_PTR,
+    CpythonHeapTypeInfo, CpythonInternedUnicodeRegistry, CpythonPendingCall,
+    CpythonStructSeqTypeInfo, CpythonThreadStateCompat, Cwchar, MAIN_INTERPRETER_STATE_TOKEN,
+    MAIN_THREAD_STATE_STORAGE, cpython_string_to_wide_units, cpython_sys_module_obj,
+    vm_current_thread_ident, with_active_cpython_context_mut,
 };
 
 #[derive(Default)]
@@ -260,6 +260,10 @@ pub(super) fn cpython_main_interpreter_state_ptr() -> usize {
 
 pub(super) fn cpython_interpreter_state_allocations() -> &'static Mutex<HashSet<usize>> {
     CPYTHON_INTERPRETER_STATE_ALLOCATIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+pub(super) fn cpython_tracemalloc_traces() -> &'static Mutex<HashMap<(usize, usize), usize>> {
+    CPYTHON_TRACEMALLOC_TRACES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub(super) fn cpython_structseq_registry()

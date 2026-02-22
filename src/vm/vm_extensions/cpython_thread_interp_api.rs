@@ -16,8 +16,8 @@ use super::{
     cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
     cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
     cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr, cpython_set_error,
-    cpython_set_typed_error, cpython_thread_state_allocations, free, malloc,
-    vm_current_thread_ident, with_active_cpython_context_mut,
+    cpython_set_typed_error, cpython_thread_state_allocations, cpython_tracemalloc_traces, free,
+    malloc, vm_current_thread_ident, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -697,13 +697,25 @@ pub unsafe extern "C" fn PyThreadState_GetDict() -> *mut c_void {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyTraceMalloc_Track(_domain: usize, _ptr: usize, _size: usize) -> i32 {
-    0
+pub unsafe extern "C" fn PyTraceMalloc_Track(domain: usize, ptr: usize, size: usize) -> i32 {
+    match cpython_tracemalloc_traces().lock() {
+        Ok(mut traces) => {
+            traces.insert((domain, ptr), size);
+            0
+        }
+        Err(_) => -1,
+    }
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyTraceMalloc_Untrack(_domain: usize, _ptr: usize) -> i32 {
-    0
+pub unsafe extern "C" fn PyTraceMalloc_Untrack(domain: usize, ptr: usize) -> i32 {
+    match cpython_tracemalloc_traces().lock() {
+        Ok(mut traces) => {
+            traces.remove(&(domain, ptr));
+            0
+        }
+        Err(_) => -1,
+    }
 }
 
 #[unsafe(no_mangle)]

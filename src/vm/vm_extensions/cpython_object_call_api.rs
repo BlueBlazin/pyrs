@@ -819,7 +819,15 @@ pub unsafe extern "C" fn PyObject_VisitManagedDict(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnstable_Object_EnableDeferredRefcount(_object: *mut c_void) -> c_int {
+pub unsafe extern "C" fn PyUnstable_Object_EnableDeferredRefcount(object: *mut c_void) -> c_int {
+    if object.is_null() {
+        return 0;
+    }
+    // CPython only enables deferred refcounting on free-threaded builds.
+    // `pyrs` is currently GIL-only, so this API is a deterministic no-op.
+    if cpython_value_from_ptr(object).is_ok() {
+        return 0;
+    }
     0
 }
 

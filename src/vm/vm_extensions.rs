@@ -420,7 +420,7 @@ use self::cpython_thread_runtime::{
     cpython_structseq_registry, cpython_take_pending_interrupt_signum,
     cpython_thread_lock_registry, cpython_thread_runtime_initialized,
     cpython_thread_state_allocations, cpython_thread_tls_key_registry, cpython_thread_tls_values,
-    cpython_thread_tss_registry, cpython_thread_tss_values,
+    cpython_thread_tss_registry, cpython_thread_tss_values, cpython_tracemalloc_traces,
 };
 use self::cpython_tuple_api::{
     PyTuple_GetItem, PyTuple_GetSlice, PyTuple_New, PyTuple_SetItem, PyTuple_Size,
@@ -3314,6 +3314,8 @@ static CPYTHON_CONSTANT_EMPTY_BYTES_PTR: AtomicUsize = AtomicUsize::new(0);
 static CPYTHON_CONSTANT_EMPTY_TUPLE_PTR: AtomicUsize = AtomicUsize::new(0);
 static MAIN_INTERPRETER_STATE_TOKEN: u8 = 0;
 static CPYTHON_INTERPRETER_STATE_ALLOCATIONS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+static CPYTHON_TRACEMALLOC_TRACES: OnceLock<Mutex<HashMap<(usize, usize), usize>>> =
+    OnceLock::new();
 static CPYTHON_STRUCTSEQ_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonStructSeqTypeInfo>>> =
     OnceLock::new();
 static CPYTHON_HEAP_TYPE_REGISTRY: OnceLock<Mutex<HashMap<usize, CpythonHeapTypeInfo>>> =

@@ -2514,15 +2514,92 @@ pub unsafe extern "C" fn PyErr_DisplayException(exc: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnstable_Object_IsUniquelyReferenced(_object: *mut c_void) -> i32 {
-    0
+pub unsafe extern "C" fn PyUnstable_Object_IsUniquelyReferenced(object: *mut c_void) -> i32 {
+    if object.is_null() {
+        return 0;
+    }
+    if let Ok(value) = cpython_value_from_ptr_or_proxy(object)
+        && cpython_value_is_effectively_immortal(&value)
+    {
+        return 0;
+    }
+    let raw = object as usize;
+    if raw < 0x1_0000_0000 || raw % std::mem::align_of::<CpythonObjectHead>() != 0 {
+        return 0;
+    }
+    // SAFETY: pointer shape validated above; this is a best-effort query API.
+    let Some(head) = (unsafe { object.cast::<CpythonObjectHead>().as_ref() }) else {
+        return 0;
+    };
+    i32::from(head.ob_refcnt == 1)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyUnstable_Object_IsUniqueReferencedTemporary(
-    _object: *mut c_void,
-) -> i32 {
-    0
+pub unsafe extern "C" fn PyUnstable_Object_IsUniqueReferencedTemporary(object: *mut c_void) -> i32 {
+    if unsafe { PyUnstable_Object_IsUniquelyReferenced(object) } == 0 {
+        return 0;
+    }
+    let Ok(value) = cpython_value_from_ptr_or_proxy(object) else {
+        return 0;
+    };
+    let Some(target_id) = cpython_identity_object_id(&value) else {
+        return 0;
+    };
+    let mut present_on_top_frame = false;
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some(frame) = vm.frames.last() else {
+            return;
+        };
+        present_on_top_frame = frame.stack.iter().any(|value| {
+            cpython_identity_object_id(value).is_some_and(|object_id| object_id == target_id)
+        }) || frame.locals.values().any(|value| {
+            cpython_identity_object_id(value).is_some_and(|object_id| object_id == target_id)
+        }) || frame.fast_locals.iter().flatten().any(|value| {
+            cpython_identity_object_id(value).is_some_and(|object_id| object_id == target_id)
+        });
+    });
+    i32::from(present_on_top_frame)
+}
+
+fn cpython_value_is_effectively_immortal(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::None
+            | Value::Bool(_)
+            | Value::Int(_)
+            | Value::Str(_)
+            | Value::Builtin(_)
+            | Value::ExceptionType(_)
+    )
+}
+
+fn cpython_identity_object_id(value: &Value) -> Option<u64> {
+    match value {
+        Value::List(obj)
+        | Value::Tuple(obj)
+        | Value::Dict(obj)
+        | Value::DictKeys(obj)
+        | Value::Set(obj)
+        | Value::FrozenSet(obj)
+        | Value::Bytes(obj)
+        | Value::ByteArray(obj)
+        | Value::MemoryView(obj)
+        | Value::Iterator(obj)
+        | Value::Generator(obj)
+        | Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Super(obj)
+        | Value::Function(obj)
+        | Value::BoundMethod(obj)
+        | Value::Cell(obj) => Some(obj.id()),
+        _ => None,
+    }
 }
 
 #[unsafe(no_mangle)]
