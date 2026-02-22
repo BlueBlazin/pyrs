@@ -7067,6 +7067,7 @@ impl Vm {
                 column: frame.column,
                 end_line: frame.end_line,
                 end_column: frame.end_column,
+                lasti: frame.lasti,
                 name: frame.name.clone(),
             })
             .collect()
@@ -7104,13 +7105,16 @@ impl Vm {
         let mut next = Value::None;
         for frame in frames.iter().rev() {
             let mut code = CodeObject::new(frame.name.clone(), frame.filename.clone());
-            code.instructions.push(Instruction::new(Opcode::Nop, None));
-            code.locations.push(Location::with_end(
-                frame.line,
-                frame.column,
-                frame.end_line,
-                frame.end_column,
-            ));
+            let instruction_count = frame.lasti.saturating_div(2).saturating_add(1).max(1);
+            for _ in 0..instruction_count {
+                code.instructions.push(Instruction::new(Opcode::Nop, None));
+                code.locations.push(Location::with_end(
+                    frame.line,
+                    frame.column,
+                    frame.end_line,
+                    frame.end_column,
+                ));
+            }
             let code_value = Value::Code(Rc::new(code));
 
             let mut frame_instance = InstanceObject::new(frame_class.clone());
@@ -7160,7 +7164,7 @@ impl Vm {
                 .insert("tb_lineno".to_string(), Value::Int(frame.line as i64));
             instance
                 .attrs
-                .insert("tb_lasti".to_string(), Value::Int(-1));
+                .insert("tb_lasti".to_string(), Value::Int(frame.lasti as i64));
             instance.attrs.insert("tb_frame".to_string(), frame_value);
             instance.attrs.insert("tb_next".to_string(), next.clone());
             next = self.heap.alloc_instance(instance);
@@ -7223,12 +7227,17 @@ impl Vm {
                         Some(Value::Int(value)) if *value >= 0 => *value as usize,
                         _ => 0,
                     };
+                    let lasti = match node_data.attrs.get("tb_lasti") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                        _ => 0,
+                    };
                     frames.push(ExceptionTracebackFrame {
                         filename,
                         line,
                         column,
                         end_line,
                         end_column,
+                        lasti,
                         name,
                     });
                     current = match node_data.attrs.get("tb_next") {
@@ -7383,6 +7392,7 @@ impl Vm {
                 column: frame.column,
                 end_line: frame.end_line,
                 end_column: frame.end_column,
+                lasti: frame.lasti,
                 name: frame.name.clone(),
             })
             .collect();
@@ -8001,6 +8011,7 @@ impl Vm {
             column,
             end_line,
             end_column,
+            lasti: trace_ip,
             name: frame.code.name.clone(),
         }
     }

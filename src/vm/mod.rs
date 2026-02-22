@@ -90,6 +90,7 @@ struct TraceFrame {
     column: usize,
     end_line: usize,
     end_column: usize,
+    lasti: usize,
     name: String,
 }
 

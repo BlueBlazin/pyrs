@@ -107,6 +107,11 @@ Status: in progress (started 2026-02-22).
     - `code.co_positions()` returns per-instruction `(start_line, end_line, start_col, end_col)`
       tuples,
     - `code.co_lines()` returns per-instruction `(start_offset, end_offset, line)` tuples.
+  - traceback instruction-index propagation was tightened:
+    - exception traceback frames now retain `lasti` values,
+    - traceback objects publish per-frame `tb_lasti` from captured instruction offsets,
+    - synthetic traceback-frame code objects now allocate enough location rows to keep
+      `co_positions` lookup at `tb_lasti // 2` in-range.
   - `compile(..., flags=_ast.PyCF_ONLY_AST)` now returns `_ast` node objects for `exec` and
     `eval` modes in the core traceback-heurstic shapes (`Module`/`Assign`/`Return`/`Expr` and
     `Call`/`Name` expression surfaces with location attrs).
@@ -130,6 +135,7 @@ Status: in progress (started 2026-02-22).
   - VM regressions added for new location API surface:
     - `code_object_co_positions_and_co_lines_iterators_have_expected_shape`
     - `traceback_helpers_can_read_exception_traceback_attr`.
+    - `traceback_tb_lasti_maps_into_code_positions`.
   - VM regression added for AST-compile surface:
     - `compile_only_ast_returns_assign_and_call_shape`.
   - VM regressions added for AST class-pattern and expression-shape coverage:

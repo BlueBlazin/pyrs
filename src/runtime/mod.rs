@@ -2086,6 +2086,7 @@ pub struct ExceptionTracebackFrame {
     pub column: usize,
     pub end_line: usize,
     pub end_column: usize,
+    pub lasti: usize,
     pub name: String,
 }
 

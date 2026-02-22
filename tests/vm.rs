@@ -1016,6 +1016,17 @@ fn traceback_helpers_can_read_exception_traceback_attr() {
 }
 
 #[test]
+fn traceback_tb_lasti_maps_into_code_positions() {
+    let source = "ok = False\ntry:\n    1 / 0\nexcept Exception as exc:\n    tb = exc.__traceback__\n    co = tb.tb_frame.f_code\n    positions = list(co.co_positions())\n    idx = tb.tb_lasti // 2\n    ok = (tb.tb_lasti >= 0 and idx >= 0 and idx < len(positions))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn code_object_co_positions_and_co_lines_iterators_have_expected_shape() {
     let source = "def f(x):\n    y = x + 1\n    return y\n\nco = f.__code__\npositions = list(co.co_positions())\nlines = list(co.co_lines())\npositions_shape = (len(positions) > 0 and all(isinstance(t, tuple) and len(t) == 4 for t in positions))\nlines_shape = (len(lines) > 0 and all(isinstance(t, tuple) and len(t) == 3 for t in lines))\nline_offsets_monotonic = all(isinstance(t[0], int) and isinstance(t[1], int) and t[0] < t[1] for t in lines)\noffsets_start_zero = (lines[0][0] == 0)\nok = positions_shape and lines_shape and line_offsets_monotonic and offsets_start_zero\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -121,6 +121,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       `(start_line, end_line, start_col, end_col)`,
     - `code.co_lines()` now returns an iterator of 3-tuples
       `(start_offset, end_offset, line)`.
+  - traceback `tb_lasti` propagation now preserves per-frame instruction offsets through
+    exception frame capture/materialization:
+    - `ExceptionTracebackFrame` now stores `lasti`,
+    - traceback objects expose `tb_lasti` from captured frame instruction offsets
+      (instead of fixed fallback),
+    - traceback frame synthetic code objects now materialize enough instruction/location rows
+      to keep `_get_code_position(co, tb_lasti)` in-range.
   - `compile(..., flags=_ast.PyCF_ONLY_AST)` baseline now materializes `_ast` node objects
     for `exec`/`eval` modes, including statement/expression shapes used by traceback caret
     heuristics (`Module`, `Assign`, `Return`, `Expr`, `Call`, `Name`, and context nodes).
@@ -162,6 +169,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::traceback_output_preserves_exception_type_without_traceback_rewrap`
     - `tests/vm.rs::code_object_co_positions_and_co_lines_iterators_have_expected_shape`
     - `tests/vm.rs::traceback_helpers_can_read_exception_traceback_attr`
+    - `tests/vm.rs::traceback_tb_lasti_maps_into_code_positions`
     - `tests/vm.rs::compile_only_ast_returns_assign_and_call_shape`
     - `tests/vm.rs::compile_only_ast_supports_positional_match_patterns`
     - `tests/vm.rs::compile_only_ast_covers_binop_compare_and_slice_shapes`
