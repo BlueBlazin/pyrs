@@ -196,6 +196,16 @@ struct SyntaxDiagnostic {
 }
 
 fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
+    if let Some((line, column)) = detect_unexpected_top_level_indent(source) {
+        return SyntaxDiagnostic {
+            error_type: "IndentationError",
+            message: "unexpected indent".to_string(),
+            line,
+            // CPython omits the caret for this case.
+            column,
+        };
+    }
+
     if let Some(issue) = detect_delimiter_issue(source) {
         return match issue {
             DelimiterIssue::UnmatchedClose { close, line, column } => SyntaxDiagnostic {
@@ -234,6 +244,16 @@ fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
             message: "expected an indented block".to_string(),
             line: err.line,
             column: err.column,
+        };
+    }
+    if message_lower.contains("indentation does not match any outer level")
+        || message_lower.contains("unindent does not match any outer indentation level")
+    {
+        return SyntaxDiagnostic {
+            error_type: "IndentationError",
+            message: "unindent does not match any outer indentation level".to_string(),
+            line: err.line,
+            column: line_end_column(source, err.line).unwrap_or(err.column),
         };
     }
     if message_lower.starts_with("expected dedent") {
@@ -436,6 +456,32 @@ fn infer_syntax_caret_width(source_line: &str, start: usize) -> usize {
         return idx.saturating_sub(start).max(1);
     }
     1
+}
+
+fn line_end_column(source: &str, line: usize) -> Option<usize> {
+    source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .map(|entry| entry.trim_end_matches('\r').chars().count().saturating_add(1))
+}
+
+fn detect_unexpected_top_level_indent(source: &str) -> Option<(usize, usize)> {
+    for (idx, raw_line) in source.lines().enumerate() {
+        let line = raw_line.trim_end_matches('\r');
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let leading = line
+            .chars()
+            .take_while(|ch| *ch == ' ' || *ch == '\t')
+            .count();
+        if leading > 0 {
+            return Some((idx.saturating_add(1), 0));
+        }
+        return None;
+    }
+    None
 }
 
 fn is_identifier_start(ch: char) -> bool {

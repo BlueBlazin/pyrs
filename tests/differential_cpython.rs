@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyrs::{compiler, parser, runtime::Value, vm::Vm};
 
@@ -114,6 +115,49 @@ fn run_pyrs_traceback(source: &str) -> Result<String, String> {
         return Err("expected pyrs script to fail with traceback".to_string());
     }
     Ok(String::from_utf8_lossy(&output.stderr).to_string())
+}
+
+fn unique_temp_script_path(prefix: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut path = std::env::temp_dir();
+    let suffix = COUNTER.fetch_add(1, Ordering::Relaxed);
+    path.push(format!(
+        "pyrs_diff_{prefix}_{}_{}_{}.py",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("thread"),
+        suffix
+    ));
+    path
+}
+
+fn run_traceback_via_file(bin: &PathBuf, source: &str) -> Result<String, String> {
+    let path = unique_temp_script_path("traceback");
+    std::fs::write(&path, source).map_err(|err| format!("failed to write temp script: {err}"))?;
+    let output = Command::new(bin)
+        .arg(&path)
+        .output()
+        .map_err(|err| format!("failed to launch interpreter: {err}"));
+    let _ = std::fs::remove_file(&path);
+    let output = output?;
+    if output.status.success() {
+        return Err("expected script to fail with traceback".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stderr).to_string())
+}
+
+fn run_cpython_traceback_file(source: &str) -> Result<String, String> {
+    let bin = cpython_bin_or_panic();
+    if bin.as_os_str().is_empty() {
+        return Ok(String::new());
+    }
+    run_traceback_via_file(&bin, source)
+}
+
+fn run_pyrs_traceback_file(source: &str) -> Result<String, String> {
+    let Some(bin) = pyrs_bin_path() else {
+        return Err("pyrs binary not found".to_string());
+    };
+    run_traceback_via_file(&bin, source)
 }
 
 fn traceback_heading_count(text: &str) -> usize {
@@ -677,4 +721,35 @@ fn differential_unterminated_triple_quoted_string_matches_cpython() {
     let py_caret = caret_line_after_source(&py, "    x = \"\"\"a").expect("python triple caret");
     let ours_caret = caret_line_after_source(&ours, "    x = \"\"\"a").expect("pyrs triple caret");
     assert_eq!(py_caret, ours_caret, "triple-quote caret mismatch");
+}
+
+#[test]
+fn differential_unexpected_indent_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "    x = 1\n";
+    let py = run_cpython_traceback_file(source).expect("CPython indentation error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs indentation error should run");
+    assert!(py.contains("IndentationError: unexpected indent"), "{}", py);
+    assert!(ours.contains("IndentationError: unexpected indent"), "{}", ours);
+    assert!(!py.contains("^\n"), "{}", py);
+    assert!(!ours.contains("^\n"), "{}", ours);
+}
+
+#[test]
+fn differential_unindent_mismatch_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "if True:\n    if True:\n        pass\n  pass\n";
+    let py = run_cpython_traceback_file(source).expect("CPython indentation error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs indentation error should run");
+    let expected = "IndentationError: unindent does not match any outer indentation level";
+    assert!(py.contains(expected), "{}", py);
+    assert!(ours.contains(expected), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "      pass").or_else(|| caret_line_after_source(&py, "    pass"));
+    let ours_caret =
+        caret_line_after_source(&ours, "      pass").or_else(|| caret_line_after_source(&ours, "    pass"));
+    assert_eq!(py_caret, ours_caret, "unindent-mismatch caret mismatch");
 }
