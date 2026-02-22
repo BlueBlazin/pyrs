@@ -506,7 +506,7 @@ Recent Lane A slice:
   - `PyEval_CallObjectWithKeywords`
   - `PyEval_CallFunction`
   - `PyEval_CallMethod`
-  - call wrappers now route through the same C-side varargs substrate as `PyObject_CallFunction`/`PyObject_CallMethod`, and thread lock/init helpers are wired to parity-safe no-op/runtime-ready semantics in the current single-runtime model.
+  - call wrappers route through the same C-side varargs substrate as `PyObject_CallFunction`/`PyObject_CallMethod`; thread helpers now provide concrete CPython-aligned state transitions (GIL acquire/release token semantics, `SaveThread`/`RestoreThread`, thread-state attach/detach validation, and idempotent init/initialized reporting in the single-runtime model).
 - Added Stable-ABI exports and semantics for bytes formatting/repr/escape APIs:
   - `PyBytes_FromFormat`
   - `PyBytes_FromFormatV`

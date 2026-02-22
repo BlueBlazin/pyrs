@@ -70,6 +70,17 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- C-API no-op closure checkpoint (2026-02-22, latest):
+  - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
+    - `PyGILState_{Ensure,Release,GetThisThreadState}`,
+    - `PyEval_{SaveThread,RestoreThread,AcquireThread,ReleaseThread,AcquireLock,ReleaseLock,InitThreads,ThreadsInitialized}`,
+    - `PyMutex_{Lock,Unlock}`,
+    - `PyThread_init_thread`, `PyThread_ReInitTLS`.
+  - C-API compatibility header now declares `PyEval_SaveThread`, `PyEval_RestoreThread`, and `PyMutex` APIs (`include/pyrs_cpython_compat.h`).
+  - extension smoke regressions were upgraded to verify semantics (not symbol presence only):
+    - `tests/extension_smoke.rs::cpython_compat_eval_abi_batch27_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_gilstate_abi_batch30_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_thread_abi_batch53_apis_work`.
 - C-API lifetime-model checkpoint (2026-02-22, latest):
   - owned-pointer free path now clears active thread-state exception pointers when they
     alias the freed pointer (`current_exception`, `exc_info.exc_value`, `exc_state.exc_value`).

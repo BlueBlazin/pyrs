@@ -7,32 +7,32 @@ Last updated: 2026-02-22
 
 ## Re-check Snapshot
 
-- Empty-body rows: `17`
-- Placeholder rows: `12`
-- Total rows: `29`
-- Total symbols represented: `31`
+- Empty-body rows: `6`
+- Placeholder rows: `9`
+- Total rows: `15`
+- Total symbols represented: `17`
 
 Note: placeholder rows are now `12` (not `13`) because `PySys_Audit` /
 `PySys_AuditTuple` were closed and removed from the no-op inventory.
 
 ## Ordered Checklist
 
-### Batch 1: Thread/GIL Substrate (dependency base)
+### Batch 1: Thread/GIL Substrate (dependency base) ✅ complete
 
-- [ ] `PyGILState_Ensure`
-- [ ] `PyGILState_Release`
-- [ ] `PyEval_SaveThread`
-- [ ] `PyEval_RestoreThread`
-- [ ] `PyEval_AcquireThread`
-- [ ] `PyEval_ReleaseThread`
-- [ ] `PyEval_AcquireLock`
-- [ ] `PyEval_ReleaseLock`
-- [ ] `PyMutex_Lock`
-- [ ] `PyMutex_Unlock`
-- [ ] `PyEval_InitThreads`
-- [ ] `PyEval_ThreadsInitialized`
-- [ ] `PyThread_init_thread`
-- [ ] `PyThread_ReInitTLS`
+- [x] `PyGILState_Ensure`
+- [x] `PyGILState_Release`
+- [x] `PyEval_SaveThread`
+- [x] `PyEval_RestoreThread`
+- [x] `PyEval_AcquireThread`
+- [x] `PyEval_ReleaseThread`
+- [x] `PyEval_AcquireLock`
+- [x] `PyEval_ReleaseLock`
+- [x] `PyMutex_Lock`
+- [x] `PyMutex_Unlock`
+- [x] `PyEval_InitThreads`
+- [x] `PyEval_ThreadsInitialized`
+- [x] `PyThread_init_thread`
+- [x] `PyThread_ReInitTLS`
 
 ### Batch 2: Signal + Recursion Control
 
