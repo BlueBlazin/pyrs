@@ -5970,8 +5970,12 @@ impl ModuleCapiContext {
             if !self.objects.contains_key(&handle) && self.capsules.contains_key(&handle) {
                 return self.cpython_external_proxy_value(object);
             }
-            self.sync_value_from_cpython_storage(handle, object);
-            self.refresh_external_proxy_instance_type(handle, object);
+            if self.cpython_handle_requires_storage_sync(handle) {
+                self.sync_value_from_cpython_storage(handle, object);
+            }
+            if !self.owns_cpython_allocation_ptr(object) {
+                self.refresh_external_proxy_instance_type(handle, object);
+            }
             if let Some(value) = self.object_value(handle) {
                 if std::env::var_os("PYRS_TRACE_METHOD_MAP_SOURCE").is_some()
                     && matches!(value, Value::BoundMethod(_))
@@ -9770,6 +9774,21 @@ impl ModuleCapiContext {
         }
 
         self.cpython_sync_in_progress.remove(&handle);
+    }
+
+    fn cpython_handle_requires_storage_sync(&self, handle: PyrsObjectHandle) -> bool {
+        let Some(slot) = self.objects.get(&handle) else {
+            return false;
+        };
+        match &slot.value {
+            Value::Tuple(_)
+            | Value::List(_)
+            | Value::ByteArray(_)
+            | Value::Module(_)
+            | Value::Exception(_) => true,
+            Value::Instance(_) => self.value_is_exception_instance_like(&slot.value),
+            _ => false,
+        }
     }
 
     fn sync_cpython_header_refcount(&mut self, handle: PyrsObjectHandle) {
