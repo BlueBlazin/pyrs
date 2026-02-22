@@ -1287,8 +1287,8 @@ fn differential_pyc_traceback_raise_exc_keeps_original_traceback_chain() {
 
 boom()
 "#;
-    let (base, pyc_path) = compile_temp_pyc(source, "traceback_raise_exc_pyc")
-        .expect("compile pyc should succeed");
+    let (base, pyc_path) =
+        compile_temp_pyc(source, "traceback_raise_exc_pyc").expect("compile pyc should succeed");
     let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
         .expect("CPython .pyc traceback should run");
     let ours =

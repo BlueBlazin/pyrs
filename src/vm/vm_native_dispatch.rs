@@ -141,10 +141,13 @@ impl Vm {
                     | NativeMethodKind::StrSplit
                     | NativeMethodKind::StrSplitLines
                     | NativeMethodKind::StrRSplit
+                    | NativeMethodKind::StrEncode
+                    | NativeMethodKind::StrDecode
                     | NativeMethodKind::StrCount
                     | NativeMethodKind::StrFind
                     | NativeMethodKind::StrIndex
                     | NativeMethodKind::StrRFind
+                    | NativeMethodKind::BytesDecode
                     | NativeMethodKind::BytesCount
                     | NativeMethodKind::BytesTranslate
                     | NativeMethodKind::ListSort
@@ -1672,9 +1675,45 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrEncode => {
+                let mut kw_encoding = None;
+                let mut kw_errors = None;
+                for (name, value) in kwargs {
+                    match name.as_str() {
+                        "encoding" => {
+                            if kw_encoding.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "encode() got multiple values for argument 'encoding'",
+                                ));
+                            }
+                        }
+                        "errors" => {
+                            if kw_errors.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "encode() got multiple values for argument 'errors'",
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "encode() got an unexpected keyword argument '{}'",
+                                name
+                            )));
+                        }
+                    }
+                }
                 if args.len() > 2 {
                     return Err(RuntimeError::new(
                         "encode() expects optional encoding and errors",
+                    ));
+                }
+                if args.len() >= 1 && kw_encoding.is_some() {
+                    return Err(RuntimeError::new(
+                        "encode() got multiple values for argument 'encoding'",
+                    ));
+                }
+                if args.len() >= 2 && kw_errors.is_some() {
+                    return Err(RuntimeError::new(
+                        "encode() got multiple values for argument 'errors'",
                     ));
                 }
                 let text = match &*receiver.kind() {
@@ -1687,11 +1726,13 @@ impl Vm {
                 let encoding = normalize_codec_encoding(
                     args.first()
                         .cloned()
+                        .or(kw_encoding)
                         .unwrap_or(Value::Str("utf-8".to_string())),
                 )?;
                 let errors = normalize_codec_errors(
                     args.get(1)
                         .cloned()
+                        .or(kw_errors)
                         .unwrap_or(Value::Str("strict".to_string())),
                 )?;
                 Ok(NativeCallResult::Value(self.heap.alloc_bytes(
@@ -1699,9 +1740,45 @@ impl Vm {
                 )))
             }
             NativeMethodKind::StrDecode => {
+                let mut kw_encoding = None;
+                let mut kw_errors = None;
+                for (name, value) in kwargs {
+                    match name.as_str() {
+                        "encoding" => {
+                            if kw_encoding.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "decode() got multiple values for argument 'encoding'",
+                                ));
+                            }
+                        }
+                        "errors" => {
+                            if kw_errors.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "decode() got multiple values for argument 'errors'",
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "decode() got an unexpected keyword argument '{}'",
+                                name
+                            )));
+                        }
+                    }
+                }
                 if args.len() > 2 {
                     return Err(RuntimeError::new(
                         "decode() expects optional encoding and errors",
+                    ));
+                }
+                if args.len() >= 1 && kw_encoding.is_some() {
+                    return Err(RuntimeError::new(
+                        "decode() got multiple values for argument 'encoding'",
+                    ));
+                }
+                if args.len() >= 2 && kw_errors.is_some() {
+                    return Err(RuntimeError::new(
+                        "decode() got multiple values for argument 'errors'",
                     ));
                 }
                 let text = match &*receiver.kind() {
@@ -1711,18 +1788,54 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::type_error("str receiver is invalid")),
                 };
-                if let Some(value) = args.first() {
+                if let Some(value) = args.first().cloned().or(kw_encoding) {
                     let _ = normalize_codec_encoding(value.clone())?;
                 }
-                if let Some(value) = args.get(1) {
-                    let _ = normalize_codec_errors(value.clone())?;
+                if let Some(value) = args.get(1).cloned().or(kw_errors) {
+                    let _ = normalize_codec_errors(value)?;
                 }
                 Ok(NativeCallResult::Value(Value::Str(text)))
             }
             NativeMethodKind::BytesDecode => {
+                let mut kw_encoding = None;
+                let mut kw_errors = None;
+                for (name, value) in kwargs {
+                    match name.as_str() {
+                        "encoding" => {
+                            if kw_encoding.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "decode() got multiple values for argument 'encoding'",
+                                ));
+                            }
+                        }
+                        "errors" => {
+                            if kw_errors.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "decode() got multiple values for argument 'errors'",
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "decode() got an unexpected keyword argument '{}'",
+                                name
+                            )));
+                        }
+                    }
+                }
                 if args.len() > 2 {
                     return Err(RuntimeError::new(
                         "decode() expects optional encoding and errors",
+                    ));
+                }
+                if args.len() >= 1 && kw_encoding.is_some() {
+                    return Err(RuntimeError::new(
+                        "decode() got multiple values for argument 'encoding'",
+                    ));
+                }
+                if args.len() >= 2 && kw_errors.is_some() {
+                    return Err(RuntimeError::new(
+                        "decode() got multiple values for argument 'errors'",
                     ));
                 }
                 let bytes = match &*receiver.kind() {
@@ -1735,11 +1848,13 @@ impl Vm {
                 let encoding = normalize_codec_encoding(
                     args.first()
                         .cloned()
+                        .or(kw_encoding)
                         .unwrap_or(Value::Str("utf-8".to_string())),
                 )?;
                 let errors = normalize_codec_errors(
                     args.get(1)
                         .cloned()
+                        .or(kw_errors)
                         .unwrap_or(Value::Str("strict".to_string())),
                 )?;
                 let text = decode_text_bytes(&bytes, &encoding, &errors)?;
@@ -4038,6 +4153,82 @@ impl Vm {
                 }
                 replaced.rebuild_layout_indexes();
                 Ok(NativeCallResult::Value(Value::Code(Rc::new(replaced))))
+            }
+            NativeMethodKind::CodeCoPositions => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("co_positions() takes no arguments"));
+                }
+                let code_obj = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Code(code_obj)) => code_obj.clone(),
+                        _ => return Err(RuntimeError::new("code receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("code receiver is invalid")),
+                };
+                let mut entries = Vec::with_capacity(code_obj.locations.len());
+                for location in &code_obj.locations {
+                    let start_line = if location.line == 0 {
+                        Value::None
+                    } else {
+                        Value::Int(location.line as i64)
+                    };
+                    let end_line = if location.end_line == 0 {
+                        Value::None
+                    } else {
+                        Value::Int(location.end_line as i64)
+                    };
+                    let start_column = if location.column == 0 {
+                        Value::None
+                    } else {
+                        Value::Int(location.column.saturating_sub(1) as i64)
+                    };
+                    let end_column = if location.end_column == 0 {
+                        Value::None
+                    } else {
+                        Value::Int(location.end_column.saturating_sub(1) as i64)
+                    };
+                    entries.push(self.heap.alloc_tuple(vec![
+                        start_line,
+                        end_line,
+                        start_column,
+                        end_column,
+                    ]));
+                }
+                let iterator = self.call_builtin(
+                    BuiltinFunction::Iter,
+                    vec![self.heap.alloc_list(entries)],
+                    HashMap::new(),
+                )?;
+                Ok(NativeCallResult::Value(iterator))
+            }
+            NativeMethodKind::CodeCoLines => {
+                if !args.is_empty() {
+                    return Err(RuntimeError::new("co_lines() takes no arguments"));
+                }
+                let code_obj = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Code(code_obj)) => code_obj.clone(),
+                        _ => return Err(RuntimeError::new("code receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::new("code receiver is invalid")),
+                };
+                let mut entries = Vec::with_capacity(code_obj.locations.len());
+                for (index, location) in code_obj.locations.iter().enumerate() {
+                    let start_offset = Value::Int((index * 2) as i64);
+                    let end_offset = Value::Int(((index + 1) * 2) as i64);
+                    let line = if location.line == 0 {
+                        Value::None
+                    } else {
+                        Value::Int(location.line as i64)
+                    };
+                    entries.push(self.heap.alloc_tuple(vec![start_offset, end_offset, line]));
+                }
+                let iterator = self.call_builtin(
+                    BuiltinFunction::Iter,
+                    vec![self.heap.alloc_list(entries)],
+                    HashMap::new(),
+                )?;
+                Ok(NativeCallResult::Value(iterator))
             }
             NativeMethodKind::RePatternSearch
             | NativeMethodKind::RePatternMatch

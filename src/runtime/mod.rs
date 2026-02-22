@@ -308,6 +308,8 @@ pub enum NativeMethodKind {
     StrLJust,
     StrExpandTabs,
     CodeReplace,
+    CodeCoPositions,
+    CodeCoLines,
     SetContains,
     SetAdd,
     SetDiscard,
@@ -7602,6 +7604,10 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrLJust => "<bound method str.ljust>".to_string(),
                     NativeMethodKind::StrExpandTabs => "<bound method str.expandtabs>".to_string(),
                     NativeMethodKind::CodeReplace => "<bound method code.replace>".to_string(),
+                    NativeMethodKind::CodeCoPositions => {
+                        "<bound method code.co_positions>".to_string()
+                    }
+                    NativeMethodKind::CodeCoLines => "<bound method code.co_lines>".to_string(),
                     NativeMethodKind::SetContains => "<bound method __contains__>".to_string(),
                     NativeMethodKind::SetAdd => "<bound method set.add>".to_string(),
                     NativeMethodKind::SetDiscard => "<bound method set.discard>".to_string(),

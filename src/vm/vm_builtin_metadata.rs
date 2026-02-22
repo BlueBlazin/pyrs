@@ -2512,6 +2512,36 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::CodeReplace, receiver))
             }
+            "co_positions" => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__code_positions_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("value".to_string(), Value::Code(code.clone()));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::CodeCoPositions, receiver))
+            }
+            "co_lines" => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__code_lines_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("value".to_string(), Value::Code(code.clone()));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::CodeCoLines, receiver))
+            }
             "co_name" | "co_qualname" => Ok(Value::Str(code.name.clone())),
             "co_filename" => Ok(Value::Str(code.filename.clone())),
             "co_argcount" => Ok(Value::Int(

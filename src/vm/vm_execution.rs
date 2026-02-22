@@ -538,7 +538,9 @@ impl Vm {
             let attr = match self.load_attr_module(&current_module, attr_name) {
                 Ok(attr) => attr,
                 Err(load_err) => {
-                    if let Some(module) = self.load_submodule_with_error(&current_module, attr_name)? {
+                    if let Some(module) =
+                        self.load_submodule_with_error(&current_module, attr_name)?
+                    {
                         Value::Module(module)
                     } else if !retried_with_canonical
                         && load_err.message.contains("has no attribute")
@@ -7124,7 +7126,9 @@ impl Vm {
             frame_instance
                 .attrs
                 .insert("f_lineno".to_string(), Value::Int(frame.line as i64));
-            frame_instance.attrs.insert("f_back".to_string(), Value::None);
+            frame_instance
+                .attrs
+                .insert("f_back".to_string(), Value::None);
             let frame_value = self.heap.alloc_instance(frame_instance);
 
             let mut instance = InstanceObject::new(traceback_class.clone());
@@ -7135,9 +7139,10 @@ impl Vm {
                 "__pyrs_tb_filename__".to_string(),
                 Value::Str(frame.filename.clone()),
             );
-            instance
-                .attrs
-                .insert("__pyrs_tb_name__".to_string(), Value::Str(frame.name.clone()));
+            instance.attrs.insert(
+                "__pyrs_tb_name__".to_string(),
+                Value::Str(frame.name.clone()),
+            );
             instance.attrs.insert(
                 "__pyrs_tb_column__".to_string(),
                 Value::Int(frame.column as i64),
@@ -7250,8 +7255,7 @@ impl Vm {
         preserve_existing_traceback: bool,
     ) -> Result<(), RuntimeError> {
         let mut traceback = Self::existing_traceback_frames(&exc);
-        let mut skip_current_frame_trace =
-            preserve_existing_traceback && !traceback.is_empty();
+        let mut skip_current_frame_trace = preserve_existing_traceback && !traceback.is_empty();
         loop {
             let frame_depth = self.frames.len();
             let Some(frame) = self.frames.last_mut() else {
