@@ -14,6 +14,9 @@ use super::{
     PyErr_Occurred, PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError, PyExc_TypeError,
     PyLong_AsSsize_t, PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string,
     capi_perf_inc_richcompare_bool_calls, capi_perf_inc_richcompare_calls,
+    capi_perf_inc_richcompare_dunder_attr_missing,
+    capi_perf_inc_richcompare_dunder_callable_invocations,
+    capi_perf_inc_richcompare_dunder_calls_external, capi_perf_inc_richcompare_dunder_calls_owned,
     capi_perf_inc_richcompare_dunder_fallback_attempts, capi_perf_inc_richcompare_slot_attempts,
     cpython_call_builtin, cpython_call_object, cpython_error_message_indicates_missing_attribute,
     cpython_is_interned_unicode_ptr, cpython_lookup_interned_unicode_text,
@@ -757,6 +760,83 @@ pub unsafe extern "C" fn PyObject_HashNotImplemented(object: *mut c_void) -> isi
     -1
 }
 
+pub(super) unsafe extern "C" fn cpython_tuple_richcompare_slot(
+    left: *mut c_void,
+    right: *mut c_void,
+    op: i32,
+) -> *mut c_void {
+    if left.is_null() || right.is_null() {
+        cpython_set_error("tuple richcompare received null operand");
+        return std::ptr::null_mut();
+    }
+    if op < 0 || op > 5 {
+        cpython_set_error("tuple richcompare received invalid compare op");
+        return std::ptr::null_mut();
+    }
+    if left == right {
+        let result = match op {
+            0 | 4 => false,
+            1 | 2 | 5 => true,
+            3 => false,
+            _ => unreachable!(),
+        };
+        return cpython_new_ptr_for_value(Value::Bool(result));
+    }
+    // SAFETY: slot is only installed on tuple type; pointer layout is validated by caller.
+    let (left_len, right_len, left_items, right_items) = unsafe {
+        let left_var = left.cast::<CpythonVarObjectHead>();
+        let right_var = right.cast::<CpythonVarObjectHead>();
+        (
+            (*left_var).ob_size.max(0) as usize,
+            (*right_var).ob_size.max(0) as usize,
+            cpython_tuple_items_ptr(left),
+            cpython_tuple_items_ptr(right),
+        )
+    };
+
+    let mut differing_index = None;
+    let min_len = left_len.min(right_len);
+    for idx in 0..min_len {
+        // SAFETY: tuple items are contiguous with length ob_size.
+        let (left_item, right_item) = unsafe { (*left_items.add(idx), *right_items.add(idx)) };
+        if left_item == right_item {
+            continue;
+        }
+        let eq = unsafe { PyObject_RichCompareBool(left_item, right_item, 2) };
+        if eq < 0 {
+            return std::ptr::null_mut();
+        }
+        if eq == 0 {
+            differing_index = Some(idx);
+            break;
+        }
+    }
+
+    if let Some(idx) = differing_index {
+        if op == 2 {
+            return cpython_new_ptr_for_value(Value::Bool(false));
+        }
+        if op == 3 {
+            return cpython_new_ptr_for_value(Value::Bool(true));
+        }
+        // SAFETY: idx is < min_len <= left/right lengths.
+        let (left_item, right_item) = unsafe { (*left_items.add(idx), *right_items.add(idx)) };
+        return unsafe { PyObject_RichCompare(left_item, right_item, op) };
+    }
+
+    let len_cmp = left_len.cmp(&right_len);
+    let result = match op {
+        0 => len_cmp == std::cmp::Ordering::Less,
+        1 => len_cmp != std::cmp::Ordering::Greater,
+        2 => len_cmp == std::cmp::Ordering::Equal,
+        3 => len_cmp != std::cmp::Ordering::Equal,
+        4 => len_cmp == std::cmp::Ordering::Greater,
+        5 => len_cmp != std::cmp::Ordering::Less,
+        _ => unreachable!(),
+    };
+    cpython_new_ptr_for_value(Value::Bool(result))
+}
+
 fn cpython_rich_compare_slot_name(op: i32) -> Option<&'static std::ffi::CStr> {
     match op {
         0 => Some(c"__lt__"),
@@ -998,6 +1078,34 @@ pub unsafe extern "C" fn PyObject_RichCompare(
     if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
         return result;
     }
+    let (allow_direct_compare, allow_dunder_fallback) =
+        with_active_cpython_context_mut(|context| {
+            (
+                context.owns_cpython_allocation_ptr(left)
+                    && context.owns_cpython_allocation_ptr(right),
+                context.owns_cpython_allocation_ptr(left)
+                    || context.owns_cpython_allocation_ptr(right),
+            )
+        })
+        .unwrap_or((false, false));
+    if !allow_dunder_fallback {
+        if let Some(result) = cpython_try_unicode_pointer_compare(left, right, op) {
+            return result;
+        }
+        return match op {
+            2 => cpython_new_ptr_for_value(Value::Bool(left == right)),
+            3 => cpython_new_ptr_for_value(Value::Bool(left != right)),
+            _ => {
+                cpython_set_error(format!(
+                    "TypeError: '{}' not supported between instances of '{}' and '{}'",
+                    cpython_compare_op_symbol(op),
+                    cpython_type_name_for_object_ptr(left),
+                    cpython_type_name_for_object_ptr(right)
+                ));
+                std::ptr::null_mut()
+            }
+        };
+    }
     let pre_mapped_values = match with_active_cpython_context_mut(|context| {
         (
             context.cpython_value_from_ptr_or_proxy(left),
@@ -1010,7 +1118,8 @@ pub unsafe extern "C" fn PyObject_RichCompare(
             return std::ptr::null_mut();
         }
     };
-    if let (Some(left_value), Some(right_value)) = (&pre_mapped_values.0, &pre_mapped_values.1)
+    if allow_direct_compare
+        && let (Some(left_value), Some(right_value)) = (&pre_mapped_values.0, &pre_mapped_values.1)
         && let Some(result) = cpython_direct_rich_compare(left_value, right_value, op)
     {
         return cpython_new_ptr_for_value(Value::Bool(result));
@@ -1071,9 +1180,18 @@ pub unsafe extern "C" fn PyObject_RichCompare(
      -> RichCompareAttempt {
         let callable = unsafe { PyObject_GetAttrString(receiver_ptr, method_name.as_ptr()) };
         if callable.is_null() {
+            capi_perf_inc_richcompare_dunder_attr_missing();
             unsafe { PyErr_Clear() };
             return RichCompareAttempt::Missing;
         }
+        let _ = with_active_cpython_context_mut(|context| {
+            if context.owns_cpython_allocation_ptr(receiver_ptr) {
+                capi_perf_inc_richcompare_dunder_calls_owned();
+            } else {
+                capi_perf_inc_richcompare_dunder_calls_external();
+            }
+        });
+        capi_perf_inc_richcompare_dunder_callable_invocations();
         let result = cpython_call_object(callable, vec![arg], HashMap::new());
         unsafe { Py_DecRef(callable) };
         if result.is_null() {
@@ -1139,21 +1257,40 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
             return 0;
         }
     }
-    let trace_compare = env_var_present_cached("PYRS_TRACE_CPY_COMPARE");
-    let direct_compare = with_active_cpython_context_mut(|context| {
-        let left_value = context.cpython_value_from_ptr_or_proxy(left);
-        let right_value = context.cpython_value_from_ptr_or_proxy(right);
-        match (left_value, right_value) {
-            (Some(left_value), Some(right_value)) => {
-                cpython_direct_rich_compare(&left_value, &right_value, op)
-            }
-            _ => None,
+    capi_perf_inc_richcompare_slot_attempts();
+    if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
+        if result.is_null() {
+            return -1;
         }
+        if cpython_is_not_implemented_ptr(result) {
+            unsafe { Py_DecRef(result) };
+        } else {
+            let truth = unsafe { PyObject_IsTrue(result) };
+            unsafe { Py_DecRef(result) };
+            return truth;
+        }
+    }
+    let trace_compare = env_var_present_cached("PYRS_TRACE_CPY_COMPARE");
+    let allow_direct_compare = with_active_cpython_context_mut(|context| {
+        context.owns_cpython_allocation_ptr(left) && context.owns_cpython_allocation_ptr(right)
     })
-    .ok()
-    .flatten();
-    if let Some(result) = direct_compare {
-        return i32::from(result);
+    .unwrap_or(false);
+    if allow_direct_compare {
+        let direct_compare = with_active_cpython_context_mut(|context| {
+            let left_value = context.cpython_value_from_ptr_or_proxy(left);
+            let right_value = context.cpython_value_from_ptr_or_proxy(right);
+            match (left_value, right_value) {
+                (Some(left_value), Some(right_value)) => {
+                    cpython_direct_rich_compare(&left_value, &right_value, op)
+                }
+                _ => None,
+            }
+        })
+        .ok()
+        .flatten();
+        if let Some(result) = direct_compare {
+            return i32::from(result);
+        }
     }
     if trace_compare && op == 2 {
         let mut left_raw = String::new();

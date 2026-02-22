@@ -1710,11 +1710,15 @@ impl Vm {
         }
         if let Some(capi_perf) = self::vm_extensions::capi_perf_snapshot() {
             eprintln!(
-                "[capi-perf] richcompare={} richcompare_bool={} richcompare_slot={} dunder_fallback={} value_from_ptr={} handle_from_ptr={}/{} py_incref={}/{} py_decref={}/{}",
+                "[capi-perf] richcompare={} richcompare_bool={} richcompare_slot={} dunder_fallback={} dunder_missing={} dunder_calls={} dunder_owned={} dunder_external={} value_from_ptr={} handle_from_ptr={}/{} py_incref={}/{} py_decref={}/{}",
                 capi_perf.richcompare_calls,
                 capi_perf.richcompare_bool_calls,
                 capi_perf.richcompare_slot_attempts,
                 capi_perf.richcompare_dunder_fallback_attempts,
+                capi_perf.richcompare_dunder_attr_missing,
+                capi_perf.richcompare_dunder_callable_invocations,
+                capi_perf.richcompare_dunder_calls_owned,
+                capi_perf.richcompare_dunder_calls_external,
                 capi_perf.value_from_ptr_calls,
                 capi_perf.handle_from_ptr_hits,
                 capi_perf.handle_from_ptr_calls,

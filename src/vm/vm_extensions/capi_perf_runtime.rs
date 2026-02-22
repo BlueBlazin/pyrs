@@ -7,6 +7,10 @@ pub(crate) struct CapiPerfSnapshot {
     pub richcompare_bool_calls: u64,
     pub richcompare_slot_attempts: u64,
     pub richcompare_dunder_fallback_attempts: u64,
+    pub richcompare_dunder_attr_missing: u64,
+    pub richcompare_dunder_callable_invocations: u64,
+    pub richcompare_dunder_calls_owned: u64,
+    pub richcompare_dunder_calls_external: u64,
     pub value_from_ptr_calls: u64,
     pub handle_from_ptr_calls: u64,
     pub handle_from_ptr_hits: u64,
@@ -20,6 +24,10 @@ static CAPIPERF_RICHCOMPARE_CALLS: AtomicU64 = AtomicU64::new(0);
 static CAPIPERF_RICHCOMPARE_BOOL_CALLS: AtomicU64 = AtomicU64::new(0);
 static CAPIPERF_RICHCOMPARE_SLOT_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static CAPIPERF_RICHCOMPARE_DUNDER_FALLBACK_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static CAPIPERF_RICHCOMPARE_DUNDER_ATTR_MISSING: AtomicU64 = AtomicU64::new(0);
+static CAPIPERF_RICHCOMPARE_DUNDER_CALLABLE_INVOCATIONS: AtomicU64 = AtomicU64::new(0);
+static CAPIPERF_RICHCOMPARE_DUNDER_CALLS_OWNED: AtomicU64 = AtomicU64::new(0);
+static CAPIPERF_RICHCOMPARE_DUNDER_CALLS_EXTERNAL: AtomicU64 = AtomicU64::new(0);
 static CAPIPERF_VALUE_FROM_PTR_CALLS: AtomicU64 = AtomicU64::new(0);
 static CAPIPERF_HANDLE_FROM_PTR_CALLS: AtomicU64 = AtomicU64::new(0);
 static CAPIPERF_HANDLE_FROM_PTR_HITS: AtomicU64 = AtomicU64::new(0);
@@ -59,6 +67,26 @@ pub(super) fn capi_perf_inc_richcompare_slot_attempts() {
 #[inline]
 pub(super) fn capi_perf_inc_richcompare_dunder_fallback_attempts() {
     capi_perf_inc(&CAPIPERF_RICHCOMPARE_DUNDER_FALLBACK_ATTEMPTS);
+}
+
+#[inline]
+pub(super) fn capi_perf_inc_richcompare_dunder_attr_missing() {
+    capi_perf_inc(&CAPIPERF_RICHCOMPARE_DUNDER_ATTR_MISSING);
+}
+
+#[inline]
+pub(super) fn capi_perf_inc_richcompare_dunder_callable_invocations() {
+    capi_perf_inc(&CAPIPERF_RICHCOMPARE_DUNDER_CALLABLE_INVOCATIONS);
+}
+
+#[inline]
+pub(super) fn capi_perf_inc_richcompare_dunder_calls_owned() {
+    capi_perf_inc(&CAPIPERF_RICHCOMPARE_DUNDER_CALLS_OWNED);
+}
+
+#[inline]
+pub(super) fn capi_perf_inc_richcompare_dunder_calls_external() {
+    capi_perf_inc(&CAPIPERF_RICHCOMPARE_DUNDER_CALLS_EXTERNAL);
 }
 
 #[inline]
@@ -105,6 +133,14 @@ pub(crate) fn capi_perf_snapshot() -> Option<CapiPerfSnapshot> {
         richcompare_bool_calls: CAPIPERF_RICHCOMPARE_BOOL_CALLS.load(Ordering::Relaxed),
         richcompare_slot_attempts: CAPIPERF_RICHCOMPARE_SLOT_ATTEMPTS.load(Ordering::Relaxed),
         richcompare_dunder_fallback_attempts: CAPIPERF_RICHCOMPARE_DUNDER_FALLBACK_ATTEMPTS
+            .load(Ordering::Relaxed),
+        richcompare_dunder_attr_missing: CAPIPERF_RICHCOMPARE_DUNDER_ATTR_MISSING
+            .load(Ordering::Relaxed),
+        richcompare_dunder_callable_invocations: CAPIPERF_RICHCOMPARE_DUNDER_CALLABLE_INVOCATIONS
+            .load(Ordering::Relaxed),
+        richcompare_dunder_calls_owned: CAPIPERF_RICHCOMPARE_DUNDER_CALLS_OWNED
+            .load(Ordering::Relaxed),
+        richcompare_dunder_calls_external: CAPIPERF_RICHCOMPARE_DUNDER_CALLS_EXTERNAL
             .load(Ordering::Relaxed),
         value_from_ptr_calls: CAPIPERF_VALUE_FROM_PTR_CALLS.load(Ordering::Relaxed),
         handle_from_ptr_calls: CAPIPERF_HANDLE_FROM_PTR_CALLS.load(Ordering::Relaxed),

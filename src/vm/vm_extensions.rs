@@ -112,6 +112,9 @@ use self::capi_perf_runtime::{
     capi_perf_inc_py_decref_calls, capi_perf_inc_py_decref_handle_hits,
     capi_perf_inc_py_incref_calls, capi_perf_inc_py_incref_handle_hits,
     capi_perf_inc_richcompare_bool_calls, capi_perf_inc_richcompare_calls,
+    capi_perf_inc_richcompare_dunder_attr_missing,
+    capi_perf_inc_richcompare_dunder_callable_invocations,
+    capi_perf_inc_richcompare_dunder_calls_external, capi_perf_inc_richcompare_dunder_calls_owned,
     capi_perf_inc_richcompare_dunder_fallback_attempts, capi_perf_inc_richcompare_slot_attempts,
     capi_perf_inc_value_from_ptr_calls,
 };
@@ -324,8 +327,8 @@ use self::cpython_object_item_compare_api::{
     PyObject_DelItem, PyObject_GetItem, PyObject_GetOptionalAttr, PyObject_Hash,
     PyObject_HashNotImplemented, PyObject_IsInstance, PyObject_IsSubclass, PyObject_Length,
     PyObject_LengthHint, PyObject_RichCompare, PyObject_RichCompareBool, PyObject_SetItem,
-    PyObject_Size, cpython_debug_compare_value, cpython_type_name_for_object_ptr,
-    cpython_value_type_name_from_ptr,
+    PyObject_Size, cpython_debug_compare_value, cpython_tuple_richcompare_slot,
+    cpython_type_name_for_object_ptr, cpython_value_type_name_from_ptr,
 };
 use self::cpython_object_lifecycle_api::{
     _Py_Dealloc, _PyObject_GC_New, _PyObject_New, _PyObject_NewVar, PyObject_Init, PyObject_InitVar,
@@ -3020,6 +3023,7 @@ fn initialize_cpython_compat_type_objects() {
         PyMethod_Type.tp_call = cpython_method_tp_call as *mut c_void;
         PyFloat_Type.tp_new = cpython_float_tp_new as *mut c_void;
         PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
+        PyTuple_Type.tp_richcompare = cpython_tuple_richcompare_slot as *mut c_void;
 
         let type_objects: &mut [*mut CpythonTypeObject] = &mut [
             std::ptr::addr_of_mut!(PyBaseObject_Type),
