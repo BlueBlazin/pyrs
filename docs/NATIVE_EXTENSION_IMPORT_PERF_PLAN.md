@@ -6,10 +6,10 @@ Reduce native scientific-stack import overhead (starting with `import numpy`) wh
 Primary user-facing gate:
 - `target/release/pyrs -S -c "import sys; sys.path.insert(0, './.venv-ext314/lib/python3.14/site-packages'); import numpy as np"`
 
-## Current Baseline (2026-02-21, latest local)
-- `pyrs` (default pyc policy): ~`0.73-0.74s` user
-- `pyrs` with `PYRS_IMPORT_PREFER_PYC=0`: ~`0.64s` user
-- CPython 3.14: ~`0.05s` user
+## Current Baseline (2026-02-22, latest local)
+- `pyrs` (default pyc policy, warm): ~`0.35-0.37s` user
+- `pyrs` first run in a shell session: ~`0.36-0.37s` user (higher wall-clock due cold startup effects)
+- CPython 3.14 (same command shape): ~`0.05-0.06s` user
 
 ## Root-Cause Buckets
 1. C-API compatibility runtime overhead in hot entrypoints used during extension init.
@@ -63,6 +63,18 @@ For each optimization slice:
 4. Commit checkpoint with exact measured impact.
 
 ## Implemented In This Round
+- C-API richcompare fast-path closure:
+  - `PyObject_RichCompare`/`PyObject_RichCompareBool` now short-circuit `==`/`!=` for type objects by identity semantics.
+  - tuple richcompare slot now skips recursive bool-compare churn for type-object elements via identity fast-path.
+- CPython-storage sync cost closure:
+  - tuple sync now rematerializes only when the tuple raw item-pointer vector changes (`cpython_tuple_items_cache_by_handle`).
+  - list sync now rematerializes only when the list raw item-pointer vector changes (`cpython_list_items_cache_by_handle`).
+  - byte sync path is narrowed to mutable `bytearray` only.
+- Measured C-API counter delta on NumPy import gate:
+  - `value_from_ptr` reduced from ~`187k` to ~`85k`.
+  - `handle_from_ptr` reduced from ~`172k` calls to ~`72k` calls.
+- Measured NumPy import gate delta:
+  - improved from ~`0.73-0.74s` user baseline in this plan to ~`0.35-0.37s` user.
 - Module attr lookup now skips frame scans when module is not actively initializing.
 - `PyObject_RichCompare` now attempts slot dispatch directly before pointer/value conversion fallback.
 - pyc compatibility closure for import-path blockers:
