@@ -59,3 +59,20 @@ python3 scripts/check_capi_noop_inventory.py --manifest perf/capi_noop_inventory
 ```
 
 This verifies that C-API no-op/placeholder exports are tracked in `docs/CAPI_NOOP_INVENTORY.md` and emits a machine-readable manifest.
+
+## Scaffolding Drift Audit
+
+Run locally:
+
+```bash
+python3 scripts/audit_scaffolding.py
+```
+
+This enforces anti-scaffolding invariants:
+
+- `shims/` is locked to `_ctypes.py` only.
+- no retired shim-path references remain in runtime/test/CI code.
+- `LOCAL_SHIM_MODULES` remains `_ctypes`-only.
+- obsolete local-shim toggle API is absent.
+- `docs/NOOP_BUILTIN_INVENTORY.txt` stays in sync with `print_noop_inventory`.
+- C-API no-op inventory drift check is green.
