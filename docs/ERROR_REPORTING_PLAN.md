@@ -66,14 +66,21 @@ Status: in progress (started 2026-02-22).
     - `'await' outside function`,
     - `'yield' outside function`,
     - `'yield from' outside function`,
-    - `'return' with value in async generator`.
+    - `'return' with value in async generator`,
+    - `global`/`nonlocal` declaration-order and scope diagnostics
+      (`used prior`, `assigned before`, module-level `nonlocal`, and missing nonlocal binding).
   - CLI/REPL compile diagnostics now render in `SyntaxError` shape; `-c` mode follows CPython by
     omitting source+caret for semantic compile errors, while file/stdin paths still include line
     source and caret when span data is available.
+  - syntax-error source rendering now mirrors CPython indentation presentation:
+    - leading indentation is normalized in displayed source line,
+    - caret offsets are adjusted accordingly,
+    - top-level `unexpected indent` continues to omit caret.
   - differential gates added for semantic compile-error parity against CPython:
     - return/break/continue outside valid scope,
     - await/yield/yield-from outside function scope,
-    - async-generator return-with-value.
+    - async-generator return-with-value,
+    - global/nonlocal declaration-order and scope errors.
   - indentation diagnostics now include CPython-style parity for:
     - top-level `unexpected indent` (no caret line),
     - `unindent does not match any outer indentation level` with end-of-line caret.

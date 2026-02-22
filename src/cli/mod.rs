@@ -202,7 +202,7 @@ fn render_syntax_diagnostic(
         output.push('\n');
         if caret_start > 0 {
             let start = caret_start.saturating_sub(1).min(source_line.chars().count());
-            let width = infer_syntax_caret_width(&source_line, start);
+            let width = infer_syntax_caret_width(&source_line, start, diagnostic);
             output.push_str("    ");
             output.push_str(&" ".repeat(start));
             output.push_str(&"^".repeat(width));
@@ -225,12 +225,13 @@ struct SyntaxDiagnostic {
 
 fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
     if let Some((line, column)) = detect_unexpected_top_level_indent(source) {
+        let _ = column;
         return SyntaxDiagnostic {
             error_type: "IndentationError",
             message: "unexpected indent".to_string(),
             line,
             // CPython omits the caret for this case.
-            column,
+            column: 0,
         };
     }
 
@@ -370,21 +371,29 @@ fn source_line_and_caret_start(
     }
 
     let requested_index = diagnostic.line.saturating_sub(1);
-    let (line_index, caret_start) = if requested_index < source_lines.len() {
+    let (line_index, caret_start_raw) = if requested_index < source_lines.len() {
         (requested_index, diagnostic.column)
     } else {
         // EOF-oriented parser errors typically point to the next line; mirror CPython by
         // showing the last source line and placing caret at end-of-line.
         let last_index = source_lines.len().saturating_sub(1);
+        let line = &source_lines[last_index];
+        let leading = line.chars().take_while(|ch| ch.is_whitespace()).count();
+        let visible_len = line.chars().count().saturating_sub(leading);
         (
             last_index,
-            source_lines[last_index].chars().count().saturating_add(1),
+            visible_len.saturating_add(1),
         )
     };
-    source_lines
-        .get(line_index)
-        .cloned()
-        .map(|line| (line, caret_start))
+    let line = source_lines.get(line_index)?.clone();
+    let leading = line.chars().take_while(|ch| ch.is_whitespace()).count();
+    let display_line: String = line.chars().skip(leading).collect();
+    let caret_start = if caret_start_raw == 0 {
+        0
+    } else {
+        caret_start_raw.saturating_sub(leading).max(1)
+    };
+    Some((display_line, caret_start))
 }
 
 enum DelimiterIssue {
@@ -483,10 +492,20 @@ fn detect_delimiter_issue(source: &str) -> Option<DelimiterIssue> {
         .map(|(open, line, column)| DelimiterIssue::UnclosedOpen { open, line, column })
 }
 
-fn infer_syntax_caret_width(source_line: &str, start: usize) -> usize {
+fn infer_syntax_caret_width(source_line: &str, start: usize, diagnostic: &SyntaxDiagnostic) -> usize {
     let chars: Vec<char> = source_line.chars().collect();
     if chars.is_empty() || start >= chars.len() {
         return 1;
+    }
+    let message = diagnostic.message.as_str();
+    if message.contains("global declaration")
+        || message.contains("binding for nonlocal")
+        || message.contains("nonlocal and global")
+        || message.contains("parameter and global")
+        || message.contains("parameter and nonlocal")
+        || message.contains("nonlocal declaration not allowed at module level")
+    {
+        return chars.len().saturating_sub(start).max(1);
     }
     let current = chars[start];
     if is_identifier_start(current) {

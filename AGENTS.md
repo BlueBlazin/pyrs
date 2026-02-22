@@ -112,9 +112,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `'await' outside function`,
     - `'yield' outside function`,
     - `'yield from' outside function`,
-    - `'return' with value in async generator`.
+    - `'return' with value in async generator`,
+    - `global/nonlocal` declaration-order and scope errors
+      (`used prior`, `assigned before`, module-level `nonlocal`, missing nonlocal binding).
   - CLI/REPL compile diagnostics now render as `SyntaxError` (instead of `compile error: ...`);
     `-c` semantic compile errors omit source+caret to match CPython command-mode behavior.
+  - syntax-error source rendering now follows CPython indentation display shape (normalized
+    leading indentation with adjusted caret offsets; `unexpected indent` still omits caret).
   - `str(KeyError(<arg>))` now follows CPython single-arg behavior (`repr(arg)`).
   - Unhandled exception propagation no longer re-wraps traceback text as nested `RuntimeError`/`<Exc>: Traceback ...`.
   - New regressions:
@@ -127,6 +131,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::rejects_yield_outside_function_with_syntax_message`
     - `tests/vm.rs::rejects_await_outside_async_function_with_syntax_message`
     - `tests/vm.rs::rejects_async_generator_return_with_value_with_syntax_message`
+    - `tests/vm.rs::rejects_global_used_prior_declaration_with_syntax_message`
+    - `tests/vm.rs::rejects_global_assigned_prior_declaration_with_syntax_message`
+    - `tests/vm.rs::rejects_module_nonlocal_with_cpython_message`
+    - `tests/vm.rs::rejects_nonlocal_without_binding_with_cpython_message`
     - `tests/pyc_translate.rs::translates_cpython_linetable_into_instruction_ranges`.
     - `tests/differential_cpython.rs::differential_traceback_context_chain_matches_cpython_shape`
     - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
@@ -156,7 +164,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_semantic_syntax_await_outside_function_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_yield_outside_function_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_yield_from_outside_function_matches_cpython`
-    - `tests/differential_cpython.rs::differential_semantic_syntax_return_with_value_in_async_generator_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_semantic_syntax_return_with_value_in_async_generator_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_global_used_prior_declaration_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_global_assigned_prior_declaration_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_nonlocal_at_module_level_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_nonlocal_without_binding_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_global_used_prior_declaration_file_caret_matches_cpython`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,

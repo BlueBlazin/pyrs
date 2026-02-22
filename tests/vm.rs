@@ -9343,6 +9343,58 @@ fn rejects_async_generator_return_with_value_with_syntax_message() {
 }
 
 #[test]
+fn rejects_global_used_prior_declaration_with_syntax_message() {
+    let source = "def f():\n    print(x)\n    global x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("name 'x' is used prior to global declaration"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "expected span for global declaration error");
+}
+
+#[test]
+fn rejects_global_assigned_prior_declaration_with_syntax_message() {
+    let source = "def f():\n    x += 1\n    global x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("name 'x' is assigned to before global declaration"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "expected span for global declaration error");
+}
+
+#[test]
+fn rejects_module_nonlocal_with_cpython_message() {
+    let source = "nonlocal x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("nonlocal declaration not allowed at module level"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "expected span for nonlocal module error");
+}
+
+#[test]
+fn rejects_nonlocal_without_binding_with_cpython_message() {
+    let source = "def f():\n    nonlocal x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("no binding for nonlocal 'x' found"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(err.span.is_some(), "expected span for nonlocal binding error");
+}
+
+#[test]
 fn executes_decorated_function_definition() {
     let source = "def deco(fn):\n    def wrap(x):\n        return fn(x) + 1\n    return wrap\n@deco\ndef ident(x):\n    return x\ny = ident(4)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

@@ -169,22 +169,19 @@ fn analyze_scope(
         &mut locals,
     );
 
+    validate_scope_declaration_semantics(
+        scope_type,
+        posonly_params,
+        params,
+        kwonly_params,
+        vararg,
+        kwarg,
+        body,
+        enclosing,
+    )?;
+
     for stmt in body {
         collect_locals_stmt(stmt, &mut locals, &mut globals, &mut nonlocals);
-    }
-
-    if !matches!(scope_type, ScopeType::Function | ScopeType::Lambda) && !nonlocals.is_empty() {
-        return Err(CompileError::new(
-            "nonlocal declarations only allowed in function scopes",
-        ));
-    }
-
-    for name in &nonlocals {
-        if !enclosing.contains(name) {
-            return Err(CompileError::new(format!(
-                "no binding for nonlocal '{name}' found"
-            )));
-        }
     }
 
     locals.retain(|name| !globals.contains(name) && !nonlocals.contains(name));
@@ -297,6 +294,1065 @@ fn collect_param_locals(
     }
     if let Some(param) = kwarg {
         locals.insert(param.name.clone());
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_scope_declaration_semantics(
+    scope_type: ScopeType,
+    posonly_params: &[Parameter],
+    params: &[Parameter],
+    kwonly_params: &[Parameter],
+    vararg: Option<&Parameter>,
+    kwarg: Option<&Parameter>,
+    body: &[Stmt],
+    enclosing: &HashSet<String>,
+) -> Result<(), CompileError> {
+    let mut param_names = HashSet::new();
+    collect_param_locals(
+        posonly_params,
+        params,
+        kwonly_params,
+        vararg,
+        kwarg,
+        &mut param_names,
+    );
+
+    let mut any_globals: HashMap<String, Span> = HashMap::new();
+    let mut any_nonlocals: HashMap<String, Span> = HashMap::new();
+    for stmt in body {
+        match &stmt.node {
+            StmtKind::Global { names } => {
+                for name in names {
+                    any_globals.entry(name.clone()).or_insert(stmt.span);
+                }
+            }
+            StmtKind::Nonlocal { names } => {
+                for name in names {
+                    any_nonlocals.entry(name.clone()).or_insert(stmt.span);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut seen_use: HashMap<String, Span> = HashMap::new();
+    let mut seen_assign: HashMap<String, Span> = HashMap::new();
+    let mut declared_globals = HashSet::new();
+    let mut declared_nonlocals = HashSet::new();
+
+    for stmt in body {
+        match &stmt.node {
+            StmtKind::Global { names } => {
+                for name in names {
+                    if any_nonlocals.contains_key(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is nonlocal and global"),
+                            stmt.span,
+                        ));
+                    }
+                    if param_names.contains(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is parameter and global"),
+                            stmt.span,
+                        ));
+                    }
+                    if seen_assign.contains_key(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is assigned to before global declaration"),
+                            stmt.span,
+                        ));
+                    }
+                    if seen_use.contains_key(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is used prior to global declaration"),
+                            stmt.span,
+                        ));
+                    }
+                    declared_globals.insert(name.clone());
+                }
+            }
+            StmtKind::Nonlocal { names } => {
+                for name in names {
+                    if scope_type == ScopeType::Module {
+                        return Err(CompileError::with_span(
+                            "nonlocal declaration not allowed at module level",
+                            stmt.span,
+                        ));
+                    }
+                    if any_globals.contains_key(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is nonlocal and global"),
+                            stmt.span,
+                        ));
+                    }
+                    if param_names.contains(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is parameter and nonlocal"),
+                            stmt.span,
+                        ));
+                    }
+                    if !enclosing.contains(name) {
+                        return Err(CompileError::with_span(
+                            format!("no binding for nonlocal '{name}' found"),
+                            stmt.span,
+                        ));
+                    }
+                    if seen_assign.contains_key(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is assigned to before nonlocal declaration"),
+                            stmt.span,
+                        ));
+                    }
+                    if seen_use.contains_key(name) {
+                        return Err(CompileError::with_span(
+                            format!("name '{name}' is used prior to nonlocal declaration"),
+                            stmt.span,
+                        ));
+                    }
+                    declared_nonlocals.insert(name.clone());
+                }
+            }
+            _ => record_scope_activity_stmt(
+                stmt,
+                &mut seen_use,
+                &mut seen_assign,
+                &declared_globals,
+                &declared_nonlocals,
+            ),
+        }
+    }
+
+    Ok(())
+}
+
+fn record_scope_activity_stmt(
+    stmt: &Stmt,
+    seen_use: &mut HashMap<String, Span>,
+    seen_assign: &mut HashMap<String, Span>,
+    declared_globals: &HashSet<String>,
+    declared_nonlocals: &HashSet<String>,
+) {
+    match &stmt.node {
+        StmtKind::Pass | StmtKind::Break | StmtKind::Continue | StmtKind::Global { .. } => {}
+        StmtKind::Nonlocal { .. } => {}
+        StmtKind::Expr(expr) => record_scope_activity_expr(
+            expr,
+            seen_use,
+            seen_assign,
+            declared_globals,
+            declared_nonlocals,
+        ),
+        StmtKind::Assign { targets, value } => {
+            record_scope_activity_expr(
+                value,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            for target in targets {
+                record_scope_activity_assign_target(
+                    target,
+                    stmt.span,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::AugAssign { target, value, .. } => {
+            record_scope_activity_expr(
+                value,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            record_scope_activity_assign_target(
+                target,
+                stmt.span,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+        StmtKind::AnnAssign {
+            target,
+            annotation,
+            value,
+        } => {
+            record_scope_activity_expr(
+                annotation,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            if let Some(value) = value {
+                record_scope_activity_expr(
+                    value,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            record_scope_activity_assign_target(
+                target,
+                stmt.span,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+        StmtKind::Delete { targets } => {
+            for target in targets {
+                record_scope_activity_assign_target(
+                    target,
+                    stmt.span,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::If { test, body, orelse } => {
+            record_scope_activity_expr(
+                test,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            for child in body {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for child in orelse {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::While { test, body, orelse } => {
+            record_scope_activity_expr(
+                test,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            for child in body {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for child in orelse {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::FunctionDef {
+            name,
+            posonly_params,
+            params,
+            vararg,
+            kwarg,
+            kwonly_params,
+            returns,
+            ..
+        } => {
+            if !declared_globals.contains(name)
+                && !declared_nonlocals.contains(name)
+                && !seen_assign.contains_key(name)
+            {
+                seen_assign.insert(name.clone(), stmt.span);
+            }
+            for param in posonly_params
+                .iter()
+                .chain(params.iter())
+                .chain(kwonly_params.iter())
+            {
+                if let Some(default) = &param.default {
+                    record_scope_activity_expr(
+                        default,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    );
+                }
+                if let Some(annotation) = &param.annotation {
+                    record_scope_activity_expr(
+                        annotation,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    );
+                }
+            }
+            if let Some(vararg) = vararg
+                && let Some(annotation) = &vararg.annotation
+            {
+                record_scope_activity_expr(
+                    annotation,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            if let Some(kwarg) = kwarg
+                && let Some(annotation) = &kwarg.annotation
+            {
+                record_scope_activity_expr(
+                    annotation,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            if let Some(returns) = returns {
+                record_scope_activity_expr(
+                    returns,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::ClassDef {
+            name,
+            bases,
+            metaclass,
+            keywords,
+            ..
+        } => {
+            if !declared_globals.contains(name)
+                && !declared_nonlocals.contains(name)
+                && !seen_assign.contains_key(name)
+            {
+                seen_assign.insert(name.clone(), stmt.span);
+            }
+            for base in bases {
+                record_scope_activity_expr(
+                    base,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            if let Some(metaclass) = metaclass {
+                record_scope_activity_expr(
+                    metaclass,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for (_name, value) in keywords {
+                record_scope_activity_expr(
+                    value,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::For {
+            target,
+            iter,
+            body,
+            orelse,
+            ..
+        } => {
+            record_scope_activity_expr(
+                iter,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            record_scope_activity_assign_target(
+                target,
+                stmt.span,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            for child in body {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for child in orelse {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::Import { names } => {
+            for alias in names {
+                let target = alias.asname.as_ref().cloned().unwrap_or_else(|| {
+                    alias
+                        .name
+                        .split('.')
+                        .next()
+                        .unwrap_or(alias.name.as_str())
+                        .to_string()
+                });
+                if !declared_globals.contains(&target)
+                    && !declared_nonlocals.contains(&target)
+                    && !seen_assign.contains_key(&target)
+                {
+                    seen_assign.insert(target, stmt.span);
+                }
+            }
+        }
+        StmtKind::ImportFrom { names, .. } => {
+            for alias in names {
+                if alias.name == "*" {
+                    continue;
+                }
+                let target = alias.asname.as_ref().unwrap_or(&alias.name).clone();
+                if !declared_globals.contains(&target)
+                    && !declared_nonlocals.contains(&target)
+                    && !seen_assign.contains_key(&target)
+                {
+                    seen_assign.insert(target, stmt.span);
+                }
+            }
+        }
+        StmtKind::With {
+            context,
+            target,
+            body,
+            ..
+        } => {
+            record_scope_activity_expr(
+                context,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            if let Some(target) = target {
+                record_scope_activity_assign_target(
+                    target,
+                    stmt.span,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for child in body {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::Try {
+            body,
+            handlers,
+            orelse,
+            finalbody,
+        } => {
+            for child in body {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for handler in handlers {
+                if let Some(type_expr) = &handler.type_expr {
+                    record_scope_activity_expr(
+                        type_expr,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    );
+                }
+                if let Some(name) = &handler.name
+                    && !declared_globals.contains(name)
+                    && !declared_nonlocals.contains(name)
+                    && !seen_assign.contains_key(name)
+                {
+                    seen_assign.insert(name.clone(), stmt.span);
+                }
+                for child in &handler.body {
+                    record_scope_activity_stmt(
+                        child,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    );
+                }
+            }
+            for child in orelse {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for child in finalbody {
+                record_scope_activity_stmt(
+                    child,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::Decorated {
+            decorators,
+            stmt: decorated_stmt,
+        } => {
+            for decorator in decorators {
+                record_scope_activity_expr(
+                    decorator,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            record_scope_activity_stmt(
+                decorated_stmt,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+        StmtKind::Match { subject, cases } => {
+            record_scope_activity_expr(
+                subject,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            for case in cases {
+                record_scope_activity_pattern(
+                    &case.pattern,
+                    stmt.span,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+                if let Some(guard) = &case.guard {
+                    record_scope_activity_expr(
+                        guard,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    );
+                }
+                for child in &case.body {
+                    record_scope_activity_stmt(
+                        child,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    );
+                }
+            }
+        }
+        StmtKind::Raise { value, cause } => {
+            if let Some(value) = value {
+                record_scope_activity_expr(
+                    value,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            if let Some(cause) = cause {
+                record_scope_activity_expr(
+                    cause,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::Assert { test, message } => {
+            record_scope_activity_expr(
+                test,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            if let Some(message) = message {
+                record_scope_activity_expr(
+                    message,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        StmtKind::Return { value } => {
+            if let Some(value) = value {
+                record_scope_activity_expr(
+                    value,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+    }
+}
+
+fn record_scope_activity_pattern(
+    pattern: &Pattern,
+    span: Span,
+    seen_assign: &mut HashMap<String, Span>,
+    declared_globals: &HashSet<String>,
+    declared_nonlocals: &HashSet<String>,
+) {
+    match pattern {
+        Pattern::Capture(name) => {
+            if name != "_"
+                && !declared_globals.contains(name)
+                && !declared_nonlocals.contains(name)
+                && !seen_assign.contains_key(name)
+            {
+                seen_assign.insert(name.clone(), span);
+            }
+        }
+        Pattern::Sequence(items) | Pattern::Or(items) => {
+            for item in items {
+                record_scope_activity_pattern(
+                    item,
+                    span,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        Pattern::Mapping { entries, rest } => {
+            for (_key, pattern) in entries {
+                record_scope_activity_pattern(
+                    pattern,
+                    span,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            if let Some(rest) = rest
+                && !declared_globals.contains(rest)
+                && !declared_nonlocals.contains(rest)
+                && !seen_assign.contains_key(rest)
+            {
+                seen_assign.insert(rest.clone(), span);
+            }
+        }
+        Pattern::Class {
+            positional,
+            keywords,
+            ..
+        } => {
+            for pattern in positional {
+                record_scope_activity_pattern(
+                    pattern,
+                    span,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            for (_name, pattern) in keywords {
+                record_scope_activity_pattern(
+                    pattern,
+                    span,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        Pattern::As { pattern, name } => {
+            record_scope_activity_pattern(
+                pattern,
+                span,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            if name != "_"
+                && !declared_globals.contains(name)
+                && !declared_nonlocals.contains(name)
+                && !seen_assign.contains_key(name)
+            {
+                seen_assign.insert(name.clone(), span);
+            }
+        }
+        Pattern::Star(Some(name)) => {
+            if name != "_"
+                && !declared_globals.contains(name)
+                && !declared_nonlocals.contains(name)
+                && !seen_assign.contains_key(name)
+            {
+                seen_assign.insert(name.clone(), span);
+            }
+        }
+        Pattern::Wildcard
+        | Pattern::Constant(_)
+        | Pattern::Value(_)
+        | Pattern::Star(None) => {}
+    }
+}
+
+fn record_scope_activity_assign_target(
+    target: &AssignTarget,
+    span: Span,
+    seen_use: &mut HashMap<String, Span>,
+    seen_assign: &mut HashMap<String, Span>,
+    declared_globals: &HashSet<String>,
+    declared_nonlocals: &HashSet<String>,
+) {
+    match target {
+        AssignTarget::Name(name) => {
+            if !declared_globals.contains(name)
+                && !declared_nonlocals.contains(name)
+                && !seen_assign.contains_key(name)
+            {
+                seen_assign.insert(name.clone(), span);
+            }
+        }
+        AssignTarget::Starred(inner) => record_scope_activity_assign_target(
+            inner,
+            span,
+            seen_use,
+            seen_assign,
+            declared_globals,
+            declared_nonlocals,
+        ),
+        AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+            for item in items {
+                record_scope_activity_assign_target(
+                    item,
+                    span,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        AssignTarget::Subscript { value, index } => {
+            record_scope_activity_expr(
+                value,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            record_scope_activity_expr(
+                index,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+        AssignTarget::Attribute { value, .. } => {
+            record_scope_activity_expr(
+                value,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+    }
+}
+
+fn record_scope_activity_expr(
+    expr: &Expr,
+    seen_use: &mut HashMap<String, Span>,
+    seen_assign: &mut HashMap<String, Span>,
+    declared_globals: &HashSet<String>,
+    declared_nonlocals: &HashSet<String>,
+) {
+    match &expr.node {
+        ExprKind::Name(name) => {
+            if !declared_globals.contains(name)
+                && !declared_nonlocals.contains(name)
+                && !seen_use.contains_key(name)
+            {
+                seen_use.insert(name.clone(), expr.span);
+            }
+        }
+        ExprKind::Constant(_) => {}
+        ExprKind::Binary { left, right, .. } | ExprKind::BoolOp { left, right, .. } => {
+            record_scope_activity_expr(
+                left,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            record_scope_activity_expr(
+                right,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+        ExprKind::Unary { operand, .. } => record_scope_activity_expr(
+            operand,
+            seen_use,
+            seen_assign,
+            declared_globals,
+            declared_nonlocals,
+        ),
+        ExprKind::Call { func, args } => {
+            record_scope_activity_expr(
+                func,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            for arg in args {
+                match arg {
+                    CallArg::Positional(value)
+                    | CallArg::Star(value)
+                    | CallArg::DoubleStar(value) => record_scope_activity_expr(
+                        value,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    ),
+                    CallArg::Keyword { value, .. } => record_scope_activity_expr(
+                        value,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    ),
+                }
+            }
+        }
+        ExprKind::List(items) | ExprKind::Tuple(items) => {
+            for item in items {
+                record_scope_activity_expr(
+                    item,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        ExprKind::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    DictEntry::Pair(key, value) => {
+                        record_scope_activity_expr(
+                            key,
+                            seen_use,
+                            seen_assign,
+                            declared_globals,
+                            declared_nonlocals,
+                        );
+                        record_scope_activity_expr(
+                            value,
+                            seen_use,
+                            seen_assign,
+                            declared_globals,
+                            declared_nonlocals,
+                        );
+                    }
+                    DictEntry::Unpack(value) => record_scope_activity_expr(
+                        value,
+                        seen_use,
+                        seen_assign,
+                        declared_globals,
+                        declared_nonlocals,
+                    ),
+                }
+            }
+        }
+        ExprKind::Subscript { value, index } => {
+            record_scope_activity_expr(
+                value,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            record_scope_activity_expr(
+                index,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+        ExprKind::Attribute { value, .. } => record_scope_activity_expr(
+            value,
+            seen_use,
+            seen_assign,
+            declared_globals,
+            declared_nonlocals,
+        ),
+        ExprKind::IfExpr { test, body, orelse } => {
+            record_scope_activity_expr(
+                test,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            record_scope_activity_expr(
+                body,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            record_scope_activity_expr(
+                orelse,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+        }
+        ExprKind::NamedExpr { target, value } => {
+            record_scope_activity_expr(
+                value,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            if !declared_globals.contains(target)
+                && !declared_nonlocals.contains(target)
+                && !seen_assign.contains_key(target)
+            {
+                seen_assign.insert(target.clone(), expr.span);
+            }
+        }
+        ExprKind::Yield { value } => {
+            if let Some(value) = value {
+                record_scope_activity_expr(
+                    value,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        ExprKind::YieldFrom { value } | ExprKind::Await { value } => record_scope_activity_expr(
+            value,
+            seen_use,
+            seen_assign,
+            declared_globals,
+            declared_nonlocals,
+        ),
+        ExprKind::Slice { lower, upper, step } => {
+            if let Some(lower) = lower {
+                record_scope_activity_expr(
+                    lower,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            if let Some(upper) = upper {
+                record_scope_activity_expr(
+                    upper,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+            if let Some(step) = step {
+                record_scope_activity_expr(
+                    step,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
+        // Nested lexical scopes: declaration-order checks are scope-local.
+        ExprKind::Lambda { .. }
+        | ExprKind::ListComp { .. }
+        | ExprKind::DictComp { .. }
+        | ExprKind::GeneratorExp { .. } => {}
     }
 }
 

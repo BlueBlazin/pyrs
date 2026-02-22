@@ -1321,3 +1321,128 @@ fn differential_semantic_syntax_return_with_value_in_async_generator_matches_cpy
         "semantic async-generator return syntax mismatch"
     );
 }
+
+#[test]
+fn differential_semantic_syntax_global_used_prior_declaration_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f():\n    print(x)\n    global x\n";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError: name 'x' is used prior to global declaration"), "{}", py);
+    assert!(
+        ours.contains("SyntaxError: name 'x' is used prior to global declaration"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic global-used-prior syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_global_assigned_prior_declaration_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f():\n    x += 1\n    global x\n";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(
+        py.contains("SyntaxError: name 'x' is assigned to before global declaration"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: name 'x' is assigned to before global declaration"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic global-assigned-prior syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_nonlocal_at_module_level_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "nonlocal x";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(
+        py.contains("SyntaxError: nonlocal declaration not allowed at module level"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: nonlocal declaration not allowed at module level"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic nonlocal-module syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_nonlocal_without_binding_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f():\n    nonlocal x\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(
+        py.contains("SyntaxError: no binding for nonlocal 'x' found"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: no binding for nonlocal 'x' found"),
+        "{}",
+        ours
+    );
+    let py_caret =
+        caret_line_after_source(&py, "    nonlocal x").expect("python nonlocal-binding caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    nonlocal x").expect("pyrs nonlocal-binding caret");
+    assert_eq!(py_caret, ours_caret, "nonlocal-binding caret mismatch");
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic nonlocal-binding syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_global_used_prior_declaration_file_caret_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f():\n    print(x)\n    global x\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError: name 'x' is used prior to global declaration"), "{}", py);
+    assert!(
+        ours.contains("SyntaxError: name 'x' is used prior to global declaration"),
+        "{}",
+        ours
+    );
+    let py_caret = caret_line_after_source(&py, "    global x").expect("python global caret");
+    let ours_caret = caret_line_after_source(&ours, "    global x").expect("pyrs global caret");
+    assert_eq!(py_caret, ours_caret, "global-used-prior caret mismatch");
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic global-used-prior file syntax mismatch"
+    );
+}
