@@ -17,14 +17,12 @@ It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those a
 | Symbol | File | Current behavior | Closure criteria |
 |---|---|---|---|
 | `Py_EndInterpreter` | `src/vm/vm_extensions/cpython_runtime_misc_api.rs` | no-op | Close with real interpreter teardown semantics or explicit subinterpreter policy + hard error behavior. |
-| `PyType_Modified` | `src/vm/vm_extensions/cpython_type_api.rs` | no-op | Implement type-cache invalidation/update propagation expected by CPython extension behavior. |
 
 ## B. Placeholder C-API Exports (non-empty, still no-op semantics)
 
 | Symbol | File | Current behavior | Closure criteria |
 |---|---|---|---|
 | `PyTraceMalloc_Track` / `PyTraceMalloc_Untrack` | `src/vm/vm_extensions/cpython_thread_interp_api.rs` | always returns `0` | Implement tracemalloc domain/pointer tracking semantics or explicit unsupported policy with deterministic behavior. |
-| `PyType_ClearCache` | `src/vm/vm_extensions/cpython_type_api.rs` | always returns `0` | Implement cache clear/invalidation accounting consistent with type mutation semantics. |
 | `Py_NewInterpreter` | `src/vm/vm_extensions/cpython_runtime_misc_api.rs` | returns current thread state (no new interpreter) | Implement real subinterpreter creation or enforce explicit unsupported contract. |
 | `PyUnstable_Object_IsUniquelyReferenced` / `PyUnstable_Object_IsUniqueReferencedTemporary` | `src/vm/vm_extensions/cpython_error_numeric_api.rs` | always return `0` | Implement CPython-compatible unique-reference query semantics (or explicit unsupported policy) without violating ownership invariants. |
 | `PyUnstable_Object_EnableDeferredRefcount` | `src/vm/vm_extensions/cpython_object_call_api.rs` | always returns `0` | Implement deferred-refcount enablement semantics or explicit unsupported policy consistent with CPython unstable API expectations. |

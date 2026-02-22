@@ -107,6 +107,18 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     extension probes:
     - `PyObject_GC_Track`, `PyObject_GC_UnTrack`, `PyObject_GC_IsTracked`,
       `PyObject_GC_IsFinalized`, `PyObject_ClearWeakRefs`.
+  - Batch 4 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
+    - `PyType_Modified`, `PyType_ClearCache`.
+  - type-cache coherence parity updates:
+    - VM now exposes explicit type-cache invalidation paths:
+      - global invalidation (`clear_all_type_caches`),
+      - per-type + subtype invalidation (`invalidate_type_cache_for_class_id`).
+    - `PyType_Modified` now refreshes class attrs from `tp_dict` for mapped type objects and
+      invalidates runtime class/inline caches for affected type hierarchies.
+    - `PyType_ClearCache` now performs global type-cache invalidation and returns a monotonic
+      non-zero version tag.
+  - extension smoke regressions were updated for this closure:
+    - `tests/extension_smoke.rs::cpython_compat_type_cache_coherence_abi_batch71_apis_work`.
 - C-API lifetime-model checkpoint (2026-02-22, latest):
   - owned-pointer free path now clears active thread-state exception pointers when they
     alias the freed pointer (`current_exception`, `exc_info.exc_value`, `exc_state.exc_value`).

@@ -7,12 +7,12 @@ Last updated: 2026-02-22
 
 ## Re-check Snapshot
 
-- Empty-body rows: `2`
-- Placeholder rows: `5`
-- Total rows: `7`
-- Total symbols represented: `9`
+- Empty-body rows: `1`
+- Placeholder rows: `4`
+- Total rows: `5`
+- Total symbols represented: `7`
 
-Note: Batch 1, Batch 2, and Batch 3 symbols are now closed and removed from the no-op
+Note: Batch 1 through Batch 4 symbols are now closed and removed from the no-op
 inventory.
 
 ## Ordered Checklist
@@ -48,10 +48,10 @@ inventory.
 - [x] `PyObject_GC_IsFinalized`
 - [x] `PyObject_ClearWeakRefs`
 
-### Batch 4: Type Cache Coherence
+### Batch 4: Type Cache Coherence ✅ complete
 
-- [ ] `PyType_Modified`
-- [ ] `PyType_ClearCache`
+- [x] `PyType_Modified`
+- [x] `PyType_ClearCache`
 
 ### Batch 5: Interpreter Lifecycle
 

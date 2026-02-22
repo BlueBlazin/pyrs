@@ -218,6 +218,9 @@ Recent Lane A slice:
 - Added Stable-ABI exports and lifecycle semantics for GC + weakref closure APIs (`batch70`):
   - `PyObject_GC_{Track,UnTrack,IsTracked,IsFinalized}`, `PyObject_ClearWeakRefs`
   - GC/weakref lifecycle behavior is smoke-covered for explicit track/untrack transitions, dealloc-precondition guards on `PyObject_ClearWeakRefs`, weakref clearing semantics, and finalized-state visibility in the C-API path.
+- Added Stable-ABI exports and lifecycle semantics for type-cache coherence APIs (`batch71`):
+  - `PyType_{Modified,ClearCache}`
+  - type-cache coherence behavior is smoke-covered for non-zero advancing `PyType_ClearCache` tags and type-modification coherence for post-update method resolution.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`
@@ -379,6 +382,7 @@ Recent Lane A slice:
     - `tests/extension_smoke.rs::cpython_compat_internal_ref_gc_abi_batch68_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_runtime_unicode_abi_batch69_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_gc_weakref_lifecycle_abi_batch70_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_type_cache_coherence_abi_batch71_apis_work`
 - Added Stable-ABI exports and semantics for error/file APIs:
   - `PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`
   - `PyFile_{GetLine,WriteObject,WriteString}`
