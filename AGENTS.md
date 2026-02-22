@@ -81,8 +81,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `callable(np.random.default_rng().integers)` is `True`.
   - latest scientific-stack gate status (`perf/numpy_gate_direct_latest.json`):
     - `scipy_import`: `PASS`,
-    - `pandas_import` / `pandas_series_sum`: `FAIL` (`pandas._libs._cyutility`: `proxy object is not callable`),
-    - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (tuple-unpack/value-call parity errors).
+    - `pandas_import` / `pandas_series_sum`: `FAIL` (`pandas._libs.tslibs.dtypes`: `type 'type' has no attribute 'keys'`),
+    - `matplotlib_import` / `matplotlib_pyplot_smoke`: `FAIL` (`TypeError: attempted to call non-function: û`).
 - C-API lifetime-model checkpoint (2026-02-20, latest):
   - VM-global pointer registry landed in `src/vm/capi_registry.rs` (provenance/lifecycle/ref-kind tracking).
   - registry is now wired into core compat allocation and teardown paths (`src/vm/vm_extensions.rs`, `src/vm/mod.rs`), including external-pin accounting and pending/free state transitions.

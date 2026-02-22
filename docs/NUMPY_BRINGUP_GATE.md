@@ -119,9 +119,11 @@ python3 scripts/probe_numpy_gate.py \
 ## Current P0 Blockers
 
 1. Pandas import path still fails in direct mode.
-   - `pandas_import` and `pandas_series_sum` currently fail during chained extension init in
-     `pandas._libs._cyutility` with `proxy object is not callable`.
-   - active root-cause lane: proxy-call/vectorcall parity in nested extension init.
+   - `pandas_import` and `pandas_series_sum` now fail later in the init chain at
+     `pandas._libs.tslibs.dtypes` with:
+     `AttributeError: type 'type' has no attribute 'keys'`.
+   - active root-cause lane: class-attribute lookup parity for extension-created/owned type
+     objects (dict-method exposure via type dictionaries).
 2. Matplotlib import path still fails in direct mode.
    - `matplotlib_import` / `matplotlib_pyplot_smoke` currently fail with repeated tuple-unpack
      shape errors (`expected at least 256`) and a later `attempted to call non-function`.

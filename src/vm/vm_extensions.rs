@@ -8939,13 +8939,16 @@ impl ModuleCapiContext {
         if self.owns_cpython_allocation_ptr(callable)
             && type_ptr == std::ptr::addr_of_mut!(PyType_Type)
         {
-            if trace_calls {
-                eprintln!(
-                    "[cpy-call] skip native callable={:p} reason=owned-compat-type-object",
-                    callable
-                );
+            let allow_owned_type_call = self.cpython_known_type_ptrs.contains(&(callable as usize));
+            if !allow_owned_type_call {
+                if trace_calls {
+                    eprintln!(
+                        "[cpy-call] skip native callable={:p} reason=owned-compat-type-object",
+                        callable
+                    );
+                }
+                return None;
             }
-            return None;
         }
         // SAFETY: `type_ptr` is derived from object header and validated non-null.
         let tp_call_raw = unsafe { (*type_ptr).tp_call };
