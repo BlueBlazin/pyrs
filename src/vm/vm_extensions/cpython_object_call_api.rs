@@ -15,9 +15,11 @@ use super::{
     PyMethodDescr_Type, PyObject_GetAttr, PyObject_GetAttrString, PyObject_HasAttrStringWithError,
     PyTuple_New, PyTuple_SetItem, PyTuple_Size, PyType_IsSubtype, PyUnicode_InternFromString,
     c_name_to_string, cpython_call_builtin, cpython_call_object,
-    cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value, cpython_objref_from_value,
+    cpython_keyword_args_from_dict_object, cpython_lookup_interned_unicode_text,
+    cpython_new_ptr_for_value, cpython_objref_from_value,
     cpython_positional_args_from_tuple_object, cpython_resolve_vectorcall, cpython_set_error,
-    cpython_value_debug_tag, cpython_value_from_ptr, is_truthy, with_active_cpython_context_mut,
+    cpython_tuple_items_ptr, cpython_value_debug_tag, cpython_value_from_ptr, is_truthy,
+    with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -1352,30 +1354,90 @@ pub unsafe extern "C" fn PyObject_Vectorcall(
     }
     let mut kwargs = HashMap::new();
     if kw_count > 0 {
-        let kw_tuple = match cpython_value_from_ptr(kwnames) {
-            Ok(Value::Tuple(tuple_obj)) => tuple_obj,
-            Ok(_) => {
-                cpython_set_error("PyObject_Vectorcall expected tuple keyword names");
-                return std::ptr::null_mut();
-            }
+        let kw_names_fast = match with_active_cpython_context_mut(
+            |context| -> Result<Option<Vec<String>>, String> {
+                if kwnames.is_null() || !context.owns_cpython_allocation_ptr(kwnames) {
+                    return Ok(None);
+                }
+                let len = unsafe { PyTuple_Size(kwnames) };
+                if len < 0 {
+                    return Err("PyObject_Vectorcall keyword tuple storage invalid".to_string());
+                }
+                if len as usize != kw_count {
+                    return Err("PyObject_Vectorcall keyword tuple length mismatch".to_string());
+                }
+                // SAFETY: `kwnames` is verified as owned tuple storage in this fast-path.
+                let items_ptr = unsafe { cpython_tuple_items_ptr(kwnames) };
+                if items_ptr.is_null() && kw_count > 0 {
+                    return Err("PyObject_Vectorcall keyword tuple storage invalid".to_string());
+                }
+                let mut names = Vec::with_capacity(kw_count);
+                for idx in 0..kw_count {
+                    // SAFETY: owned tuple pointer with validated length has contiguous item slots.
+                    let name_ptr = unsafe { *items_ptr.add(idx) };
+                    if name_ptr.is_null() {
+                        return Err("PyObject_Vectorcall keyword names must be str".to_string());
+                    }
+                    if let Some(interned) = cpython_lookup_interned_unicode_text(name_ptr) {
+                        names.push(interned);
+                        continue;
+                    }
+                    let Some(name_value) = context.cpython_value_from_ptr_or_proxy(name_ptr) else {
+                        return Err("PyObject_Vectorcall keyword names must be str".to_string());
+                    };
+                    let Value::Str(name) = name_value else {
+                        return Err("PyObject_Vectorcall keyword names must be str".to_string());
+                    };
+                    names.push(name);
+                }
+                Ok(Some(names))
+            },
+        ) {
+            Ok(result) => match result {
+                Ok(names) => names,
+                Err(err) => {
+                    cpython_set_error(err);
+                    return std::ptr::null_mut();
+                }
+            },
             Err(err) => {
                 cpython_set_error(err);
                 return std::ptr::null_mut();
             }
         };
-        let Object::Tuple(names) = &*kw_tuple.kind() else {
-            cpython_set_error("PyObject_Vectorcall keyword tuple storage invalid");
-            return std::ptr::null_mut();
-        };
-        if names.len() != kw_count {
-            cpython_set_error("PyObject_Vectorcall keyword tuple length mismatch");
-            return std::ptr::null_mut();
-        }
-        for (offset, name_value) in names.iter().enumerate() {
-            let Value::Str(name) = name_value else {
-                cpython_set_error("PyObject_Vectorcall keyword names must be str");
+        let kw_names = if let Some(names) = kw_names_fast {
+            names
+        } else {
+            let kw_tuple = match cpython_value_from_ptr(kwnames) {
+                Ok(Value::Tuple(tuple_obj)) => tuple_obj,
+                Ok(_) => {
+                    cpython_set_error("PyObject_Vectorcall expected tuple keyword names");
+                    return std::ptr::null_mut();
+                }
+                Err(err) => {
+                    cpython_set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
+            let Object::Tuple(names) = &*kw_tuple.kind() else {
+                cpython_set_error("PyObject_Vectorcall keyword tuple storage invalid");
                 return std::ptr::null_mut();
             };
+            if names.len() != kw_count {
+                cpython_set_error("PyObject_Vectorcall keyword tuple length mismatch");
+                return std::ptr::null_mut();
+            }
+            let mut decoded = Vec::with_capacity(kw_count);
+            for name_value in names {
+                let Value::Str(name) = name_value else {
+                    cpython_set_error("PyObject_Vectorcall keyword names must be str");
+                    return std::ptr::null_mut();
+                };
+                decoded.push(name.clone());
+            }
+            decoded
+        };
+        for (offset, name) in kw_names.iter().enumerate() {
             let value_index = positional_count + offset;
             let Some(value) = values.get(value_index) else {
                 cpython_set_error("PyObject_Vectorcall keyword value missing");

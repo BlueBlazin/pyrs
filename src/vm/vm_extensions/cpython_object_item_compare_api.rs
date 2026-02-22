@@ -13,7 +13,7 @@ use super::{
     ModuleCapiContext, PY_TPFLAGS_TYPE_SUBCLASS, Py_DecRef, PyErr_BadInternalCall, PyErr_Clear,
     PyErr_ExceptionMatches, PyErr_Occurred, PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError,
     PyExc_TypeError, PyLong_AsSsize_t, PyObject_GetAttr, PyObject_GetAttrString, PyType_IsSubtype,
-    PyType_Type, c_name_to_string, capi_perf_inc_richcompare_bool_calls,
+    PyType_Type, PyUnicode_Type, c_name_to_string, capi_perf_inc_richcompare_bool_calls,
     capi_perf_inc_richcompare_calls, capi_perf_inc_richcompare_dunder_attr_missing,
     capi_perf_inc_richcompare_dunder_callable_invocations,
     capi_perf_inc_richcompare_dunder_calls_external, capi_perf_inc_richcompare_dunder_calls_owned,
@@ -1076,14 +1076,38 @@ fn cpython_try_unicode_pointer_compare(
     right: *mut c_void,
     op: i32,
 ) -> Option<*mut c_void> {
+    let result = cpython_try_unicode_pointer_compare_bool(left, right, op)?;
+    Some(cpython_new_ptr_for_value(Value::Bool(result)))
+}
+
+fn cpython_try_unicode_pointer_compare_bool(
+    left: *mut c_void,
+    right: *mut c_void,
+    op: i32,
+) -> Option<bool> {
     if op != 2 && op != 3 {
+        return None;
+    }
+    if !unsafe { cpython_is_exact_unicode_object_ptr(left) }
+        || !unsafe { cpython_is_exact_unicode_object_ptr(right) }
+    {
         return None;
     }
     let left_text = cpython_unicode_text_from_ptr_for_compare(left)?;
     let right_text = cpython_unicode_text_from_ptr_for_compare(right)?;
     let equal = left_text == right_text;
-    let result = if op == 2 { equal } else { !equal };
-    Some(cpython_new_ptr_for_value(Value::Bool(result)))
+    Some(if op == 2 { equal } else { !equal })
+}
+
+unsafe fn cpython_is_exact_unicode_object_ptr(object: *mut c_void) -> bool {
+    if object.is_null() {
+        return false;
+    }
+    // SAFETY: read-only type-header probe for exact built-in type match.
+    let Some(head) = (unsafe { object.cast::<CpythonObjectHead>().as_ref() }) else {
+        return false;
+    };
+    head.ob_type.cast::<c_void>() == std::ptr::addr_of_mut!(PyUnicode_Type).cast()
 }
 
 #[unsafe(no_mangle)]
@@ -1113,6 +1137,9 @@ pub unsafe extern "C" fn PyObject_RichCompare(
         } else {
             left != right
         }));
+    }
+    if let Some(result) = cpython_try_unicode_pointer_compare(left, right, op) {
+        return result;
     }
     capi_perf_inc_richcompare_slot_attempts();
     if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
@@ -1306,6 +1333,9 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
         } else {
             left != right
         });
+    }
+    if let Some(result) = cpython_try_unicode_pointer_compare_bool(left, right, op) {
+        return i32::from(result);
     }
     capi_perf_inc_richcompare_slot_attempts();
     if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
