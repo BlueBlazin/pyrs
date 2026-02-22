@@ -13,8 +13,12 @@ Status: in progress (started 2026-02-22).
   - traceback output now includes CPython-style file/line/function rows plus source and caret.
   - exception chaining now renders separate traceback blocks for `__context__` / `__cause__`
     instead of flattening into message-only chain text.
+  - caret fallback now infers identifier spans when end-columns are unavailable
+    (e.g. `NameError` on `foo` highlights `^^^`), and suppresses statement-keyword carets.
 - Phase 3 complete:
   - location metadata upgraded to `start+end` ranges in bytecode location model.
+  - default source-compiler locations now mark end columns unknown until explicit ranges are
+    available, avoiding misleading single-character highlights.
 - Phase 4 complete:
   - CPython 3.14 `co_linetable` decoding added for translated `.pyc` bytecode.
 - Phase 5 in progress:
