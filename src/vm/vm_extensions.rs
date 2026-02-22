@@ -3391,6 +3391,7 @@ struct ModuleCapiContext {
     cpython_builtin_method_defs: HashMap<BuiltinFunction, *mut CpythonMethodDef>,
     cpython_builtin_by_method_def: HashMap<usize, BuiltinFunction>,
     cpython_list_buffers: HashMap<PyrsObjectHandle, (*mut *mut c_void, usize)>,
+    cpython_tuple_items_cache_by_handle: HashMap<PyrsObjectHandle, Vec<usize>>,
     cpython_sync_in_progress: HashSet<PyrsObjectHandle>,
     module_dict_handles: HashMap<PyrsObjectHandle, ObjRef>,
     module_dict_handle_by_module_id: HashMap<u64, PyrsObjectHandle>,
@@ -4022,6 +4023,7 @@ impl ModuleCapiContext {
             cpython_builtin_method_defs: HashMap::new(),
             cpython_builtin_by_method_def: HashMap::new(),
             cpython_list_buffers: HashMap::new(),
+            cpython_tuple_items_cache_by_handle: HashMap::new(),
             cpython_sync_in_progress: HashSet::new(),
             module_dict_handles: HashMap::new(),
             module_dict_handle_by_module_id: HashMap::new(),
@@ -5900,15 +5902,7 @@ impl ModuleCapiContext {
         if !self.owns_cpython_allocation_ptr(object) {
             return None;
         }
-        let recovered = self
-            .cpython_ptr_by_handle
-            .iter()
-            .find_map(|(handle, ptr)| ((*ptr as usize) == (object as usize)).then_some(*handle));
-        if let Some(handle) = recovered {
-            self.cpython_objects_by_ptr.insert(object as usize, handle);
-            capi_perf_inc_handle_from_ptr_hits();
-        }
-        recovered
+        None
     }
 
     fn cpython_builtin_type_value_from_ptr(&self, object: *mut c_void) -> Option<Value> {
@@ -9266,6 +9260,7 @@ impl ModuleCapiContext {
             self.cpython_object_handles_by_id.remove(&object_id);
         }
         self.cpython_sync_in_progress.remove(&handle);
+        self.cpython_tuple_items_cache_by_handle.remove(&handle);
         self.module_dict_handles.remove(&handle);
         if self.thread_state_dict_handle == Some(handle) {
             self.thread_state_dict_handle = None;
@@ -9427,7 +9422,7 @@ impl ModuleCapiContext {
         enum SyncPayload {
             Tuple(Vec<*mut c_void>),
             List(Vec<*mut c_void>),
-            Bytes(Vec<u8>),
+            ByteArray(Vec<u8>),
             Exception {
                 args: *mut c_void,
                 notes: *mut c_void,
@@ -9476,15 +9471,15 @@ impl ModuleCapiContext {
                     };
                     Some(SyncPayload::List(item_ptrs))
                 }
-                Value::Bytes(_) | Value::ByteArray(_) => {
-                    // SAFETY: `ptr` is an owned bytes-compatible allocation for this handle.
+                Value::ByteArray(_) => {
+                    // SAFETY: `ptr` is an owned bytearray-compatible allocation for this handle.
                     let bytes = unsafe {
                         let raw = ptr.cast::<CpythonBytesCompatObject>();
                         let len = (*raw).ob_base.ob_size.max(0) as usize;
                         let data = cpython_bytes_data_ptr(ptr);
                         std::slice::from_raw_parts(data.cast::<u8>(), len).to_vec()
                     };
-                    Some(SyncPayload::Bytes(bytes))
+                    Some(SyncPayload::ByteArray(bytes))
                 }
                 Value::Exception(_) => {
                     // SAFETY: `ptr` is an owned base-exception-compatible allocation for this handle.
@@ -9526,6 +9521,17 @@ impl ModuleCapiContext {
 
         match payload {
             Some(SyncPayload::Tuple(item_ptrs)) => {
+                let raw_items: Vec<usize> = item_ptrs.iter().map(|ptr| *ptr as usize).collect();
+                if self
+                    .cpython_tuple_items_cache_by_handle
+                    .get(&handle)
+                    .is_some_and(|cached| *cached == raw_items)
+                {
+                    self.cpython_sync_in_progress.remove(&handle);
+                    return;
+                }
+                self.cpython_tuple_items_cache_by_handle
+                    .insert(handle, raw_items);
                 let trace_raw = std::env::var_os("PYRS_TRACE_CPY_TUPLE_RAW").is_some();
                 let mut values = Vec::with_capacity(item_ptrs.len());
                 let mut fallback_indices = Vec::new();
@@ -9634,20 +9640,12 @@ impl ModuleCapiContext {
                     *items = values;
                 }
             }
-            Some(SyncPayload::Bytes(bytes)) => {
+            Some(SyncPayload::ByteArray(bytes)) => {
                 if let Some(slot) = self.objects.get_mut(&handle) {
-                    match &mut slot.value {
-                        Value::Bytes(bytes_obj) => {
-                            if let Object::Bytes(values) = &mut *bytes_obj.kind_mut() {
-                                *values = bytes;
-                            }
-                        }
-                        Value::ByteArray(bytes_obj) => {
-                            if let Object::ByteArray(values) = &mut *bytes_obj.kind_mut() {
-                                *values = bytes;
-                            }
-                        }
-                        _ => {}
+                    if let Value::ByteArray(bytes_obj) = &mut slot.value
+                        && let Object::ByteArray(values) = &mut *bytes_obj.kind_mut()
+                    {
+                        *values = bytes;
                     }
                 }
             }

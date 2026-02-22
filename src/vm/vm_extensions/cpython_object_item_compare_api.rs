@@ -10,11 +10,11 @@ use crate::vm::{
 use super::cpython_object_call_api::PyObject_IsTrue;
 use super::{
     _Py_NotImplementedStruct, CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead,
-    ModuleCapiContext, Py_DecRef, PyErr_BadInternalCall, PyErr_Clear, PyErr_ExceptionMatches,
-    PyErr_Occurred, PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError, PyExc_TypeError,
-    PyLong_AsSsize_t, PyObject_GetAttr, PyObject_GetAttrString, c_name_to_string,
-    capi_perf_inc_richcompare_bool_calls, capi_perf_inc_richcompare_calls,
-    capi_perf_inc_richcompare_dunder_attr_missing,
+    ModuleCapiContext, PY_TPFLAGS_TYPE_SUBCLASS, Py_DecRef, PyErr_BadInternalCall, PyErr_Clear,
+    PyErr_ExceptionMatches, PyErr_Occurred, PyExc_AttributeError, PyExc_IndexError, PyExc_KeyError,
+    PyExc_TypeError, PyLong_AsSsize_t, PyObject_GetAttr, PyObject_GetAttrString, PyType_IsSubtype,
+    PyType_Type, c_name_to_string, capi_perf_inc_richcompare_bool_calls,
+    capi_perf_inc_richcompare_calls, capi_perf_inc_richcompare_dunder_attr_missing,
     capi_perf_inc_richcompare_dunder_callable_invocations,
     capi_perf_inc_richcompare_dunder_calls_external, capi_perf_inc_richcompare_dunder_calls_owned,
     capi_perf_inc_richcompare_dunder_fallback_attempts, capi_perf_inc_richcompare_slot_attempts,
@@ -802,6 +802,14 @@ pub(super) unsafe extern "C" fn cpython_tuple_richcompare_slot(
         if left_item == right_item {
             continue;
         }
+        // Fast-path type-object equality by identity; this avoids expensive recursive
+        // rich-compare traffic during NumPy operator table initialization.
+        if unsafe { cpython_is_type_object_ptr(left_item) }
+            && unsafe { cpython_is_type_object_ptr(right_item) }
+        {
+            differing_index = Some(idx);
+            break;
+        }
         let eq = unsafe { PyObject_RichCompareBool(left_item, right_item, 2) };
         if eq < 0 {
             return std::ptr::null_mut();
@@ -835,6 +843,28 @@ pub(super) unsafe extern "C" fn cpython_tuple_richcompare_slot(
         _ => unreachable!(),
     };
     cpython_new_ptr_for_value(Value::Bool(result))
+}
+
+unsafe fn cpython_is_type_object_ptr(object: *mut c_void) -> bool {
+    if object.is_null() {
+        return false;
+    }
+    // SAFETY: read-only header probe and type metadata inspection.
+    unsafe {
+        let Some(head) = object.cast::<CpythonObjectHead>().as_ref() else {
+            return false;
+        };
+        let metatype = head.ob_type.cast::<CpythonTypeObject>();
+        if metatype.is_null() {
+            return false;
+        }
+        let type_ptr = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
+        if metatype.cast::<c_void>() == type_ptr {
+            return true;
+        }
+        ((*metatype).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
+            || PyType_IsSubtype(metatype.cast::<c_void>(), type_ptr) != 0
+    }
 }
 
 fn cpython_rich_compare_slot_name(op: i32) -> Option<&'static std::ffi::CStr> {
@@ -1074,6 +1104,16 @@ pub unsafe extern "C" fn PyObject_RichCompare(
     if (op == 2 || op == 3) && left == right {
         return cpython_new_ptr_for_value(Value::Bool(op == 2));
     }
+    if (op == 2 || op == 3)
+        && unsafe { cpython_is_type_object_ptr(left) }
+        && unsafe { cpython_is_type_object_ptr(right) }
+    {
+        return cpython_new_ptr_for_value(Value::Bool(if op == 2 {
+            left == right
+        } else {
+            left != right
+        }));
+    }
     capi_perf_inc_richcompare_slot_attempts();
     if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
         return result;
@@ -1256,6 +1296,16 @@ pub unsafe extern "C" fn PyObject_RichCompareBool(
         if op == 3 {
             return 0;
         }
+    }
+    if (op == 2 || op == 3)
+        && unsafe { cpython_is_type_object_ptr(left) }
+        && unsafe { cpython_is_type_object_ptr(right) }
+    {
+        return i32::from(if op == 2 {
+            left == right
+        } else {
+            left != right
+        });
     }
     capi_perf_inc_richcompare_slot_attempts();
     if let Some(result) = cpython_try_richcompare_slot(left, right, op) {
