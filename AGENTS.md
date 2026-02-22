@@ -94,6 +94,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::exception_constructor_keyword_parity_matches_cpython`
     - `tests/vm.rs::traceback_output_preserves_exception_type_without_traceback_rewrap`
     - `tests/pyc_translate.rs::translates_cpython_linetable_into_instruction_ranges`.
+    - `tests/differential_cpython.rs::differential_traceback_context_chain_matches_cpython_shape`
+    - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,

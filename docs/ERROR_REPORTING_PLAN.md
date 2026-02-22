@@ -20,6 +20,9 @@ Status: in progress (started 2026-02-22).
 - Phase 5 in progress:
   - regression coverage added for constructor kwargs parity, linetable-range decoding, and
     traceback no-rewrap behavior.
+  - differential traceback-shape gates now compare pyrs vs CPython for both
+    `__context__` and `__cause__` chain formatting, normalized to ignore source/caret
+    rendering differences while preserving traceback-block and delimiter parity.
   - next gate: expand golden traceback-shape tests against CPython output for nested chains.
 
 ## Scope

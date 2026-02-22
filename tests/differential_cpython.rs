@@ -71,6 +71,74 @@ fn run_pyrs_json(source: &str) -> Result<String, String> {
     }
 }
 
+fn pyrs_bin_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_pyrs") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
+    if candidate.is_file() {
+        return Some(candidate);
+    }
+    None
+}
+
+fn run_cpython_traceback(source: &str) -> Result<String, String> {
+    let bin = cpython_bin_or_panic();
+    if bin.as_os_str().is_empty() {
+        return Ok(String::new());
+    }
+    let output = Command::new(bin)
+        .arg("-c")
+        .arg(source)
+        .output()
+        .map_err(|err| format!("failed to launch CPython: {err}"))?;
+    if output.status.success() {
+        return Err("expected CPython script to fail with traceback".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stderr).to_string())
+}
+
+fn run_pyrs_traceback(source: &str) -> Result<String, String> {
+    let Some(bin) = pyrs_bin_path() else {
+        return Err("pyrs binary not found".to_string());
+    };
+    let output = Command::new(bin)
+        .arg("-c")
+        .arg(source)
+        .output()
+        .map_err(|err| format!("failed to launch pyrs: {err}"))?;
+    if output.status.success() {
+        return Err("expected pyrs script to fail with traceback".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stderr).to_string())
+}
+
+fn traceback_heading_count(text: &str) -> usize {
+    text.matches("Traceback (most recent call last):").count()
+}
+
+fn traceback_lines_without_source_carets(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_end();
+            if trimmed.is_empty() {
+                return Some(String::new());
+            }
+            let stripped = trimmed.trim_start();
+            if !stripped.is_empty() && stripped.chars().all(|ch| ch == '^' || ch == '~') {
+                return None;
+            }
+            if line.starts_with("    ") && !line.trim_start().starts_with("File ") {
+                return None;
+            }
+            Some(trimmed.to_string())
+        })
+        .collect()
+}
+
 fn normalize_jsonish(text: &str) -> String {
     text.chars()
         .filter(|ch| !ch.is_ascii_whitespace())
@@ -381,5 +449,87 @@ result = raised
         normalize_jsonish(&py),
         normalize_jsonish(&ours),
         "pickle object-protocol malformed-input contract differential mismatch"
+    );
+}
+
+#[test]
+fn differential_traceback_context_chain_matches_cpython_shape() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    raise AttributeError("one")
+except Exception:
+    raise AttributeError("two")
+"#;
+    let py = run_cpython_traceback(source).expect("CPython traceback should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs traceback should run");
+    assert_eq!(traceback_heading_count(&py), 2, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
+    assert!(
+        py.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("AttributeError: one") && py.contains("AttributeError: two"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("AttributeError: one") && ours.contains("AttributeError: two"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "context traceback shape mismatch"
+    );
+}
+
+#[test]
+fn differential_traceback_direct_cause_matches_cpython_shape() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    raise ValueError("inner")
+except Exception as exc:
+    raise RuntimeError("outer") from exc
+"#;
+    let py = run_cpython_traceback(source).expect("CPython traceback should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs traceback should run");
+    assert_eq!(traceback_heading_count(&py), 2, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
+    assert!(
+        py.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("ValueError: inner") && py.contains("RuntimeError: outer"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("ValueError: inner") && ours.contains("RuntimeError: outer"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "direct-cause traceback shape mismatch"
     );
 }
