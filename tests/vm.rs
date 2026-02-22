@@ -1093,6 +1093,17 @@ fn compile_only_ast_honors_operator_hierarchy() {
 }
 
 #[test]
+fn compile_only_ast_covers_common_statement_nodes() {
+    let source = "import _ast\nif_node = compile('if a:\\n    pass\\nelse:\\n    pass', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nwhile_node = compile('while a:\\n    break', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nfor_node = compile('for i in it:\\n    continue', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nwith_node = compile('with ctx as x:\\n    pass', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\ntry_node = compile('try:\\n    x = 1\\nexcept Exception as exc:\\n    x = 2\\nfinally:\\n    x = 3', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nimport_node = compile('import os as o', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nimport_from_node = compile('from os import path as p', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\ndelete_node = compile('del x', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nraise_node = compile('raise ValueError() from None', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nassert_node = compile('assert a, b', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nglobal_node = compile('global g', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nbreak_node = compile('while True:\\n    break', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0].body[0]\ncontinue_node = compile('while True:\\n    continue', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0].body[0]\nok = isinstance(if_node, _ast.If) and isinstance(while_node, _ast.While) and isinstance(for_node, _ast.For) and isinstance(with_node, _ast.With) and isinstance(try_node, _ast.Try) and isinstance(try_node.handlers[0], _ast.ExceptHandler) and isinstance(import_node, _ast.Import) and isinstance(import_node.names[0], _ast.alias) and isinstance(import_from_node, _ast.ImportFrom) and isinstance(delete_node, _ast.Delete) and isinstance(raise_node, _ast.Raise) and isinstance(assert_node, _ast.Assert) and isinstance(global_node, _ast.Global) and isinstance(break_node, _ast.Break) and isinstance(continue_node, _ast.Continue)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

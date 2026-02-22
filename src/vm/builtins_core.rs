@@ -25,7 +25,8 @@ use super::{
 };
 use crate::ast::{
     AssignTarget, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg, Constant as AstConstant,
-    DictEntry, Expr, ExprKind, Module as AstModule, Stmt, StmtKind, UnaryOp as AstUnaryOp,
+    DictEntry, ExceptHandler as AstExceptHandler, Expr, ExprKind, ImportAlias as AstImportAlias,
+    Module as AstModule, Stmt, StmtKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -3793,6 +3794,65 @@ impl Vm {
         }
     }
 
+    fn convert_stmt_list_to_ast_values(
+        &mut self,
+        statements: &[Stmt],
+    ) -> Result<Vec<Value>, RuntimeError> {
+        let mut out = Vec::with_capacity(statements.len());
+        for statement in statements {
+            out.push(self.convert_stmt_to_ast_node(statement)?);
+        }
+        Ok(out)
+    }
+
+    fn convert_import_alias_to_ast_node(
+        &mut self,
+        alias: &AstImportAlias,
+    ) -> Result<Value, RuntimeError> {
+        self.build_ast_node(
+            "alias",
+            None,
+            vec![
+                ("name", Value::Str(alias.name.clone())),
+                (
+                    "asname",
+                    alias
+                        .asname
+                        .as_ref()
+                        .map(|value| Value::Str(value.clone()))
+                        .unwrap_or(Value::None),
+                ),
+            ],
+        )
+    }
+
+    fn convert_except_handler_to_ast_node(
+        &mut self,
+        handler: &AstExceptHandler,
+    ) -> Result<Value, RuntimeError> {
+        let body = self.convert_stmt_list_to_ast_values(&handler.body)?;
+        let type_node = match &handler.type_expr {
+            Some(expr) => self.convert_expr_to_ast_node(expr)?,
+            None => Value::None,
+        };
+        self.build_ast_node(
+            "ExceptHandler",
+            None,
+            vec![
+                ("type", type_node),
+                (
+                    "name",
+                    handler
+                        .name
+                        .as_ref()
+                        .map(|value| Value::Str(value.clone()))
+                        .unwrap_or(Value::None),
+                ),
+                ("body", self.heap.alloc_list(body)),
+            ],
+        )
+    }
+
     fn convert_assign_target_to_ast_expr(
         &mut self,
         target: &AssignTarget,
@@ -4115,6 +4175,17 @@ impl Vm {
                     ],
                 )
             }
+            StmtKind::Delete { targets } => {
+                let mut converted_targets = Vec::with_capacity(targets.len());
+                for target in targets {
+                    converted_targets.push(self.convert_assign_target_to_ast_expr(target)?);
+                }
+                self.build_ast_node(
+                    "Delete",
+                    location,
+                    vec![("targets", self.heap.alloc_list(converted_targets))],
+                )
+            }
             StmtKind::Return { value } => {
                 let value_node = match value {
                     Some(value) => self.convert_expr_to_ast_node(value)?,
@@ -4122,11 +4193,202 @@ impl Vm {
                 };
                 self.build_ast_node("Return", location, vec![("value", value_node)])
             }
+            StmtKind::Raise { value, cause } => {
+                let exc = match value {
+                    Some(value) => self.convert_expr_to_ast_node(value)?,
+                    None => Value::None,
+                };
+                let cause = match cause {
+                    Some(cause) => self.convert_expr_to_ast_node(cause)?,
+                    None => Value::None,
+                };
+                self.build_ast_node("Raise", location, vec![("exc", exc), ("cause", cause)])
+            }
+            StmtKind::Assert { test, message } => {
+                let test_node = self.convert_expr_to_ast_node(test)?;
+                let message_node = match message {
+                    Some(value) => self.convert_expr_to_ast_node(value)?,
+                    None => Value::None,
+                };
+                self.build_ast_node(
+                    "Assert",
+                    location,
+                    vec![("test", test_node), ("msg", message_node)],
+                )
+            }
+            StmtKind::If { test, body, orelse } => {
+                let test_node = self.convert_expr_to_ast_node(test)?;
+                let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
+                let orelse_nodes = self.convert_stmt_list_to_ast_values(orelse)?;
+                self.build_ast_node(
+                    "If",
+                    location,
+                    vec![
+                        ("test", test_node),
+                        ("body", self.heap.alloc_list(body_nodes)),
+                        ("orelse", self.heap.alloc_list(orelse_nodes)),
+                    ],
+                )
+            }
+            StmtKind::While { test, body, orelse } => {
+                let test_node = self.convert_expr_to_ast_node(test)?;
+                let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
+                let orelse_nodes = self.convert_stmt_list_to_ast_values(orelse)?;
+                self.build_ast_node(
+                    "While",
+                    location,
+                    vec![
+                        ("test", test_node),
+                        ("body", self.heap.alloc_list(body_nodes)),
+                        ("orelse", self.heap.alloc_list(orelse_nodes)),
+                    ],
+                )
+            }
+            StmtKind::For {
+                is_async,
+                target,
+                iter,
+                body,
+                orelse,
+            } => {
+                let class_name = if *is_async { "AsyncFor" } else { "For" };
+                let target_node = self.convert_assign_target_to_ast_expr(target)?;
+                let iter_node = self.convert_expr_to_ast_node(iter)?;
+                let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
+                let orelse_nodes = self.convert_stmt_list_to_ast_values(orelse)?;
+                self.build_ast_node(
+                    class_name,
+                    location,
+                    vec![
+                        ("target", target_node),
+                        ("iter", iter_node),
+                        ("body", self.heap.alloc_list(body_nodes)),
+                        ("orelse", self.heap.alloc_list(orelse_nodes)),
+                        ("type_comment", Value::None),
+                    ],
+                )
+            }
+            StmtKind::With {
+                is_async,
+                context,
+                target,
+                body,
+            } => {
+                let class_name = if *is_async { "AsyncWith" } else { "With" };
+                let context_expr = self.convert_expr_to_ast_node(context)?;
+                let optional_vars = match target {
+                    Some(value) => self.convert_assign_target_to_ast_expr(value)?,
+                    None => Value::None,
+                };
+                let with_item = self.build_ast_node(
+                    "withitem",
+                    None,
+                    vec![
+                        ("context_expr", context_expr),
+                        ("optional_vars", optional_vars),
+                    ],
+                )?;
+                let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
+                self.build_ast_node(
+                    class_name,
+                    location,
+                    vec![
+                        ("items", self.heap.alloc_list(vec![with_item])),
+                        ("body", self.heap.alloc_list(body_nodes)),
+                        ("type_comment", Value::None),
+                    ],
+                )
+            }
+            StmtKind::Try {
+                body,
+                handlers,
+                orelse,
+                finalbody,
+            } => {
+                let class_name = if handlers.iter().any(|handler| handler.is_star) {
+                    "TryStar"
+                } else {
+                    "Try"
+                };
+                let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
+                let mut handler_nodes = Vec::with_capacity(handlers.len());
+                for handler in handlers {
+                    handler_nodes.push(self.convert_except_handler_to_ast_node(handler)?);
+                }
+                let orelse_nodes = self.convert_stmt_list_to_ast_values(orelse)?;
+                let final_nodes = self.convert_stmt_list_to_ast_values(finalbody)?;
+                self.build_ast_node(
+                    class_name,
+                    location,
+                    vec![
+                        ("body", self.heap.alloc_list(body_nodes)),
+                        ("handlers", self.heap.alloc_list(handler_nodes)),
+                        ("orelse", self.heap.alloc_list(orelse_nodes)),
+                        ("finalbody", self.heap.alloc_list(final_nodes)),
+                    ],
+                )
+            }
+            StmtKind::Import { names } => {
+                let mut converted = Vec::with_capacity(names.len());
+                for name in names {
+                    converted.push(self.convert_import_alias_to_ast_node(name)?);
+                }
+                self.build_ast_node(
+                    "Import",
+                    location,
+                    vec![("names", self.heap.alloc_list(converted))],
+                )
+            }
+            StmtKind::ImportFrom {
+                module,
+                names,
+                level,
+            } => {
+                let mut converted = Vec::with_capacity(names.len());
+                for name in names {
+                    converted.push(self.convert_import_alias_to_ast_node(name)?);
+                }
+                self.build_ast_node(
+                    "ImportFrom",
+                    location,
+                    vec![
+                        (
+                            "module",
+                            module
+                                .as_ref()
+                                .map(|value| Value::Str(value.clone()))
+                                .unwrap_or(Value::None),
+                        ),
+                        ("names", self.heap.alloc_list(converted)),
+                        ("level", Value::Int(*level as i64)),
+                    ],
+                )
+            }
+            StmtKind::Global { names } => self.build_ast_node(
+                "Global",
+                location,
+                vec![(
+                    "names",
+                    self.heap
+                        .alloc_list(names.iter().cloned().map(Value::Str).collect()),
+                )],
+            ),
+            StmtKind::Nonlocal { names } => self.build_ast_node(
+                "Nonlocal",
+                location,
+                vec![(
+                    "names",
+                    self.heap
+                        .alloc_list(names.iter().cloned().map(Value::Str).collect()),
+                )],
+            ),
             StmtKind::Expr(value) => {
                 let value_node = self.convert_expr_to_ast_node(value)?;
                 self.build_ast_node("Expr", location, vec![("value", value_node)])
             }
             StmtKind::Pass => self.build_ast_node("Pass", location, Vec::new()),
+            StmtKind::Break => self.build_ast_node("Break", location, Vec::new()),
+            StmtKind::Continue => self.build_ast_node("Continue", location, Vec::new()),
             _ => self.build_ast_node("Pass", location, Vec::new()),
         }
     }

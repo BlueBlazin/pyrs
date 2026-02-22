@@ -146,9 +146,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `mod`/`stmt`/`expr`/`expr_context`/`operator`/`unaryop`/`boolop`/`cmpop` now inherit from `AST`,
     - concrete nodes are wired to their abstract families (e.g. `Assign -> stmt`,
       `Name/Call/BinOp/Compare/... -> expr`, `Add/Sub/... -> operator`, `Eq/Lt/... -> cmpop`).
+  - `compile(..., PyCF_ONLY_AST)` statement-surface coverage expanded beyond minimal bootstrap:
+    - `Delete`, `Raise`, `Assert`, `If`, `While`, `For`/`AsyncFor`, `With`/`AsyncWith`,
+      `Try`/`TryStar`, `Import`/`ImportFrom`, `Global`/`Nonlocal`, `Break`, `Continue`,
+      plus helper nodes `alias`, `withitem`, and `ExceptHandler`.
   - additional AST hierarchy regressions are now covered:
     - `tests/vm.rs::compile_only_ast_honors_core_ast_hierarchy`
     - `tests/vm.rs::compile_only_ast_honors_operator_hierarchy`.
+    - `tests/vm.rs::compile_only_ast_covers_common_statement_nodes`.
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.

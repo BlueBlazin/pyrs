@@ -127,6 +127,11 @@ Status: in progress (started 2026-02-22).
   - `_ast` class-hierarchy wiring now maps core abstract and concrete node families to CPython-like
     inheritance roots (e.g. `expr`, `stmt`, `operator`, `cmpop`) so `isinstance(...)` and
     positional pattern matching semantics align with stdlib traceback/ast consumers.
+  - AST compile conversion now includes a broader statement subset used by stdlib error/traceback
+    paths and AST consumers: `Delete`, `Raise`, `Assert`, `If`, `While`, `For`/`AsyncFor`,
+    `With`/`AsyncWith`, `Try`/`TryStar`, `Import`/`ImportFrom`, `Global`/`Nonlocal`, and
+    loop controls (`Break`/`Continue`), with helper-node materialization for
+    `alias`, `withitem`, and `ExceptHandler`.
   - native codec keyword-path parity was tightened for traceback stdlib flows:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs and
       enforce duplicate/unexpected-keyword checks.
@@ -146,6 +151,7 @@ Status: in progress (started 2026-02-22).
     - `compile_only_ast_covers_binop_compare_and_slice_shapes`.
     - `compile_only_ast_honors_core_ast_hierarchy`
     - `compile_only_ast_honors_operator_hierarchy`.
+    - `compile_only_ast_covers_common_statement_nodes`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

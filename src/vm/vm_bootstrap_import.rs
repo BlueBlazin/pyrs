@@ -82,9 +82,54 @@ impl Vm {
             &["targets", "value", "type_comment"],
             &LOC_ATTRS,
         );
+        self.configure_bootstrap_ast_class("Delete", &["targets"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Return", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Raise", &["exc", "cause"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Assert", &["test", "msg"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Expr", &["value"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Pass", &[], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Break", &[], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Continue", &[], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("If", &["test", "body", "orelse"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("While", &["test", "body", "orelse"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "For",
+            &["target", "iter", "body", "orelse", "type_comment"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
+            "AsyncFor",
+            &["target", "iter", "body", "orelse", "type_comment"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class("Import", &["names"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("ImportFrom", &["module", "names", "level"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Global", &["names"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Nonlocal", &["names"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("With", &["items", "body", "type_comment"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "AsyncWith",
+            &["items", "body", "type_comment"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
+            "Try",
+            &["body", "handlers", "orelse", "finalbody"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
+            "TryStar",
+            &["body", "handlers", "orelse", "finalbody"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class("excepthandler", &[], &[]);
+        self.configure_bootstrap_ast_class("ExceptHandler", &["type", "name", "body"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("alias", &["name", "asname"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "withitem",
+            &["context_expr", "optional_vars"],
+            &LOC_ATTRS,
+        );
         self.configure_bootstrap_ast_class("Name", &["id", "ctx"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Call", &["func", "args", "keywords"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("keyword", &["arg", "value"], &LOC_ATTRS);
@@ -455,11 +500,34 @@ impl Vm {
         let _ = self.set_module_class_bases("_ast", "unaryop", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "boolop", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "cmpop", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "excepthandler", &["AST"]);
 
         let _ = self.set_module_class_bases("_ast", "Module", &["mod"]);
         let _ = self.set_module_class_bases("_ast", "Expression", &["mod"]);
 
-        for class_name in ["Assign", "Return", "Expr", "Pass"] {
+        for class_name in [
+            "Assign",
+            "Delete",
+            "Return",
+            "Raise",
+            "Assert",
+            "Expr",
+            "Pass",
+            "Break",
+            "Continue",
+            "If",
+            "While",
+            "For",
+            "AsyncFor",
+            "Import",
+            "ImportFrom",
+            "Global",
+            "Nonlocal",
+            "With",
+            "AsyncWith",
+            "Try",
+            "TryStar",
+        ] {
             let _ = self.set_module_class_bases("_ast", class_name, &["stmt"]);
         }
 
@@ -486,6 +554,9 @@ impl Vm {
             let _ = self.set_module_class_bases("_ast", class_name, &["expr"]);
         }
         let _ = self.set_module_class_bases("_ast", "keyword", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "alias", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "withitem", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "ExceptHandler", &["excepthandler"]);
 
         for class_name in ["Load", "Store", "Del"] {
             let _ = self.set_module_class_bases("_ast", class_name, &["expr_context"]);
@@ -3866,9 +3937,94 @@ impl Vm {
                         .alloc_class(ClassObject::new("Assign".to_string(), Vec::new())),
                 ),
                 (
+                    "Delete",
+                    self.heap
+                        .alloc_class(ClassObject::new("Delete".to_string(), Vec::new())),
+                ),
+                (
                     "Return",
                     self.heap
                         .alloc_class(ClassObject::new("Return".to_string(), Vec::new())),
+                ),
+                (
+                    "Raise",
+                    self.heap
+                        .alloc_class(ClassObject::new("Raise".to_string(), Vec::new())),
+                ),
+                (
+                    "Assert",
+                    self.heap
+                        .alloc_class(ClassObject::new("Assert".to_string(), Vec::new())),
+                ),
+                (
+                    "If",
+                    self.heap
+                        .alloc_class(ClassObject::new("If".to_string(), Vec::new())),
+                ),
+                (
+                    "While",
+                    self.heap
+                        .alloc_class(ClassObject::new("While".to_string(), Vec::new())),
+                ),
+                (
+                    "For",
+                    self.heap
+                        .alloc_class(ClassObject::new("For".to_string(), Vec::new())),
+                ),
+                (
+                    "AsyncFor",
+                    self.heap
+                        .alloc_class(ClassObject::new("AsyncFor".to_string(), Vec::new())),
+                ),
+                (
+                    "With",
+                    self.heap
+                        .alloc_class(ClassObject::new("With".to_string(), Vec::new())),
+                ),
+                (
+                    "AsyncWith",
+                    self.heap
+                        .alloc_class(ClassObject::new("AsyncWith".to_string(), Vec::new())),
+                ),
+                (
+                    "Try",
+                    self.heap
+                        .alloc_class(ClassObject::new("Try".to_string(), Vec::new())),
+                ),
+                (
+                    "TryStar",
+                    self.heap
+                        .alloc_class(ClassObject::new("TryStar".to_string(), Vec::new())),
+                ),
+                (
+                    "ExceptHandler",
+                    self.heap
+                        .alloc_class(ClassObject::new("ExceptHandler".to_string(), Vec::new())),
+                ),
+                (
+                    "excepthandler",
+                    self.heap
+                        .alloc_class(ClassObject::new("excepthandler".to_string(), Vec::new())),
+                ),
+                (
+                    "Import",
+                    self.heap
+                        .alloc_class(ClassObject::new("Import".to_string(), Vec::new())),
+                ),
+                (
+                    "ImportFrom",
+                    self.heap
+                        .alloc_class(ClassObject::new("ImportFrom".to_string(), Vec::new())),
+                ),
+                (
+                    "Global",
+                    self.heap
+                        .alloc_class(ClassObject::new("Global".to_string(), Vec::new())),
+                ),
+                (
+                    "Nonlocal",
+                    self.heap
+                        .alloc_class(ClassObject::new("Nonlocal".to_string(), Vec::new())),
                 ),
                 (
                     "Constant",
@@ -3879,6 +4035,26 @@ impl Vm {
                     "Pass",
                     self.heap
                         .alloc_class(ClassObject::new("Pass".to_string(), Vec::new())),
+                ),
+                (
+                    "Break",
+                    self.heap
+                        .alloc_class(ClassObject::new("Break".to_string(), Vec::new())),
+                ),
+                (
+                    "Continue",
+                    self.heap
+                        .alloc_class(ClassObject::new("Continue".to_string(), Vec::new())),
+                ),
+                (
+                    "alias",
+                    self.heap
+                        .alloc_class(ClassObject::new("alias".to_string(), Vec::new())),
+                ),
+                (
+                    "withitem",
+                    self.heap
+                        .alloc_class(ClassObject::new("withitem".to_string(), Vec::new())),
                 ),
                 (
                     "Tuple",
