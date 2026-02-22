@@ -1113,6 +1113,13 @@ impl Vm {
             .retain(|(stored_tool, _), _| *stored_tool != tool_id);
     }
 
+    fn monitoring_code_key_from_value(&self, code: Value) -> Result<usize, RuntimeError> {
+        match code {
+            Value::Code(code_obj) => Ok(Rc::as_ptr(&code_obj) as usize),
+            _ => Err(RuntimeError::type_error("code must be a code object")),
+        }
+    }
+
     pub(super) fn builtin_sys_monitoring_get_tool(
         &mut self,
         mut args: Vec<Value>,
@@ -1308,6 +1315,31 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_sys_monitoring_get_events(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.get_events() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "get_events expected 1 argument, got {}",
+                args.len()
+            )));
+        }
+        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
+        let event_set = self
+            .monitoring_event_sets
+            .get(&tool_id)
+            .copied()
+            .unwrap_or(0);
+        Ok(Value::Int(event_set))
+    }
+
     pub(super) fn builtin_sys_monitoring_set_local_events(
         &mut self,
         mut args: Vec<Value>,
@@ -1324,12 +1356,9 @@ impl Vm {
                 args.len()
             )));
         }
-        let tool_id = self.sys_monitoring_parse_tool_id(args.remove(0))?;
-        let code = args.remove(0);
-        let code_key = match code {
-            Value::Code(code_obj) => Rc::as_ptr(&code_obj) as usize,
-            _ => return Err(RuntimeError::type_error("code must be a code object")),
-        };
+        let tool = args.remove(0);
+        let code_key = self.monitoring_code_key_from_value(args.remove(0))?;
+        let tool_id = self.sys_monitoring_parse_tool_id(tool)?;
         let mut event_set = value_to_int(args.remove(0))?;
         let c_return_events = MONITORING_EVENT_C_RETURN | MONITORING_EVENT_C_RAISE;
         let c_call_events = c_return_events | MONITORING_EVENT_CALL;
@@ -1357,6 +1386,33 @@ impl Vm {
         self.monitoring_local_event_sets
             .insert((tool_id, code_key), event_set);
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_sys_monitoring_get_local_events(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.monitoring.get_local_events() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 2 {
+            return Err(RuntimeError::type_error(format!(
+                "get_local_events expected 2 arguments, got {}",
+                args.len()
+            )));
+        }
+        let tool = args.remove(0);
+        let code_key = self.monitoring_code_key_from_value(args.remove(0))?;
+        let tool_id = self.sys_monitoring_parse_tool_id(tool)?;
+        let events = self
+            .monitoring_local_event_sets
+            .get(&(tool_id, code_key))
+            .copied()
+            .unwrap_or(0);
+        Ok(Value::Int(events))
     }
 
     pub(super) fn builtin_sys_monitoring_restart_events(

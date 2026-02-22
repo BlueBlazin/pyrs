@@ -6563,8 +6563,14 @@ impl Vm {
             BuiltinFunction::SysMonitoringRegisterCallback => {
                 self.builtin_sys_monitoring_register_callback(args, kwargs)
             }
+            BuiltinFunction::SysMonitoringGetEvents => {
+                self.builtin_sys_monitoring_get_events(args, kwargs)
+            }
             BuiltinFunction::SysMonitoringSetEvents => {
                 self.builtin_sys_monitoring_set_events(args, kwargs)
+            }
+            BuiltinFunction::SysMonitoringGetLocalEvents => {
+                self.builtin_sys_monitoring_get_local_events(args, kwargs)
             }
             BuiltinFunction::SysMonitoringSetLocalEvents => {
                 self.builtin_sys_monitoring_set_local_events(args, kwargs)

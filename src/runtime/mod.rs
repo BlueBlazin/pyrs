@@ -2443,7 +2443,9 @@ pub enum BuiltinFunction {
     SysMonitoringClearToolId,
     SysMonitoringFreeToolId,
     SysMonitoringRegisterCallback,
+    SysMonitoringGetEvents,
     SysMonitoringSetEvents,
+    SysMonitoringGetLocalEvents,
     SysMonitoringSetLocalEvents,
     SysMonitoringRestartEvents,
     SysStdoutWrite,
@@ -5663,7 +5665,9 @@ impl BuiltinFunction {
             | BuiltinFunction::SysMonitoringClearToolId
             | BuiltinFunction::SysMonitoringFreeToolId
             | BuiltinFunction::SysMonitoringRegisterCallback
+            | BuiltinFunction::SysMonitoringGetEvents
             | BuiltinFunction::SysMonitoringSetEvents
+            | BuiltinFunction::SysMonitoringGetLocalEvents
             | BuiltinFunction::SysMonitoringSetLocalEvents
             | BuiltinFunction::SysMonitoringRestartEvents
             | BuiltinFunction::SysStdoutWrite

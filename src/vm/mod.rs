@@ -3464,8 +3464,16 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::SysMonitoringRegisterCallback),
                 );
                 monitoring_data.globals.insert(
+                    "get_events".to_string(),
+                    Value::Builtin(BuiltinFunction::SysMonitoringGetEvents),
+                );
+                monitoring_data.globals.insert(
                     "set_events".to_string(),
                     Value::Builtin(BuiltinFunction::SysMonitoringSetEvents),
+                );
+                monitoring_data.globals.insert(
+                    "get_local_events".to_string(),
+                    Value::Builtin(BuiltinFunction::SysMonitoringGetLocalEvents),
                 );
                 monitoring_data.globals.insert(
                     "set_local_events".to_string(),
