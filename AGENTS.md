@@ -70,6 +70,25 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- Error-reporting parity checkpoint (2026-02-23, latest):
+  - Added local PEP references used for implementation:
+    - `docs/references/pep-0626.rst`
+    - `docs/references/pep-0657.rst`
+    - execution plan in `docs/ERROR_REPORTING_PLAN.md`.
+  - Exception-constructor kwargs parity updated in `instantiate_exception_type`:
+    - `AttributeError(..., name=?, obj=?)`,
+    - `NameError(..., name=?)`,
+    - `ImportError/ModuleNotFoundError(..., name=?, path=?)`,
+    - unexpected kwargs now raise typed `TypeError` with CPython-style text.
+  - Traceback formatting now includes source lines and caret spans when source text is available:
+    - source text cache added to VM and wired for file/`-c`/REPL/import/eval/exec/compile paths.
+    - frame lines now render in CPython shape (`File "...", line N, in ...`) with caret.
+  - CPython `.pyc` `co_linetable` decoding now maps instruction ranges into `Location {line,column,end_line,end_column}`.
+  - Unhandled exception propagation no longer re-wraps traceback text as nested `RuntimeError`/`<Exc>: Traceback ...`.
+  - New regressions:
+    - `tests/vm.rs::exception_constructor_keyword_parity_matches_cpython`
+    - `tests/vm.rs::traceback_output_preserves_exception_type_without_traceback_rewrap`
+    - `tests/pyc_translate.rs::translates_cpython_linetable_into_instruction_ranges`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,
