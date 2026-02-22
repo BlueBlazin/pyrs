@@ -1028,6 +1028,7 @@ PyObject *PyErr_NewExceptionWithDoc(
 );
 const char *PyExceptionClass_Name(PyObject *exception_class);
 PyObject *PyErr_Occurred(void);
+int PyErr_ExceptionMatches(PyObject *exc);
 PyObject *PyErr_GetRaisedException(void);
 void PyErr_SetRaisedException(PyObject *exc);
 PyObject *PyErr_GetHandledException(void);
