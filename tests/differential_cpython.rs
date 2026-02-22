@@ -2024,3 +2024,49 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_compile_only_ast_match_and_pattern_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+node = compile(
+    "match subject:\n    case [1, *rest]:\n        pass\n    case {'k': v, **more}:\n        pass\n    case Point(x=px, y=py):\n        pass\n    case True:\n        pass\n    case capture if capture > 0:\n        pass\n    case _:\n        pass\n",
+    "<ast>",
+    "exec",
+    _ast.PyCF_ONLY_AST,
+)
+match_node = node.body[0]
+case_seq = match_node.cases[0]
+case_map = match_node.cases[1]
+case_class = match_node.cases[2]
+case_singleton = match_node.cases[3]
+case_guard = match_node.cases[4]
+case_wild = match_node.cases[5]
+result = {
+    "match_type": type(match_node).__name__,
+    "match_is_stmt": isinstance(match_node, _ast.stmt),
+    "case_type": type(case_seq).__name__,
+    "case_is_match_case": isinstance(case_seq, _ast.match_case),
+    "pattern_base": isinstance(case_seq.pattern, _ast.pattern),
+    "seq_pattern_type": type(case_seq.pattern).__name__,
+    "seq_subpatterns": [type(p).__name__ for p in case_seq.pattern.patterns],
+    "mapping_type": type(case_map.pattern).__name__,
+    "mapping_rest": case_map.pattern.rest,
+    "mapping_pattern_types": [type(p).__name__ for p in case_map.pattern.patterns],
+    "class_type": type(case_class.pattern).__name__,
+    "class_kwd_attrs": list(case_class.pattern.kwd_attrs),
+    "class_kwd_pattern_types": [type(p).__name__ for p in case_class.pattern.kwd_patterns],
+    "singleton_type": type(case_singleton.pattern).__name__,
+    "guard_type": type(case_guard.guard).__name__,
+    "guard_pattern_name": case_guard.pattern.name,
+    "wild_type": type(case_wild.pattern).__name__,
+    "wild_name": case_wild.pattern.name,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}

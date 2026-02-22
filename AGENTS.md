@@ -159,6 +159,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `AugAssign` (augmented-op to `_ast` operator-node mapping),
     - `AnnAssign` with CPython `simple` field semantics
       (`1` for name targets, `0` for non-name targets).
+  - `compile(..., PyCF_ONLY_AST)` now includes structural pattern matching node conversion:
+    - `Match` + `match_case`,
+    - `pattern` abstract root and concrete `Match*` families:
+      `MatchValue`, `MatchSingleton`, `MatchSequence`, `MatchMapping`,
+      `MatchClass`, `MatchStar`, `MatchAs`, `MatchOr`.
   - `_ast` metadata/hierarchy parity was extended for these node families:
     - metadata now includes CPython-shaped `_fields` / `_attributes` for `FunctionDef`,
       `AsyncFunctionDef`, `ClassDef`, `arguments`, `arg`, `type_param`, `TypeVar`,
@@ -167,17 +172,22 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       `arguments`/`arg`/`type_param -> AST`,
       `TypeVar`/`ParamSpec`/`TypeVarTuple -> type_param`,
     - corrected `withitem._attributes` to CPython parity (`()`).
+    - pattern hierarchy now wired to CPython families:
+      `Match -> stmt`, `match_case -> AST`, `pattern -> AST`,
+      concrete `Match*` pattern classes -> `pattern`.
   - additional AST hierarchy regressions are now covered:
     - `tests/vm.rs::compile_only_ast_honors_core_ast_hierarchy`
     - `tests/vm.rs::compile_only_ast_honors_operator_hierarchy`.
     - `tests/vm.rs::compile_only_ast_covers_common_statement_nodes`.
     - `tests/vm.rs::compile_only_ast_covers_function_class_and_type_param_nodes`.
     - `tests/vm.rs::compile_only_ast_covers_augassign_and_annassign_nodes`.
+    - `tests/vm.rs::compile_only_ast_covers_match_and_pattern_nodes`.
   - differential CPython parity gates were expanded for AST-compile surfaces:
     - `tests/differential_cpython.rs::differential_compile_only_ast_assign_fields_and_match_args`
     - `tests/differential_cpython.rs::differential_compile_only_ast_operator_hierarchy_parity`.
     - `tests/differential_cpython.rs::differential_compile_only_ast_function_class_and_type_param_parity`.
     - `tests/differential_cpython.rs::differential_compile_only_ast_augassign_and_annassign_parity`.
+    - `tests/differential_cpython.rs::differential_compile_only_ast_match_and_pattern_parity`.
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.

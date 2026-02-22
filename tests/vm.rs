@@ -1126,6 +1126,17 @@ fn compile_only_ast_covers_augassign_and_annassign_nodes() {
 }
 
 #[test]
+fn compile_only_ast_covers_match_and_pattern_nodes() {
+    let source = "import _ast\nnode = compile('match subject:\\n    case [1, *rest]:\\n        pass\\n    case {\"k\": v, **more}:\\n        pass\\n    case Point(x=px, y=py):\\n        pass\\n    case True:\\n        pass\\n    case capture if capture > 0:\\n        pass\\n    case _:\\n        pass\\n', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nmatch_node = node.body[0]\ncase_seq = match_node.cases[0]\ncase_map = match_node.cases[1]\ncase_class = match_node.cases[2]\ncase_singleton = match_node.cases[3]\ncase_guard = match_node.cases[4]\ncase_wild = match_node.cases[5]\nok = isinstance(match_node, _ast.Match) and isinstance(case_seq, _ast.match_case) and isinstance(case_seq.pattern, _ast.MatchSequence) and isinstance(case_seq.pattern.patterns[0], _ast.MatchValue) and isinstance(case_seq.pattern.patterns[1], _ast.MatchStar) and isinstance(case_map.pattern, _ast.MatchMapping) and isinstance(case_map.pattern.patterns[0], _ast.MatchAs) and isinstance(case_class.pattern, _ast.MatchClass) and case_class.pattern.kwd_attrs == ['x', 'y'] and isinstance(case_singleton.pattern, _ast.MatchSingleton) and isinstance(case_guard.guard, _ast.Compare) and isinstance(case_guard.pattern, _ast.MatchAs) and case_guard.pattern.name == 'capture' and isinstance(case_wild.pattern, _ast.MatchAs) and case_wild.pattern.name is None and isinstance(case_seq.pattern, _ast.pattern)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

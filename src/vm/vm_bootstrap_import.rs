@@ -134,6 +134,7 @@ impl Vm {
         self.configure_bootstrap_ast_class("Pass", &[], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Break", &[], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Continue", &[], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Match", &["subject", "cases"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("If", &["test", "body", "orelse"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("While", &["test", "body", "orelse"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class(
@@ -188,6 +189,24 @@ impl Vm {
             &["arg", "annotation", "type_comment"],
             &LOC_ATTRS,
         );
+        self.configure_bootstrap_ast_class("match_case", &["pattern", "guard", "body"], &[]);
+        self.configure_bootstrap_ast_class("pattern", &[], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("MatchValue", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("MatchSingleton", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("MatchSequence", &["patterns"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "MatchMapping",
+            &["keys", "patterns", "rest"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
+            "MatchClass",
+            &["cls", "patterns", "kwd_attrs", "kwd_patterns"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class("MatchStar", &["name"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("MatchAs", &["pattern", "name"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("MatchOr", &["patterns"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("type_param", &[], &LOC_ATTRS);
         self.configure_bootstrap_ast_class(
             "TypeVar",
@@ -566,6 +585,7 @@ impl Vm {
         let _ = self.set_module_class_bases("_ast", "unaryop", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "boolop", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "cmpop", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "pattern", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "excepthandler", &["AST"]);
 
         let _ = self.set_module_class_bases("_ast", "Module", &["mod"]);
@@ -598,6 +618,7 @@ impl Vm {
             "AsyncWith",
             "Try",
             "TryStar",
+            "Match",
         ] {
             let _ = self.set_module_class_bases("_ast", class_name, &["stmt"]);
         }
@@ -633,6 +654,15 @@ impl Vm {
         let _ = self.set_module_class_bases("_ast", "TypeVar", &["type_param"]);
         let _ = self.set_module_class_bases("_ast", "ParamSpec", &["type_param"]);
         let _ = self.set_module_class_bases("_ast", "TypeVarTuple", &["type_param"]);
+        let _ = self.set_module_class_bases("_ast", "match_case", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "MatchValue", &["pattern"]);
+        let _ = self.set_module_class_bases("_ast", "MatchSingleton", &["pattern"]);
+        let _ = self.set_module_class_bases("_ast", "MatchSequence", &["pattern"]);
+        let _ = self.set_module_class_bases("_ast", "MatchMapping", &["pattern"]);
+        let _ = self.set_module_class_bases("_ast", "MatchClass", &["pattern"]);
+        let _ = self.set_module_class_bases("_ast", "MatchStar", &["pattern"]);
+        let _ = self.set_module_class_bases("_ast", "MatchAs", &["pattern"]);
+        let _ = self.set_module_class_bases("_ast", "MatchOr", &["pattern"]);
         let _ = self.set_module_class_bases("_ast", "ExceptHandler", &["excepthandler"]);
 
         for class_name in ["Load", "Store", "Del"] {
@@ -4177,6 +4207,61 @@ impl Vm {
                     "Continue",
                     self.heap
                         .alloc_class(ClassObject::new("Continue".to_string(), Vec::new())),
+                ),
+                (
+                    "Match",
+                    self.heap
+                        .alloc_class(ClassObject::new("Match".to_string(), Vec::new())),
+                ),
+                (
+                    "match_case",
+                    self.heap
+                        .alloc_class(ClassObject::new("match_case".to_string(), Vec::new())),
+                ),
+                (
+                    "pattern",
+                    self.heap
+                        .alloc_class(ClassObject::new("pattern".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchValue",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchValue".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchSingleton",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchSingleton".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchSequence",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchSequence".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchMapping",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchMapping".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchClass",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchClass".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchStar",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchStar".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchAs",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchAs".to_string(), Vec::new())),
+                ),
+                (
+                    "MatchOr",
+                    self.heap
+                        .alloc_class(ClassObject::new("MatchOr".to_string(), Vec::new())),
                 ),
                 (
                     "alias",

@@ -26,8 +26,8 @@ use super::{
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
     Constant as AstConstant, DictEntry, ExceptHandler as AstExceptHandler, Expr, ExprKind,
-    ImportAlias as AstImportAlias, Module as AstModule, Parameter as AstParameter, Stmt, StmtKind,
-    UnaryOp as AstUnaryOp,
+    ImportAlias as AstImportAlias, MatchCase as AstMatchCase, Module as AstModule,
+    Parameter as AstParameter, Pattern as AstPattern, Stmt, StmtKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -3999,6 +3999,158 @@ impl Vm {
         Ok(node)
     }
 
+    fn convert_pattern_to_ast_node(
+        &mut self,
+        pattern: &AstPattern,
+        location: Option<(usize, usize)>,
+    ) -> Result<Value, RuntimeError> {
+        match pattern {
+            AstPattern::Wildcard => self.build_ast_node(
+                "MatchAs",
+                location,
+                vec![("pattern", Value::None), ("name", Value::None)],
+            ),
+            AstPattern::Capture(name) => self.build_ast_node(
+                "MatchAs",
+                location,
+                vec![("pattern", Value::None), ("name", Value::Str(name.clone()))],
+            ),
+            AstPattern::Constant(value) => match value {
+                AstConstant::None | AstConstant::Bool(_) => self.build_ast_node(
+                    "MatchSingleton",
+                    location,
+                    vec![("value", self.convert_ast_constant(value))],
+                ),
+                _ => {
+                    let constant_node = self.build_ast_node(
+                        "Constant",
+                        location,
+                        vec![("value", self.convert_ast_constant(value))],
+                    )?;
+                    self.build_ast_node("MatchValue", location, vec![("value", constant_node)])
+                }
+            },
+            AstPattern::Value(expr) => {
+                let value_node = self.convert_expr_to_ast_node(expr)?;
+                self.build_ast_node("MatchValue", location, vec![("value", value_node)])
+            }
+            AstPattern::Sequence(items) => {
+                let mut converted = Vec::with_capacity(items.len());
+                for item in items {
+                    converted.push(self.convert_pattern_to_ast_node(item, location)?);
+                }
+                self.build_ast_node(
+                    "MatchSequence",
+                    location,
+                    vec![("patterns", self.heap.alloc_list(converted))],
+                )
+            }
+            AstPattern::Mapping { entries, rest } => {
+                let mut keys = Vec::with_capacity(entries.len());
+                let mut patterns = Vec::with_capacity(entries.len());
+                for (key, value_pattern) in entries {
+                    keys.push(self.convert_expr_to_ast_node(key)?);
+                    patterns.push(self.convert_pattern_to_ast_node(value_pattern, location)?);
+                }
+                self.build_ast_node(
+                    "MatchMapping",
+                    location,
+                    vec![
+                        ("keys", self.heap.alloc_list(keys)),
+                        ("patterns", self.heap.alloc_list(patterns)),
+                        (
+                            "rest",
+                            rest.as_ref()
+                                .map(|name| Value::Str(name.clone()))
+                                .unwrap_or(Value::None),
+                        ),
+                    ],
+                )
+            }
+            AstPattern::Class {
+                class,
+                positional,
+                keywords,
+            } => {
+                let cls = self.convert_expr_to_ast_node(class)?;
+                let mut pos_patterns = Vec::with_capacity(positional.len());
+                for value in positional {
+                    pos_patterns.push(self.convert_pattern_to_ast_node(value, location)?);
+                }
+                let mut kwd_attrs = Vec::with_capacity(keywords.len());
+                let mut kwd_patterns = Vec::with_capacity(keywords.len());
+                for (name, value_pattern) in keywords {
+                    kwd_attrs.push(Value::Str(name.clone()));
+                    kwd_patterns.push(self.convert_pattern_to_ast_node(value_pattern, location)?);
+                }
+                self.build_ast_node(
+                    "MatchClass",
+                    location,
+                    vec![
+                        ("cls", cls),
+                        ("patterns", self.heap.alloc_list(pos_patterns)),
+                        ("kwd_attrs", self.heap.alloc_list(kwd_attrs)),
+                        ("kwd_patterns", self.heap.alloc_list(kwd_patterns)),
+                    ],
+                )
+            }
+            AstPattern::Or(patterns) => {
+                let mut converted = Vec::with_capacity(patterns.len());
+                for value in patterns {
+                    converted.push(self.convert_pattern_to_ast_node(value, location)?);
+                }
+                self.build_ast_node(
+                    "MatchOr",
+                    location,
+                    vec![("patterns", self.heap.alloc_list(converted))],
+                )
+            }
+            AstPattern::As { pattern, name } => {
+                let pattern_node = self.convert_pattern_to_ast_node(pattern, location)?;
+                self.build_ast_node(
+                    "MatchAs",
+                    location,
+                    vec![
+                        ("pattern", pattern_node),
+                        ("name", Value::Str(name.clone())),
+                    ],
+                )
+            }
+            AstPattern::Star(name) => self.build_ast_node(
+                "MatchStar",
+                location,
+                vec![(
+                    "name",
+                    name.as_ref()
+                        .map(|value| Value::Str(value.clone()))
+                        .unwrap_or(Value::None),
+                )],
+            ),
+        }
+    }
+
+    fn convert_match_case_to_ast_node(
+        &mut self,
+        case: &AstMatchCase,
+        location: Option<(usize, usize)>,
+    ) -> Result<Value, RuntimeError> {
+        let pattern = self.convert_pattern_to_ast_node(&case.pattern, location)?;
+        let guard = match &case.guard {
+            Some(expr) => self.convert_expr_to_ast_node(expr)?,
+            None => Value::None,
+        };
+        let body = self.convert_stmt_list_to_ast_values(&case.body)?;
+        self.build_ast_node(
+            "match_case",
+            None,
+            vec![
+                ("pattern", pattern),
+                ("guard", guard),
+                ("body", self.heap.alloc_list(body)),
+            ],
+        )
+    }
+
     fn convert_assign_target_to_ast_expr(
         &mut self,
         target: &AssignTarget,
@@ -4554,6 +4706,21 @@ impl Vm {
                     ],
                 )
             }
+            StmtKind::Match { subject, cases } => {
+                let subject_node = self.convert_expr_to_ast_node(subject)?;
+                let mut case_nodes = Vec::with_capacity(cases.len());
+                for case in cases {
+                    case_nodes.push(self.convert_match_case_to_ast_node(case, location)?);
+                }
+                self.build_ast_node(
+                    "Match",
+                    location,
+                    vec![
+                        ("subject", subject_node),
+                        ("cases", self.heap.alloc_list(case_nodes)),
+                    ],
+                )
+            }
             StmtKind::With {
                 is_async,
                 context,
@@ -4675,7 +4842,6 @@ impl Vm {
             StmtKind::Pass => self.build_ast_node("Pass", location, Vec::new()),
             StmtKind::Break => self.build_ast_node("Break", location, Vec::new()),
             StmtKind::Continue => self.build_ast_node("Continue", location, Vec::new()),
-            _ => self.build_ast_node("Pass", location, Vec::new()),
         }
     }
 

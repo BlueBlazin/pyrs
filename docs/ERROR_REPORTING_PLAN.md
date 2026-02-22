@@ -141,6 +141,12 @@ Status: in progress (started 2026-02-22).
     - `AugAssign` with operator node materialization from augmented-op enums,
     - `AnnAssign` with CPython-shaped `simple` field behavior
       (`1` for name targets, `0` otherwise).
+  - `compile(..., PyCF_ONLY_AST)` now includes structural pattern-matching AST conversion:
+    - statement node: `Match` + `match_case`,
+    - pattern nodes: `pattern`, `MatchValue`, `MatchSingleton`, `MatchSequence`,
+      `MatchMapping`, `MatchClass`, `MatchStar`, `MatchAs`, `MatchOr`,
+    - conversion covers wildcard/capture/value/constant/sequence/mapping/class/or/as/star
+      pattern families from parser AST.
   - `_ast` metadata/hierarchy parity was extended for those nodes:
     - class metadata now includes CPython-shaped `_fields`/`_attributes` for
       `FunctionDef`, `AsyncFunctionDef`, `ClassDef`, `arguments`, `arg`,
@@ -149,6 +155,8 @@ Status: in progress (started 2026-02-22).
       `arguments`/`arg`/`type_param -> AST`, and
       `TypeVar`/`ParamSpec`/`TypeVarTuple -> type_param`,
     - corrected `withitem._attributes` to CPython parity (empty tuple).
+    - hierarchy now also maps `Match -> stmt`, `match_case -> AST`,
+      `pattern -> AST`, and concrete `Match*` pattern classes -> `pattern`.
   - native codec keyword-path parity was tightened for traceback stdlib flows:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs and
       enforce duplicate/unexpected-keyword checks.
@@ -176,9 +184,12 @@ Status: in progress (started 2026-02-22).
       (`differential_compile_only_ast_function_class_and_type_param_parity`).
     - augmented/annotated assignment node parity
       (`differential_compile_only_ast_augassign_and_annassign_parity`).
+    - match/pattern node-shape and hierarchy parity
+      (`differential_compile_only_ast_match_and_pattern_parity`).
   - VM regressions added for expanded AST-conversion coverage:
     - `compile_only_ast_covers_function_class_and_type_param_nodes`.
     - `compile_only_ast_covers_augassign_and_annassign_nodes`.
+    - `compile_only_ast_covers_match_and_pattern_nodes`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.
