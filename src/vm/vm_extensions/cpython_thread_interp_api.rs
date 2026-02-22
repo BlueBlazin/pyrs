@@ -12,12 +12,12 @@ use super::{
     CpythonThreadStateCompat, CpythonVarObjectHead, Object, Py_IncRef, PyBytes_FromStringAndSize,
     PyErr_BadInternalCall, PyExc_SystemError, PyFrame_Type, PyLong_FromLong, PyTuple_New,
     PyUnicode_FromStringAndSize, calloc, cpython_bind_module_def, cpython_current_thread_state_ptr,
-    cpython_get_or_init_constant_ptr, cpython_init_thread_state_compat,
-    cpython_interpreter_state_allocations, cpython_is_known_interpreter_state_ptr,
-    cpython_is_known_thread_state_ptr, cpython_main_interpreter_state_ptr,
-    cpython_main_thread_state_ptr, cpython_set_error, cpython_set_typed_error,
-    cpython_thread_state_allocations, free, malloc, vm_current_thread_ident,
-    with_active_cpython_context_mut,
+    cpython_current_thread_state_ptr_unchecked, cpython_get_or_init_constant_ptr,
+    cpython_init_thread_state_compat, cpython_interpreter_state_allocations,
+    cpython_is_known_interpreter_state_ptr, cpython_is_known_thread_state_ptr,
+    cpython_main_interpreter_state_ptr, cpython_main_thread_state_ptr, cpython_set_error,
+    cpython_set_typed_error, cpython_thread_state_allocations, free, malloc,
+    vm_current_thread_ident, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -443,7 +443,12 @@ pub unsafe extern "C" fn PyFrame_GetLineNumber(frame: *mut c_void) -> i32 {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyInterpreterState_Get() -> *mut c_void {
-    cpython_main_interpreter_state_ptr() as *mut c_void
+    let current = cpython_current_thread_state_ptr_unchecked();
+    if current == 0 || !cpython_is_known_thread_state_ptr(current) {
+        return cpython_main_interpreter_state_ptr() as *mut c_void;
+    }
+    // SAFETY: `current` is validated as a known thread state pointer above.
+    unsafe { (*(current as *mut CpythonThreadStateCompat)).interp }
 }
 
 #[unsafe(no_mangle)]
@@ -666,7 +671,12 @@ pub unsafe extern "C" fn PyThreadState_GetInterpreter(state: *mut c_void) -> *mu
     if state.is_null() {
         return std::ptr::null_mut();
     }
-    unsafe { PyInterpreterState_Get() }
+    let state_ptr = state as usize;
+    if !cpython_is_known_thread_state_ptr(state_ptr) {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `state_ptr` is validated as a known thread state pointer above.
+    unsafe { (*(state_ptr as *mut CpythonThreadStateCompat)).interp }
 }
 
 #[unsafe(no_mangle)]

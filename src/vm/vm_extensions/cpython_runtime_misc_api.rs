@@ -12,13 +12,18 @@ use super::{
     CPYTHON_EXEC_PREFIX_WIDE, CPYTHON_IS_FINALIZING, CPYTHON_IS_INITIALIZED, CPYTHON_PATH_WIDE,
     CPYTHON_PLATFORM_TEXT, CPYTHON_PREFIX_WIDE, CPYTHON_PROGRAM_FULL_PATH_WIDE,
     CPYTHON_PROGRAM_NAME_WIDE, CPYTHON_PYTHON_HOME_WIDE, CPYTHON_RECURSION_LIMIT,
-    CPYTHON_REPR_STACK, CPYTHON_VERSION_TEXT, CpythonPendingCall, Cwchar, PyErr_SetString,
-    PyExc_SyntaxError, PyExc_SystemError, PyExc_TypeError, PyMem_RawMalloc, PySys_SetPath,
-    PyThreadState_Get, c_name_to_string, c_wide_name_to_string, cpython_atexit_callbacks,
-    cpython_collect_sys_argv, cpython_get_or_init_wide_storage, cpython_pending_calls,
-    cpython_read_sys_path_string, cpython_read_sys_string, cpython_set_error,
-    cpython_set_typed_error, cpython_set_wide_storage, cpython_store_argv_wide,
-    cpython_string_to_wide_units, cpython_wide_ptr_to_string, with_active_cpython_context_mut,
+    CPYTHON_REPR_STACK, CPYTHON_VERSION_TEXT, CpythonPendingCall, CpythonThreadStateCompat, Cwchar,
+    PyErr_SetString, PyExc_SyntaxError, PyExc_SystemError, PyExc_TypeError,
+    PyInterpreterState_Clear, PyInterpreterState_Delete, PyInterpreterState_New, PyMem_RawMalloc,
+    PySys_SetPath, PyThreadState_Clear, PyThreadState_Delete, PyThreadState_New,
+    PyThreadState_Swap, c_name_to_string, c_wide_name_to_string, cpython_atexit_callbacks,
+    cpython_collect_sys_argv, cpython_current_thread_state_ptr_unchecked,
+    cpython_get_or_init_wide_storage, cpython_is_known_interpreter_state_ptr,
+    cpython_is_known_thread_state_ptr, cpython_main_interpreter_state_ptr, cpython_pending_calls,
+    cpython_read_sys_path_string, cpython_read_sys_string, cpython_set_current_thread_state_ptr,
+    cpython_set_error, cpython_set_typed_error, cpython_set_wide_storage, cpython_store_argv_wide,
+    cpython_string_to_wide_units, cpython_thread_state_allocations, cpython_wide_ptr_to_string,
+    with_active_cpython_context_mut,
 };
 
 const CPYTHON_PENDING_CALLS_MAX: usize = 32;
@@ -713,11 +718,92 @@ pub unsafe extern "C" fn _Py_FatalErrorFunc(func: *const c_char, message: *const
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_NewInterpreter() -> *mut c_void {
-    unsafe { PyThreadState_Get() }
+    let interp = unsafe { PyInterpreterState_New() };
+    if interp.is_null() {
+        return std::ptr::null_mut();
+    }
+    let state = unsafe { PyThreadState_New(interp) };
+    if state.is_null() {
+        unsafe { PyInterpreterState_Delete(interp) };
+        return std::ptr::null_mut();
+    }
+    unsafe { PyThreadState_Swap(state) };
+    state
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Py_EndInterpreter(_state: *mut c_void) {}
+pub unsafe extern "C" fn Py_EndInterpreter(state: *mut c_void) {
+    if state.is_null() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_EndInterpreter requires non-null thread state",
+        );
+        return;
+    }
+    let state_ptr = state as usize;
+    if !cpython_is_known_thread_state_ptr(state_ptr) {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_EndInterpreter received unknown thread state",
+        );
+        return;
+    }
+    if cpython_current_thread_state_ptr_unchecked() != state_ptr {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_EndInterpreter requires current thread state",
+        );
+        return;
+    }
+
+    // SAFETY: `state_ptr` is validated as a known thread-state allocation above.
+    let interp_ptr = unsafe { (*(state_ptr as *mut CpythonThreadStateCompat)).interp as usize };
+    if interp_ptr == 0 || interp_ptr == cpython_main_interpreter_state_ptr() {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_EndInterpreter cannot close main interpreter",
+        );
+        return;
+    }
+    if !cpython_is_known_interpreter_state_ptr(interp_ptr) {
+        cpython_set_typed_error(
+            unsafe { PyExc_SystemError },
+            "Py_EndInterpreter received thread state with unknown interpreter",
+        );
+        return;
+    }
+
+    let mut states_for_interp: Vec<usize> = match cpython_thread_state_allocations().lock() {
+        Ok(set) => set
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                let state_raw = *candidate as *mut CpythonThreadStateCompat;
+                // SAFETY: pointers in `cpython_thread_state_allocations` come from
+                // `PyThreadState_New` and have `CpythonThreadStateCompat` layout.
+                unsafe { (*state_raw).interp as usize == interp_ptr }
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    if !states_for_interp.contains(&state_ptr) {
+        states_for_interp.push(state_ptr);
+    }
+    states_for_interp.sort_unstable();
+    states_for_interp.dedup();
+    states_for_interp.sort_by_key(|candidate| usize::from(*candidate == state_ptr));
+
+    unsafe { PyInterpreterState_Clear(interp_ptr as *mut c_void) };
+    for candidate in states_for_interp {
+        let raw = candidate as *mut c_void;
+        unsafe { PyThreadState_Clear(raw) };
+        unsafe { PyThreadState_Delete(raw) };
+    }
+    // CPython leaves no current thread-state after subinterpreter teardown; callers
+    // are expected to restore a previous state explicitly.
+    cpython_set_current_thread_state_ptr(0);
+    unsafe { PyInterpreterState_Delete(interp_ptr as *mut c_void) };
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _PyErr_BadInternalCall(_filename: *const c_char, _lineno: i32) {

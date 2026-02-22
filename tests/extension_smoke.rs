@@ -10520,6 +10520,144 @@ PyInit_cpython_api_batch71_probe(void) {
 }
 
 #[test]
+fn cpython_compat_interpreter_lifecycle_abi_batch72_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch72 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch72 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch72");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch72_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    void *main_tstate = PyThreadState_Get();
+    void *main_interp = PyInterpreterState_Get();
+    long long main_id = PyInterpreterState_GetID(main_interp);
+    int main_ok = (main_tstate != 0 && main_interp != 0 && main_id != -1) ? 1 : 0;
+
+    void *substate = Py_NewInterpreter();
+    int create_ok = (substate != 0) ? 1 : 0;
+    int current_ok = (create_ok && PyThreadState_Get() == substate) ? 1 : 0;
+
+    void *subinterp = create_ok ? PyInterpreterState_Get() : 0;
+    long long sub_id = subinterp ? PyInterpreterState_GetID(subinterp) : -1;
+    int interp_ok = (
+        subinterp != 0 &&
+        subinterp != main_interp &&
+        sub_id != -1 &&
+        sub_id != main_id &&
+        PyThreadState_GetInterpreter(substate) == subinterp
+    ) ? 1 : 0;
+
+    void *aux_tstate = subinterp ? PyThreadState_New(subinterp) : 0;
+    int aux_ok = (
+        aux_tstate != 0 &&
+        PyThreadState_GetInterpreter(aux_tstate) == subinterp
+    ) ? 1 : 0;
+
+    if (create_ok) {
+        Py_EndInterpreter(substate);
+    }
+    PyThreadState_Swap(main_tstate);
+    int restore_ok = (PyThreadState_Get() == main_tstate && PyInterpreterState_Get() == main_interp) ? 1 : 0;
+
+    int aux_deleted_ok = 0;
+    if (aux_tstate) {
+        PyErr_Clear();
+        PyThreadState_Clear(aux_tstate);
+        aux_deleted_ok = (PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+    }
+
+    int non_current_reject_ok = 0;
+    void *substate2 = Py_NewInterpreter();
+    if (substate2) {
+        PyThreadState_Swap(main_tstate);
+        PyErr_Clear();
+        Py_EndInterpreter(substate2);
+        non_current_reject_ok = (PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+        PyThreadState_Swap(substate2);
+        Py_EndInterpreter(substate2);
+        PyThreadState_Swap(main_tstate);
+    }
+
+    return Py_BuildValue(
+        "(iiiiiii)",
+        main_ok,
+        create_ok,
+        current_ok,
+        interp_ok,
+        aux_ok,
+        restore_ok && aux_deleted_ok,
+        non_current_reject_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe interpreter lifecycle APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch72_probe",
+    "cpython api batch72 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch72_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch72_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch72 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch72_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch72 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");
