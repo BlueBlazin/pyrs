@@ -43,7 +43,6 @@ It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those a
 | `PyGILState_Ensure` | `src/vm/vm_extensions/cpython_eval_os_marshal_api.rs` | always returns `0` state | Return/track real GIL-state tokens and pair with `PyGILState_Release`. |
 | `PyEval_ThreadsInitialized` | `src/vm/vm_extensions/cpython_eval_os_marshal_api.rs` | always returns `1` | Reflect true thread runtime state or documented 3.14-compat policy with tests. |
 | `PyEval_SaveThread` | `src/vm/vm_extensions/cpython_eval_os_marshal_api.rs` | always returns `NULL` | Return/restores valid thread-state handles with GIL handoff semantics. |
-| `PySys_AuditTuple` / `PySys_Audit` | `src/vm/vm_extensions/cpython_sys_thread_api.rs`, `src/vm/capi_variadics.c` | validates non-null event, then no-op success | Implement audit-hook dispatch (`sys.addaudithook` parity lane) and event payload propagation. |
 | `PyObject_GC_IsFinalized` | `src/vm/vm_extensions/cpython_gc_alloc_api.rs` | always returns `0` | Return finalized-state parity for GC objects and prove via GC lifecycle tests. |
 | `PyTraceMalloc_Track` / `PyTraceMalloc_Untrack` | `src/vm/vm_extensions/cpython_thread_interp_api.rs` | always returns `0` | Implement tracemalloc domain/pointer tracking semantics or explicit unsupported policy with deterministic behavior. |
 | `Py_EnterRecursiveCall` | `src/vm/vm_extensions/cpython_thread_interp_api.rs` | always returns `0` | Implement recursion-depth checks and error signaling on overflow. |

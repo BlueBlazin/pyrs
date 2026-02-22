@@ -13,7 +13,7 @@ Snapshot date: 2026-02-22
 Notes:
 - The previously-tracked production no-op surfaces were implemented in this round:
   - `object.__init_subclass__`
-  - `sys.audit`, `sys.breakpointhook`, `sys.__breakpointhook__`
+  - `sys.audit`, `sys.addaudithook`, `sys.breakpointhook`, `sys.__breakpointhook__`
   - `sys.unraisablehook`, `sys.__unraisablehook__`
   - `sys._clear_type_descriptors`
   - `sys.monitoring.{get_tool,use_tool_id,clear_tool_id,free_tool_id,register_callback,set_events,set_local_events,restart_events}`

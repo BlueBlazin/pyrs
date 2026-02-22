@@ -844,6 +844,61 @@ impl Vm {
         }
     }
 
+    pub(crate) fn dispatch_sys_audit_event(
+        &mut self,
+        event: &str,
+        event_args: Vec<Value>,
+    ) -> Result<(), RuntimeError> {
+        if self.audit_hooks.is_empty() {
+            return Ok(());
+        }
+
+        let mut index = 0usize;
+        let event_name = Value::Str(event.to_string());
+        let payload = self.heap.alloc_tuple(event_args);
+        while index < self.audit_hooks.len() {
+            let hook = self.audit_hooks[index].clone();
+            index += 1;
+            match self.call_internal(
+                hook,
+                vec![event_name.clone(), payload.clone()],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(_) | InternalCallOutcome::CallerExceptionHandled => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn builtin_sys_addaudithook(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::type_error(
+                "sys.addaudithook() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error(format!(
+                "sys.addaudithook() takes exactly one argument ({} given)",
+                args.len()
+            )));
+        }
+        let hook = args.remove(0);
+        match self.dispatch_sys_audit_event("sys.addaudithook", Vec::new()) {
+            Ok(()) => self.audit_hooks.push(hook),
+            Err(err) => {
+                if runtime_error_matches_exception(&err, "Exception") {
+                    return Ok(Value::None);
+                }
+                return Err(err);
+            }
+        }
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_sys_audit(
         &mut self,
         mut args: Vec<Value>,
@@ -866,6 +921,10 @@ impl Vm {
                 self.value_type_name_for_error(&event)
             )));
         }
+        let Value::Str(event_name) = event else {
+            unreachable!("event type was validated above");
+        };
+        self.dispatch_sys_audit_event(&event_name, args)?;
         Ok(Value::None)
     }
 

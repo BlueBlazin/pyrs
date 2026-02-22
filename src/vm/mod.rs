@@ -1002,6 +1002,7 @@ pub struct Vm {
     run_stop_depth: Option<usize>,
     pending_import_drain_depth: usize,
     signal_handlers: HashMap<i64, Value>,
+    audit_hooks: Vec<Value>,
     monitoring_tool_names: HashMap<i64, String>,
     monitoring_event_sets: HashMap<i64, i64>,
     monitoring_local_event_sets: HashMap<(i64, usize), i64>,
@@ -1251,6 +1252,7 @@ impl Vm {
             run_stop_depth: None,
             pending_import_drain_depth: 0,
             signal_handlers: HashMap::new(),
+            audit_hooks: Vec::new(),
             monitoring_tool_names: HashMap::new(),
             monitoring_event_sets: HashMap::new(),
             monitoring_local_event_sets: HashMap::new(),
@@ -3146,6 +3148,10 @@ impl Vm {
             module_data.globals.insert(
                 "audit".to_string(),
                 Value::Builtin(BuiltinFunction::SysAudit),
+            );
+            module_data.globals.insert(
+                "addaudithook".to_string(),
+                Value::Builtin(BuiltinFunction::SysAddAuditHook),
             );
             module_data.globals.insert(
                 "unraisablehook".to_string(),

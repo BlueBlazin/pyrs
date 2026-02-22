@@ -2435,6 +2435,7 @@ pub enum BuiltinFunction {
     SysGetRecursionLimit,
     SysSetRecursionLimit,
     SysAudit,
+    SysAddAuditHook,
     SysClearTypeDescriptors,
     SysUnraisableHook,
     SysBreakpointHook,
@@ -5657,6 +5658,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetRecursionLimit
             | BuiltinFunction::SysSetRecursionLimit
             | BuiltinFunction::SysAudit
+            | BuiltinFunction::SysAddAuditHook
             | BuiltinFunction::SysClearTypeDescriptors
             | BuiltinFunction::SysUnraisableHook
             | BuiltinFunction::SysBreakpointHook

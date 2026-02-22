@@ -6543,6 +6543,7 @@ impl Vm {
                 self.builtin_sys_setrecursionlimit(args, kwargs)
             }
             BuiltinFunction::SysAudit => self.builtin_sys_audit(args, kwargs),
+            BuiltinFunction::SysAddAuditHook => self.builtin_sys_addaudithook(args, kwargs),
             BuiltinFunction::SysClearTypeDescriptors => {
                 self.builtin_sys_clear_type_descriptors(args, kwargs)
             }

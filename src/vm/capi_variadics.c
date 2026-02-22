@@ -21,6 +21,8 @@ extern void *pyrs_capi_pyerr_formatv_fallback(void *exception, const char *forma
 extern void pyrs_capi_sys_write_stdout(const char *text);
 extern void pyrs_capi_sys_write_stderr(const char *text);
 extern int pyrs_capi_sys_audit_noargs(const char *event);
+extern int pyrs_capi_sys_audit_object(const char *event, void *args);
+extern void *Py_VaBuildValue(const char *format, va_list ap);
 
 extern void *PyTuple_New(Py_ssize_t size);
 extern int PyTuple_SetItem(void *tuple, Py_ssize_t index, void *item);
@@ -128,11 +130,20 @@ void PySys_FormatStderr(const char *format, ...)
 
 int PySys_Audit(const char *event, const char *format, ...)
 {
-    (void)format;
+    if (format == NULL || format[0] == '\0') {
+        return pyrs_capi_sys_audit_noargs(event);
+    }
+
     va_list ap;
     va_start(ap, format);
+    void *args = Py_VaBuildValue(format, ap);
     va_end(ap);
-    return pyrs_capi_sys_audit_noargs(event);
+    if (args == NULL) {
+        return -1;
+    }
+    int result = pyrs_capi_sys_audit_object(event, args);
+    Py_DecRef(args);
+    return result;
 }
 
 typedef struct {

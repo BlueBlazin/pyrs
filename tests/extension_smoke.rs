@@ -6546,7 +6546,7 @@ PyInit_cpython_api_batch44_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch44_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1)",
+        "import sys\nrecords=[]\ndef hook(event, args):\n    if event == 'batch44.event':\n        records.append(args)\nsys.addaudithook(hook)\nimport cpython_api_batch44_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1)\nassert records == [(), ('payload',)]",
     )
     .expect("cpython api batch44 extension import should succeed");
 

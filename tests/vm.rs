@@ -15427,6 +15427,80 @@ ok = ok and missing and wrong_type
 }
 
 #[test]
+fn sys_addaudithook_and_audit_match_cpython_dispatch_contracts() {
+    let source = r#"import sys
+records = []
+def h2(event, args):
+    records.append(("h2", event, args))
+def h1(event, args):
+    records.append(("h1", event, args))
+    if event == "ev":
+        sys.addaudithook(h2)
+sys.addaudithook(h1)
+sys.audit("ev", 1)
+dynamic_add = (records == [
+    ("h1", "ev", (1,)),
+    ("h1", "sys.addaudithook", ()),
+    ("h2", "ev", (1,)),
+])
+records.clear()
+def blocker(event, args):
+    if event == "sys.addaudithook":
+        raise RuntimeError("block")
+sys.addaudithook(blocker)
+add_blocked = (sys.addaudithook(h2) is None)
+records.clear()
+sys.audit("post_block", 9)
+blocked_hook_not_added = (records == [("h1", "post_block", (9,)), ("h2", "post_block", (9,))])
+ok = dynamic_add and add_blocked and blocked_hook_not_added
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_addaudithook_propagates_base_exception() {
+    let source = r#"import sys
+def blocker(event, args):
+    if event == "sys.addaudithook":
+        raise KeyboardInterrupt("stop")
+sys.addaudithook(blocker)
+try:
+    sys.addaudithook(lambda event, args: None)
+except KeyboardInterrupt:
+    propagated = True
+else:
+    propagated = False
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("propagated"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_addaudithook_accepts_non_callable_and_audit_raises_type_error() {
+    let source = r#"import sys
+sys.addaudithook(1)
+try:
+    sys.audit("evt")
+except TypeError:
+    ok = True
+else:
+    ok = False
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn sys_breakpointhook_obeys_pythonbreakpoint_contracts() {
     let source = r#"import os, sys
 os.putenv("PYTHONBREAKPOINT", "0")

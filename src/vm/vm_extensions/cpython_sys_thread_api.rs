@@ -10,10 +10,11 @@ use crate::vm::{ObjRef, dict_remove_value, dict_set_value_checked, vm_os_thread_
 use super::{
     CPYTHON_THREAD_NEXT_IDENT, CPYTHON_THREAD_STACK_SIZE, CPYTHON_THREAD_TLS_NEXT_KEY,
     CpythonThreadLock, CpythonThreadTss, Cwchar, ModuleCapiContext, PyExc_SystemError,
-    PyExc_ValueError, c_name_to_string, c_wide_name_to_string, cpython_current_thread_ident_u64,
-    cpython_set_error, cpython_set_typed_error, cpython_store_argv_wide,
-    cpython_thread_lock_registry, cpython_thread_tls_key_registry, cpython_thread_tls_values,
-    cpython_thread_tss_registry, cpython_thread_tss_values, with_active_cpython_context_mut,
+    PyExc_TypeError, PyExc_ValueError, c_name_to_string, c_wide_name_to_string,
+    cpython_current_thread_ident_u64, cpython_set_error, cpython_set_typed_error,
+    cpython_store_argv_wide, cpython_thread_lock_registry, cpython_thread_tls_key_registry,
+    cpython_thread_tls_values, cpython_thread_tss_registry, cpython_thread_tss_values,
+    with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -318,8 +319,11 @@ pub unsafe extern "C" fn pyrs_capi_sys_write_stderr(text: *const c_char) {
     eprint!("{line}");
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PySys_AuditTuple(event: *const c_char, _args: *mut c_void) -> i32 {
+fn cpython_sys_audit_dispatch_from_object(
+    event: *const c_char,
+    args: *mut c_void,
+    require_tuple: bool,
+) -> i32 {
     if event.is_null() {
         cpython_set_typed_error(
             unsafe { PyExc_SystemError },
@@ -327,7 +331,74 @@ pub unsafe extern "C" fn PySys_AuditTuple(event: *const c_char, _args: *mut c_vo
         );
         return -1;
     }
-    0
+
+    let event_name = match unsafe { c_name_to_string(event) } {
+        Ok(name) => name,
+        Err(err) => {
+            cpython_set_error(err);
+            return -1;
+        }
+    };
+
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("PySys_AuditTuple missing VM context");
+            return -1;
+        }
+        let event_args = if args.is_null() {
+            Vec::new()
+        } else {
+            let Some(arg_value) = context.cpython_value_from_ptr_or_proxy(args) else {
+                cpython_set_error("PySys_AuditTuple received unknown args object");
+                return -1;
+            };
+            match arg_value {
+                Value::Tuple(items_obj) => match &*items_obj.kind() {
+                    Object::Tuple(items) => items.clone(),
+                    _ => {
+                        cpython_set_error("PySys_AuditTuple tuple storage invalid");
+                        return -1;
+                    }
+                },
+                other if !require_tuple => vec![other],
+                other => {
+                    // SAFETY: VM pointer is valid for active context lifetime.
+                    let type_name = unsafe { (&mut *context.vm).value_type_name_for_error(&other) };
+                    cpython_set_typed_error(
+                        unsafe { PyExc_TypeError },
+                        format!("args must be tuple, got {type_name}"),
+                    );
+                    return -1;
+                }
+            }
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.dispatch_sys_audit_event(&event_name, event_args) {
+            Ok(()) => 0,
+            Err(err) => {
+                context.set_error(err.message);
+                -1
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err.to_string());
+        -1
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PySys_AuditTuple(event: *const c_char, args: *mut c_void) -> i32 {
+    cpython_sys_audit_dispatch_from_object(event, args, true)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pyrs_capi_sys_audit_object(
+    event: *const c_char,
+    args: *mut c_void,
+) -> i32 {
+    cpython_sys_audit_dispatch_from_object(event, args, false)
 }
 
 #[unsafe(no_mangle)]

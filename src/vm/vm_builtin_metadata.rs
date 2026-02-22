@@ -228,6 +228,7 @@ impl Vm {
             BuiltinFunction::ObjectFormat => "__format__".to_string(),
             BuiltinFunction::ObjectInitSubclass => "__init_subclass__".to_string(),
             BuiltinFunction::SysAudit => "audit".to_string(),
+            BuiltinFunction::SysAddAuditHook => "addaudithook".to_string(),
             BuiltinFunction::SysClearTypeDescriptors => "_clear_type_descriptors".to_string(),
             BuiltinFunction::SysUnraisableHook => "unraisablehook".to_string(),
             BuiltinFunction::SysBreakpointHook => "breakpointhook".to_string(),
