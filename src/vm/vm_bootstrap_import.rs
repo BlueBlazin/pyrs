@@ -17,6 +17,122 @@ use crate::extensions::{
 const PYRS_MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
 
 impl Vm {
+    fn configure_bootstrap_ast_class(
+        &mut self,
+        class_name: &str,
+        fields: &[&str],
+        attributes: &[&str],
+    ) {
+        let Some(ast_module) = self.modules.get("_ast").cloned() else {
+            return;
+        };
+        let class_ref = {
+            let module_kind = ast_module.kind();
+            let module_data = match &*module_kind {
+                Object::Module(module_data) => module_data,
+                _ => return,
+            };
+            match module_data.globals.get(class_name) {
+                Some(Value::Class(class_ref)) => class_ref.clone(),
+                _ => return,
+            }
+        };
+
+        let field_tuple = self.heap.alloc_tuple(
+            fields
+                .iter()
+                .map(|entry| Value::Str((*entry).to_string()))
+                .collect(),
+        );
+        let attributes_tuple = self.heap.alloc_tuple(
+            attributes
+                .iter()
+                .map(|entry| Value::Str((*entry).to_string()))
+                .collect(),
+        );
+        if let Object::Class(class_data) = &mut *class_ref.kind_mut() {
+            class_data
+                .attrs
+                .insert("_fields".to_string(), field_tuple.clone());
+            class_data
+                .attrs
+                .insert("__match_args__".to_string(), field_tuple);
+            class_data
+                .attrs
+                .insert("_attributes".to_string(), attributes_tuple);
+        }
+    }
+
+    fn configure_bootstrap_ast_metadata(&mut self) {
+        const LOC_ATTRS: [&str; 4] = ["lineno", "col_offset", "end_lineno", "end_col_offset"];
+        self.configure_bootstrap_ast_class("AST", &[], &[]);
+        self.configure_bootstrap_ast_class("mod", &[], &[]);
+        self.configure_bootstrap_ast_class("stmt", &[], &[]);
+        self.configure_bootstrap_ast_class("expr", &[], &[]);
+        self.configure_bootstrap_ast_class("expr_context", &[], &[]);
+
+        self.configure_bootstrap_ast_class("Module", &["body", "type_ignores"], &[]);
+        self.configure_bootstrap_ast_class("Expression", &["body"], &[]);
+        self.configure_bootstrap_ast_class(
+            "Assign",
+            &["targets", "value", "type_comment"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class("Return", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Expr", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Pass", &[], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Name", &["id", "ctx"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Call", &["func", "args", "keywords"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("keyword", &["arg", "value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Attribute", &["value", "attr", "ctx"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Subscript", &["value", "slice", "ctx"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Tuple", &["elts", "ctx"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("List", &["elts", "ctx"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Dict", &["keys", "values"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Constant", &["value", "kind"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Starred", &["value", "ctx"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Slice", &["lower", "upper", "step"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("BinOp", &["left", "op", "right"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("UnaryOp", &["op", "operand"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Compare", &["left", "ops", "comparators"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("BoolOp", &["op", "values"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("IfExp", &["test", "body", "orelse"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("NamedExpr", &["target", "value"], &LOC_ATTRS);
+
+        self.configure_bootstrap_ast_class("Load", &[], &[]);
+        self.configure_bootstrap_ast_class("Store", &[], &[]);
+        self.configure_bootstrap_ast_class("Del", &[], &[]);
+        self.configure_bootstrap_ast_class("And", &[], &[]);
+        self.configure_bootstrap_ast_class("Or", &[], &[]);
+        self.configure_bootstrap_ast_class("Not", &[], &[]);
+        self.configure_bootstrap_ast_class("Add", &[], &[]);
+        self.configure_bootstrap_ast_class("Sub", &[], &[]);
+        self.configure_bootstrap_ast_class("Mult", &[], &[]);
+        self.configure_bootstrap_ast_class("MatMult", &[], &[]);
+        self.configure_bootstrap_ast_class("Div", &[], &[]);
+        self.configure_bootstrap_ast_class("FloorDiv", &[], &[]);
+        self.configure_bootstrap_ast_class("Mod", &[], &[]);
+        self.configure_bootstrap_ast_class("Pow", &[], &[]);
+        self.configure_bootstrap_ast_class("LShift", &[], &[]);
+        self.configure_bootstrap_ast_class("RShift", &[], &[]);
+        self.configure_bootstrap_ast_class("BitAnd", &[], &[]);
+        self.configure_bootstrap_ast_class("BitOr", &[], &[]);
+        self.configure_bootstrap_ast_class("BitXor", &[], &[]);
+        self.configure_bootstrap_ast_class("UAdd", &[], &[]);
+        self.configure_bootstrap_ast_class("USub", &[], &[]);
+        self.configure_bootstrap_ast_class("Invert", &[], &[]);
+        self.configure_bootstrap_ast_class("Eq", &[], &[]);
+        self.configure_bootstrap_ast_class("NotEq", &[], &[]);
+        self.configure_bootstrap_ast_class("Lt", &[], &[]);
+        self.configure_bootstrap_ast_class("LtE", &[], &[]);
+        self.configure_bootstrap_ast_class("Gt", &[], &[]);
+        self.configure_bootstrap_ast_class("GtE", &[], &[]);
+        self.configure_bootstrap_ast_class("In", &[], &[]);
+        self.configure_bootstrap_ast_class("NotIn", &[], &[]);
+        self.configure_bootstrap_ast_class("Is", &[], &[]);
+        self.configure_bootstrap_ast_class("IsNot", &[], &[]);
+    }
+
     fn sys_str_value(&self, name: &str) -> Option<String> {
         let sys_module = self.modules.get("sys")?.clone();
         let module_kind = sys_module.kind();
@@ -3738,6 +3854,21 @@ impl Vm {
                         .alloc_class(ClassObject::new("UnaryOp".to_string(), Vec::new())),
                 ),
                 (
+                    "BoolOp",
+                    self.heap
+                        .alloc_class(ClassObject::new("BoolOp".to_string(), Vec::new())),
+                ),
+                (
+                    "IfExp",
+                    self.heap
+                        .alloc_class(ClassObject::new("IfExp".to_string(), Vec::new())),
+                ),
+                (
+                    "NamedExpr",
+                    self.heap
+                        .alloc_class(ClassObject::new("NamedExpr".to_string(), Vec::new())),
+                ),
+                (
                     "Subscript",
                     self.heap
                         .alloc_class(ClassObject::new("Subscript".to_string(), Vec::new())),
@@ -3771,6 +3902,21 @@ impl Vm {
                     "keyword",
                     self.heap
                         .alloc_class(ClassObject::new("keyword".to_string(), Vec::new())),
+                ),
+                (
+                    "And",
+                    self.heap
+                        .alloc_class(ClassObject::new("And".to_string(), Vec::new())),
+                ),
+                (
+                    "Or",
+                    self.heap
+                        .alloc_class(ClassObject::new("Or".to_string(), Vec::new())),
+                ),
+                (
+                    "Not",
+                    self.heap
+                        .alloc_class(ClassObject::new("Not".to_string(), Vec::new())),
                 ),
                 (
                     "Add",
@@ -3853,6 +3999,26 @@ impl Vm {
                         .alloc_class(ClassObject::new("Invert".to_string(), Vec::new())),
                 ),
                 (
+                    "Is",
+                    self.heap
+                        .alloc_class(ClassObject::new("Is".to_string(), Vec::new())),
+                ),
+                (
+                    "IsNot",
+                    self.heap
+                        .alloc_class(ClassObject::new("IsNot".to_string(), Vec::new())),
+                ),
+                (
+                    "In",
+                    self.heap
+                        .alloc_class(ClassObject::new("In".to_string(), Vec::new())),
+                ),
+                (
+                    "NotIn",
+                    self.heap
+                        .alloc_class(ClassObject::new("NotIn".to_string(), Vec::new())),
+                ),
+                (
                     "Eq",
                     self.heap
                         .alloc_class(ClassObject::new("Eq".to_string(), Vec::new())),
@@ -3887,6 +4053,7 @@ impl Vm {
                 ("PyCF_OPTIMIZED_AST", Value::Int(32768)),
             ],
         );
+        self.configure_bootstrap_ast_metadata();
         self.install_builtin_module(
             "_opcode",
             &[

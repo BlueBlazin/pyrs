@@ -1038,6 +1038,28 @@ fn compile_only_ast_returns_assign_and_call_shape() {
 }
 
 #[test]
+fn compile_only_ast_supports_positional_match_patterns() {
+    let source = "import _ast\nnode = compile('x = f()', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nstmt = node.body[0]\nok = False\nmatch stmt:\n    case _ast.Assign(targets, value, type_comment):\n        ok = (len(targets) == 1 and isinstance(value, _ast.Call))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_only_ast_covers_binop_compare_and_slice_shapes() {
+    let source = "import _ast\nexpr = compile('a + b < c[1:3]', '<ast>', 'eval', _ast.PyCF_ONLY_AST).body\nok = isinstance(expr, _ast.Compare) and isinstance(expr.left, _ast.BinOp) and isinstance(expr.left.op, _ast.Add) and isinstance(expr.ops[0], _ast.Lt) and isinstance(expr.comparators[0], _ast.Subscript) and isinstance(expr.comparators[0].slice, _ast.Slice)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

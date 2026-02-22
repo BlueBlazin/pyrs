@@ -112,6 +112,13 @@ Status: in progress (started 2026-02-22).
     `Call`/`Name` expression surfaces with location attrs).
   - `_ast` bootstrap class surface now includes missing statement roots used in those flows
     (`Module`, `Assign`, `Return`, `Expr`, `Pass`).
+  - `_ast` metadata parity pass landed:
+    - AST classes now expose `_fields`, `__match_args__`, and `_attributes` for positional
+      class-pattern matching compatibility.
+    - AST conversion now maps key expression forms used by traceback anchor extraction:
+      `BinOp`, `Compare`, `UnaryOp`, `BoolOp`, `IfExp`, `NamedExpr`, `Slice`.
+    - added required operator/comparator classes in `_ast` bootstrap inventory:
+      `And`, `Or`, `Not`, `Is`, `IsNot`, `In`, `NotIn` (plus `BoolOp`, `IfExp`, `NamedExpr`).
   - native codec keyword-path parity was tightened for traceback stdlib flows:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs and
       enforce duplicate/unexpected-keyword checks.
@@ -125,6 +132,9 @@ Status: in progress (started 2026-02-22).
     - `traceback_helpers_can_read_exception_traceback_attr`.
   - VM regression added for AST-compile surface:
     - `compile_only_ast_returns_assign_and_call_shape`.
+  - VM regressions added for AST class-pattern and expression-shape coverage:
+    - `compile_only_ast_supports_positional_match_patterns`
+    - `compile_only_ast_covers_binop_compare_and_slice_shapes`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

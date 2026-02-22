@@ -24,8 +24,8 @@ use super::{
     with_bytes_like_source, xor_values,
 };
 use crate::ast::{
-    AssignTarget, CallArg, Constant as AstConstant, DictEntry, Expr, ExprKind, Module as AstModule,
-    Stmt, StmtKind,
+    AssignTarget, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg, Constant as AstConstant,
+    DictEntry, Expr, ExprKind, Module as AstModule, Stmt, StmtKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -3733,6 +3733,66 @@ impl Vm {
         }
     }
 
+    fn ast_binary_operator_class_name(op: &AstBinaryOp) -> &'static str {
+        match op {
+            AstBinaryOp::Add => "Add",
+            AstBinaryOp::Sub => "Sub",
+            AstBinaryOp::Mul => "Mult",
+            AstBinaryOp::MatMul => "MatMult",
+            AstBinaryOp::Div => "Div",
+            AstBinaryOp::Pow => "Pow",
+            AstBinaryOp::FloorDiv => "FloorDiv",
+            AstBinaryOp::Mod => "Mod",
+            AstBinaryOp::LShift => "LShift",
+            AstBinaryOp::RShift => "RShift",
+            AstBinaryOp::BitAnd => "BitAnd",
+            AstBinaryOp::BitXor => "BitXor",
+            AstBinaryOp::BitOr => "BitOr",
+            AstBinaryOp::Eq => "Eq",
+            AstBinaryOp::Ne => "NotEq",
+            AstBinaryOp::Lt => "Lt",
+            AstBinaryOp::Le => "LtE",
+            AstBinaryOp::Gt => "Gt",
+            AstBinaryOp::Ge => "GtE",
+            AstBinaryOp::In => "In",
+            AstBinaryOp::NotIn => "NotIn",
+            AstBinaryOp::Is => "Is",
+            AstBinaryOp::IsNot => "IsNot",
+        }
+    }
+
+    fn ast_binary_operator_is_compare(op: &AstBinaryOp) -> bool {
+        matches!(
+            op,
+            AstBinaryOp::Eq
+                | AstBinaryOp::Ne
+                | AstBinaryOp::Lt
+                | AstBinaryOp::Le
+                | AstBinaryOp::Gt
+                | AstBinaryOp::Ge
+                | AstBinaryOp::In
+                | AstBinaryOp::NotIn
+                | AstBinaryOp::Is
+                | AstBinaryOp::IsNot
+        )
+    }
+
+    fn ast_unary_operator_class_name(op: &AstUnaryOp) -> &'static str {
+        match op {
+            AstUnaryOp::Neg => "USub",
+            AstUnaryOp::Not => "Not",
+            AstUnaryOp::Pos => "UAdd",
+            AstUnaryOp::Invert => "Invert",
+        }
+    }
+
+    fn ast_bool_operator_class_name(op: &AstBoolOp) -> &'static str {
+        match op {
+            AstBoolOp::And => "And",
+            AstBoolOp::Or => "Or",
+        }
+    }
+
     fn convert_assign_target_to_ast_expr(
         &mut self,
         target: &AssignTarget,
@@ -3817,6 +3877,81 @@ impl Vm {
                 location,
                 vec![("value", self.convert_ast_constant(value))],
             ),
+            ExprKind::Binary { left, op, right } => {
+                let left_node = self.convert_expr_to_ast_node(left)?;
+                let right_node = self.convert_expr_to_ast_node(right)?;
+                let op_name = Self::ast_binary_operator_class_name(op);
+                let op_node = self.build_ast_node(op_name, None, Vec::new())?;
+                if Self::ast_binary_operator_is_compare(op) {
+                    self.build_ast_node(
+                        "Compare",
+                        location,
+                        vec![
+                            ("left", left_node),
+                            ("ops", self.heap.alloc_list(vec![op_node])),
+                            ("comparators", self.heap.alloc_list(vec![right_node])),
+                        ],
+                    )
+                } else {
+                    self.build_ast_node(
+                        "BinOp",
+                        location,
+                        vec![("left", left_node), ("op", op_node), ("right", right_node)],
+                    )
+                }
+            }
+            ExprKind::Unary { op, operand } => {
+                let operand_node = self.convert_expr_to_ast_node(operand)?;
+                let op_name = Self::ast_unary_operator_class_name(op);
+                let op_node = self.build_ast_node(op_name, None, Vec::new())?;
+                self.build_ast_node(
+                    "UnaryOp",
+                    location,
+                    vec![("op", op_node), ("operand", operand_node)],
+                )
+            }
+            ExprKind::BoolOp { op, left, right } => {
+                let op_name = Self::ast_bool_operator_class_name(op);
+                let op_node = self.build_ast_node(op_name, None, Vec::new())?;
+                let left_node = self.convert_expr_to_ast_node(left)?;
+                let right_node = self.convert_expr_to_ast_node(right)?;
+                self.build_ast_node(
+                    "BoolOp",
+                    location,
+                    vec![
+                        ("op", op_node),
+                        ("values", self.heap.alloc_list(vec![left_node, right_node])),
+                    ],
+                )
+            }
+            ExprKind::IfExpr { test, body, orelse } => {
+                let test_node = self.convert_expr_to_ast_node(test)?;
+                let body_node = self.convert_expr_to_ast_node(body)?;
+                let orelse_node = self.convert_expr_to_ast_node(orelse)?;
+                self.build_ast_node(
+                    "IfExp",
+                    location,
+                    vec![
+                        ("test", test_node),
+                        ("body", body_node),
+                        ("orelse", orelse_node),
+                    ],
+                )
+            }
+            ExprKind::NamedExpr { target, value } => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                let store_ctx = self.build_ast_context_node("Store")?;
+                let target_node = self.build_ast_node(
+                    "Name",
+                    None,
+                    vec![("id", Value::Str(target.clone())), ("ctx", store_ctx)],
+                )?;
+                self.build_ast_node(
+                    "NamedExpr",
+                    location,
+                    vec![("target", target_node), ("value", value_node)],
+                )
+            }
             ExprKind::Call { func, args } => {
                 let mut positional = Vec::new();
                 let mut keywords = Vec::new();
@@ -3932,6 +4067,29 @@ impl Vm {
                     "Subscript",
                     location,
                     vec![("value", value_node), ("slice", index_node), ("ctx", ctx)],
+                )
+            }
+            ExprKind::Slice { lower, upper, step } => {
+                let lower_node = match lower {
+                    Some(value) => self.convert_expr_to_ast_node(value)?,
+                    None => Value::None,
+                };
+                let upper_node = match upper {
+                    Some(value) => self.convert_expr_to_ast_node(value)?,
+                    None => Value::None,
+                };
+                let step_node = match step {
+                    Some(value) => self.convert_expr_to_ast_node(value)?,
+                    None => Value::None,
+                };
+                self.build_ast_node(
+                    "Slice",
+                    location,
+                    vec![
+                        ("lower", lower_node),
+                        ("upper", upper_node),
+                        ("step", step_node),
+                    ],
                 )
             }
             _ => self.build_ast_node("Constant", location, vec![("value", Value::None)]),

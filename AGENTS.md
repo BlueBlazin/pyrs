@@ -126,6 +126,15 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     heuristics (`Module`, `Assign`, `Return`, `Expr`, `Call`, `Name`, and context nodes).
   - `_ast` bootstrap surface was expanded with missing node classes consumed by stdlib `ast.py`
     and traceback matching paths (`Module`, `Assign`, `Return`, `Expr`, `Pass`).
+  - `_ast` class metadata parity improved:
+    - AST node classes now publish `_fields`, `__match_args__`, and `_attributes`,
+      enabling positional `match` class-pattern behavior used by stdlib traceback helpers.
+    - expression/statement conversion now covers additional core nodes used by traceback
+      anchor extraction (`BinOp`, `Compare`, `UnaryOp`, `BoolOp`, `IfExp`, `NamedExpr`,
+      and `Slice`) instead of falling back to placeholder constants.
+  - `_ast` bootstrap class inventory now includes missing operator/comparator/context nodes
+    required by those conversion paths (`And`, `Or`, `Not`, `Is`, `IsNot`, `In`, `NotIn`,
+    `BoolOp`, `IfExp`, `NamedExpr`).
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.
@@ -154,6 +163,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::code_object_co_positions_and_co_lines_iterators_have_expected_shape`
     - `tests/vm.rs::traceback_helpers_can_read_exception_traceback_attr`
     - `tests/vm.rs::compile_only_ast_returns_assign_and_call_shape`
+    - `tests/vm.rs::compile_only_ast_supports_positional_match_patterns`
+    - `tests/vm.rs::compile_only_ast_covers_binop_compare_and_slice_shapes`
     - `tests/vm.rs::traceback_caret_infers_identifier_span_without_keyword_noise`
     - `tests/vm.rs::traceback_caret_skips_statement_keyword_ranges`
     - `tests/vm.rs::keyerror_single_arg_string_uses_repr_semantics`
