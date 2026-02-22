@@ -92,6 +92,21 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - extension smoke regressions were updated for this closure:
     - `tests/extension_smoke.rs::cpython_compat_error_abi_batch21_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_internal_ref_gc_abi_batch68_apis_work`.
+  - Batch 3 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
+    - `PyObject_GC_Track`, `PyObject_GC_UnTrack`, `PyObject_GC_IsFinalized`,
+      `PyObject_ClearWeakRefs`.
+  - GC/weakref lifecycle parity updates:
+    - VM-global C-API registry now tracks GC track/untrack overrides and pointer finalized state.
+    - `PyObject_ClearWeakRefs` now enforces compat-owned dealloc precondition (`refcnt == 0`),
+      clears runtime weakrefs for target objects, and marks finalized state for C-API visibility.
+    - runtime weakref wrappers now honor explicit weakref-clear state in addition to finalized
+      `__del__` state when resolving `weakref.ref()` targets.
+  - extension smoke regressions were updated for this closure:
+    - `tests/extension_smoke.rs::cpython_compat_gc_weakref_lifecycle_abi_batch70_apis_work`.
+  - C-API compatibility header now declares GC lifecycle and weakref-clear exports used by
+    extension probes:
+    - `PyObject_GC_Track`, `PyObject_GC_UnTrack`, `PyObject_GC_IsTracked`,
+      `PyObject_GC_IsFinalized`, `PyObject_ClearWeakRefs`.
 - C-API lifetime-model checkpoint (2026-02-22, latest):
   - owned-pointer free path now clears active thread-state exception pointers when they
     alias the freed pointer (`current_exception`, `exc_info.exc_value`, `exc_state.exc_value`).

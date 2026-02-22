@@ -16,9 +16,6 @@ It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those a
 
 | Symbol | File | Current behavior | Closure criteria |
 |---|---|---|---|
-| `PyObject_ClearWeakRefs` | `src/vm/vm_extensions/cpython_weakref_api.rs` | no-op | Implement weakref-list clear parity for deallocation paths (including callback suppression/order) and add extension regression coverage. |
-| `PyObject_GC_Track` | `src/vm/vm_extensions/cpython_gc_alloc_api.rs` | no-op | Wire into explicit GC-tracked state model for C-API objects and ensure `IsTracked/IsFinalized` parity. |
-| `PyObject_GC_UnTrack` | `src/vm/vm_extensions/cpython_gc_alloc_api.rs` | no-op | Same closure as `PyObject_GC_Track`; must preserve safe transitions and no-UAF invariants. |
 | `Py_EndInterpreter` | `src/vm/vm_extensions/cpython_runtime_misc_api.rs` | no-op | Close with real interpreter teardown semantics or explicit subinterpreter policy + hard error behavior. |
 | `PyType_Modified` | `src/vm/vm_extensions/cpython_type_api.rs` | no-op | Implement type-cache invalidation/update propagation expected by CPython extension behavior. |
 
@@ -26,7 +23,6 @@ It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those a
 
 | Symbol | File | Current behavior | Closure criteria |
 |---|---|---|---|
-| `PyObject_GC_IsFinalized` | `src/vm/vm_extensions/cpython_gc_alloc_api.rs` | always returns `0` | Return finalized-state parity for GC objects and prove via GC lifecycle tests. |
 | `PyTraceMalloc_Track` / `PyTraceMalloc_Untrack` | `src/vm/vm_extensions/cpython_thread_interp_api.rs` | always returns `0` | Implement tracemalloc domain/pointer tracking semantics or explicit unsupported policy with deterministic behavior. |
 | `PyType_ClearCache` | `src/vm/vm_extensions/cpython_type_api.rs` | always returns `0` | Implement cache clear/invalidation accounting consistent with type mutation semantics. |
 | `Py_NewInterpreter` | `src/vm/vm_extensions/cpython_runtime_misc_api.rs` | returns current thread state (no new interpreter) | Implement real subinterpreter creation or enforce explicit unsupported contract. |

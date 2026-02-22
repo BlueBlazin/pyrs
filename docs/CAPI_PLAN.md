@@ -215,6 +215,9 @@ Recent Lane A slice:
   - `Py_{Main,BytesMain,CompileString,Exit,FatalError}`, `PyWrapper_New`
   - `PyUnicode_{AsCharmapString,AsMBCSString,BuildEncodingMap,DecodeCharmap,DecodeCodePageStateful,DecodeMBCS,DecodeMBCSStateful,DecodeUTF7,DecodeUTF7Stateful,EncodeCodePage,Resize,Translate}`
   - runtime/unicode behavior is smoke-covered for compile entry, codec paths, charmap/build-map flows, translate, and resize semantics.
+- Added Stable-ABI exports and lifecycle semantics for GC + weakref closure APIs (`batch70`):
+  - `PyObject_GC_{Track,UnTrack,IsTracked,IsFinalized}`, `PyObject_ClearWeakRefs`
+  - GC/weakref lifecycle behavior is smoke-covered for explicit track/untrack transitions, dealloc-precondition guards on `PyObject_ClearWeakRefs`, weakref clearing semantics, and finalized-state visibility in the C-API path.
 - Manifest normalization now handles Mach-O private-symbol prefixing (`__Py_*` -> `_Py_*`) so abi3 coverage accounting on macOS does not undercount private Stable-ABI symbols.
 - Added Stable-ABI exports and semantics for import APIs:
   - `PyImport_{AddModuleRef,AddModuleObject,AddModule,GetModule}`
@@ -375,6 +378,7 @@ Recent Lane A slice:
     - `tests/extension_smoke.rs::cpython_compat_lifecycle_and_pack_abi_batch67_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_internal_ref_gc_abi_batch68_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_runtime_unicode_abi_batch69_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_gc_weakref_lifecycle_abi_batch70_apis_work`
 - Added Stable-ABI exports and semantics for error/file APIs:
   - `PyErr_{GetRaisedException,SetRaisedException,GetHandledException,SetHandledException,GetExcInfo,SetExcInfo}`
   - `PyFile_{GetLine,WriteObject,WriteString}`

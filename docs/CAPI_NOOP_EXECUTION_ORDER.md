@@ -7,12 +7,12 @@ Last updated: 2026-02-22
 
 ## Re-check Snapshot
 
-- Empty-body rows: `5`
-- Placeholder rows: `6`
-- Total rows: `11`
-- Total symbols represented: `13`
+- Empty-body rows: `2`
+- Placeholder rows: `5`
+- Total rows: `7`
+- Total symbols represented: `9`
 
-Note: Batch 1 and Batch 2 symbols are now closed and removed from the no-op
+Note: Batch 1, Batch 2, and Batch 3 symbols are now closed and removed from the no-op
 inventory.
 
 ## Ordered Checklist
@@ -41,12 +41,12 @@ inventory.
 - [x] `Py_LeaveRecursiveCall`
 - [x] `_Py_CheckRecursiveCall`
 
-### Batch 3: GC + Weakref Lifecycle
+### Batch 3: GC + Weakref Lifecycle ✅ complete
 
-- [ ] `PyObject_GC_Track`
-- [ ] `PyObject_GC_UnTrack`
-- [ ] `PyObject_GC_IsFinalized`
-- [ ] `PyObject_ClearWeakRefs`
+- [x] `PyObject_GC_Track`
+- [x] `PyObject_GC_UnTrack`
+- [x] `PyObject_GC_IsFinalized`
+- [x] `PyObject_ClearWeakRefs`
 
 ### Batch 4: Type Cache Coherence
 
