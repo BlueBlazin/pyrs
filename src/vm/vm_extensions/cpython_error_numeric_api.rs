@@ -1795,7 +1795,7 @@ pub unsafe extern "C" fn PyErr_GetExcInfo(
         }
         if !p_traceback.is_null() {
             let value = cpython_exception_traceback_ptr_for_value(context, &handled)
-                .unwrap_or(std::ptr::null_mut());
+                .unwrap_or(std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>());
             // SAFETY: caller provided writable output pointer.
             unsafe { *p_traceback = value };
         }

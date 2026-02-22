@@ -4,7 +4,8 @@ use std::ffi::{c_char, c_int, c_void};
 use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
-    InternalCallOutcome, ModuleCapiContext, ObjRef, Py_DecRef, PyErr_BadInternalCall,
+    CpythonBaseExceptionCompatObject, InternalCallOutcome, ModuleCapiContext, ObjRef, Py_DecRef,
+    PyErr_BadInternalCall,
     PyErr_Occurred, PyExc_EOFError, PyExc_SystemError, PyExc_TypeError, PyLong_FromLong,
     PyObject_CallObject, PyObject_CallOneArg, PyObject_GetAttrString, PyObject_Str,
     PyUnicode_AsUTF8, PyUnicode_FromString, Vm, c_name_to_string, cpython_new_bytes_ptr,
@@ -568,6 +569,7 @@ pub unsafe extern "C" fn PyException_SetArgs(exception: *mut c_void, args: *mut 
             context.set_error("PyException_SetArgs expected tuple object");
             return;
         };
+        let args_ptr = context.alloc_cpython_ptr_for_value(args_value.clone());
         let Some(slot) = context.objects.get_mut(&handle) else {
             context.set_error("PyException_SetArgs exception handle is not available");
             return;
@@ -593,6 +595,15 @@ pub unsafe extern "C" fn PyException_SetArgs(exception: *mut c_void, args: *mut 
             _ => {
                 context.set_error("PyException_SetArgs expected exception object");
                 return;
+            }
+        }
+        if let Some(raw_ptr) = context.cpython_ptr_by_handle.get(&handle).copied()
+            && context.owns_cpython_allocation_ptr(raw_ptr)
+        {
+            // SAFETY: `raw_ptr` is owned base-exception-compatible storage for this handle.
+            unsafe {
+                let raw_exception = raw_ptr.cast::<CpythonBaseExceptionCompatObject>();
+                (*raw_exception).args = args_ptr;
             }
         }
     })

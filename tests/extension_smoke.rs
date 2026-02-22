@@ -7903,7 +7903,7 @@ run(PyObject *self, PyObject *args) {
 
     freeze_ok = (PyType_Freeze((PyTypeObject *)type_obj) == 0) ? 1 : 0;
     PyType_Modified((PyTypeObject *)type_obj);
-    clear_cache_ok = (PyType_ClearCache() == 0) ? 1 : 0;
+    clear_cache_ok = (PyType_ClearCache() != 0) ? 1 : 0;
 
     Py_DECREF(type_obj);
 
