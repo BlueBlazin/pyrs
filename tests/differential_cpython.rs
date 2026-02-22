@@ -1022,3 +1022,154 @@ except Exception:
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn differential_pyc_traceback_direct_cause_matches_cpython_shape() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    raise ValueError("inner")
+except Exception as exc:
+    raise RuntimeError("outer") from exc
+"#;
+    let (base, pyc_path) =
+        compile_temp_pyc(source, "traceback_direct_cause_pyc").expect("compile pyc should succeed");
+    let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
+        .expect("CPython .pyc traceback should run");
+    let ours = run_traceback_via_pyc_file(
+        &pyrs_bin_path().expect("pyrs binary not found"),
+        &pyc_path,
+    )
+    .expect("pyrs .pyc traceback should run");
+    assert_eq!(traceback_heading_count(&py), 2, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
+    assert!(
+        py.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        ours
+    );
+    assert!(py.contains("ValueError: inner"), "{}", py);
+    assert!(py.contains("RuntimeError: outer"), "{}", py);
+    assert!(ours.contains("ValueError: inner"), "{}", ours);
+    assert!(ours.contains("RuntimeError: outer"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "pyc direct-cause traceback shape mismatch"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn differential_traceback_mixed_cause_and_context_chain_matches_cpython_shape() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    try:
+        raise KeyError("k")
+    except Exception as inner:
+        raise ValueError("v") from inner
+except Exception:
+    raise RuntimeError("r")
+"#;
+    let py = run_cpython_traceback(source).expect("CPython traceback should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs traceback should run");
+    assert_eq!(traceback_heading_count(&py), 3, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 3, "{}", ours);
+    assert!(
+        py.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        ours
+    );
+    assert!(py.contains("KeyError:"), "{}", py);
+    assert!(py.contains("ValueError: v"), "{}", py);
+    assert!(py.contains("RuntimeError: r"), "{}", py);
+    assert!(ours.contains("KeyError:"), "{}", ours);
+    assert!(ours.contains("ValueError: v"), "{}", ours);
+    assert!(ours.contains("RuntimeError: r"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "mixed cause/context traceback shape mismatch"
+    );
+}
+
+#[test]
+fn differential_pyc_traceback_mixed_cause_and_context_chain_matches_cpython_shape() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"try:
+    try:
+        raise KeyError("k")
+    except Exception as inner:
+        raise ValueError("v") from inner
+except Exception:
+    raise RuntimeError("r")
+"#;
+    let (base, pyc_path) = compile_temp_pyc(source, "traceback_mixed_chain_pyc")
+        .expect("compile pyc should succeed");
+    let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
+        .expect("CPython .pyc traceback should run");
+    let ours = run_traceback_via_pyc_file(
+        &pyrs_bin_path().expect("pyrs binary not found"),
+        &pyc_path,
+    )
+    .expect("pyrs .pyc traceback should run");
+    assert_eq!(traceback_heading_count(&py), 3, "{}", py);
+    assert_eq!(traceback_heading_count(&ours), 3, "{}", ours);
+    assert!(
+        py.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("The above exception was the direct cause of the following exception:"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("During handling of the above exception, another exception occurred:"),
+        "{}",
+        ours
+    );
+    assert!(py.contains("KeyError:"), "{}", py);
+    assert!(py.contains("ValueError: v"), "{}", py);
+    assert!(py.contains("RuntimeError: r"), "{}", py);
+    assert!(ours.contains("KeyError:"), "{}", ours);
+    assert!(ours.contains("ValueError: v"), "{}", ours);
+    assert!(ours.contains("RuntimeError: r"), "{}", ours);
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "pyc mixed cause/context traceback shape mismatch"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

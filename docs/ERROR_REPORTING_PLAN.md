@@ -49,9 +49,14 @@ Status: in progress (started 2026-02-22).
     - NameError identifier-caret span parity from compiled bytecode execution.
     - `__context__` chain traceback-shape parity from compiled bytecode execution.
     - `raise ... from None` suppressed-context traceback-shape parity.
+    - direct-cause (`raise ... from exc`) traceback-shape parity from compiled bytecode.
+  - differential traceback gates now cover mixed nested chains (`__cause__` inside `__context__`)
+    for both source execution and `.pyc` execution.
   - traceback capture now uses `reraise_lasti_override` when available so reraised exceptions
     in exception-table cleanup paths preserve the original fault line (avoids line-0 fallback
     in `.pyc` context-chain traces).
+  - final exception-line rendering now follows CPython `KeyError` display semantics when args are
+    available (single-arg `KeyError` displays `repr(arg)` in traceback footer).
   - indentation diagnostics now include CPython-style parity for:
     - top-level `unexpected indent` (no caret line),
     - `unindent does not match any outer indentation level` with end-of-line caret.

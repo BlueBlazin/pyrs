@@ -7831,10 +7831,36 @@ impl Vm {
     }
 
     pub(super) fn format_exception_object(&self, exception: &ExceptionObject) -> String {
-        match &exception.message {
-            Some(message) if !message.is_empty() => format!("{}: {}", exception.name, message),
-            _ => exception.name.clone(),
+        let display = self.exception_display_message(exception);
+        if display.is_empty() {
+            exception.name.clone()
+        } else {
+            format!("{}: {}", exception.name, display)
         }
+    }
+
+    fn exception_display_message(&self, exception: &ExceptionObject) -> String {
+        let args = {
+            let attrs = exception.attrs.borrow();
+            let Some(Value::Tuple(tuple)) = attrs.get("args") else {
+                return exception.message.clone().unwrap_or_default();
+            };
+            let Object::Tuple(values) = &*tuple.kind() else {
+                return exception.message.clone().unwrap_or_default();
+            };
+            values.clone()
+        };
+        if args.is_empty() {
+            return String::new();
+        }
+        if exception.name == "KeyError" && args.len() == 1 {
+            return format_repr(&args[0]);
+        }
+        if args.len() == 1 {
+            return format_value(&args[0]);
+        }
+        let parts = args.iter().map(format_repr).collect::<Vec<_>>();
+        format!("({})", parts.join(", "))
     }
 
     pub(super) fn class_namespace_backing_dict(&self, namespace: &Value) -> Option<ObjRef> {
