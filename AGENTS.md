@@ -114,7 +114,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_indentation_error_shape_matches_cpython`.
     - `tests/differential_cpython.rs::differential_unmatched_closing_delimiter_matches_cpython`
     - `tests/differential_cpython.rs::differential_mismatched_closing_delimiter_matches_cpython`
-    - `tests/differential_cpython.rs::differential_unterminated_triple_quoted_string_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_unterminated_triple_quoted_string_matches_cpython`
+    - `tests/differential_cpython.rs::differential_unexpected_indent_matches_cpython`
+    - `tests/differential_cpython.rs::differential_unindent_mismatch_matches_cpython`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,

@@ -43,6 +43,9 @@ Status: in progress (started 2026-02-22).
   - differential syntax gates now also cover invalid-syntax span parity, unclosed-delimiter shape,
     indentation-error shape, unmatched/mismatched closing delimiters, and unterminated
     triple-quoted strings against CPython output.
+  - indentation diagnostics now include CPython-style parity for:
+    - top-level `unexpected indent` (no caret line),
+    - `unindent does not match any outer indentation level` with end-of-line caret.
   - next gate: expand golden traceback-shape tests against CPython output for nested chains.
 
 ## Scope
