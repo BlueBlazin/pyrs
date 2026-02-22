@@ -11,6 +11,7 @@ Status values:
 ## Enforcement
 - No-op inventory artifact: `docs/NOOP_BUILTIN_INVENTORY.txt`
 - No-op inventory gate: `tests/noop_inventory.rs`
+- C-API no-op inventory: `docs/CAPI_NOOP_INVENTORY.md`
 - Refresh command:
   - `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`
 - Process/quality gates:

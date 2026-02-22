@@ -16,6 +16,7 @@ Use this file to find canonical ownership quickly.
 
 ## Gap Tracking
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
+- `docs/CAPI_NOOP_INVENTORY.md`: intentional C-API no-op/placeholder inventory with closure criteria.
 - `docs/ALGO_AUDIT_BACKLOG.md`: algorithmic/semantic risk backlog.
 - `docs/STDLIB_COMMON_USECASE_CHECKLIST.md`: top-stdlib baseline closure tracker.
 - `docs/STDLIB_EXTENDED_COMMON_USECASE_CHECKLIST.md`: expanded stdlib smoke matrix and blocker grouping.
