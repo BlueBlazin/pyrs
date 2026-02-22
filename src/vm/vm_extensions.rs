@@ -3391,6 +3391,7 @@ struct ModuleCapiContext {
     cpython_builtin_method_defs: HashMap<BuiltinFunction, *mut CpythonMethodDef>,
     cpython_builtin_by_method_def: HashMap<usize, BuiltinFunction>,
     cpython_list_buffers: HashMap<PyrsObjectHandle, (*mut *mut c_void, usize)>,
+    cpython_list_items_cache_by_handle: HashMap<PyrsObjectHandle, Vec<usize>>,
     cpython_tuple_items_cache_by_handle: HashMap<PyrsObjectHandle, Vec<usize>>,
     cpython_sync_in_progress: HashSet<PyrsObjectHandle>,
     module_dict_handles: HashMap<PyrsObjectHandle, ObjRef>,
@@ -4023,6 +4024,7 @@ impl ModuleCapiContext {
             cpython_builtin_method_defs: HashMap::new(),
             cpython_builtin_by_method_def: HashMap::new(),
             cpython_list_buffers: HashMap::new(),
+            cpython_list_items_cache_by_handle: HashMap::new(),
             cpython_tuple_items_cache_by_handle: HashMap::new(),
             cpython_sync_in_progress: HashSet::new(),
             module_dict_handles: HashMap::new(),
@@ -9260,6 +9262,7 @@ impl ModuleCapiContext {
             self.cpython_object_handles_by_id.remove(&object_id);
         }
         self.cpython_sync_in_progress.remove(&handle);
+        self.cpython_list_items_cache_by_handle.remove(&handle);
         self.cpython_tuple_items_cache_by_handle.remove(&handle);
         self.module_dict_handles.remove(&handle);
         if self.thread_state_dict_handle == Some(handle) {
@@ -9599,6 +9602,17 @@ impl ModuleCapiContext {
                 }
             }
             Some(SyncPayload::List(item_ptrs)) => {
+                let raw_items: Vec<usize> = item_ptrs.iter().map(|ptr| *ptr as usize).collect();
+                if self
+                    .cpython_list_items_cache_by_handle
+                    .get(&handle)
+                    .is_some_and(|cached| *cached == raw_items)
+                {
+                    self.cpython_sync_in_progress.remove(&handle);
+                    return;
+                }
+                self.cpython_list_items_cache_by_handle
+                    .insert(handle, raw_items);
                 let mut values = Vec::with_capacity(item_ptrs.len());
                 let mut fallback_indices = Vec::new();
                 for (idx, item_ptr) in item_ptrs.into_iter().enumerate() {
