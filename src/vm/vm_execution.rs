@@ -378,12 +378,40 @@ impl Vm {
             );
         }
         let Some(class_ref) = self.class_of_value(receiver) else {
+            if let Value::MemoryView(view) = receiver {
+                let method_kind = match method_name {
+                    "__enter__" => Some(NativeMethodKind::MemoryViewEnter),
+                    "__exit__" => Some(NativeMethodKind::MemoryViewExit),
+                    _ => None,
+                };
+                if let Some(kind) = method_kind {
+                    return Ok(Some(self.alloc_native_bound_method(kind, view.clone())));
+                }
+            }
+            if Self::cpython_proxy_raw_ptr_from_value(receiver).is_some()
+                && let Some(method) = self.load_cpython_proxy_attr_for_value(receiver, method_name)
+            {
+                if trace && method_name == "__exit__" {
+                    eprintln!("[load-special] proxy attr hit (no class)");
+                }
+                return Ok(Some(method));
+            }
             if trace && method_name == "__exit__" {
                 eprintln!("[load-special] no class");
             }
             return Ok(None);
         };
         let Some(method) = class_attr_lookup(&class_ref, method_name) else {
+            if let Value::MemoryView(view) = receiver {
+                let method_kind = match method_name {
+                    "__enter__" => Some(NativeMethodKind::MemoryViewEnter),
+                    "__exit__" => Some(NativeMethodKind::MemoryViewExit),
+                    _ => None,
+                };
+                if let Some(kind) = method_kind {
+                    return Ok(Some(self.alloc_native_bound_method(kind, view.clone())));
+                }
+            }
             if Self::cpython_proxy_raw_ptr_from_value(receiver).is_some()
                 && let Some(method) = self.load_cpython_proxy_attr_for_value(receiver, method_name)
             {

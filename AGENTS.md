@@ -114,7 +114,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `'yield from' outside function`,
     - `'return' with value in async generator`,
     - `global/nonlocal` declaration-order and scope errors
-      (`used prior`, `assigned before`, module-level `nonlocal`, missing nonlocal binding).
+      (`used prior`, `assigned before`, module-level `nonlocal`, missing nonlocal binding,
+      parameter/global conflict, parameter/nonlocal conflict, nonlocal/global conflict).
   - CLI/REPL compile diagnostics now render as `SyntaxError` (instead of `compile error: ...`);
     `-c` semantic compile errors omit source+caret to match CPython command-mode behavior.
   - syntax-error source rendering now follows CPython indentation display shape (normalized
@@ -135,6 +136,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::rejects_global_assigned_prior_declaration_with_syntax_message`
     - `tests/vm.rs::rejects_module_nonlocal_with_cpython_message`
     - `tests/vm.rs::rejects_nonlocal_without_binding_with_cpython_message`
+    - `tests/vm.rs::rejects_parameter_and_global_conflict_with_cpython_message`
+    - `tests/vm.rs::rejects_parameter_and_nonlocal_conflict_with_cpython_message`
+    - `tests/vm.rs::rejects_nonlocal_global_conflict_with_global_first`
+    - `tests/vm.rs::rejects_nonlocal_global_conflict_with_nonlocal_first`
     - `tests/pyc_translate.rs::translates_cpython_linetable_into_instruction_ranges`.
     - `tests/differential_cpython.rs::differential_traceback_context_chain_matches_cpython_shape`
     - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
@@ -169,7 +174,17 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_semantic_syntax_global_assigned_prior_declaration_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_nonlocal_at_module_level_matches_cpython`
     - `tests/differential_cpython.rs::differential_semantic_syntax_nonlocal_without_binding_matches_cpython`
-    - `tests/differential_cpython.rs::differential_semantic_syntax_global_used_prior_declaration_file_caret_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_semantic_syntax_global_used_prior_declaration_file_caret_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_parameter_and_global_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_parameter_and_nonlocal_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_nonlocal_and_global_conflict_global_first_matches_cpython`
+    - `tests/differential_cpython.rs::differential_semantic_syntax_nonlocal_and_global_conflict_nonlocal_first_matches_cpython`.
+- VM protocol-dispatch checkpoint (2026-02-23, latest):
+  - `LOAD_SPECIAL` now probes CPython-proxy attributes even when `class_of_value(...)` is unavailable for the receiver.
+  - memoryview context-manager methods are now bound in special-method lookup for both native memoryview values and CPython-proxy memoryview receivers.
+  - closed regressions:
+    - `tests/vm.rs::pickle_zero_copy_bytearray_roundtrips_across_protocols`
+    - `tests/vm.rs::pickle_zero_copy_bytes_oob_buffers_preserve_identity`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,
