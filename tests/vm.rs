@@ -1148,6 +1148,17 @@ fn compile_only_ast_sets_location_attrs_on_alias_keyword_and_excepthandler() {
 }
 
 #[test]
+fn compile_only_ast_covers_lambda_await_comprehension_and_yield_nodes() {
+    let source = "import _ast\nlam = compile('lambda x, /, y=2, *args, z, **kw: x + y', '<ast>', 'eval', _ast.PyCF_ONLY_AST).body\nlst = compile('[x async for x in xs if x > 0]', '<ast>', 'eval', _ast.PyCF_ONLY_AST).body\ndct = compile('{x: x + 1 for x in xs if x > 0}', '<ast>', 'eval', _ast.PyCF_ONLY_AST).body\ngen = compile('(x for x in xs if x > 0)', '<ast>', 'eval', _ast.PyCF_ONLY_AST).body\nawait_node = compile('async def f():\\n    return await g()\\n', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0].body[0].value\nyield_node = compile('def f():\\n    yield 1\\n', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0].body[0].value\nyield_from_node = compile('def f():\\n    yield from it\\n', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0].body[0].value\nok = isinstance(lam, _ast.Lambda) and isinstance(lam.args, _ast.arguments) and isinstance(lam.body, _ast.BinOp) and isinstance(lst, _ast.ListComp) and isinstance(lst.generators[0], _ast.comprehension) and (lst.generators[0].is_async == 1) and isinstance(dct, _ast.DictComp) and (dct.generators[0].is_async == 0) and isinstance(gen, _ast.GeneratorExp) and isinstance(await_node, _ast.Await) and isinstance(yield_node, _ast.Yield) and isinstance(yield_from_node, _ast.YieldFrom)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

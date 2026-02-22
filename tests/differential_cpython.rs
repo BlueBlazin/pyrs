@@ -2099,3 +2099,38 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_compile_only_ast_lambda_await_comprehension_and_yield_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+lam = compile("lambda x, /, y=2, *args, z, **kw: x + y", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
+lst = compile("[x async for x in xs if x > 0]", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
+dct = compile("{x: x + 1 for x in xs if x > 0}", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
+gen = compile("(x for x in xs if x > 0)", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
+await_node = compile("async def f():\n    return await g()\n", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0].body[0].value
+yield_node = compile("def f():\n    yield 1\n", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0].body[0].value
+yield_from_node = compile("def f():\n    yield from it\n", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0].body[0].value
+result = {
+    "lam_type": type(lam).__name__,
+    "lam_args_type": type(lam.args).__name__,
+    "lam_body_type": type(lam.body).__name__,
+    "listcomp_type": type(lst).__name__,
+    "listcomp_gen_type": type(lst.generators[0]).__name__,
+    "listcomp_gen_base": isinstance(lst.generators[0], _ast.comprehension),
+    "listcomp_is_async": lst.generators[0].is_async,
+    "dictcomp_type": type(dct).__name__,
+    "dictcomp_is_async": dct.generators[0].is_async,
+    "genexp_type": type(gen).__name__,
+    "await_type": type(await_node).__name__,
+    "yield_type": type(yield_node).__name__,
+    "yield_from_type": type(yield_from_node).__name__,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}

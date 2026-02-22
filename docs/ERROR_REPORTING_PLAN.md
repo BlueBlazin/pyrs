@@ -147,6 +147,12 @@ Status: in progress (started 2026-02-22).
       `MatchMapping`, `MatchClass`, `MatchStar`, `MatchAs`, `MatchOr`,
     - conversion covers wildcard/capture/value/constant/sequence/mapping/class/or/as/star
       pattern families from parser AST.
+  - `compile(..., PyCF_ONLY_AST)` expression conversion now covers previously-fallback families:
+    - `Lambda`,
+    - `Await`,
+    - `ListComp` / `DictComp` / `GeneratorExp`,
+    - `Yield` / `YieldFrom`,
+    - helper-node `comprehension` materialization for generator clauses.
   - location-attribute propagation was tightened for AST helper nodes that expose location attrs:
     - `alias`, `keyword`, and `ExceptHandler` node conversion now materializes location fields
       instead of leaving `_attributes` unbound.
@@ -194,6 +200,7 @@ Status: in progress (started 2026-02-22).
     - `compile_only_ast_covers_augassign_and_annassign_nodes`.
     - `compile_only_ast_covers_match_and_pattern_nodes`.
     - `compile_only_ast_sets_location_attrs_on_alias_keyword_and_excepthandler`.
+    - `compile_only_ast_covers_lambda_await_comprehension_and_yield_nodes`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

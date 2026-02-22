@@ -25,9 +25,10 @@ use super::{
 };
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
-    Constant as AstConstant, DictEntry, ExceptHandler as AstExceptHandler, Expr, ExprKind,
-    ImportAlias as AstImportAlias, MatchCase as AstMatchCase, Module as AstModule,
-    Parameter as AstParameter, Pattern as AstPattern, Stmt, StmtKind, UnaryOp as AstUnaryOp,
+    ComprehensionClause as AstComprehensionClause, Constant as AstConstant, DictEntry,
+    ExceptHandler as AstExceptHandler, Expr, ExprKind, ImportAlias as AstImportAlias,
+    MatchCase as AstMatchCase, Module as AstModule, Parameter as AstParameter,
+    Pattern as AstPattern, Stmt, StmtKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -4153,6 +4154,33 @@ impl Vm {
         )
     }
 
+    fn convert_comprehension_clauses_to_ast_nodes(
+        &mut self,
+        clauses: &[AstComprehensionClause],
+        location: Option<(usize, usize)>,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        let mut out = Vec::with_capacity(clauses.len());
+        for clause in clauses {
+            let target = self.convert_assign_target_to_ast_expr(&clause.target)?;
+            let iter = self.convert_expr_to_ast_node(&clause.iter)?;
+            let mut ifs = Vec::with_capacity(clause.ifs.len());
+            for predicate in &clause.ifs {
+                ifs.push(self.convert_expr_to_ast_node(predicate)?);
+            }
+            out.push(self.build_ast_node(
+                "comprehension",
+                location,
+                vec![
+                    ("target", target),
+                    ("iter", iter),
+                    ("ifs", self.heap.alloc_list(ifs)),
+                    ("is_async", Value::Int(if clause.is_async { 1 } else { 0 })),
+                ],
+            )?);
+        }
+        Ok(out)
+    }
+
     fn convert_assign_target_to_ast_expr(
         &mut self,
         target: &AssignTarget,
@@ -4312,6 +4340,89 @@ impl Vm {
                     vec![("target", target_node), ("value", value_node)],
                 )
             }
+            ExprKind::Lambda {
+                posonly_params,
+                params,
+                vararg,
+                kwarg,
+                kwonly_params,
+                body,
+            } => {
+                let args_node = self.convert_function_arguments_to_ast_node(
+                    posonly_params,
+                    params,
+                    vararg,
+                    kwonly_params,
+                    kwarg,
+                    location,
+                )?;
+                let body_node = self.convert_expr_to_ast_node(body)?;
+                self.build_ast_node(
+                    "Lambda",
+                    location,
+                    vec![("args", args_node), ("body", body_node)],
+                )
+            }
+            ExprKind::Await { value } => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                self.build_ast_node("Await", location, vec![("value", value_node)])
+            }
+            ExprKind::ListComp { elt, clauses } => {
+                let elt_node = self.convert_expr_to_ast_node(elt)?;
+                let generators =
+                    self.convert_comprehension_clauses_to_ast_nodes(clauses, location)?;
+                self.build_ast_node(
+                    "ListComp",
+                    location,
+                    vec![
+                        ("elt", elt_node),
+                        ("generators", self.heap.alloc_list(generators)),
+                    ],
+                )
+            }
+            ExprKind::DictComp {
+                key,
+                value,
+                clauses,
+            } => {
+                let key_node = self.convert_expr_to_ast_node(key)?;
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                let generators =
+                    self.convert_comprehension_clauses_to_ast_nodes(clauses, location)?;
+                self.build_ast_node(
+                    "DictComp",
+                    location,
+                    vec![
+                        ("key", key_node),
+                        ("value", value_node),
+                        ("generators", self.heap.alloc_list(generators)),
+                    ],
+                )
+            }
+            ExprKind::GeneratorExp { elt, clauses } => {
+                let elt_node = self.convert_expr_to_ast_node(elt)?;
+                let generators =
+                    self.convert_comprehension_clauses_to_ast_nodes(clauses, location)?;
+                self.build_ast_node(
+                    "GeneratorExp",
+                    location,
+                    vec![
+                        ("elt", elt_node),
+                        ("generators", self.heap.alloc_list(generators)),
+                    ],
+                )
+            }
+            ExprKind::Yield { value } => {
+                let value_node = match value {
+                    Some(expr) => self.convert_expr_to_ast_node(expr)?,
+                    None => Value::None,
+                };
+                self.build_ast_node("Yield", location, vec![("value", value_node)])
+            }
+            ExprKind::YieldFrom { value } => {
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                self.build_ast_node("YieldFrom", location, vec![("value", value_node)])
+            }
             ExprKind::Call { func, args } => {
                 let mut positional = Vec::new();
                 let mut keywords = Vec::new();
@@ -4452,7 +4563,6 @@ impl Vm {
                     ],
                 )
             }
-            _ => self.build_ast_node("Constant", location, vec![("value", Value::None)]),
         }
     }
 

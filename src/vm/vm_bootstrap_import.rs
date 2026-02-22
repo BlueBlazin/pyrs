@@ -232,6 +232,18 @@ impl Vm {
         self.configure_bootstrap_ast_class("BoolOp", &["op", "values"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("IfExp", &["test", "body", "orelse"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("NamedExpr", &["target", "value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Lambda", &["args", "body"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Await", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("ListComp", &["elt", "generators"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("DictComp", &["key", "value", "generators"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("GeneratorExp", &["elt", "generators"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("Yield", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("YieldFrom", &["value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "comprehension",
+            &["target", "iter", "ifs", "is_async"],
+            &[],
+        );
 
         self.configure_bootstrap_ast_class("Load", &[], &[]);
         self.configure_bootstrap_ast_class("Store", &[], &[]);
@@ -640,6 +652,13 @@ impl Vm {
             "BoolOp",
             "IfExp",
             "NamedExpr",
+            "Lambda",
+            "Await",
+            "ListComp",
+            "DictComp",
+            "GeneratorExp",
+            "Yield",
+            "YieldFrom",
             "Interpolation",
             "TemplateStr",
         ] {
@@ -650,6 +669,7 @@ impl Vm {
         let _ = self.set_module_class_bases("_ast", "withitem", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "arguments", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "arg", &["AST"]);
+        let _ = self.set_module_class_bases("_ast", "comprehension", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "type_param", &["AST"]);
         let _ = self.set_module_class_bases("_ast", "TypeVar", &["type_param"]);
         let _ = self.set_module_class_bases("_ast", "ParamSpec", &["type_param"]);
@@ -4349,6 +4369,41 @@ impl Vm {
                         .alloc_class(ClassObject::new("NamedExpr".to_string(), Vec::new())),
                 ),
                 (
+                    "Lambda",
+                    self.heap
+                        .alloc_class(ClassObject::new("Lambda".to_string(), Vec::new())),
+                ),
+                (
+                    "Await",
+                    self.heap
+                        .alloc_class(ClassObject::new("Await".to_string(), Vec::new())),
+                ),
+                (
+                    "ListComp",
+                    self.heap
+                        .alloc_class(ClassObject::new("ListComp".to_string(), Vec::new())),
+                ),
+                (
+                    "DictComp",
+                    self.heap
+                        .alloc_class(ClassObject::new("DictComp".to_string(), Vec::new())),
+                ),
+                (
+                    "GeneratorExp",
+                    self.heap
+                        .alloc_class(ClassObject::new("GeneratorExp".to_string(), Vec::new())),
+                ),
+                (
+                    "Yield",
+                    self.heap
+                        .alloc_class(ClassObject::new("Yield".to_string(), Vec::new())),
+                ),
+                (
+                    "YieldFrom",
+                    self.heap
+                        .alloc_class(ClassObject::new("YieldFrom".to_string(), Vec::new())),
+                ),
+                (
                     "Subscript",
                     self.heap
                         .alloc_class(ClassObject::new("Subscript".to_string(), Vec::new())),
@@ -4382,6 +4437,11 @@ impl Vm {
                     "keyword",
                     self.heap
                         .alloc_class(ClassObject::new("keyword".to_string(), Vec::new())),
+                ),
+                (
+                    "comprehension",
+                    self.heap
+                        .alloc_class(ClassObject::new("comprehension".to_string(), Vec::new())),
                 ),
                 (
                     "And",

@@ -164,6 +164,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `pattern` abstract root and concrete `Match*` families:
       `MatchValue`, `MatchSingleton`, `MatchSequence`, `MatchMapping`,
       `MatchClass`, `MatchStar`, `MatchAs`, `MatchOr`.
+  - `compile(..., PyCF_ONLY_AST)` expression conversion now covers previously fallback-heavy
+    families:
+    - `Lambda`, `Await`,
+    - `ListComp` / `DictComp` / `GeneratorExp`,
+    - `Yield` / `YieldFrom`,
+    - generator-clause helper node `comprehension`.
   - location-attribute propagation for AST helper nodes improved:
     - `alias`, `keyword`, and `ExceptHandler` conversions now populate location attrs
       (`lineno`, `col_offset`, `end_lineno`, `end_col_offset`) rather than leaving
@@ -187,6 +193,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::compile_only_ast_covers_augassign_and_annassign_nodes`.
     - `tests/vm.rs::compile_only_ast_covers_match_and_pattern_nodes`.
     - `tests/vm.rs::compile_only_ast_sets_location_attrs_on_alias_keyword_and_excepthandler`.
+    - `tests/vm.rs::compile_only_ast_covers_lambda_await_comprehension_and_yield_nodes`.
   - differential CPython parity gates were expanded for AST-compile surfaces:
     - `tests/differential_cpython.rs::differential_compile_only_ast_assign_fields_and_match_args`
     - `tests/differential_cpython.rs::differential_compile_only_ast_operator_hierarchy_parity`.
@@ -194,6 +201,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_compile_only_ast_augassign_and_annassign_parity`.
     - `tests/differential_cpython.rs::differential_compile_only_ast_match_and_pattern_parity`.
     - `tests/differential_cpython.rs::differential_compile_only_ast_alias_keyword_and_handler_location_attrs_parity`.
+    - `tests/differential_cpython.rs::differential_compile_only_ast_lambda_await_comprehension_and_yield_parity`.
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.
