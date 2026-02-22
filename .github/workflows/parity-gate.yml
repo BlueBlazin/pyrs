@@ -8,9 +8,121 @@ on:
       - master
 
 jobs:
-  parity:
+  integrity:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download CPython 3.14.3 Lib
+        run: |
+          curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
+          tar -xzf /tmp/Python-3.14.3.tgz -C /tmp
+          echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
+
+      - name: Verify generated Unicode-name table
+        run: |
+          python scripts/generate_unicode_name_table.py \
+            --check \
+            --cpython-src /tmp/Python-3.14.3 \
+            --output src/parser/unicode_names_data.txt
+
+      - name: Verify C-API no-op inventory drift
+        run: python3 scripts/check_capi_noop_inventory.py --manifest perf/capi_noop_inventory.json
+
+      - name: Upload C-API no-op inventory artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capi-noop-inventory
+          path: perf/capi_noop_inventory.json
+          if-no-files-found: ignore
+
+  full-test-suite:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download CPython 3.14.3 Lib
+        run: |
+          curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
+          tar -xzf /tmp/Python-3.14.3.tgz -C /tmp
+          echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
+
+      - name: Run full test suite
+        run: cargo test -q
+
+  parity-profile:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download CPython 3.14.3 Lib
+        run: |
+          curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
+          tar -xzf /tmp/Python-3.14.3.tgz -C /tmp
+          echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
+
+      - name: Run parity gate profile
+        env:
+          PYRS_CPYTHON_BIN: python3
+        run: ./scripts/run_parity_gate.sh
+
+      - name: Upload builtin parity artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: builtin-parity-report
+          path: perf/builtin_parity_report.json
+          if-no-files-found: ignore
+
+  coverage-gate:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -39,32 +151,43 @@ jobs:
           tar -xzf /tmp/Python-3.14.3.tgz -C /tmp
           echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
 
-      - name: Verify generated Unicode-name table
-        run: |
-          python scripts/generate_unicode_name_table.py \
-            --check \
-            --cpython-src /tmp/Python-3.14.3 \
-            --output src/parser/unicode_names_data.txt
+      - name: Run coverage gate (enforced soft floors)
+        env:
+          PYRS_COVERAGE_ENFORCE: "1"
+          PYRS_COVERAGE_MIN_REGIONS: "70"
+          PYRS_COVERAGE_MIN_FUNCTIONS: "65"
+          PYRS_COVERAGE_MIN_LINES: "70"
+        run: ./scripts/run_coverage_gate.sh
 
-      - name: Verify C-API no-op inventory drift
-        run: python3 scripts/check_capi_noop_inventory.py --manifest perf/capi_noop_inventory.json
+  numpy-probes:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
 
-      - name: Upload C-API no-op inventory artifact
-        if: always()
-        uses: actions/upload-artifact@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
         with:
-          name: capi-noop-inventory
-          path: perf/capi_noop_inventory.json
-          if-no-files-found: ignore
+          python-version: "3.14"
 
-      - name: Run full test suite
-        run: cargo test -q
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
-      - name: CPython harness parity lane
-        run: cargo test -q --test cpython_harness
+      - name: Download CPython 3.14.3 Lib
+        run: |
+          curl -fsSL -o /tmp/Python-3.14.3.tgz https://www.python.org/ftp/python/3.14.3/Python-3.14.3.tgz
+          tar -xzf /tmp/Python-3.14.3.tgz -C /tmp
+          echo "PYRS_CPYTHON_LIB=/tmp/Python-3.14.3/Lib" >> "$GITHUB_ENV"
 
-      - name: Extension smoke lane
-        run: cargo test -q --test extension_smoke
+      - name: Build debug pyrs binary
+        run: cargo build -q --bin pyrs
 
       - name: NumPy bring-up probe (non-blocking)
         continue-on-error: true
@@ -124,8 +247,28 @@ jobs:
           path: perf/numpy_gate_direct_latest.json
           if-no-files-found: ignore
 
+  dispatch-hotpath-benchmark:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
       - name: Dispatch hotpath benchmark smoke (non-blocking)
-        continue-on-error: true
         run: ./scripts/bench_dispatch_hotpath.sh 5
 
       - name: Upload dispatch benchmark artifact
@@ -136,28 +279,8 @@ jobs:
           path: perf/dispatch_hotpath_bench.txt
           if-no-files-found: ignore
 
-      - name: Run parity gate profile
-        env:
-          PYRS_CPYTHON_BIN: python3
-        run: ./scripts/run_parity_gate.sh
-
-      - name: Upload builtin parity artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: builtin-parity-report
-          path: perf/builtin_parity_report.json
-          if-no-files-found: ignore
-
-      - name: Run coverage gate (enforced soft floors)
-        env:
-          PYRS_COVERAGE_ENFORCE: "1"
-          PYRS_COVERAGE_MIN_REGIONS: "70"
-          PYRS_COVERAGE_MIN_FUNCTIONS: "65"
-          PYRS_COVERAGE_MIN_LINES: "70"
-        run: ./scripts/run_coverage_gate.sh
-
   sanitizer-stability:
+    needs: integrity
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
