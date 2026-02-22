@@ -1034,6 +1034,7 @@ pub struct Vm {
     synthetic_builtin_classes: HashMap<String, ObjRef>,
     exception_parents: HashMap<String, String>,
     finalized_del_objects: HashSet<u64>,
+    cleared_weakref_objects: HashSet<u64>,
     pending_del_instances: HashMap<u64, ObjRef>,
     weakref_finalizers: HashMap<u64, (Weak<Obj>, Vec<ObjRef>)>,
     atexit_handlers: Vec<AtexitHandler>,
@@ -1284,6 +1285,7 @@ impl Vm {
             synthetic_builtin_classes: HashMap::new(),
             exception_parents: HashMap::new(),
             finalized_del_objects: HashSet::new(),
+            cleared_weakref_objects: HashSet::new(),
             pending_del_instances: HashMap::new(),
             weakref_finalizers: HashMap::new(),
             atexit_handlers: Vec::new(),
@@ -1440,6 +1442,113 @@ impl Vm {
 
     pub(super) fn capi_registry_mark_freed(&mut self, ptr: usize) {
         self.capi_object_registry.mark_freed(ptr);
+    }
+
+    pub(super) fn capi_registry_set_gc_tracked_override(
+        &mut self,
+        ptr: usize,
+        tracked: bool,
+    ) -> bool {
+        self.capi_object_registry
+            .set_gc_tracked_override(ptr, tracked)
+    }
+
+    pub(super) fn capi_registry_gc_tracked_override(&self, ptr: usize) -> Option<bool> {
+        self.capi_object_registry.gc_tracked_override(ptr)
+    }
+
+    pub(super) fn capi_registry_set_gc_finalized(&mut self, ptr: usize, finalized: bool) -> bool {
+        self.capi_object_registry.set_gc_finalized(ptr, finalized)
+    }
+
+    pub(super) fn capi_registry_is_gc_finalized(&self, ptr: usize) -> bool {
+        self.capi_object_registry.is_gc_finalized(ptr)
+    }
+
+    pub(super) fn is_object_gc_finalized(&self, object_id: u64) -> bool {
+        self.finalized_del_objects.contains(&object_id)
+            || self.cleared_weakref_objects.contains(&object_id)
+    }
+
+    pub(super) fn mark_object_weakrefs_cleared(&mut self, object_id: u64) {
+        self.cleared_weakref_objects.insert(object_id);
+    }
+
+    pub(super) fn clear_runtime_weakrefs_for_target_id(&mut self, target_id: u64) {
+        self.mark_object_weakrefs_cleared(target_id);
+        let mut wrappers: Vec<(ObjRef, Option<Value>)> = Vec::new();
+        for object in self.heap.snapshot_objects() {
+            let Object::Module(module_data) = &*object.kind() else {
+                continue;
+            };
+            if !matches!(
+                module_data.globals.get("__pyrs_weakref_ref__"),
+                Some(Value::Bool(true))
+            ) {
+                continue;
+            }
+            let wrapper_target_id = match module_data.globals.get("target_id") {
+                Some(Value::Int(value)) if *value >= 0 => *value as u64,
+                _ => continue,
+            };
+            if wrapper_target_id != target_id {
+                continue;
+            }
+            let callback = module_data
+                .globals
+                .get("callback")
+                .cloned()
+                .and_then(|value| {
+                    if matches!(value, Value::None) {
+                        None
+                    } else {
+                        Some(value)
+                    }
+                });
+            wrappers.push((object.clone(), callback));
+        }
+
+        for (wrapper, _) in &wrappers {
+            if let Object::Module(module_data) = &mut *wrapper.kind_mut() {
+                module_data
+                    .globals
+                    .insert("target_id".to_string(), Value::Int(-1));
+                module_data
+                    .globals
+                    .insert("callback".to_string(), Value::None);
+            }
+        }
+
+        for (wrapper, callback) in wrappers {
+            let Some(callback) = callback else {
+                continue;
+            };
+            let weakref_value =
+                self.alloc_builtin_bound_method(BuiltinFunction::WeakRefRef, wrapper.clone());
+            match self.call_internal_preserving_caller(
+                callback,
+                vec![weakref_value],
+                HashMap::new(),
+            ) {
+                Ok(InternalCallOutcome::Value(_))
+                | Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.active_exception = None;
+                    }
+                }
+                Err(err) => {
+                    let exception = self.runtime_error_to_exception_value(err);
+                    self.emit_unraisable_exception(
+                        exception,
+                        Some(Value::Module(wrapper.clone())),
+                        Some("Exception ignored while calling weakref callback"),
+                    );
+                    if let Some(frame) = self.frames.last_mut() {
+                        frame.active_exception = None;
+                    }
+                }
+            }
+        }
     }
 
     pub(super) fn current_thread_ident_value(&self) -> i64 {
@@ -2645,6 +2754,7 @@ impl Vm {
         for obj in unreachable {
             let obj_id = obj.id();
             self.pending_del_instances.remove(&obj_id);
+            self.cleared_weakref_objects.remove(&obj_id);
             self.hash_states.remove(&obj_id);
             self.zlib_compress_objects.remove(&obj_id);
             self.zlib_decompress_objects.remove(&obj_id);

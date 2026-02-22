@@ -10237,6 +10237,149 @@ PyInit_cpython_api_batch69_probe(void) {
 }
 
 #[test]
+fn cpython_compat_gc_weakref_lifecycle_abi_batch70_apis_work() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython api batch70 smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython api batch70 smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_api_batch70");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_api_batch70_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+static PyObject *
+run(PyObject *self, PyObject *args) {
+    (void)self;
+    (void)args;
+
+    PyObject *main_mod = PyImport_AddModule("__main__");
+    PyObject *globals = main_mod ? PyModule_GetDict(main_mod) : 0;
+    PyObject *compiled = globals
+        ? Py_CompileString("def _batch70_target():\n    return 1\n", "<batch70>", 257)
+        : 0;
+    PyObject *exec_res = (compiled && globals) ? PyEval_EvalCode(compiled, globals, globals) : 0;
+    Py_XDECREF(compiled);
+    Py_XDECREF(exec_res);
+    PyObject *target = globals ? PyDict_GetItemString(globals, "_batch70_target") : 0;
+    Py_XINCREF(target);
+    PyObject *weak = target ? PyWeakref_NewRef(target, 0) : 0;
+    int weak_created_ok = (weak != 0) ? 1 : 0;
+
+    int tracked_initial_ok = target ? (PyObject_GC_IsTracked(target) == 1) : 0;
+    if (target) {
+        PyObject_GC_UnTrack(target);
+    }
+    int untrack_ok = target ? (PyObject_GC_IsTracked(target) == 0) : 0;
+    if (target) {
+        PyObject_GC_Track(target);
+    }
+    int retrack_ok = target ? (PyObject_GC_IsTracked(target) == 1) : 0;
+
+    int clear_requires_dealloc_ok = 0;
+    if (target) {
+        PyErr_Clear();
+        PyObject_ClearWeakRefs(target);
+        clear_requires_dealloc_ok = (PyErr_Occurred() != 0) ? 1 : 0;
+        PyErr_Clear();
+    }
+
+    int clear_ok = 0;
+    int weak_dead_ok = 0;
+    int weak_getref_cleared_ok = 0;
+    int finalized_ok = 0;
+    if (target && weak) {
+        _Py_SetRefcnt(target, 0);
+        PyErr_Clear();
+        PyObject_ClearWeakRefs(target);
+        clear_ok = (PyErr_Occurred() == 0) ? 1 : 0;
+        PyErr_Clear();
+
+        weak_dead_ok = Py_IsNone(PyWeakref_GetObject(weak));
+        PyObject *strong = 0;
+        int getref_rc = PyWeakref_GetRef(weak, &strong);
+        weak_getref_cleared_ok = (getref_rc == 0 && strong == 0) ? 1 : 0;
+        Py_XDECREF(strong);
+
+        finalized_ok = (PyObject_GC_IsFinalized(target) == 1) ? 1 : 0;
+        _Py_SetRefcnt(target, 1);
+    }
+
+    Py_XDECREF(weak);
+    Py_XDECREF(target);
+
+    return Py_BuildValue(
+        "(iiiiiiiii)",
+        weak_created_ok,
+        tracked_initial_ok,
+        untrack_ok,
+        retrack_ok,
+        clear_requires_dealloc_ok,
+        clear_ok,
+        weak_dead_ok,
+        weak_getref_cleared_ok,
+        finalized_ok
+    );
+}
+
+static PyMethodDef module_methods[] = {
+    {"run", run, METH_NOARGS, "probe gc + weakref lifecycle ABI APIs"},
+    {0, 0, 0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_api_batch70_probe",
+    "cpython api batch70 probe module",
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_api_batch70_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+    if (PyModule_AddFunctions(module, module_methods) != 0) {
+        return 0;
+    }
+    return module;
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_api_batch70_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("cpython api batch70 extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_api_batch70_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1), res",
+    )
+    .expect("cpython api batch70 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn dynamic_extension_can_set_module_values_via_object_handles() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping object-handle extension smoke (pyrs binary not found)");

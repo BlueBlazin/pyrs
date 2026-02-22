@@ -265,6 +265,7 @@ PyObject *PyModule_FromDefAndSpec2(PyModuleDef *module, PyObject *spec, int modu
 int PyModule_ExecDef(PyObject *module, PyModuleDef *def);
 PyModuleDef *PyModule_GetDef(PyObject *module);
 void *PyModule_GetState(PyObject *module);
+PyObject *PyModule_GetDict(PyObject *module);
 
 PyObject *PyModule_NewObject(PyObject *name);
 PyObject *PyModule_New(const char *name);
@@ -1009,6 +1010,7 @@ void PyBuffer_Release(Py_buffer *view);
 
 PyObject *PyDict_New(void);
 int PyDict_SetItem(PyObject *dict, PyObject *key, PyObject *value);
+PyObject *PyDict_GetItemString(PyObject *dict, const char *key);
 PyObject *PyDict_Keys(PyObject *dict);
 PyObject *PyDict_Values(PyObject *dict);
 PyObject *PyDict_Items(PyObject *dict);
@@ -1148,8 +1150,11 @@ long long PyGC_Collect(void);
 int PyGC_Enable(void);
 int PyGC_Disable(void);
 int PyGC_IsEnabled(void);
+void PyObject_GC_Track(PyObject *object);
+void PyObject_GC_UnTrack(PyObject *object);
 int PyObject_GC_IsTracked(PyObject *object);
 int PyObject_GC_IsFinalized(PyObject *object);
+void PyObject_ClearWeakRefs(PyObject *object);
 
 PyObject *PyFile_FromFd(
     int fd,

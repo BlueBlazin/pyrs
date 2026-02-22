@@ -79,6 +79,8 @@ pub(crate) struct CapiPtrEntry {
     pub(crate) owned_refs: usize,
     pub(crate) stolen_refs: usize,
     pub(crate) external_pins: usize,
+    pub(crate) gc_tracked_override: Option<bool>,
+    pub(crate) gc_finalized: bool,
 }
 
 impl CapiPtrEntry {
@@ -98,6 +100,8 @@ impl CapiPtrEntry {
             owned_refs: 0,
             stolen_refs: 0,
             external_pins: 0,
+            gc_tracked_override: None,
+            gc_finalized: false,
         }
     }
 }
@@ -131,13 +135,16 @@ impl CapiObjectRegistry {
         }
         if let Some(existing) = self.entries.get_mut(&ptr) {
             let was_freed = existing.lifecycle == CapiPtrLifecycleState::Freed;
+            let object_id_changed = object_id.is_some() && existing.object_id != object_id;
             existing.provenance = provenance;
             existing.lifecycle = CapiPtrLifecycleState::Alive;
-            if was_freed {
+            if was_freed || object_id_changed {
                 existing.borrowed_refs = 0;
                 existing.owned_refs = 0;
                 existing.stolen_refs = 0;
                 existing.external_pins = 0;
+                existing.gc_tracked_override = None;
+                existing.gc_finalized = false;
             }
             if object_id.is_some() {
                 existing.object_id = object_id;
@@ -294,12 +301,64 @@ impl CapiObjectRegistry {
                 entry.owned_refs = 0;
                 entry.stolen_refs = 0;
                 entry.external_pins = 0;
+                entry.gc_tracked_override = None;
+                entry.gc_finalized = false;
             }
             entry.lifecycle = CapiPtrLifecycleState::Alive;
             return true;
         }
         self.register_ptr(ptr, CapiPtrProvenance::OwnedCompat, None);
         true
+    }
+
+    pub(crate) fn set_gc_tracked_override(&mut self, ptr: usize, tracked: bool) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(&ptr) else {
+            return false;
+        };
+        if entry.lifecycle == CapiPtrLifecycleState::Freed {
+            return false;
+        }
+        entry.gc_tracked_override = Some(tracked);
+        true
+    }
+
+    pub(crate) fn gc_tracked_override(&self, ptr: usize) -> Option<bool> {
+        if ptr == 0 {
+            return None;
+        }
+        self.entries.get(&ptr).and_then(|entry| {
+            if entry.lifecycle == CapiPtrLifecycleState::Freed {
+                None
+            } else {
+                entry.gc_tracked_override
+            }
+        })
+    }
+
+    pub(crate) fn set_gc_finalized(&mut self, ptr: usize, finalized: bool) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        let Some(entry) = self.entries.get_mut(&ptr) else {
+            return false;
+        };
+        if entry.lifecycle == CapiPtrLifecycleState::Freed {
+            return false;
+        }
+        entry.gc_finalized = finalized;
+        true
+    }
+
+    pub(crate) fn is_gc_finalized(&self, ptr: usize) -> bool {
+        if ptr == 0 {
+            return false;
+        }
+        self.entries.get(&ptr).is_some_and(|entry| {
+            entry.lifecycle != CapiPtrLifecycleState::Freed && entry.gc_finalized
+        })
     }
 
     pub(crate) fn mark_pending_free(&mut self, ptr: usize) {
@@ -333,6 +392,8 @@ impl CapiObjectRegistry {
         };
         entry.lifecycle = CapiPtrLifecycleState::Freed;
         entry.external_pins = 0;
+        entry.gc_tracked_override = None;
+        entry.gc_finalized = false;
         if let Some(id) = entry.object_id
             && self.object_ptr_by_id.get(&id).copied() == Some(ptr)
         {
@@ -556,5 +617,23 @@ mod tests {
         assert!(registry.contains_live_or_pending(0x66));
         registry.mark_freed(0x66);
         assert!(!registry.contains_live_or_pending(0x66));
+    }
+
+    #[test]
+    fn gc_state_flags_reset_when_entry_is_freed_or_reused() {
+        let mut registry = CapiObjectRegistry::default();
+        registry.register_ptr(0x123, CapiPtrProvenance::OwnedCompat, Some(1));
+        assert!(registry.set_gc_tracked_override(0x123, true));
+        assert_eq!(registry.gc_tracked_override(0x123), Some(true));
+        assert!(registry.set_gc_finalized(0x123, true));
+        assert!(registry.is_gc_finalized(0x123));
+
+        registry.mark_freed(0x123);
+        assert_eq!(registry.gc_tracked_override(0x123), None);
+        assert!(!registry.is_gc_finalized(0x123));
+
+        registry.register_ptr(0x123, CapiPtrProvenance::OwnedCompat, Some(2));
+        assert_eq!(registry.gc_tracked_override(0x123), None);
+        assert!(!registry.is_gc_finalized(0x123));
     }
 }

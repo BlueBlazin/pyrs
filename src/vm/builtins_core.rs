@@ -8549,7 +8549,9 @@ impl Vm {
             // CPython clears weakrefs when object finalization begins.
             // Keep weakrefs dead even if the object is still temporarily reachable
             // during __del__ side-effects (e.g. warnings source payloads).
-            if self.finalized_del_objects.contains(&target_id) {
+            if self.finalized_del_objects.contains(&target_id)
+                || self.cleared_weakref_objects.contains(&target_id)
+            {
                 return Ok(Value::None);
             }
             let Some(obj) = self.heap.find_object_by_id(target_id) else {

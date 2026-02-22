@@ -1639,6 +1639,18 @@ impl Heap {
             .count()
     }
 
+    pub fn snapshot_objects(&self) -> Vec<ObjRef> {
+        let mut registry = self.registry.borrow_mut();
+        registry.retain(|weak| weak.strong_count() > 0);
+        let mut out = Vec::new();
+        for weak in registry.iter() {
+            if let Some(obj) = weak.upgrade() {
+                out.push(ObjRef::from_rc(obj));
+            }
+        }
+        out
+    }
+
     pub fn find_object_by_id(&self, id: u64) -> Option<ObjRef> {
         let mut registry = self.registry.borrow_mut();
         registry.retain(|weak| weak.strong_count() > 0);

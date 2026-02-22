@@ -38,10 +38,40 @@ pub unsafe extern "C" fn PyObject_Free(ptr: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyObject_GC_Track(_object: *mut c_void) {}
+pub unsafe extern "C" fn PyObject_GC_Track(object: *mut c_void) {
+    if object.is_null() {
+        return;
+    }
+    let _ = with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            return;
+        };
+        if !cpython_value_supports_gc_tracking(&value) || context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let _ = vm.capi_registry_set_gc_tracked_override(object as usize, true);
+    });
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyObject_GC_UnTrack(_object: *mut c_void) {}
+pub unsafe extern "C" fn PyObject_GC_UnTrack(object: *mut c_void) {
+    if object.is_null() {
+        return;
+    }
+    let _ = with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            return;
+        };
+        if !cpython_value_supports_gc_tracking(&value) || context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let _ = vm.capi_registry_set_gc_tracked_override(object as usize, false);
+    });
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GC_IsTracked(object: *mut c_void) -> i32 {
@@ -49,7 +79,45 @@ pub unsafe extern "C" fn PyObject_GC_IsTracked(object: *mut c_void) -> i32 {
         Ok(value) => value,
         Err(_) => return 0,
     };
-    let tracked = matches!(
+    let mut tracked = cpython_value_supports_gc_tracking(&value);
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        if let Some(override_value) = vm.capi_registry_gc_tracked_override(object as usize) {
+            tracked = override_value;
+        }
+    });
+    i32::from(tracked)
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GC_IsFinalized(object: *mut c_void) -> i32 {
+    let value = match cpython_value_from_ptr(object) {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    if !cpython_value_supports_gc_tracking(&value) {
+        return 0;
+    }
+    let object_id = cpython_identity_object_id(&value);
+    let mut finalized = false;
+    let _ = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return;
+        }
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        finalized = vm.capi_registry_is_gc_finalized(object as usize)
+            || object_id.is_some_and(|id| vm.is_object_gc_finalized(id));
+    });
+    i32::from(finalized)
+}
+
+fn cpython_value_supports_gc_tracking(value: &Value) -> bool {
+    matches!(
         value,
         Value::List(_)
             | Value::Tuple(_)
@@ -60,13 +128,34 @@ pub unsafe extern "C" fn PyObject_GC_IsTracked(object: *mut c_void) -> i32 {
             | Value::Class(_)
             | Value::Module(_)
             | Value::MemoryView(_)
-    );
-    i32::from(tracked)
+            | Value::Function(_)
+            | Value::BoundMethod(_)
+            | Value::Cell(_)
+    )
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PyObject_GC_IsFinalized(_object: *mut c_void) -> i32 {
-    0
+fn cpython_identity_object_id(value: &Value) -> Option<u64> {
+    match value {
+        Value::List(obj)
+        | Value::Tuple(obj)
+        | Value::Dict(obj)
+        | Value::DictKeys(obj)
+        | Value::Set(obj)
+        | Value::FrozenSet(obj)
+        | Value::Bytes(obj)
+        | Value::ByteArray(obj)
+        | Value::MemoryView(obj)
+        | Value::Iterator(obj)
+        | Value::Generator(obj)
+        | Value::Module(obj)
+        | Value::Class(obj)
+        | Value::Instance(obj)
+        | Value::Super(obj)
+        | Value::Function(obj)
+        | Value::BoundMethod(obj)
+        | Value::Cell(obj) => Some(obj.id()),
+        _ => None,
+    }
 }
 
 #[unsafe(no_mangle)]
