@@ -16,13 +16,13 @@ use reedline::{
 };
 use reedline::{EditCommand, Highlighter, Hinter};
 
+use super::{format_compile_error, format_syntax_error};
 use crate::VERSION;
 use crate::ast::{AssignTarget, Module, StmtKind};
 use crate::compiler;
 use crate::parser::{self, ParseError};
 use crate::runtime::{Object, Value};
 use crate::vm::Vm;
-use super::{format_compile_error, format_syntax_error};
 
 const HISTORY_CAPACITY: usize = 10_000;
 const INDENT_WIDTH: usize = 4;
@@ -1795,7 +1795,8 @@ fn execute_module_source(
     echo_expression_result: bool,
 ) -> Result<(), String> {
     vm.cache_source_text(filename, source);
-    let module = parser::parse_module(source).map_err(|err| format_parse_error(source, filename, &err))?;
+    let module =
+        parser::parse_module(source).map_err(|err| format_parse_error(source, filename, &err))?;
     execute_parsed_module(vm, &module, source, filename, echo_expression_result)
 }
 

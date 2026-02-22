@@ -128,8 +128,8 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
     vm.cache_source_text(path, &source);
 
-    let module = parser::parse_module(&source)
-        .map_err(|err| format_syntax_error(path, &source, &err))?;
+    let module =
+        parser::parse_module(&source).map_err(|err| format_syntax_error(path, &source, &err))?;
 
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format_compile_error(path, &source, &err))?;
@@ -201,7 +201,9 @@ fn render_syntax_diagnostic(
         output.push_str(&source_line);
         output.push('\n');
         if caret_start > 0 {
-            let start = caret_start.saturating_sub(1).min(source_line.chars().count());
+            let start = caret_start
+                .saturating_sub(1)
+                .min(source_line.chars().count());
             let width = infer_syntax_caret_width(&source_line, start, diagnostic);
             output.push_str("    ");
             output.push_str(&" ".repeat(start));
@@ -237,7 +239,11 @@ fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
 
     if let Some(issue) = detect_delimiter_issue(source) {
         return match issue {
-            DelimiterIssue::UnmatchedClose { close, line, column } => SyntaxDiagnostic {
+            DelimiterIssue::UnmatchedClose {
+                close,
+                line,
+                column,
+            } => SyntaxDiagnostic {
                 error_type: "SyntaxError",
                 message: format!("unmatched '{}'", close),
                 line,
@@ -329,7 +335,10 @@ fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
                 detected_line
             )
         } else {
-            format!("unterminated string literal (detected at line {})", detected_line)
+            format!(
+                "unterminated string literal (detected at line {})",
+                detected_line
+            )
         };
         return SyntaxDiagnostic {
             error_type: "SyntaxError",
@@ -380,10 +389,7 @@ fn source_line_and_caret_start(
         let line = &source_lines[last_index];
         let leading = line.chars().take_while(|ch| ch.is_whitespace()).count();
         let visible_len = line.chars().count().saturating_sub(leading);
-        (
-            last_index,
-            visible_len.saturating_add(1),
-        )
+        (last_index, visible_len.saturating_add(1))
     };
     let line = source_lines.get(line_index)?.clone();
     let leading = line.chars().take_while(|ch| ch.is_whitespace()).count();
@@ -492,7 +498,11 @@ fn detect_delimiter_issue(source: &str) -> Option<DelimiterIssue> {
         .map(|(open, line, column)| DelimiterIssue::UnclosedOpen { open, line, column })
 }
 
-fn infer_syntax_caret_width(source_line: &str, start: usize, diagnostic: &SyntaxDiagnostic) -> usize {
+fn infer_syntax_caret_width(
+    source_line: &str,
+    start: usize,
+    diagnostic: &SyntaxDiagnostic,
+) -> usize {
     let chars: Vec<char> = source_line.chars().collect();
     if chars.is_empty() || start >= chars.len() {
         return 1;
@@ -519,10 +529,13 @@ fn infer_syntax_caret_width(source_line: &str, start: usize, diagnostic: &Syntax
 }
 
 fn line_end_column(source: &str, line: usize) -> Option<usize> {
-    source
-        .lines()
-        .nth(line.saturating_sub(1))
-        .map(|entry| entry.trim_end_matches('\r').chars().count().saturating_add(1))
+    source.lines().nth(line.saturating_sub(1)).map(|entry| {
+        entry
+            .trim_end_matches('\r')
+            .chars()
+            .count()
+            .saturating_add(1)
+    })
 }
 
 fn line_colon_after_column(source: &str, line: usize, column: usize) -> Option<usize> {

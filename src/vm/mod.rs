@@ -1350,7 +1350,16 @@ impl Vm {
             instruction_steps: 0,
         };
         let main = vm.main_module.clone();
-        vm.set_module_metadata(&main, "__main__", None, None, false, Vec::new(), false);
+        vm.set_module_metadata(
+            &main,
+            "__main__",
+            None,
+            None,
+            None,
+            false,
+            Vec::new(),
+            false,
+        );
         vm.install_sys_module();
         vm.install_importlib_modules();
         // Provide CPython core `_random` substrate; stdlib `random.py` layers on top.
@@ -3051,7 +3060,8 @@ impl Vm {
         if filename.is_empty() || line == 0 {
             return None;
         }
-        if !self.source_text_cache.contains_key(filename) && !filename.starts_with('<')
+        if !self.source_text_cache.contains_key(filename)
+            && !filename.starts_with('<')
             && let Ok(source) = fs::read_to_string(filename)
         {
             self.cache_source_text(filename, &source);
@@ -3108,7 +3118,16 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
-        self.set_module_metadata(&sys_module, "sys", None, None, false, Vec::new(), false);
+        self.set_module_metadata(
+            &sys_module,
+            "sys",
+            None,
+            None,
+            None,
+            false,
+            Vec::new(),
+            false,
+        );
         if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
             let flags = match self.heap.alloc_module(ModuleObject::new("sys.flags")) {
                 Value::Module(obj) => obj,
@@ -3824,6 +3843,7 @@ impl Vm {
             &importlib,
             "importlib",
             None,
+            None,
             Some(BUILTIN_MODULE_LOADER),
             true,
             Vec::new(),
@@ -3856,6 +3876,7 @@ impl Vm {
         self.set_module_metadata(
             &util,
             "importlib.util",
+            None,
             None,
             Some(BUILTIN_MODULE_LOADER),
             false,
@@ -4156,6 +4177,7 @@ impl Vm {
             &random_module,
             "_random",
             None,
+            None,
             Some(BUILTIN_MODULE_LOADER),
             false,
             Vec::new(),
@@ -4213,6 +4235,7 @@ impl Vm {
         self.set_module_metadata(
             &random_fallback,
             "random",
+            None,
             None,
             Some(BUILTIN_MODULE_LOADER),
             false,
@@ -4276,6 +4299,7 @@ impl Vm {
         self.set_module_metadata(
             &module,
             name,
+            None,
             None,
             Some(BUILTIN_MODULE_LOADER),
             false,
@@ -4426,6 +4450,7 @@ impl Vm {
         self.set_module_metadata(
             &module,
             "builtins",
+            None,
             None,
             Some(BUILTIN_MODULE_LOADER),
             false,

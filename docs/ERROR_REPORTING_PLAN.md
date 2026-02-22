@@ -68,7 +68,8 @@ Status: in progress (started 2026-02-22).
     - `'yield from' outside function`,
     - `'return' with value in async generator`,
     - `global`/`nonlocal` declaration-order and scope diagnostics
-      (`used prior`, `assigned before`, module-level `nonlocal`, and missing nonlocal binding).
+      (`used prior`, `assigned before`, module-level `nonlocal`, missing nonlocal binding,
+      parameter/global conflict, parameter/nonlocal conflict, nonlocal/global conflict).
   - CLI/REPL compile diagnostics now render in `SyntaxError` shape; `-c` mode follows CPython by
     omitting source+caret for semantic compile errors, while file/stdin paths still include line
     source and caret when span data is available.

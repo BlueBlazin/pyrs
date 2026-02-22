@@ -324,6 +324,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - pyc-first status:
     - the previously observed `AttributeError: str has no attribute 'value'` repro was caused by a stale local cache-only `__pycache__/enum.cpython-314.pyc` shadowing stdlib enum in the workspace root.
     - with that stale local cache removed, the minimal enum pyc repro now follows CPython behavior; remaining pyc work is long-tail parity/perf closure.
+    - source-bound pyc imports now preserve CPython-style metadata:
+      - `__file__` / `__spec__.origin` resolve to source `.py` when available,
+      - `__cached__` / `__spec__.cached` resolve to the loaded `.pyc` path.
+    - vm regression `tests/vm.rs::cpython_enum_path_supports_member_value_and_name` now runs import/compile execution on a large-stack worker thread to avoid Rust test-harness thread stack overflow during deep stdlib import recursion.
   - pyc compatibility closure (latest):
     - marshal loader now accepts `TYPE_ELLIPSIS ('.')`, `TYPE_STOPITER ('S')`, and arbitrary-size `TYPE_LONG ('l')` constants (decoded to `BigInt` when needed).
     - pyc constant translation now supports bytes constants.

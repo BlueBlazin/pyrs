@@ -1059,10 +1059,7 @@ fn record_scope_activity_pattern(
                 seen_assign.insert(name.clone(), span);
             }
         }
-        Pattern::Wildcard
-        | Pattern::Constant(_)
-        | Pattern::Value(_)
-        | Pattern::Star(None) => {}
+        Pattern::Wildcard | Pattern::Constant(_) | Pattern::Value(_) | Pattern::Star(None) => {}
     }
 }
 
@@ -2730,7 +2727,10 @@ impl Compiler {
                 compiler.compile_decorated_stmt(decorators, stmt)
             }
             StmtKind::Return { value } => {
-                if !matches!(compiler.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+                if !matches!(
+                    compiler.scope.scope_type,
+                    ScopeType::Function | ScopeType::Lambda
+                ) {
                     return Err(compiler.syntax_error_here("'return' outside function"));
                 }
                 if compiler.code.is_async_generator && value.is_some() {
@@ -2957,7 +2957,10 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::Yield { value } => {
-                if !matches!(compiler.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+                if !matches!(
+                    compiler.scope.scope_type,
+                    ScopeType::Function | ScopeType::Lambda
+                ) {
                     return Err(compiler.syntax_error_here("'yield' outside function"));
                 }
                 if let Some(value) = value {
@@ -2969,7 +2972,10 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::YieldFrom { value } => {
-                if !matches!(compiler.scope.scope_type, ScopeType::Function | ScopeType::Lambda) {
+                if !matches!(
+                    compiler.scope.scope_type,
+                    ScopeType::Function | ScopeType::Lambda
+                ) {
                     return Err(compiler.syntax_error_here("'yield from' outside function"));
                 }
                 compiler.compile_expr(value)?;

@@ -160,6 +160,7 @@ impl Vm {
                     &replacement,
                     &module_name,
                     Some(&source_path),
+                    None,
                     Some(SOURCE_FILE_LOADER),
                     is_package,
                     package_dirs.clone(),
@@ -7813,7 +7814,10 @@ impl Vm {
         end_column: usize,
         name: &str,
     ) {
-        output.push_str(&format!("  File \"{}\", line {}, in {}\n", filename, line, name));
+        output.push_str(&format!(
+            "  File \"{}\", line {}, in {}\n",
+            filename, line, name
+        ));
         if line > 0
             && let Some(source_line) = self.traceback_source_line(filename, line)
         {
@@ -12091,7 +12095,9 @@ fn render_traceback_caret_line(
     if char_count == 0 {
         return None;
     }
-    let start = start_column.saturating_sub(1).min(char_count.saturating_sub(1));
+    let start = start_column
+        .saturating_sub(1)
+        .min(char_count.saturating_sub(1));
     let fallback = infer_traceback_caret_end(source_line, start);
     let mut end_exclusive = if end_column > 0 {
         end_column.saturating_sub(1)

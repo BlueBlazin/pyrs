@@ -704,14 +704,11 @@ impl Vm {
         } else {
             SOURCE_FILE_LOADER
         };
-        let origin = if source_info.is_namespace {
-            None
-        } else {
-            Some(&source_info.path)
-        };
+        let (origin, cached) = self.module_origin_and_cached_paths(&source_info);
         Ok(self.build_module_spec_value(
             &resolved_name,
-            origin,
+            origin.as_ref(),
+            cached.as_ref(),
             Some(loader_name),
             source_info.is_package,
             source_info.package_dirs.as_slice(),
@@ -774,8 +771,15 @@ impl Vm {
         };
         let is_package = !matches!(normalized_search_locations, Value::None);
         let location_path = PathBuf::from(&location);
-        let spec =
-            self.build_module_spec_value(&name, Some(&location_path), None, is_package, &[], false);
+        let spec = self.build_module_spec_value(
+            &name,
+            Some(&location_path),
+            None,
+            None,
+            is_package,
+            &[],
+            false,
+        );
         self.set_module_spec_field(&spec, "loader", loader);
         self.set_module_spec_field(
             &spec,
@@ -914,6 +918,7 @@ impl Vm {
         };
         let spec = self.build_module_spec_value(
             &name,
+            None,
             None,
             if matches!(loader, Value::None) {
                 None

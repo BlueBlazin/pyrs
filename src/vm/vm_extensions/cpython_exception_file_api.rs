@@ -5,12 +5,11 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     CpythonBaseExceptionCompatObject, InternalCallOutcome, ModuleCapiContext, ObjRef, Py_DecRef,
-    PyErr_BadInternalCall,
-    PyErr_Occurred, PyExc_EOFError, PyExc_SystemError, PyExc_TypeError, PyLong_FromLong,
-    PyObject_CallObject, PyObject_CallOneArg, PyObject_GetAttrString, PyObject_Str,
-    PyUnicode_AsUTF8, PyUnicode_FromString, Vm, c_name_to_string, cpython_new_bytes_ptr,
-    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error, cpython_value_from_ptr,
-    with_active_cpython_context_mut,
+    PyErr_BadInternalCall, PyErr_Occurred, PyExc_EOFError, PyExc_SystemError, PyExc_TypeError,
+    PyLong_FromLong, PyObject_CallObject, PyObject_CallOneArg, PyObject_GetAttrString,
+    PyObject_Str, PyUnicode_AsUTF8, PyUnicode_FromString, Vm, c_name_to_string,
+    cpython_new_bytes_ptr, cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
+    cpython_value_from_ptr, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]

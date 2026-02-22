@@ -956,7 +956,12 @@ fn decode_cpython_linetable_locations(
                 let end_line_delta = read_varint_from_linetable(linetable, &mut cursor)?;
                 let start_column = read_varint_from_linetable(linetable, &mut cursor)? - 1;
                 let end_column = read_varint_from_linetable(linetable, &mut cursor)? - 1;
-                (start_line, start_column, start_line + end_line_delta, end_column)
+                (
+                    start_line,
+                    start_column,
+                    start_line + end_line_delta,
+                    end_column,
+                )
             }
             PY_CODE_LOCATION_INFO_NO_COLUMNS => {
                 let line_delta = read_signed_varint_from_linetable(linetable, &mut cursor)?;

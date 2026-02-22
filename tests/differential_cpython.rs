@@ -158,7 +158,8 @@ fn compile_temp_pyc(source: &str, module_name: &str) -> Result<(PathBuf, PathBuf
     ));
     std::fs::create_dir_all(&base).map_err(|err| format!("failed to create temp dir: {err}"))?;
     let py_path = base.join(format!("{module_name}.py"));
-    std::fs::write(&py_path, source).map_err(|err| format!("failed to write temp source: {err}"))?;
+    std::fs::write(&py_path, source)
+        .map_err(|err| format!("failed to write temp source: {err}"))?;
     let output = Command::new(&bin)
         .arg("-m")
         .arg("py_compile")
@@ -678,7 +679,11 @@ fn differential_syntax_error_shape_matches_cpython() {
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
     assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
-    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(
+        !ours.contains("Traceback (most recent call last):"),
+        "{}",
+        ours
+    );
     assert!(py.contains("File \"<string>\", line 1"), "{}", py);
     assert!(ours.contains("File \"<string>\", line 1"), "{}", ours);
     assert!(py.contains("\n    x =\n"), "{}", py);
@@ -732,8 +737,7 @@ fn differential_indentation_error_shape_matches_cpython() {
     let ours = run_pyrs_traceback(source).expect("pyrs indentation error should run");
     assert!(py.contains("IndentationError:"), "{}", py);
     assert!(ours.contains("IndentationError:"), "{}", ours);
-    let py_caret =
-        caret_line_after_source(&py, "    print(1)").expect("python indentation caret");
+    let py_caret = caret_line_after_source(&py, "    print(1)").expect("python indentation caret");
     let ours_caret =
         caret_line_after_source(&ours, "    print(1)").expect("pyrs indentation caret");
     assert_eq!(py_caret, ours_caret, "indentation caret mismatch");
@@ -751,7 +755,10 @@ fn differential_unmatched_closing_delimiter_matches_cpython() {
     assert!(ours.contains("SyntaxError: unmatched ']'"), "{}", ours);
     let py_caret = caret_line_after_source(&py, "    ]").expect("python unmatched caret");
     let ours_caret = caret_line_after_source(&ours, "    ]").expect("pyrs unmatched caret");
-    assert_eq!(py_caret, ours_caret, "unmatched closing-delimiter caret mismatch");
+    assert_eq!(
+        py_caret, ours_caret,
+        "unmatched closing-delimiter caret mismatch"
+    );
 }
 
 #[test]
@@ -767,7 +774,10 @@ fn differential_mismatched_closing_delimiter_matches_cpython() {
     assert!(ours.contains(expected), "{}", ours);
     let py_caret = caret_line_after_source(&py, "    ([)]").expect("python mismatch caret");
     let ours_caret = caret_line_after_source(&ours, "    ([)]").expect("pyrs mismatch caret");
-    assert_eq!(py_caret, ours_caret, "mismatched closing-delimiter caret mismatch");
+    assert_eq!(
+        py_caret, ours_caret,
+        "mismatched closing-delimiter caret mismatch"
+    );
 }
 
 #[test]
@@ -795,7 +805,11 @@ fn differential_unexpected_indent_matches_cpython() {
     let py = run_cpython_traceback_file(source).expect("CPython indentation error should run");
     let ours = run_pyrs_traceback_file(source).expect("pyrs indentation error should run");
     assert!(py.contains("IndentationError: unexpected indent"), "{}", py);
-    assert!(ours.contains("IndentationError: unexpected indent"), "{}", ours);
+    assert!(
+        ours.contains("IndentationError: unexpected indent"),
+        "{}",
+        ours
+    );
     assert!(!py.contains("^\n"), "{}", py);
     assert!(!ours.contains("^\n"), "{}", ours);
 }
@@ -811,9 +825,10 @@ fn differential_unindent_mismatch_matches_cpython() {
     let expected = "IndentationError: unindent does not match any outer indentation level";
     assert!(py.contains(expected), "{}", py);
     assert!(ours.contains(expected), "{}", ours);
-    let py_caret = caret_line_after_source(&py, "      pass").or_else(|| caret_line_after_source(&py, "    pass"));
-    let ours_caret =
-        caret_line_after_source(&ours, "      pass").or_else(|| caret_line_after_source(&ours, "    pass"));
+    let py_caret = caret_line_after_source(&py, "      pass")
+        .or_else(|| caret_line_after_source(&py, "    pass"));
+    let ours_caret = caret_line_after_source(&ours, "      pass")
+        .or_else(|| caret_line_after_source(&ours, "    pass"));
     assert_eq!(py_caret, ours_caret, "unindent-mismatch caret mismatch");
 }
 
@@ -827,8 +842,10 @@ fn differential_class_header_colon_inside_unclosed_paren_is_invalid_syntax() {
     let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
     assert!(py.contains("SyntaxError: invalid syntax"), "{}", py);
     assert!(ours.contains("SyntaxError: invalid syntax"), "{}", ours);
-    let py_caret = caret_line_after_source(&py, "    class A(:").expect("python class-header caret");
-    let ours_caret = caret_line_after_source(&ours, "    class A(:").expect("pyrs class-header caret");
+    let py_caret =
+        caret_line_after_source(&py, "    class A(:").expect("python class-header caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    class A(:").expect("pyrs class-header caret");
     assert_eq!(py_caret, ours_caret, "class-header caret mismatch");
 }
 
@@ -919,11 +936,9 @@ fn differential_pyc_traceback_identifier_caret_span_matches_cpython() {
         compile_temp_pyc(source, "traceback_nameerror").expect("compile pyc should succeed");
     let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
         .expect("CPython .pyc traceback should run");
-    let ours = run_traceback_via_pyc_file(
-        &pyrs_bin_path().expect("pyrs binary not found"),
-        &pyc_path,
-    )
-    .expect("pyrs .pyc traceback should run");
+    let ours =
+        run_traceback_via_pyc_file(&pyrs_bin_path().expect("pyrs binary not found"), &pyc_path)
+            .expect("pyrs .pyc traceback should run");
     assert!(py.contains("NameError"), "{}", py);
     assert!(ours.contains("NameError"), "{}", ours);
     let py_caret = caret_line_after_source(&py, "    x = foo").expect("python pyc caret");
@@ -946,11 +961,9 @@ except Exception:
         compile_temp_pyc(source, "traceback_context_chain").expect("compile pyc should succeed");
     let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
         .expect("CPython .pyc traceback should run");
-    let ours = run_traceback_via_pyc_file(
-        &pyrs_bin_path().expect("pyrs binary not found"),
-        &pyc_path,
-    )
-    .expect("pyrs .pyc traceback should run");
+    let ours =
+        run_traceback_via_pyc_file(&pyrs_bin_path().expect("pyrs binary not found"), &pyc_path)
+            .expect("pyrs .pyc traceback should run");
     assert_eq!(traceback_heading_count(&py), 2, "{}", py);
     assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
     assert!(
@@ -989,11 +1002,9 @@ except Exception:
         .expect("compile pyc should succeed");
     let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
         .expect("CPython .pyc traceback should run");
-    let ours = run_traceback_via_pyc_file(
-        &pyrs_bin_path().expect("pyrs binary not found"),
-        &pyc_path,
-    )
-    .expect("pyrs .pyc traceback should run");
+    let ours =
+        run_traceback_via_pyc_file(&pyrs_bin_path().expect("pyrs binary not found"), &pyc_path)
+            .expect("pyrs .pyc traceback should run");
     assert_eq!(traceback_heading_count(&py), 1, "{}", py);
     assert_eq!(traceback_heading_count(&ours), 1, "{}", ours);
     assert!(
@@ -1042,11 +1053,9 @@ except Exception as exc:
         compile_temp_pyc(source, "traceback_direct_cause_pyc").expect("compile pyc should succeed");
     let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
         .expect("CPython .pyc traceback should run");
-    let ours = run_traceback_via_pyc_file(
-        &pyrs_bin_path().expect("pyrs binary not found"),
-        &pyc_path,
-    )
-    .expect("pyrs .pyc traceback should run");
+    let ours =
+        run_traceback_via_pyc_file(&pyrs_bin_path().expect("pyrs binary not found"), &pyc_path)
+            .expect("pyrs .pyc traceback should run");
     assert_eq!(traceback_heading_count(&py), 2, "{}", py);
     assert_eq!(traceback_heading_count(&ours), 2, "{}", ours);
     assert!(
@@ -1134,15 +1143,13 @@ fn differential_pyc_traceback_mixed_cause_and_context_chain_matches_cpython_shap
 except Exception:
     raise RuntimeError("r")
 "#;
-    let (base, pyc_path) = compile_temp_pyc(source, "traceback_mixed_chain_pyc")
-        .expect("compile pyc should succeed");
+    let (base, pyc_path) =
+        compile_temp_pyc(source, "traceback_mixed_chain_pyc").expect("compile pyc should succeed");
     let py = run_traceback_via_pyc_file(&cpython_bin_or_panic(), &pyc_path)
         .expect("CPython .pyc traceback should run");
-    let ours = run_traceback_via_pyc_file(
-        &pyrs_bin_path().expect("pyrs binary not found"),
-        &pyc_path,
-    )
-    .expect("pyrs .pyc traceback should run");
+    let ours =
+        run_traceback_via_pyc_file(&pyrs_bin_path().expect("pyrs binary not found"), &pyc_path)
+            .expect("pyrs .pyc traceback should run");
     assert_eq!(traceback_heading_count(&py), 3, "{}", py);
     assert_eq!(traceback_heading_count(&ours), 3, "{}", ours);
     assert!(
@@ -1188,9 +1195,21 @@ fn differential_semantic_syntax_return_outside_function_matches_cpython() {
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
     assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
-    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
-    assert!(py.contains("SyntaxError: 'return' outside function"), "{}", py);
-    assert!(ours.contains("SyntaxError: 'return' outside function"), "{}", ours);
+    assert!(
+        !ours.contains("Traceback (most recent call last):"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("SyntaxError: 'return' outside function"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: 'return' outside function"),
+        "{}",
+        ours
+    );
     assert_eq!(
         traceback_lines_without_source_carets(&py),
         traceback_lines_without_source_carets(&ours),
@@ -1207,9 +1226,17 @@ fn differential_semantic_syntax_break_outside_loop_matches_cpython() {
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
     assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
-    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
+    assert!(
+        !ours.contains("Traceback (most recent call last):"),
+        "{}",
+        ours
+    );
     assert!(py.contains("SyntaxError: 'break' outside loop"), "{}", py);
-    assert!(ours.contains("SyntaxError: 'break' outside loop"), "{}", ours);
+    assert!(
+        ours.contains("SyntaxError: 'break' outside loop"),
+        "{}",
+        ours
+    );
     assert_eq!(
         traceback_lines_without_source_carets(&py),
         traceback_lines_without_source_carets(&ours),
@@ -1226,8 +1253,16 @@ fn differential_semantic_syntax_continue_outside_loop_matches_cpython() {
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
     assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
-    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
-    assert!(py.contains("SyntaxError: 'continue' not properly in loop"), "{}", py);
+    assert!(
+        !ours.contains("Traceback (most recent call last):"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("SyntaxError: 'continue' not properly in loop"),
+        "{}",
+        py
+    );
     assert!(
         ours.contains("SyntaxError: 'continue' not properly in loop"),
         "{}",
@@ -1249,9 +1284,21 @@ fn differential_semantic_syntax_await_outside_function_matches_cpython() {
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
     assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
-    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
-    assert!(py.contains("SyntaxError: 'await' outside function"), "{}", py);
-    assert!(ours.contains("SyntaxError: 'await' outside function"), "{}", ours);
+    assert!(
+        !ours.contains("Traceback (most recent call last):"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("SyntaxError: 'await' outside function"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: 'await' outside function"),
+        "{}",
+        ours
+    );
     assert_eq!(
         traceback_lines_without_source_carets(&py),
         traceback_lines_without_source_carets(&ours),
@@ -1268,9 +1315,21 @@ fn differential_semantic_syntax_yield_outside_function_matches_cpython() {
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
     assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
-    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
-    assert!(py.contains("SyntaxError: 'yield' outside function"), "{}", py);
-    assert!(ours.contains("SyntaxError: 'yield' outside function"), "{}", ours);
+    assert!(
+        !ours.contains("Traceback (most recent call last):"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("SyntaxError: 'yield' outside function"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: 'yield' outside function"),
+        "{}",
+        ours
+    );
     assert_eq!(
         traceback_lines_without_source_carets(&py),
         traceback_lines_without_source_carets(&ours),
@@ -1287,8 +1346,16 @@ fn differential_semantic_syntax_yield_from_outside_function_matches_cpython() {
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
     assert!(!py.contains("Traceback (most recent call last):"), "{}", py);
-    assert!(!ours.contains("Traceback (most recent call last):"), "{}", ours);
-    assert!(py.contains("SyntaxError: 'yield from' outside function"), "{}", py);
+    assert!(
+        !ours.contains("Traceback (most recent call last):"),
+        "{}",
+        ours
+    );
+    assert!(
+        py.contains("SyntaxError: 'yield from' outside function"),
+        "{}",
+        py
+    );
     assert!(
         ours.contains("SyntaxError: 'yield from' outside function"),
         "{}",
@@ -1309,7 +1376,11 @@ fn differential_semantic_syntax_return_with_value_in_async_generator_matches_cpy
     let source = "async def f():\n    yield 1\n    return 2\n";
     let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
-    assert!(py.contains("SyntaxError: 'return' with value in async generator"), "{}", py);
+    assert!(
+        py.contains("SyntaxError: 'return' with value in async generator"),
+        "{}",
+        py
+    );
     assert!(
         ours.contains("SyntaxError: 'return' with value in async generator"),
         "{}",
@@ -1330,7 +1401,11 @@ fn differential_semantic_syntax_global_used_prior_declaration_matches_cpython() 
     let source = "def f():\n    print(x)\n    global x\n";
     let py = run_cpython_traceback(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
-    assert!(py.contains("SyntaxError: name 'x' is used prior to global declaration"), "{}", py);
+    assert!(
+        py.contains("SyntaxError: name 'x' is used prior to global declaration"),
+        "{}",
+        py
+    );
     assert!(
         ours.contains("SyntaxError: name 'x' is used prior to global declaration"),
         "{}",
@@ -1431,7 +1506,11 @@ fn differential_semantic_syntax_global_used_prior_declaration_file_caret_matches
     let source = "def f():\n    print(x)\n    global x\n";
     let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
     let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
-    assert!(py.contains("SyntaxError: name 'x' is used prior to global declaration"), "{}", py);
+    assert!(
+        py.contains("SyntaxError: name 'x' is used prior to global declaration"),
+        "{}",
+        py
+    );
     assert!(
         ours.contains("SyntaxError: name 'x' is used prior to global declaration"),
         "{}",
@@ -1444,5 +1523,130 @@ fn differential_semantic_syntax_global_used_prior_declaration_file_caret_matches
         traceback_lines_without_source_carets(&py),
         traceback_lines_without_source_carets(&ours),
         "semantic global-used-prior file syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_parameter_and_global_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f(x):\n    global x\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(
+        py.contains("SyntaxError: name 'x' is parameter and global"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: name 'x' is parameter and global"),
+        "{}",
+        ours
+    );
+    let py_caret = caret_line_after_source(&py, "    global x").expect("python param/global caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    global x").expect("pyrs param/global caret");
+    assert_eq!(py_caret, ours_caret, "parameter/global caret mismatch");
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic parameter/global syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_parameter_and_nonlocal_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f(x):\n    nonlocal x\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(
+        py.contains("SyntaxError: name 'x' is parameter and nonlocal"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: name 'x' is parameter and nonlocal"),
+        "{}",
+        ours
+    );
+    let py_caret =
+        caret_line_after_source(&py, "    nonlocal x").expect("python param/nonlocal caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    nonlocal x").expect("pyrs param/nonlocal caret");
+    assert_eq!(py_caret, ours_caret, "parameter/nonlocal caret mismatch");
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic parameter/nonlocal syntax mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_nonlocal_and_global_conflict_global_first_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f():\n    global x\n    nonlocal x\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(
+        py.contains("SyntaxError: name 'x' is nonlocal and global"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: name 'x' is nonlocal and global"),
+        "{}",
+        ours
+    );
+    let py_caret =
+        caret_line_after_source(&py, "    global x").expect("python nonlocal/global caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    global x").expect("pyrs nonlocal/global caret");
+    assert_eq!(
+        py_caret, ours_caret,
+        "nonlocal/global (global first) caret mismatch"
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic nonlocal/global (global first) mismatch"
+    );
+}
+
+#[test]
+fn differential_semantic_syntax_nonlocal_and_global_conflict_nonlocal_first_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f():\n    nonlocal x\n    global x\n";
+    let py = run_cpython_traceback_file(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback_file(source).expect("pyrs syntax error should run");
+    assert!(
+        py.contains("SyntaxError: name 'x' is nonlocal and global"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("SyntaxError: name 'x' is nonlocal and global"),
+        "{}",
+        ours
+    );
+    let py_caret =
+        caret_line_after_source(&py, "    nonlocal x").expect("python nonlocal/global caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    nonlocal x").expect("pyrs nonlocal/global caret");
+    assert_eq!(
+        py_caret, ours_caret,
+        "nonlocal/global (nonlocal first) caret mismatch"
+    );
+    assert_eq!(
+        traceback_lines_without_source_carets(&py),
+        traceback_lines_without_source_carets(&ours),
+        "semantic nonlocal/global (nonlocal first) mismatch"
     );
 }

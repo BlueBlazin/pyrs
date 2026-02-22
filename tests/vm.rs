@@ -5662,17 +5662,26 @@ fn cpython_enum_path_supports_member_value_and_name() {
         return;
     };
     let source = "import enum\npath = getattr(enum, '__file__', '')\nnorm = path.replace('\\\\', '/')\nclass E(enum.Enum):\n    A = 1\nok_member = (E.A.value == 1 and E.A.name == 'A' and '/Lib/enum.py' in norm)\n";
-    let module = parser::parse_module(source).expect("parse should succeed");
-    let code = compiler::compile_module(&module).expect("compile should succeed");
-    let mut vm = Vm::new();
-    vm.add_module_path(lib_path.clone());
-    vm.execute(&code).expect("enum probe should execute");
-    let enum_path = match vm.get_global("norm") {
-        Some(Value::Str(path)) => path,
-        other => panic!("expected enum probe path, got {other:?}"),
-    };
-    assert!(enum_path.contains("/Lib/enum.py"));
-    assert_eq!(vm.get_global("ok_member"), Some(Value::Bool(true)));
+    let lib_path_for_vm = lib_path.clone();
+    std::thread::Builder::new()
+        .name("enum-cpython-path-probe".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path_for_vm);
+            vm.execute(&code).expect("enum probe should execute");
+            let enum_path = match vm.get_global("norm") {
+                Some(Value::Str(path)) => path,
+                other => panic!("expected enum probe path, got {other:?}"),
+            };
+            assert!(enum_path.contains("/Lib/enum.py"));
+            assert_eq!(vm.get_global("ok_member"), Some(Value::Bool(true)));
+        })
+        .expect("spawn enum cpython-path probe")
+        .join()
+        .expect("enum cpython-path probe thread should succeed");
 
     let pyrs_bin = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/pyrs");
     if !pyrs_bin.is_file() {
@@ -9332,7 +9341,8 @@ fn rejects_async_generator_return_with_value_with_syntax_message() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let err = compiler::compile_module(&module).expect_err("compile should fail");
     assert!(
-        err.message.contains("'return' with value in async generator"),
+        err.message
+            .contains("'return' with value in async generator"),
         "unexpected message: {}",
         err.message
     );
@@ -9348,11 +9358,15 @@ fn rejects_global_used_prior_declaration_with_syntax_message() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let err = compiler::compile_module(&module).expect_err("compile should fail");
     assert!(
-        err.message.contains("name 'x' is used prior to global declaration"),
+        err.message
+            .contains("name 'x' is used prior to global declaration"),
         "unexpected message: {}",
         err.message
     );
-    assert!(err.span.is_some(), "expected span for global declaration error");
+    assert!(
+        err.span.is_some(),
+        "expected span for global declaration error"
+    );
 }
 
 #[test]
@@ -9361,11 +9375,15 @@ fn rejects_global_assigned_prior_declaration_with_syntax_message() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let err = compiler::compile_module(&module).expect_err("compile should fail");
     assert!(
-        err.message.contains("name 'x' is assigned to before global declaration"),
+        err.message
+            .contains("name 'x' is assigned to before global declaration"),
         "unexpected message: {}",
         err.message
     );
-    assert!(err.span.is_some(), "expected span for global declaration error");
+    assert!(
+        err.span.is_some(),
+        "expected span for global declaration error"
+    );
 }
 
 #[test]
@@ -9374,11 +9392,15 @@ fn rejects_module_nonlocal_with_cpython_message() {
     let module = parser::parse_module(source).expect("parse should succeed");
     let err = compiler::compile_module(&module).expect_err("compile should fail");
     assert!(
-        err.message.contains("nonlocal declaration not allowed at module level"),
+        err.message
+            .contains("nonlocal declaration not allowed at module level"),
         "unexpected message: {}",
         err.message
     );
-    assert!(err.span.is_some(), "expected span for nonlocal module error");
+    assert!(
+        err.span.is_some(),
+        "expected span for nonlocal module error"
+    );
 }
 
 #[test]
@@ -9391,7 +9413,74 @@ fn rejects_nonlocal_without_binding_with_cpython_message() {
         "unexpected message: {}",
         err.message
     );
-    assert!(err.span.is_some(), "expected span for nonlocal binding error");
+    assert!(
+        err.span.is_some(),
+        "expected span for nonlocal binding error"
+    );
+}
+
+#[test]
+fn rejects_parameter_and_global_conflict_with_cpython_message() {
+    let source = "def f(x):\n    global x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("name 'x' is parameter and global"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(
+        err.span.is_some(),
+        "expected span for parameter/global declaration error"
+    );
+}
+
+#[test]
+fn rejects_parameter_and_nonlocal_conflict_with_cpython_message() {
+    let source = "def f(x):\n    nonlocal x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("name 'x' is parameter and nonlocal"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(
+        err.span.is_some(),
+        "expected span for parameter/nonlocal declaration error"
+    );
+}
+
+#[test]
+fn rejects_nonlocal_global_conflict_with_global_first() {
+    let source = "def f():\n    global x\n    nonlocal x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("name 'x' is nonlocal and global"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(
+        err.span.is_some(),
+        "expected span for nonlocal/global declaration error"
+    );
+}
+
+#[test]
+fn rejects_nonlocal_global_conflict_with_nonlocal_first() {
+    let source = "def f():\n    nonlocal x\n    global x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let err = compiler::compile_module(&module).expect_err("compile should fail");
+    assert!(
+        err.message.contains("name 'x' is nonlocal and global"),
+        "unexpected message: {}",
+        err.message
+    );
+    assert!(
+        err.span.is_some(),
+        "expected span for nonlocal/global declaration error"
+    );
 }
 
 #[test]
@@ -15081,9 +15170,18 @@ except Exception:
         .matches("Traceback (most recent call last):")
         .count();
     assert_eq!(traceback_count, 2, "{}", err.message);
-    assert!(err.message.contains("File \"<traceback-test>\", line 4, in <module>"));
-    assert!(err.message.contains("File \"<traceback-test>\", line 2, in <module>"));
-    assert!(err.message.contains("raise AttributeError(\"three\\n four\")"));
+    assert!(
+        err.message
+            .contains("File \"<traceback-test>\", line 4, in <module>")
+    );
+    assert!(
+        err.message
+            .contains("File \"<traceback-test>\", line 2, in <module>")
+    );
+    assert!(
+        err.message
+            .contains("raise AttributeError(\"three\\n four\")")
+    );
     assert!(err.message.contains("raise AttributeError(\"one\\n two\")"));
     assert!(err.message.contains("AttributeError: one"));
     assert!(err.message.contains("AttributeError: three"));

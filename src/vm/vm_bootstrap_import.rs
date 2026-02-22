@@ -237,10 +237,9 @@ impl Vm {
                 err.offset, err.message
             ))
         })?;
-        let code = compiler::compile_module_with_filename(&module_ast, &source_filename)
-            .map_err(|err| {
-                RuntimeError::new(format!("compile error in module '{name}': {}", err.message))
-            })?;
+        let code = compiler::compile_module_with_filename(&module_ast, &source_filename).map_err(
+            |err| RuntimeError::new(format!("compile error in module '{name}': {}", err.message)),
+        )?;
         self.mark_module_initializing(module);
         let code = Rc::new(code);
         let cells = self.build_cells(&code, Vec::new());
@@ -1375,6 +1374,7 @@ impl Vm {
             &pyexpat_model_module,
             "pyexpat.model",
             None,
+            None,
             Some(BUILTIN_MODULE_LOADER),
             false,
             Vec::new(),
@@ -1389,6 +1389,7 @@ impl Vm {
         self.set_module_metadata(
             &pyexpat_errors_module,
             "pyexpat.errors",
+            None,
             None,
             Some(BUILTIN_MODULE_LOADER),
             false,
@@ -1642,6 +1643,7 @@ impl Vm {
                 &decoder_module,
                 "json.decoder",
                 None,
+                None,
                 Some(BUILTIN_MODULE_LOADER),
                 false,
                 Vec::new(),
@@ -1650,6 +1652,7 @@ impl Vm {
             self.set_module_metadata(
                 &scanner_module,
                 "json.scanner",
+                None,
                 None,
                 Some(BUILTIN_MODULE_LOADER),
                 false,
@@ -3411,6 +3414,7 @@ impl Vm {
             self.set_module_metadata(
                 &types_alias,
                 "_types",
+                None,
                 None,
                 Some(BUILTIN_MODULE_LOADER),
                 false,
@@ -6541,15 +6545,12 @@ impl Vm {
         };
 
         let module = self.create_module_for_loader(name, loader_name)?;
-        let origin = if source_info.is_namespace {
-            None
-        } else {
-            Some(&source_info.path)
-        };
+        let (metadata_origin, metadata_cached) = self.module_origin_and_cached_paths(&source_info);
         self.set_module_metadata(
             &module,
             name,
-            origin,
+            metadata_origin.as_ref(),
+            metadata_cached.as_ref(),
             Some(loader_name),
             source_info.is_package,
             source_info.package_dirs.clone(),
@@ -6582,6 +6583,26 @@ impl Vm {
                 "unsupported loader for module creation: {loader_name}"
             ))),
         }
+    }
+
+    pub(super) fn module_origin_and_cached_paths(
+        &self,
+        source_info: &ModuleSourceInfo,
+    ) -> (Option<PathBuf>, Option<PathBuf>) {
+        if source_info.is_namespace {
+            return (None, None);
+        }
+        if source_info.is_bytecode {
+            let cached = Some(source_info.path.clone());
+            let source_path = PathBuf::from(source_path_from_cache_path(
+                &source_info.path.to_string_lossy(),
+            ));
+            if source_path.is_file() {
+                return (Some(source_path), cached);
+            }
+            return (Some(source_info.path.clone()), cached);
+        }
+        (Some(source_info.path.clone()), None)
     }
 
     pub(super) fn exec_module_for_loader(
@@ -6653,6 +6674,7 @@ impl Vm {
                                 module,
                                 name,
                                 Some(&source_path),
+                                None,
                                 Some(SOURCE_FILE_LOADER),
                                 source_info.is_package,
                                 source_info.package_dirs.clone(),
@@ -7176,7 +7198,7 @@ impl Vm {
             Value::Module(obj) => obj,
             _ => unreachable!(),
         };
-        self.set_module_metadata(&module, name, None, None, false, Vec::new(), false);
+        self.set_module_metadata(&module, name, None, None, None, false, Vec::new(), false);
         self.register_module(name, module.clone());
         module
     }
@@ -7186,6 +7208,7 @@ impl Vm {
         module: &ObjRef,
         name: &str,
         origin: Option<&PathBuf>,
+        cached: Option<&PathBuf>,
         loader_name: Option<&str>,
         is_package: bool,
         package_dirs: Vec<PathBuf>,
@@ -7204,6 +7227,9 @@ impl Vm {
         let origin_value = origin
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
+        let cached_value = cached
+            .map(|path| Value::Str(path.to_string_lossy().to_string()))
+            .unwrap_or(Value::None);
         let submodule_locations = if is_package {
             let mut entries = Vec::new();
             for dir in package_dirs.iter() {
@@ -7216,6 +7242,7 @@ impl Vm {
         let spec_value = self.build_module_spec_value(
             name,
             origin,
+            cached,
             loader_name,
             is_package,
             package_dirs.as_slice(),
@@ -7243,6 +7270,16 @@ impl Vm {
                 module_data
                     .globals
                     .insert("__file__".to_string(), origin_value);
+            }
+            match cached_value {
+                Value::None => {
+                    module_data.globals.remove("__cached__");
+                }
+                _ => {
+                    module_data
+                        .globals
+                        .insert("__cached__".to_string(), cached_value);
+                }
             }
             if is_package {
                 module_data
@@ -7307,6 +7344,7 @@ impl Vm {
         &mut self,
         name: &str,
         origin: Option<&PathBuf>,
+        cached: Option<&PathBuf>,
         loader_name: Option<&str>,
         is_package: bool,
         package_dirs: &[PathBuf],
@@ -7318,6 +7356,9 @@ impl Vm {
             .unwrap_or_default();
         let loader_value = self.loader_spec_value(loader_name);
         let origin_value = origin
+            .map(|path| Value::Str(path.to_string_lossy().to_string()))
+            .unwrap_or(Value::None);
+        let cached_value = cached
             .map(|path| Value::Str(path.to_string_lossy().to_string()))
             .unwrap_or(Value::None);
         let submodule_locations = if is_package {
@@ -7382,7 +7423,7 @@ impl Vm {
                 .insert("has_location".to_string(), Value::Bool(origin.is_some()));
             instance_data
                 .attrs
-                .insert("cached".to_string(), Value::None);
+                .insert("cached".to_string(), cached_value);
         }
         Value::Instance(spec)
     }
