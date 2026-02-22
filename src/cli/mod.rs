@@ -162,29 +162,186 @@ fn run_command(source: &str, import_site: bool) -> Result<(), String> {
 }
 
 pub(super) fn format_syntax_error(filename: &str, source: &str, err: &ParseError) -> String {
+    let diagnostic = classify_syntax_error(source, err);
     let mut output = String::new();
-    output.push_str(&format!("  File \"{}\", line {}\n", filename, err.line));
-    if err.line > 0
-        && let Some(source_line) = source
-            .lines()
-            .nth(err.line.saturating_sub(1))
-            .map(|line| line.trim_end_matches('\r'))
-    {
+    output.push_str(&format!(
+        "  File \"{}\", line {}\n",
+        filename, diagnostic.line
+    ));
+    if let Some((source_line, caret_start)) = source_line_and_caret_start(source, &diagnostic) {
         output.push_str("    ");
-        output.push_str(source_line);
+        output.push_str(&source_line);
         output.push('\n');
-        if err.column > 0 {
-            let char_count = source_line.chars().count();
-            let start = err.column.saturating_sub(1).min(char_count);
+        if caret_start > 0 {
+            let start = caret_start.saturating_sub(1).min(source_line.chars().count());
+            let width = infer_syntax_caret_width(&source_line, start);
             output.push_str("    ");
             output.push_str(&" ".repeat(start));
-            output.push('^');
+            output.push_str(&"^".repeat(width));
             output.push('\n');
         }
     }
-    output.push_str("SyntaxError: ");
-    output.push_str(&err.message);
+    output.push_str(diagnostic.error_type);
+    output.push_str(": ");
+    output.push_str(&diagnostic.message);
     output
+}
+
+#[derive(Debug, Clone)]
+struct SyntaxDiagnostic {
+    error_type: &'static str,
+    message: String,
+    line: usize,
+    column: usize,
+}
+
+fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
+    if let Some((delimiter, line, column)) = detect_unclosed_delimiter(source) {
+        return SyntaxDiagnostic {
+            error_type: "SyntaxError",
+            message: format!("'{}' was never closed", delimiter),
+            line,
+            column,
+        };
+    }
+
+    let message_lower = err.message.to_ascii_lowercase();
+    if message_lower.starts_with("expected indent") {
+        return SyntaxDiagnostic {
+            error_type: "IndentationError",
+            message: "expected an indented block".to_string(),
+            line: err.line,
+            column: err.column,
+        };
+    }
+    if message_lower.starts_with("expected dedent") {
+        return SyntaxDiagnostic {
+            error_type: "IndentationError",
+            message: "unindent does not match any outer indentation level".to_string(),
+            line: err.line,
+            column: err.column,
+        };
+    }
+    if message_lower.starts_with("unexpected indent") {
+        return SyntaxDiagnostic {
+            error_type: "IndentationError",
+            message: "unexpected indent".to_string(),
+            line: err.line,
+            column: err.column,
+        };
+    }
+    if message_lower.contains("unterminated string literal")
+        && !message_lower.contains("(detected at line")
+    {
+        return SyntaxDiagnostic {
+            error_type: "SyntaxError",
+            message: format!("unterminated string literal (detected at line {})", err.line),
+            line: err.line,
+            column: err.column,
+        };
+    }
+    if message_lower.starts_with("expected ")
+        || message_lower.contains("unexpected token")
+        || message_lower.contains("unexpected character")
+    {
+        return SyntaxDiagnostic {
+            error_type: "SyntaxError",
+            message: "invalid syntax".to_string(),
+            line: err.line,
+            column: err.column,
+        };
+    }
+
+    SyntaxDiagnostic {
+        error_type: "SyntaxError",
+        message: err.message.clone(),
+        line: err.line,
+        column: err.column,
+    }
+}
+
+fn source_line_and_caret_start(
+    source: &str,
+    diagnostic: &SyntaxDiagnostic,
+) -> Option<(String, usize)> {
+    let source_lines = source
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_string())
+        .collect::<Vec<_>>();
+    if source_lines.is_empty() {
+        return None;
+    }
+
+    let requested_index = diagnostic.line.saturating_sub(1);
+    let (line_index, caret_start) = if requested_index < source_lines.len() {
+        (requested_index, diagnostic.column)
+    } else {
+        // EOF-oriented parser errors typically point to the next line; mirror CPython by
+        // showing the last source line and placing caret at end-of-line.
+        let last_index = source_lines.len().saturating_sub(1);
+        (
+            last_index,
+            source_lines[last_index].chars().count().saturating_add(1),
+        )
+    };
+    source_lines
+        .get(line_index)
+        .cloned()
+        .map(|line| (line, caret_start))
+}
+
+fn detect_unclosed_delimiter(source: &str) -> Option<(char, usize, usize)> {
+    let mut lexer = parser::lexer::Lexer::new(source);
+    let tokens = lexer.tokenize().ok()?;
+    let mut stack: Vec<(char, usize, usize)> = Vec::new();
+    for token in tokens {
+        match token.kind {
+            parser::token::TokenKind::LParen => stack.push(('(', token.line, token.column)),
+            parser::token::TokenKind::LBracket => stack.push(('[', token.line, token.column)),
+            parser::token::TokenKind::LBrace => stack.push(('{', token.line, token.column)),
+            parser::token::TokenKind::RParen => {
+                if stack.last().is_some_and(|(ch, _, _)| *ch == '(') {
+                    stack.pop();
+                }
+            }
+            parser::token::TokenKind::RBracket => {
+                if stack.last().is_some_and(|(ch, _, _)| *ch == '[') {
+                    stack.pop();
+                }
+            }
+            parser::token::TokenKind::RBrace => {
+                if stack.last().is_some_and(|(ch, _, _)| *ch == '{') {
+                    stack.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    stack.pop()
+}
+
+fn infer_syntax_caret_width(source_line: &str, start: usize) -> usize {
+    let chars: Vec<char> = source_line.chars().collect();
+    if chars.is_empty() || start >= chars.len() {
+        return 1;
+    }
+    let current = chars[start];
+    if is_identifier_start(current) {
+        let mut idx = start + 1;
+        while idx < chars.len() && is_identifier_continue(chars[idx]) {
+            idx += 1;
+        }
+        return idx.saturating_sub(start).max(1);
+    }
+    1
+}
+
+fn is_identifier_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
 }
 
 fn configure_vm_for_execution(
@@ -317,12 +474,8 @@ fn detect_virtualenv_site_packages_entries() -> Vec<PathBuf> {
 fn run_ast(path: &str) -> Result<(), String> {
     let source =
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
-    let module = parser::parse_module(&source).map_err(|err| {
-        format!(
-            "parse error at {} (line {}, column {}): {}",
-            err.offset, err.line, err.column, err.message
-        )
-    })?;
+    let module =
+        parser::parse_module(&source).map_err(|err| format_syntax_error(path, &source, &err))?;
     println!("{module:#?}");
     Ok(())
 }
@@ -330,12 +483,8 @@ fn run_ast(path: &str) -> Result<(), String> {
 fn run_bytecode(path: &str) -> Result<(), String> {
     let source =
         std::fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
-    let module = parser::parse_module(&source).map_err(|err| {
-        format!(
-            "parse error at {} (line {}, column {}): {}",
-            err.offset, err.line, err.column, err.message
-        )
-    })?;
+    let module =
+        parser::parse_module(&source).map_err(|err| format_syntax_error(path, &source, &err))?;
     let code = compiler::compile_module_with_filename(&module, path)
         .map_err(|err| format!("compile error: {}", err.message))?;
     print_code_recursive(&code, 0);

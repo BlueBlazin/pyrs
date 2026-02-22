@@ -582,3 +582,52 @@ fn differential_syntax_error_shape_matches_cpython() {
     assert!(py.contains("SyntaxError:"), "{}", py);
     assert!(ours.contains("SyntaxError:"), "{}", ours);
 }
+
+#[test]
+fn differential_invalid_syntax_span_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "if True print(1)";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError:"), "{}", py);
+    assert!(ours.contains("SyntaxError:"), "{}", ours);
+    let py_caret =
+        caret_line_after_source(&py, "    if True print(1)").expect("python invalid-syntax caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    if True print(1)").expect("pyrs invalid-syntax caret");
+    assert_eq!(py_caret, ours_caret, "invalid-syntax caret mismatch");
+}
+
+#[test]
+fn differential_unclosed_delimiter_shape_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "def f(";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(py.contains("was never closed"), "{}", py);
+    assert!(ours.contains("was never closed"), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    def f(").expect("python unclosed caret");
+    let ours_caret = caret_line_after_source(&ours, "    def f(").expect("pyrs unclosed caret");
+    assert_eq!(py_caret, ours_caret, "unclosed-delimiter caret mismatch");
+}
+
+#[test]
+fn differential_indentation_error_shape_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "if True:\nprint(1)";
+    let py = run_cpython_traceback(source).expect("CPython indentation error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs indentation error should run");
+    assert!(py.contains("IndentationError:"), "{}", py);
+    assert!(ours.contains("IndentationError:"), "{}", ours);
+    let py_caret =
+        caret_line_after_source(&py, "    print(1)").expect("python indentation caret");
+    let ours_caret =
+        caret_line_after_source(&ours, "    print(1)").expect("pyrs indentation caret");
+    assert_eq!(py_caret, ours_caret, "indentation caret mismatch");
+}
