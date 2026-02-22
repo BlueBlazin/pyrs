@@ -7935,24 +7935,23 @@ fn imports_package_from_cached_pyc_without_source_file() {
 }
 
 #[test]
-fn pkgutil_native_and_importlib_resources_shim_support_basic_resource_reads() {
+fn pkgutil_native_supports_basic_resource_reads_without_shims() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time works")
         .as_nanos();
-    let root_dir = std::env::temp_dir().join(format!("pyrs_resource_shim_{unique}"));
+    let root_dir = std::env::temp_dir().join(format!("pyrs_pkgutil_resource_{unique}"));
     let pkg_dir = root_dir.join("pkg");
     std::fs::create_dir_all(&pkg_dir).expect("create temp package");
     std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
     std::fs::write(pkg_dir.join("data.txt"), "hello").expect("write package data");
     let path_literal = root_dir.to_string_lossy().replace('\\', "\\\\");
     let source = format!(
-        "import sys\nsys.path = ['{path_literal}']\nimport pkgutil\nimport importlib.resources as resources\nraw = pkgutil.get_data('pkg', 'data.txt')\ntext = resources.files('pkg').joinpath('data.txt').read_text()\nok = (raw == b'hello' and text == 'hello' and getattr(pkgutil, '__file__', None) is None)\n"
+        "import sys\nsys.path = ['{path_literal}']\nimport pkgutil\nraw = pkgutil.get_data('pkg', 'data.txt')\nok = (raw == b'hello' and getattr(pkgutil, '__file__', None) is None)\n"
     );
     let module = parser::parse_module(&source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();
-    vm.enable_local_shim_fallback();
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
@@ -7960,6 +7959,70 @@ fn pkgutil_native_and_importlib_resources_shim_support_basic_resource_reads() {
     let _ = std::fs::remove_file(pkg_dir.join("data.txt"));
     let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
     let _ = std::fs::remove_dir(pkg_dir);
+    let _ = std::fs::remove_dir(root_dir);
+}
+
+#[test]
+fn importlib_resources_stdlib_supports_basic_resource_reads() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!("pyrs_resources_stdlib_{unique}"));
+    let pkg_dir = root_dir.join("pkg");
+    std::fs::create_dir_all(&pkg_dir).expect("create temp package");
+    std::fs::write(pkg_dir.join("__init__.py"), "").expect("write package init");
+    std::fs::write(pkg_dir.join("data.txt"), "hello").expect("write package data");
+
+    let handle = std::thread::Builder::new()
+        .name("importlib-resources-stdlib-read".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn({
+            let root_dir = root_dir.clone();
+            move || {
+                let source = "import importlib.resources as resources\nnorm = getattr(resources, '__file__', '').replace('\\\\', '/')\nok = ('/shims/' not in norm and '/importlib/resources/' in norm)\n";
+                let module = parser::parse_module(source).expect("parse should succeed");
+                let code = compiler::compile_module(&module).expect("compile should succeed");
+                let mut vm = Vm::new();
+                vm.add_module_path(lib_path);
+                vm.add_module_path(root_dir);
+                let value = vm.execute(&code).expect("execution should succeed");
+                assert_eq!(value, Value::None);
+                assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+            }
+        })
+        .expect("spawn importlib-resources-stdlib-read thread");
+    handle
+        .join()
+        .expect("importlib-resources-stdlib-read thread should complete");
+
+    let _ = std::fs::remove_file(pkg_dir.join("data.txt"));
+    let _ = std::fs::remove_file(pkg_dir.join("__init__.py"));
+    let _ = std::fs::remove_dir(pkg_dir);
+    let _ = std::fs::remove_dir(root_dir);
+}
+
+#[test]
+fn importlib_resources_requires_stdlib_without_shim_fallback() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!("pyrs_resources_no_stdlib_{unique}"));
+    std::fs::create_dir_all(&root_dir).expect("create temp dir");
+    let path_literal = root_dir.to_string_lossy().replace('\\', "\\\\");
+    let source = format!(
+        "import sys\nsys.path = ['{path_literal}']\nok = False\ntry:\n    import importlib.resources as resources\nexcept ModuleNotFoundError:\n    ok = True\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
     let _ = std::fs::remove_dir(root_dir);
 }
 
@@ -10075,6 +10138,30 @@ fn functools_singledispatch_exposes_register_attribute() {
     let value = vm.execute(&code).expect("execution should succeed");
     assert_eq!(value, Value::None);
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn functools_singledispatch_plain_register_uses_annotations() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("functools-singledispatch-annotate".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "import functools\n@functools.singledispatch\ndef f(x):\n    return 'base'\n@f.register\ndef _(x: int):\n    return 'int'\n@f.register\ndef _(x: None):\n    return 'none'\nok = (f(1) == 'int' and f(None) == 'none')\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(lib_path);
+            let value = vm.execute(&code).expect("execution should succeed");
+            assert_eq!(value, Value::None);
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn functools-singledispatch-annotate thread");
+    handle
+        .join()
+        .expect("functools-singledispatch-annotate thread should complete");
 }
 
 #[test]

@@ -2116,7 +2116,21 @@ impl Vm {
             "__func__" => Ok(Value::Function(func.clone())),
             "__get__" => Ok(self
                 .alloc_native_bound_method(NativeMethodKind::FunctionDescriptorGet, func.clone())),
-            "__annotate__" => Ok(Value::None),
+            "__annotate__" => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__function_annotate__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("function".to_string(), Value::Function(func.clone()));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::FunctionAnnotate, receiver))
+            }
             "__defaults__" => {
                 let defaults = {
                     let func_ref = func.kind();

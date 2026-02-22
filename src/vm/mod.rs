@@ -435,7 +435,7 @@ const LOGGING_PERCENT_VALIDATION_PATTERN: &str =
     r"%\(\w+\)[#0+ -]*(\*|\d+)?(\.(\*|\d+))?[diouxefgcrsa%]";
 const PKGUTIL_RESOLVE_NAME_PATTERN: &str =
     r"^(?P<pkg>(?!\d)(\w+)(\.(?!\d)(\w+))*)(?P<cln>:(?P<obj>(?!\d)(\w+)(\.(?!\d)(\w+))*)?)?$";
-const LOCAL_SHIM_MODULES: &[&str] = &["importlib.resources", "_ctypes"];
+const LOCAL_SHIM_MODULES: &[&str] = &["_ctypes"];
 const LOCAL_SHIM_PRECEDENCE_MODULES: &[&str] = &["_ctypes"];
 
 thread_local! {
@@ -1274,8 +1274,8 @@ impl Vm {
             extension_initialized_names: HashSet::new(),
             extension_init_failures: HashMap::new(),
             next_extension_callable_id: 1,
-            // Shim fallback is restricted by LOCAL_SHIM_MODULES and only used when normal
-            // path resolution fails, so keep it enabled by default (allow explicit opt-out).
+            // Shim fallback is restricted by LOCAL_SHIM_MODULES (`_ctypes`) and only used when
+            // normal path resolution fails, so keep it enabled by default (allow explicit opt-out).
             local_shim_fallback_enabled: !env_flag_enabled("PYRS_DISABLE_LOCAL_SHIMS"),
             prefer_pure_json_when_available: true,
             prefer_pure_pickle_when_available: true,
