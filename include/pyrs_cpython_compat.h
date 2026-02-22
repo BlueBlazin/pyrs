@@ -893,6 +893,8 @@ int Py_MakePendingCalls(void);
 int Py_AtExit(void (*func)(void));
 int Py_GetRecursionLimit(void);
 void Py_SetRecursionLimit(int new_limit);
+int Py_EnterRecursiveCall(const char *where);
+void Py_LeaveRecursiveCall(void);
 void Py_Initialize(void);
 void Py_InitializeEx(int initsigs);
 void Py_Finalize(void);
@@ -1073,6 +1075,7 @@ PyObject *PyErr_SetFromWindowsErr(int ierr);
 PyObject *PyErr_SetFromWindowsErrWithFilename(int ierr, const char *filename);
 void PyErr_SetInterrupt(void);
 int PyErr_SetInterruptEx(int signum);
+int PyErr_CheckSignals(void);
 int PyErr_WarnEx(PyObject *category, const char *message, long long stack_level);
 int PyErr_WarnFormat(PyObject *category, long long stack_level, const char *format);
 int PyErr_WarnExplicit(

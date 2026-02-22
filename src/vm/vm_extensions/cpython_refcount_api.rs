@@ -149,7 +149,9 @@ pub unsafe extern "C" fn _Py_NegativeRefcount(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn _Py_CheckRecursiveCall(_where: *const c_char) -> c_int {
+pub unsafe extern "C" fn _Py_CheckRecursiveCall(_where_ptr: *const c_char) -> c_int {
+    // CPython 3.14 only reports failure when the low-level C-stack guard trips.
+    // For non-overflowing paths this returns success.
     0
 }
 

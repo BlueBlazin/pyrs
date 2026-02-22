@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_long, c_uint, c_ulong, c_void};
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, Once, OnceLock};
 
 use super::capi_registry::{BorrowedRef, CapiPtrProvenance, CapiRefKind, OwnedRef, StolenRef};
@@ -413,10 +413,12 @@ use self::cpython_thread_runtime::{
     cpython_is_interned_unicode_ptr, cpython_is_known_interpreter_state_ptr,
     cpython_is_known_thread_state_ptr, cpython_lookup_interned_unicode_ptr,
     cpython_lookup_interned_unicode_text, cpython_main_interpreter_state_ptr,
-    cpython_main_thread_state_ptr, cpython_mark_thread_runtime_initialized, cpython_pending_calls,
-    cpython_read_sys_path_string, cpython_read_sys_string, cpython_register_interned_unicode,
+    cpython_main_thread_state_ptr, cpython_mark_pending_interrupt,
+    cpython_mark_thread_runtime_initialized, cpython_pending_calls, cpython_read_sys_path_string,
+    cpython_read_sys_string, cpython_register_interned_unicode,
     cpython_set_current_thread_state_ptr, cpython_set_wide_storage, cpython_store_argv_wide,
-    cpython_structseq_registry, cpython_thread_lock_registry, cpython_thread_runtime_initialized,
+    cpython_structseq_registry, cpython_take_pending_interrupt_signum,
+    cpython_thread_lock_registry, cpython_thread_runtime_initialized,
     cpython_thread_state_allocations, cpython_thread_tls_key_registry, cpython_thread_tls_values,
     cpython_thread_tss_registry, cpython_thread_tss_values,
 };
@@ -3290,6 +3292,7 @@ static CPYTHON_THREAD_TSS_VALUES: OnceLock<Mutex<HashMap<(u64, usize), usize>>> 
 static CPYTHON_PENDING_CALLS: OnceLock<Mutex<VecDeque<CpythonPendingCall>>> = OnceLock::new();
 static CPYTHON_ATEXIT_CALLBACKS: OnceLock<Mutex<Vec<unsafe extern "C" fn()>>> = OnceLock::new();
 static CPYTHON_RECURSION_LIMIT: AtomicI64 = AtomicI64::new(1000);
+static CPYTHON_PENDING_INTERRUPT_SIGNUM: AtomicI32 = AtomicI32::new(0);
 static CPYTHON_VERSION_TEXT: OnceLock<CString> = OnceLock::new();
 static CPYTHON_BUILD_INFO_TEXT: OnceLock<CString> = OnceLock::new();
 static CPYTHON_COMPILER_TEXT: OnceLock<CString> = OnceLock::new();

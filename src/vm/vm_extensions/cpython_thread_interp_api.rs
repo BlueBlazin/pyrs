@@ -697,12 +697,16 @@ pub unsafe extern "C" fn PyTraceMalloc_Untrack(_domain: usize, _ptr: usize) -> i
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Py_EnterRecursiveCall(_where: *const c_char) -> i32 {
+pub unsafe extern "C" fn Py_EnterRecursiveCall(_where_ptr: *const c_char) -> i32 {
+    // CPython 3.14 uses this as a C-stack guard hook; in non-overflowing
+    // execution it returns success and has no side effects.
     0
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Py_LeaveRecursiveCall() {}
+pub unsafe extern "C" fn Py_LeaveRecursiveCall() {
+    // CPython 3.14 counterpart is a no-op in the public ABI path.
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Py_IsInitialized() -> i32 {

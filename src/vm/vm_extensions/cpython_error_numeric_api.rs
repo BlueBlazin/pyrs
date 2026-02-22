@@ -18,10 +18,10 @@ use super::{
     PyUnicode_FromStringAndSize, c_name_to_string, cpython_bigint_low_u64, cpython_bigint_to_u64,
     cpython_call_builtin, cpython_exception_name_parts, cpython_exception_value_from_ptr,
     cpython_foreign_long_to_i64, cpython_foreign_long_to_u64, cpython_is_exception_instance,
-    cpython_is_type_object_ptr, cpython_new_ptr_for_value, cpython_set_error,
-    cpython_set_typed_error, cpython_structseq_count_fields, cpython_structseq_registry,
-    cpython_tuple_items_ptr, cpython_type_name_for_object_ptr, cpython_value_debug_tag,
-    cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, value_to_int,
+    cpython_is_type_object_ptr, cpython_mark_pending_interrupt, cpython_new_ptr_for_value,
+    cpython_set_error, cpython_set_typed_error, cpython_structseq_count_fields,
+    cpython_structseq_registry, cpython_tuple_items_ptr, cpython_type_name_for_object_ptr,
+    cpython_value_debug_tag, cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, value_to_int,
     with_active_cpython_context_mut,
 };
 
@@ -2184,7 +2184,8 @@ pub unsafe extern "C" fn PyErr_SetFromWindowsErrWithFilename(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_SetInterrupt() {
-    cpython_set_typed_error(std::ptr::null_mut(), "KeyboardInterrupt");
+    const SIGINT: i32 = 2;
+    cpython_mark_pending_interrupt(SIGINT);
 }
 
 #[unsafe(no_mangle)]
@@ -2192,7 +2193,7 @@ pub unsafe extern "C" fn PyErr_SetInterruptEx(signum: i32) -> i32 {
     if signum <= 0 {
         return -1;
     }
-    unsafe { PyErr_SetInterrupt() };
+    cpython_mark_pending_interrupt(signum);
     0
 }
 

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::c_void;
+use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 
@@ -8,14 +8,15 @@ use crate::runtime::{Object, Value};
 use super::{
     CPYTHON_ARGC, CPYTHON_ARGV, CPYTHON_ATEXIT_CALLBACKS, CPYTHON_HEAP_TYPE_REGISTRY,
     CPYTHON_INTERNED_UNICODE_REGISTRY, CPYTHON_INTERPRETER_STATE_ALLOCATIONS,
-    CPYTHON_IS_INITIALIZED, CPYTHON_PENDING_CALLS, CPYTHON_STRUCTSEQ_TYPE_REGISTRY,
-    CPYTHON_THREAD_LOCK_REGISTRY, CPYTHON_THREAD_RUNTIME_INITIALIZED,
-    CPYTHON_THREAD_STATE_ALLOCATIONS, CPYTHON_THREAD_TLS_KEY_REGISTRY, CPYTHON_THREAD_TLS_VALUES,
-    CPYTHON_THREAD_TSS_REGISTRY, CPYTHON_THREAD_TSS_VALUES, CURRENT_THREAD_STATE_PTR,
-    CpythonHeapTypeInfo, CpythonInternedUnicodeRegistry, CpythonPendingCall,
-    CpythonStructSeqTypeInfo, CpythonThreadStateCompat, Cwchar, MAIN_INTERPRETER_STATE_TOKEN,
-    MAIN_THREAD_STATE_STORAGE, cpython_string_to_wide_units, cpython_sys_module_obj,
-    vm_current_thread_ident, with_active_cpython_context_mut,
+    CPYTHON_IS_INITIALIZED, CPYTHON_PENDING_CALLS, CPYTHON_PENDING_INTERRUPT_SIGNUM,
+    CPYTHON_STRUCTSEQ_TYPE_REGISTRY, CPYTHON_THREAD_LOCK_REGISTRY,
+    CPYTHON_THREAD_RUNTIME_INITIALIZED, CPYTHON_THREAD_STATE_ALLOCATIONS,
+    CPYTHON_THREAD_TLS_KEY_REGISTRY, CPYTHON_THREAD_TLS_VALUES, CPYTHON_THREAD_TSS_REGISTRY,
+    CPYTHON_THREAD_TSS_VALUES, CURRENT_THREAD_STATE_PTR, CpythonHeapTypeInfo,
+    CpythonInternedUnicodeRegistry, CpythonPendingCall, CpythonStructSeqTypeInfo,
+    CpythonThreadStateCompat, Cwchar, MAIN_INTERPRETER_STATE_TOKEN, MAIN_THREAD_STATE_STORAGE,
+    cpython_string_to_wide_units, cpython_sys_module_obj, vm_current_thread_ident,
+    with_active_cpython_context_mut,
 };
 
 #[derive(Default)]
@@ -394,4 +395,16 @@ pub(super) fn cpython_gil_release_for_current_thread() -> bool {
     state.owner_thread_id = None;
     runtime.condvar.notify_one();
     true
+}
+
+pub(super) fn cpython_mark_pending_interrupt(signum: c_int) {
+    if signum <= 0 {
+        return;
+    }
+    CPYTHON_PENDING_INTERRUPT_SIGNUM.store(signum, Ordering::Relaxed);
+}
+
+pub(super) fn cpython_take_pending_interrupt_signum() -> Option<c_int> {
+    let signum = CPYTHON_PENDING_INTERRUPT_SIGNUM.swap(0, Ordering::Relaxed);
+    if signum > 0 { Some(signum) } else { None }
 }

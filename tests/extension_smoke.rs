@@ -3735,11 +3735,14 @@ PyInit_cpython_api_batch21_probe(void) {
 
     int interrupt_ok = 1;
     PyErr_SetInterrupt();
-    interrupt_ok &= error_is_set();
+    interrupt_ok &= !error_is_set();
+    interrupt_ok &= (PyErr_CheckSignals() == -1 && error_is_set());
     PyErr_Clear();
-    interrupt_ok &= (PyErr_SetInterruptEx(2) == 0 && error_is_set());
+    interrupt_ok &= (PyErr_CheckSignals() == 0 && !error_is_set());
+    interrupt_ok &= (PyErr_SetInterruptEx(2) == 0 && !error_is_set());
+    interrupt_ok &= (PyErr_CheckSignals() == -1 && error_is_set());
     PyErr_Clear();
-    interrupt_ok &= (PyErr_SetInterruptEx(-1) == -1);
+    interrupt_ok &= (PyErr_SetInterruptEx(-1) == -1 && !error_is_set());
 
     int syntax_ok = 1;
     PyErr_SyntaxLocation("syntax_a.py", 12);
@@ -10006,7 +10009,23 @@ run(PyObject *self, PyObject *args) {
     _Py_DecRef(value);
     int dec_ok = (Py_REFCNT(value) == 2) ? 1 : 0;
 
-    int recurse_ok = (_Py_CheckRecursiveCall("batch68") == 0) ? 1 : 0;
+    int recurse_ok = 1;
+    recurse_ok &= (_Py_CheckRecursiveCall("batch68") == 0) ? 1 : 0;
+    int old_limit = Py_GetRecursionLimit();
+    Py_SetRecursionLimit(4);
+    recurse_ok &= (Py_EnterRecursiveCall(" while probing recursion") == 0);
+    recurse_ok &= (Py_EnterRecursiveCall(" while probing recursion") == 0);
+    recurse_ok &= (Py_EnterRecursiveCall(" while probing recursion") == 0);
+    recurse_ok &= (Py_EnterRecursiveCall(" while probing recursion") == 0);
+    recurse_ok &= (_Py_CheckRecursiveCall(" while probing recursion") == 0 && PyErr_Occurred() == 0);
+    recurse_ok &= (Py_EnterRecursiveCall(" while probing recursion") == 0 && PyErr_Occurred() == 0);
+    Py_LeaveRecursiveCall();
+    Py_LeaveRecursiveCall();
+    Py_LeaveRecursiveCall();
+    Py_LeaveRecursiveCall();
+    Py_LeaveRecursiveCall();
+    recurse_ok &= (_Py_CheckRecursiveCall("batch68_after_leave") == 0) ? 1 : 0;
+    Py_SetRecursionLimit(old_limit);
 
     PyObject *gc_obj = _PyObject_GC_NewVar(0, 3);
     int gc_new_ok = (gc_obj != 0) ? 1 : 0;
