@@ -46,6 +46,17 @@ jobs:
             --cpython-src /tmp/Python-3.14.3 \
             --output src/parser/unicode_names_data.txt
 
+      - name: Verify C-API no-op inventory drift
+        run: python3 scripts/check_capi_noop_inventory.py --manifest perf/capi_noop_inventory.json
+
+      - name: Upload C-API no-op inventory artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capi-noop-inventory
+          path: perf/capi_noop_inventory.json
+          if-no-files-found: ignore
+
       - name: Run full test suite
         run: cargo test -q
 

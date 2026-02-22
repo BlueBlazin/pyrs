@@ -49,6 +49,9 @@ It does **not** cover Python-level `BuiltinFunction::NoOp` placeholders; those a
 | `Py_EnterRecursiveCall` | `src/vm/vm_extensions/cpython_thread_interp_api.rs` | always returns `0` | Implement recursion-depth checks and error signaling on overflow. |
 | `PyType_ClearCache` | `src/vm/vm_extensions/cpython_type_api.rs` | always returns `0` | Implement cache clear/invalidation accounting consistent with type mutation semantics. |
 | `Py_NewInterpreter` | `src/vm/vm_extensions/cpython_runtime_misc_api.rs` | returns current thread state (no new interpreter) | Implement real subinterpreter creation or enforce explicit unsupported contract. |
+| `PyUnstable_Object_IsUniquelyReferenced` / `PyUnstable_Object_IsUniqueReferencedTemporary` | `src/vm/vm_extensions/cpython_error_numeric_api.rs` | always return `0` | Implement CPython-compatible unique-reference query semantics (or explicit unsupported policy) without violating ownership invariants. |
+| `PyUnstable_Object_EnableDeferredRefcount` | `src/vm/vm_extensions/cpython_object_call_api.rs` | always returns `0` | Implement deferred-refcount enablement semantics or explicit unsupported policy consistent with CPython unstable API expectations. |
+| `_Py_CheckRecursiveCall` | `src/vm/vm_extensions/cpython_refcount_api.rs` | always returns `0` | Implement recursion-limit check parity and error signaling in lockstep with recursion-entry APIs. |
 
 ## Closure and Ownership
 

@@ -12,8 +12,10 @@ Status values:
 - No-op inventory artifact: `docs/NOOP_BUILTIN_INVENTORY.txt`
 - No-op inventory gate: `tests/noop_inventory.rs`
 - C-API no-op inventory: `docs/CAPI_NOOP_INVENTORY.md`
+- C-API no-op drift gate: `scripts/check_capi_noop_inventory.py`
 - Refresh command:
   - `cargo run --quiet --bin print_noop_inventory > docs/NOOP_BUILTIN_INVENTORY.txt`
+  - `python3 scripts/check_capi_noop_inventory.py --manifest perf/capi_noop_inventory.json`
 - Process/quality gates:
   - `docs/ENGINEERING_GATES.md`
   - `docs/ALGO_AUDIT_BACKLOG.md`
