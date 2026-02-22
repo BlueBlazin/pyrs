@@ -15025,6 +15025,19 @@ fn traceback_caret_skips_statement_keyword_ranges() {
 }
 
 #[test]
+fn keyerror_single_arg_string_uses_repr_semantics() {
+    let source = r#"s = str(KeyError("k"))
+i = str(KeyError(1))
+ok = (s == "'k'" and i == "1")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn module_not_found_error_populates_name_for_missing_import() {
     let source = r#"ok = False
 try:

@@ -7740,7 +7740,7 @@ pub fn format_value(value: &Value) -> String {
             _ => "<bound method ?>".to_string(),
         },
         Value::Cell(_) => "<cell>".to_string(),
-        Value::Exception(exception) => exception.message.clone().unwrap_or_default(),
+        Value::Exception(exception) => exception_display_value(exception),
         Value::ExceptionType(name) => format!("<class '{}'>", name),
         Value::Slice(slice) => {
             let lower = slice
@@ -7765,6 +7765,31 @@ pub fn format_value(value: &Value) -> String {
                 )
             }),
     }
+}
+
+fn exception_display_value(exception: &ExceptionObject) -> String {
+    if exception.name == "KeyError" {
+        let keyerror_from_args = {
+            let attrs = exception.attrs.borrow();
+            if let Some(Value::Tuple(tuple)) = attrs.get("args") {
+                if let Object::Tuple(args) = &*tuple.kind() {
+                    if args.len() == 1 {
+                        Some(format_repr(&args[0]))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(message) = keyerror_from_args {
+            return message;
+        }
+    }
+    exception.message.clone().unwrap_or_default()
 }
 
 fn format_repr_string(value: &str) -> String {

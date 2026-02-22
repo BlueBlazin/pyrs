@@ -57,6 +57,7 @@ Status: in progress (started 2026-02-22).
     in `.pyc` context-chain traces).
   - final exception-line rendering now follows CPython `KeyError` display semantics when args are
     available (single-arg `KeyError` displays `repr(arg)` in traceback footer).
+  - runtime `str(KeyError(<arg>))` now follows CPython single-arg display semantics (`repr(arg)`).
   - indentation diagnostics now include CPython-style parity for:
     - top-level `unexpected indent` (no caret line),
     - `unindent does not match any outer indentation level` with end-of-line caret.

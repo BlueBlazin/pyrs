@@ -111,6 +111,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::traceback_output_preserves_exception_type_without_traceback_rewrap`
     - `tests/vm.rs::traceback_caret_infers_identifier_span_without_keyword_noise`
     - `tests/vm.rs::traceback_caret_skips_statement_keyword_ranges`
+    - `tests/vm.rs::keyerror_single_arg_string_uses_repr_semantics`
     - `tests/pyc_translate.rs::translates_cpython_linetable_into_instruction_ranges`.
     - `tests/differential_cpython.rs::differential_traceback_context_chain_matches_cpython_shape`
     - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
