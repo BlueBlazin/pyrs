@@ -49,3 +49,13 @@ Notes:
 - Sanitizers require nightly (`-Zsanitizer` + `-Zbuild-std`).
 - Start with targeted tests (`--test extension_smoke`) before full-suite runs.
 - On this target/toolchain (`aarch64-apple-darwin`), rustc does not accept `-Zsanitizer=undefined`; UBSan is currently unavailable through Rust sanitizer flags here.
+
+## C-API No-Op Drift Gate
+
+Run locally:
+
+```bash
+python3 scripts/check_capi_noop_inventory.py --manifest perf/capi_noop_inventory.json
+```
+
+This verifies that C-API no-op/placeholder exports are tracked in `docs/CAPI_NOOP_INVENTORY.md` and emits a machine-readable manifest.
