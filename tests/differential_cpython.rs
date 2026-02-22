@@ -2070,3 +2070,32 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_compile_only_ast_alias_keyword_and_handler_location_attrs_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+imp = compile("import os as o", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0]
+call = compile("f(x=1, **d)", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
+tr = compile("try:\n    pass\nexcept E as e:\n    pass", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0]
+alias = imp.names[0]
+kw0 = call.keywords[0]
+kw1 = call.keywords[1]
+handler = tr.handlers[0]
+attrs = ["lineno", "col_offset", "end_lineno", "end_col_offset"]
+result = {
+    "alias_has_attrs": all(hasattr(alias, a) for a in attrs),
+    "kw0_has_attrs": all(hasattr(kw0, a) for a in attrs),
+    "kw1_has_attrs": all(hasattr(kw1, a) for a in attrs),
+    "handler_has_attrs": all(hasattr(handler, a) for a in attrs),
+    "alias_lineno": alias.lineno,
+    "kw0_lineno": kw0.lineno,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}

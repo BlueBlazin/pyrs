@@ -3827,10 +3827,11 @@ impl Vm {
     fn convert_import_alias_to_ast_node(
         &mut self,
         alias: &AstImportAlias,
+        location: Option<(usize, usize)>,
     ) -> Result<Value, RuntimeError> {
         self.build_ast_node(
             "alias",
-            None,
+            location,
             vec![
                 ("name", Value::Str(alias.name.clone())),
                 (
@@ -3848,6 +3849,7 @@ impl Vm {
     fn convert_except_handler_to_ast_node(
         &mut self,
         handler: &AstExceptHandler,
+        location: Option<(usize, usize)>,
     ) -> Result<Value, RuntimeError> {
         let body = self.convert_stmt_list_to_ast_values(&handler.body)?;
         let type_node = match &handler.type_expr {
@@ -3856,7 +3858,7 @@ impl Vm {
         };
         self.build_ast_node(
             "ExceptHandler",
-            None,
+            location,
             vec![
                 ("type", type_node),
                 (
@@ -4322,7 +4324,7 @@ impl Vm {
                             let converted = self.convert_expr_to_ast_node(value)?;
                             keywords.push(self.build_ast_node(
                                 "keyword",
-                                None,
+                                location,
                                 vec![("arg", Value::Str(name.clone())), ("value", converted)],
                             )?);
                         }
@@ -4339,7 +4341,7 @@ impl Vm {
                             let converted = self.convert_expr_to_ast_node(value)?;
                             keywords.push(self.build_ast_node(
                                 "keyword",
-                                None,
+                                location,
                                 vec![("arg", Value::None), ("value", converted)],
                             )?);
                         }
@@ -4766,7 +4768,7 @@ impl Vm {
                 let body_nodes = self.convert_stmt_list_to_ast_values(body)?;
                 let mut handler_nodes = Vec::with_capacity(handlers.len());
                 for handler in handlers {
-                    handler_nodes.push(self.convert_except_handler_to_ast_node(handler)?);
+                    handler_nodes.push(self.convert_except_handler_to_ast_node(handler, location)?);
                 }
                 let orelse_nodes = self.convert_stmt_list_to_ast_values(orelse)?;
                 let final_nodes = self.convert_stmt_list_to_ast_values(finalbody)?;
@@ -4784,7 +4786,7 @@ impl Vm {
             StmtKind::Import { names } => {
                 let mut converted = Vec::with_capacity(names.len());
                 for name in names {
-                    converted.push(self.convert_import_alias_to_ast_node(name)?);
+                    converted.push(self.convert_import_alias_to_ast_node(name, location)?);
                 }
                 self.build_ast_node(
                     "Import",
@@ -4799,7 +4801,7 @@ impl Vm {
             } => {
                 let mut converted = Vec::with_capacity(names.len());
                 for name in names {
-                    converted.push(self.convert_import_alias_to_ast_node(name)?);
+                    converted.push(self.convert_import_alias_to_ast_node(name, location)?);
                 }
                 self.build_ast_node(
                     "ImportFrom",

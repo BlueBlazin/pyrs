@@ -147,6 +147,9 @@ Status: in progress (started 2026-02-22).
       `MatchMapping`, `MatchClass`, `MatchStar`, `MatchAs`, `MatchOr`,
     - conversion covers wildcard/capture/value/constant/sequence/mapping/class/or/as/star
       pattern families from parser AST.
+  - location-attribute propagation was tightened for AST helper nodes that expose location attrs:
+    - `alias`, `keyword`, and `ExceptHandler` node conversion now materializes location fields
+      instead of leaving `_attributes` unbound.
   - `_ast` metadata/hierarchy parity was extended for those nodes:
     - class metadata now includes CPython-shaped `_fields`/`_attributes` for
       `FunctionDef`, `AsyncFunctionDef`, `ClassDef`, `arguments`, `arg`,
@@ -190,6 +193,7 @@ Status: in progress (started 2026-02-22).
     - `compile_only_ast_covers_function_class_and_type_param_nodes`.
     - `compile_only_ast_covers_augassign_and_annassign_nodes`.
     - `compile_only_ast_covers_match_and_pattern_nodes`.
+    - `compile_only_ast_sets_location_attrs_on_alias_keyword_and_excepthandler`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

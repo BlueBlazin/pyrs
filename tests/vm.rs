@@ -1137,6 +1137,17 @@ fn compile_only_ast_covers_match_and_pattern_nodes() {
 }
 
 #[test]
+fn compile_only_ast_sets_location_attrs_on_alias_keyword_and_excepthandler() {
+    let source = "import _ast\nimp = compile('import os as o', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\ncall = compile('f(x=1, **d)', '<ast>', 'eval', _ast.PyCF_ONLY_AST).body\ntr = compile('try:\\n    pass\\nexcept E as e:\\n    pass', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nalias = imp.names[0]\nkw0 = call.keywords[0]\nkw1 = call.keywords[1]\nhandler = tr.handlers[0]\nattrs = ['lineno', 'col_offset', 'end_lineno', 'end_col_offset']\nok = all(hasattr(alias, a) for a in attrs) and all(hasattr(kw0, a) for a in attrs) and all(hasattr(kw1, a) for a in attrs) and all(hasattr(handler, a) for a in attrs) and (alias.lineno == 1) and (kw0.lineno == 1)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
