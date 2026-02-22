@@ -17,7 +17,7 @@ use reedline::{
 use reedline::{EditCommand, Highlighter, Hinter};
 
 use crate::VERSION;
-use crate::ast::{Module, StmtKind};
+use crate::ast::{AssignTarget, Module, StmtKind};
 use crate::compiler;
 use crate::parser::{self, ParseError};
 use crate::runtime::{Object, Value};
@@ -144,11 +144,86 @@ pub(super) fn run_repl(import_site: bool) -> Result<(), String> {
     run_result.and(shutdown_result)
 }
 
-fn repl_module_updates_completions(module: &Module) -> bool {
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum CompletionRefreshPlan {
+    None,
+    Full,
+    Symbols(Vec<String>),
+}
+
+fn repl_module_completion_plan(module: &Module) -> CompletionRefreshPlan {
     if module.body.len() != 1 {
-        return true;
+        return CompletionRefreshPlan::Full;
     }
-    !matches!(module.body[0].node, StmtKind::Expr(_))
+    let stmt = &module.body[0].node;
+    match stmt {
+        StmtKind::Expr(_) => CompletionRefreshPlan::None,
+        StmtKind::Assign { targets, .. } => {
+            let symbols = assignment_target_symbols(targets);
+            if symbols.is_empty() {
+                CompletionRefreshPlan::None
+            } else {
+                CompletionRefreshPlan::Symbols(symbols)
+            }
+        }
+        StmtKind::AnnAssign { target, value, .. } => {
+            if value.is_none() {
+                return CompletionRefreshPlan::None;
+            }
+            let mut symbols = Vec::new();
+            collect_assignment_target_symbols(target, &mut symbols);
+            normalize_completion_symbols(symbols).map_or(CompletionRefreshPlan::None, |names| {
+                CompletionRefreshPlan::Symbols(names)
+            })
+        }
+        StmtKind::AugAssign { target, .. } => {
+            let mut symbols = Vec::new();
+            collect_assignment_target_symbols(target, &mut symbols);
+            normalize_completion_symbols(symbols).map_or(CompletionRefreshPlan::None, |names| {
+                CompletionRefreshPlan::Symbols(names)
+            })
+        }
+        StmtKind::Delete { targets } => {
+            let symbols = assignment_target_symbols(targets);
+            if symbols.is_empty() {
+                CompletionRefreshPlan::None
+            } else {
+                CompletionRefreshPlan::Symbols(symbols)
+            }
+        }
+        _ => CompletionRefreshPlan::Full,
+    }
+}
+
+fn assignment_target_symbols(targets: &[AssignTarget]) -> Vec<String> {
+    let mut symbols = Vec::new();
+    for target in targets {
+        collect_assignment_target_symbols(target, &mut symbols);
+    }
+    normalize_completion_symbols(symbols).unwrap_or_default()
+}
+
+fn collect_assignment_target_symbols(target: &AssignTarget, symbols: &mut Vec<String>) {
+    match target {
+        AssignTarget::Name(name) => symbols.push(name.clone()),
+        AssignTarget::Starred(inner) => collect_assignment_target_symbols(inner, symbols),
+        AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+            for item in items {
+                collect_assignment_target_symbols(item, symbols);
+            }
+        }
+        AssignTarget::Subscript { .. } | AssignTarget::Attribute { .. } => {}
+    }
+}
+
+fn normalize_completion_symbols(mut symbols: Vec<String>) -> Option<Vec<String>> {
+    symbols.retain(|name| is_valid_identifier_name(name));
+    if symbols.is_empty() {
+        return None;
+    }
+    symbols.sort();
+    symbols.dedup();
+    Some(symbols)
 }
 
 fn build_vm(import_site: bool, interactive: bool) -> Result<Vm, String> {
@@ -272,7 +347,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                 pending.push('\n');
                 match parser::parse_module(&pending) {
                     Ok(module) => {
-                        let refresh_completion = repl_module_updates_completions(&module);
+                        let completion_plan = repl_module_completion_plan(&module);
                         if let Err(err) = execute_parsed_module_with_timing(
                             vm,
                             &module,
@@ -281,8 +356,8 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                             timing_enabled,
                         ) {
                             eprintln!("{err}");
-                        } else if refresh_completion {
-                            refresh_completion_state(vm, &completion_state);
+                        } else {
+                            apply_completion_refresh_plan(vm, &completion_state, completion_plan);
                         }
                         pending.clear();
                     }
@@ -455,6 +530,50 @@ struct CompletionState {
 fn refresh_completion_state(vm: &Vm, state: &Arc<Mutex<CompletionState>>) {
     if let Ok(mut guard) = state.lock() {
         *guard = build_completion_state(vm);
+    }
+}
+
+fn refresh_completion_symbols(vm: &Vm, state: &Arc<Mutex<CompletionState>>, symbols: &[String]) {
+    const MAX_COMPLETION_DEPTH: usize = 6;
+    if symbols.is_empty() {
+        return;
+    }
+    if let Ok(mut guard) = state.lock() {
+        for symbol in symbols {
+            guard.symbols.retain(|name| name != symbol);
+            guard.members.retain(|path, _| {
+                !(path == symbol
+                    || path
+                        .strip_prefix(symbol)
+                        .is_some_and(|suffix| suffix.starts_with('.')))
+            });
+            if let Some(value) = vm.get_global(symbol) {
+                guard.symbols.push(symbol.clone());
+                let mut visited = HashSet::new();
+                collect_completion_members(
+                    &mut guard,
+                    symbol,
+                    &value,
+                    0,
+                    MAX_COMPLETION_DEPTH,
+                    &mut visited,
+                );
+            }
+        }
+        guard.symbols.sort();
+        guard.symbols.dedup();
+    }
+}
+
+fn apply_completion_refresh_plan(
+    vm: &Vm,
+    state: &Arc<Mutex<CompletionState>>,
+    plan: CompletionRefreshPlan,
+) {
+    match plan {
+        CompletionRefreshPlan::None => {}
+        CompletionRefreshPlan::Full => refresh_completion_state(vm, state),
+        CompletionRefreshPlan::Symbols(symbols) => refresh_completion_symbols(vm, state, &symbols),
     }
 }
 
@@ -1890,11 +2009,11 @@ mod tests {
     use reedline::{Completer, Highlighter, StyledText};
 
     use super::{
-        CompletionState, MetaCommand, PythonHighlighter, ReplCompleter, ReplMagicCommand,
-        ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment, format_parse_error,
-        is_path_like, parse_colorfgbg_background_code, parse_magic_command, parse_meta_command,
-        parse_repl_theme_mode, repl_input_is_incomplete, repl_module_updates_completions,
-        repl_palette, resolve_repl_theme,
+        CompletionRefreshPlan, CompletionState, MetaCommand, PythonHighlighter, ReplCompleter,
+        ReplMagicCommand, ReplThemeMode, ResolvedReplTheme, TimeItRequest, completion_fragment,
+        format_parse_error, is_path_like, parse_colorfgbg_background_code, parse_magic_command,
+        parse_meta_command, parse_repl_theme_mode, repl_input_is_incomplete,
+        repl_module_completion_plan, repl_palette, resolve_repl_theme,
     };
     use crate::parser;
 
@@ -1980,11 +2099,22 @@ mod tests {
     }
 
     #[test]
-    fn completion_refresh_skips_single_expression_modules() {
+    fn completion_refresh_plan_is_incremental_for_simple_assignment() {
         let expr_module = parser::parse_module("1 + 1\n").expect("parse expression module");
         let assign_module = parser::parse_module("x = 1\n").expect("parse assignment module");
-        assert!(!repl_module_updates_completions(&expr_module));
-        assert!(repl_module_updates_completions(&assign_module));
+        let import_module = parser::parse_module("import os\n").expect("parse import module");
+        assert_eq!(
+            repl_module_completion_plan(&expr_module),
+            CompletionRefreshPlan::None
+        );
+        assert_eq!(
+            repl_module_completion_plan(&assign_module),
+            CompletionRefreshPlan::Symbols(vec!["x".to_string()])
+        );
+        assert_eq!(
+            repl_module_completion_plan(&import_module),
+            CompletionRefreshPlan::Full
+        );
     }
 
     #[test]
@@ -2131,6 +2261,27 @@ mod tests {
         let state = super::build_completion_state(&vm);
         assert!(!state.members.contains_key("proxy"));
         assert!(!state.members.contains_key("Proxy"));
+    }
+
+    #[test]
+    fn refresh_completion_symbols_updates_and_removes_bindings() {
+        let mut vm = super::build_vm(false, true).expect("vm");
+        let state = Arc::new(Mutex::new(super::build_completion_state(&vm)));
+
+        vm.set_global("x", crate::runtime::Value::Int(1));
+        super::refresh_completion_symbols(&vm, &state, &[String::from("x")]);
+        {
+            let guard = state.lock().expect("completion state");
+            assert!(guard.symbols.iter().any(|symbol| symbol == "x"));
+            assert!(guard.members.contains_key("x"));
+        }
+
+        super::execute_module_source(&mut vm, "del x\n", "<stdin>", false)
+            .expect("delete should succeed");
+        super::refresh_completion_symbols(&vm, &state, &[String::from("x")]);
+        let guard = state.lock().expect("completion state");
+        assert!(!guard.symbols.iter().any(|symbol| symbol == "x"));
+        assert!(!guard.members.contains_key("x"));
     }
 
     #[test]
