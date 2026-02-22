@@ -8,11 +8,11 @@ Last updated: 2026-02-22
 ## Re-check Snapshot
 
 - Empty-body rows: `0`
-- Placeholder rows: `3`
-- Total rows: `3`
-- Total symbols represented: `5`
+- Placeholder rows: `0`
+- Total rows: `0`
+- Total symbols represented: `0`
 
-Note: Batch 1 through Batch 5 symbols are now closed and removed from the no-op
+Note: Batch 1 through Batch 6 symbols are now closed and removed from the no-op
 inventory.
 
 ## Ordered Checklist
@@ -58,13 +58,13 @@ inventory.
 - [x] `Py_NewInterpreter`
 - [x] `Py_EndInterpreter`
 
-### Batch 6: Observability + Unstable APIs
+### Batch 6: Observability + Unstable APIs ✅ complete
 
-- [ ] `PyTraceMalloc_Track`
-- [ ] `PyTraceMalloc_Untrack`
-- [ ] `PyUnstable_Object_IsUniquelyReferenced`
-- [ ] `PyUnstable_Object_IsUniqueReferencedTemporary`
-- [ ] `PyUnstable_Object_EnableDeferredRefcount`
+- [x] `PyTraceMalloc_Track`
+- [x] `PyTraceMalloc_Untrack`
+- [x] `PyUnstable_Object_IsUniquelyReferenced`
+- [x] `PyUnstable_Object_IsUniqueReferencedTemporary`
+- [x] `PyUnstable_Object_EnableDeferredRefcount`
 
 ## Batch Gate
 

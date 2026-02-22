@@ -130,6 +130,22 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       derived from thread-state ownership instead of always returning main-interpreter token.
   - extension smoke regressions were updated for this closure:
     - `tests/extension_smoke.rs::cpython_compat_interpreter_lifecycle_abi_batch72_apis_work`.
+  - Batch 6 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
+    - `PyTraceMalloc_Track`, `PyTraceMalloc_Untrack`,
+    - `PyUnstable_Object_IsUniquelyReferenced`,
+    - `PyUnstable_Object_IsUniqueReferencedTemporary`,
+    - `PyUnstable_Object_EnableDeferredRefcount`.
+  - observability/unstable API parity updates:
+    - `PyTraceMalloc_Track`/`PyTraceMalloc_Untrack` now maintain a VM process-level trace table
+      keyed by `(domain, ptr)` with update+idempotent-untrack semantics.
+    - `PyUnstable_Object_IsUniquelyReferenced` now resolves refcount-based uniqueness while
+      suppressing effectively-immortal runtime values.
+    - `PyUnstable_Object_IsUniqueReferencedTemporary` now gates unique-ref checks on top-frame
+      presence for object identity handles.
+    - `PyUnstable_Object_EnableDeferredRefcount` now follows explicit GIL-mode policy:
+      deterministic no-op (`0`) in current runtime mode.
+  - extension smoke regressions were updated for this closure:
+    - `tests/extension_smoke.rs::cpython_compat_observability_unstable_abi_batch73_apis_work`.
 - C-API lifetime-model checkpoint (2026-02-22, latest):
   - owned-pointer free path now clears active thread-state exception pointers when they
     alias the freed pointer (`current_exception`, `exc_info.exc_value`, `exc_state.exc_value`).
