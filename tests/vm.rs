@@ -6995,6 +6995,62 @@ fn executes_from_import_alias() {
 }
 
 #[test]
+fn from_import_reads_attribute_from_replaced_sys_modules_entry() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_from_import_swapmod_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(
+        temp_dir.join("swapmod.py"),
+        "import sys as _sys\n_sys.modules[__name__] = _sys\n",
+    )
+    .expect("write swap module");
+
+    let source = "\
+from swapmod import version as v\n\
+import swapmod, sys\n\
+ok = (swapmod is sys) and (v == sys.version)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+
+    let _ = std::fs::remove_file(temp_dir.join("swapmod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
+fn from_import_star_raises_when_all_contains_missing_name() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!("pyrs_from_import_star_missing_{unique}"));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    std::fs::write(temp_dir.join("mod.py"), "__all__ = ['missing']\n").expect("write module");
+
+    let source = "from mod import *\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&temp_dir);
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(
+        err.message.contains("module 'mod' has no attribute 'missing'"),
+        "unexpected error: {}",
+        err.message
+    );
+
+    let _ = std::fs::remove_file(temp_dir.join("mod.py"));
+    let _ = std::fs::remove_dir(&temp_dir);
+}
+
+#[test]
 fn executes_relative_from_import_in_package_module() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -437,15 +437,17 @@ impl Vm {
     }
 
     fn import_star_entries_from_module(
-        &self,
+        &mut self,
         module_obj: &ObjRef,
     ) -> Result<Vec<(String, Value)>, RuntimeError> {
         let Object::Module(module_data) = &*module_obj.kind() else {
             return Err(RuntimeError::new("import from expects module object"));
         };
 
+        let mut explicit_all = false;
         let export_names: Vec<String> = if let Some(all_names) = module_data.globals.get("__all__")
         {
+            explicit_all = true;
             match all_names {
                 Value::List(obj) => {
                     let Object::List(values) = &*obj.kind() else {
@@ -488,6 +490,21 @@ impl Vm {
                 .collect()
         };
 
+        if explicit_all {
+            let mut values = Vec::with_capacity(export_names.len());
+            for name in export_names {
+                // CPython resolves each `__all__` name via attribute lookup,
+                // which propagates missing-name errors instead of silently
+                // skipping missing keys in module globals.
+                let value = self.load_attr_module(module_obj, &name)?;
+                values.push((name, value));
+            }
+            return Ok(values);
+        }
+
+        let Object::Module(module_data) = &*module_obj.kind() else {
+            return Err(RuntimeError::new("import from expects module object"));
+        };
         let mut values = Vec::with_capacity(export_names.len());
         for name in export_names {
             if let Some(value) = module_data.globals.get(&name).cloned() {

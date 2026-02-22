@@ -184,10 +184,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - memoryview context-manager methods are now bound in special-method lookup for both native memoryview values and CPython-proxy memoryview receivers.
   - `IMPORT_FROM` now re-canonicalizes to `sys.modules[requested_name]` and retries attribute lookup on missing-attribute misses.
     - closes stale-module alias edge cases where module execution rewires `sys.modules` (e.g. `decimal` -> `_pydecimal`) during import.
+  - `import *` now resolves explicit `__all__` entries through module attribute lookup instead of silently skipping missing globals.
+    - missing `__all__` names now raise `AttributeError` (CPython parity) instead of incorrectly succeeding.
   - closed regressions:
     - `tests/vm.rs::pickle_zero_copy_bytearray_roundtrips_across_protocols`
     - `tests/vm.rs::pickle_zero_copy_bytes_oob_buffers_preserve_identity`.
     - `tests/vm.rs::statistics_mean_supports_basic_int_dataset`.
+    - `tests/vm.rs::from_import_reads_attribute_from_replaced_sys_modules_entry`
+    - `tests/vm.rs::from_import_star_raises_when_all_contains_missing_name`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,
