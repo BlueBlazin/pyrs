@@ -1650,3 +1650,92 @@ fn differential_semantic_syntax_nonlocal_and_global_conflict_nonlocal_first_matc
         "semantic nonlocal/global (nonlocal first) mismatch"
     );
 }
+
+#[test]
+fn differential_from_import_reads_attribute_from_replaced_sys_modules_entry() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let module_name = format!("_pyrs_diff_swapmod_{unique}");
+    let source = format!(
+        r#"
+import os
+import sys
+
+name = "{module_name}"
+path = name + ".py"
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("import sys as _sys\n_sys.modules[__name__] = _sys\n")
+try:
+    sys.path.insert(0, ".")
+    from {module_name} import version as v
+    import {module_name} as swapmod
+    result = (swapmod is sys) and (v == sys.version)
+finally:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+"#
+    );
+    let py = run_cpython_json(&source).expect("CPython run should succeed");
+    let ours = run_pyrs_json(&source).expect("pyrs run should succeed");
+    assert_eq!(py, ours, "from-import sys.modules replacement mismatch");
+}
+
+#[test]
+fn differential_from_import_star_missing_all_entry_raises_attribute_error() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time works")
+        .as_nanos();
+    let module_name = format!("_pyrs_diff_mod_{unique}");
+    let source = format!(
+        r#"
+import os
+import sys
+
+name = "{module_name}"
+path = name + ".py"
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("__all__ = ['missing']\n")
+try:
+    sys.path.insert(0, ".")
+    from {module_name} import *
+finally:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+"#
+    );
+    let py = run_cpython_traceback(&source).expect("CPython traceback should run");
+    let ours = run_pyrs_traceback(&source).expect("pyrs traceback should run");
+    assert!(
+        py.contains("AttributeError: module") && py.contains("has no attribute 'missing'"),
+        "{}",
+        py
+    );
+    assert!(
+        ours.contains("AttributeError: module") && ours.contains("has no attribute 'missing'"),
+        "{}",
+        ours
+    );
+    assert_eq!(
+        traceback_heading_count(&py),
+        traceback_heading_count(&ours),
+        "from-import-* traceback block count mismatch"
+    );
+    assert_eq!(
+        py.lines().last().map(str::trim),
+        ours.lines().last().map(str::trim),
+        "from-import-* exception footer mismatch"
+    );
+}
