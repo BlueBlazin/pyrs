@@ -507,6 +507,12 @@ Recent Lane A slice:
   - `PyEval_CallFunction`
   - `PyEval_CallMethod`
   - call wrappers route through the same C-side varargs substrate as `PyObject_CallFunction`/`PyObject_CallMethod`; thread helpers now provide concrete CPython-aligned state transitions (GIL acquire/release token semantics, `SaveThread`/`RestoreThread`, thread-state attach/detach validation, and idempotent init/initialized reporting in the single-runtime model).
+- Added Stable-ABI signal/recursion control closure updates:
+  - `PyErr_CheckSignals`
+  - `Py_EnterRecursiveCall`
+  - `Py_LeaveRecursiveCall`
+  - `_Py_CheckRecursiveCall`
+  - `PyErr_CheckSignals` now consumes pending interrupts posted by `PyErr_SetInterrupt` / `PyErr_SetInterruptEx` and raises `KeyboardInterrupt` (`-1`) on check; recursion APIs now follow CPython 3.14 non-overflow path semantics (success/no-op behavior in normal stack conditions), with extension coverage updated in batch21 and batch68 probes.
 - Added Stable-ABI exports and semantics for bytes formatting/repr/escape APIs:
   - `PyBytes_FromFormat`
   - `PyBytes_FromFormatV`

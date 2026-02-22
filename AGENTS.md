@@ -81,6 +81,17 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/extension_smoke.rs::cpython_compat_eval_abi_batch27_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_gilstate_abi_batch30_apis_work`
     - `tests/extension_smoke.rs::cpython_compat_thread_abi_batch53_apis_work`.
+  - Batch 2 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
+    - `PyErr_CheckSignals`,
+    - `Py_EnterRecursiveCall`, `Py_LeaveRecursiveCall`, `_Py_CheckRecursiveCall`.
+  - signal and recursion parity updates:
+    - `PyErr_SetInterrupt` / `PyErr_SetInterruptEx` now post pending-interrupt state;
+      `PyErr_CheckSignals` consumes that state and raises typed `KeyboardInterrupt` on demand.
+    - recursion-control APIs match CPython 3.14 non-overflow behavior in supported runtime paths
+      (successful/no-op calls under normal stack conditions).
+  - extension smoke regressions were updated for this closure:
+    - `tests/extension_smoke.rs::cpython_compat_error_abi_batch21_apis_work`
+    - `tests/extension_smoke.rs::cpython_compat_internal_ref_gc_abi_batch68_apis_work`.
 - C-API lifetime-model checkpoint (2026-02-22, latest):
   - owned-pointer free path now clears active thread-state exception pointers when they
     alias the freed pointer (`current_exception`, `exc_info.exc_value`, `exc_state.exc_value`).

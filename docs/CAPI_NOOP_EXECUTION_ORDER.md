@@ -7,13 +7,13 @@ Last updated: 2026-02-22
 
 ## Re-check Snapshot
 
-- Empty-body rows: `6`
-- Placeholder rows: `9`
-- Total rows: `15`
-- Total symbols represented: `17`
+- Empty-body rows: `5`
+- Placeholder rows: `6`
+- Total rows: `11`
+- Total symbols represented: `13`
 
-Note: placeholder rows are now `12` (not `13`) because `PySys_Audit` /
-`PySys_AuditTuple` were closed and removed from the no-op inventory.
+Note: Batch 1 and Batch 2 symbols are now closed and removed from the no-op
+inventory.
 
 ## Ordered Checklist
 
@@ -34,12 +34,12 @@ Note: placeholder rows are now `12` (not `13`) because `PySys_Audit` /
 - [x] `PyThread_init_thread`
 - [x] `PyThread_ReInitTLS`
 
-### Batch 2: Signal + Recursion Control
+### Batch 2: Signal + Recursion Control ✅ complete
 
-- [ ] `PyErr_CheckSignals`
-- [ ] `Py_EnterRecursiveCall`
-- [ ] `Py_LeaveRecursiveCall`
-- [ ] `_Py_CheckRecursiveCall`
+- [x] `PyErr_CheckSignals`
+- [x] `Py_EnterRecursiveCall`
+- [x] `Py_LeaveRecursiveCall`
+- [x] `_Py_CheckRecursiveCall`
 
 ### Batch 3: GC + Weakref Lifecycle
 
