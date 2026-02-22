@@ -120,6 +120,12 @@ impl Vm {
             &["targets", "value", "type_comment"],
             &LOC_ATTRS,
         );
+        self.configure_bootstrap_ast_class("AugAssign", &["target", "op", "value"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "AnnAssign",
+            &["target", "annotation", "value", "simple"],
+            &LOC_ATTRS,
+        );
         self.configure_bootstrap_ast_class("Delete", &["targets"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Return", &["value"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Raise", &["exc", "cause"], &LOC_ATTRS);
@@ -570,6 +576,8 @@ impl Vm {
             "AsyncFunctionDef",
             "ClassDef",
             "Assign",
+            "AugAssign",
+            "AnnAssign",
             "Delete",
             "Return",
             "Raise",
@@ -4049,6 +4057,16 @@ impl Vm {
                     "Assign",
                     self.heap
                         .alloc_class(ClassObject::new("Assign".to_string(), Vec::new())),
+                ),
+                (
+                    "AugAssign",
+                    self.heap
+                        .alloc_class(ClassObject::new("AugAssign".to_string(), Vec::new())),
+                ),
+                (
+                    "AnnAssign",
+                    self.heap
+                        .alloc_class(ClassObject::new("AnnAssign".to_string(), Vec::new())),
                 ),
                 (
                     "Delete",

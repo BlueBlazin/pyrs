@@ -1999,3 +1999,28 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_compile_only_ast_augassign_and_annassign_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+aug = compile("x += 1", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0]
+ann = compile("x: int = 1", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0]
+sub_ann = compile("obj.x: int", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0]
+result = {
+    "aug_type": type(aug).__name__,
+    "aug_op_type": type(aug.op).__name__,
+    "ann_type": type(ann).__name__,
+    "ann_fields": list(ann._fields),
+    "ann_simple": ann.simple,
+    "ann_target_ctx": type(ann.target.ctx).__name__,
+    "sub_ann_simple": sub_ann.simple,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}

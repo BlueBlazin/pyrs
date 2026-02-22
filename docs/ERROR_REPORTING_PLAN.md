@@ -137,6 +137,10 @@ Status: in progress (started 2026-02-22).
     - `arguments` / `arg`,
     - `type_param` / `TypeVar` / `ParamSpec` / `TypeVarTuple`,
     - decorator-list propagation through `StmtKind::Decorated`.
+  - `compile(..., PyCF_ONLY_AST)` statement conversion now includes assignment variants:
+    - `AugAssign` with operator node materialization from augmented-op enums,
+    - `AnnAssign` with CPython-shaped `simple` field behavior
+      (`1` for name targets, `0` otherwise).
   - `_ast` metadata/hierarchy parity was extended for those nodes:
     - class metadata now includes CPython-shaped `_fields`/`_attributes` for
       `FunctionDef`, `AsyncFunctionDef`, `ClassDef`, `arguments`, `arg`,
@@ -170,8 +174,11 @@ Status: in progress (started 2026-02-22).
     - operator/comparator/unary abstract-family membership parity.
     - function/class/type-param node-shape and hierarchy parity
       (`differential_compile_only_ast_function_class_and_type_param_parity`).
+    - augmented/annotated assignment node parity
+      (`differential_compile_only_ast_augassign_and_annassign_parity`).
   - VM regressions added for expanded AST-conversion coverage:
     - `compile_only_ast_covers_function_class_and_type_param_nodes`.
+    - `compile_only_ast_covers_augassign_and_annassign_nodes`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

@@ -1115,6 +1115,17 @@ fn compile_only_ast_covers_function_class_and_type_param_nodes() {
 }
 
 #[test]
+fn compile_only_ast_covers_augassign_and_annassign_nodes() {
+    let source = "import _ast\naug = compile('x += 1', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nann = compile('x: int = 1', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nsub_ann = compile('obj.x: int', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nok = isinstance(aug, _ast.AugAssign) and isinstance(aug.op, _ast.Add) and isinstance(ann, _ast.AnnAssign) and ann.simple == 1 and isinstance(sub_ann, _ast.AnnAssign) and sub_ann.simple == 0 and isinstance(ann.target.ctx, _ast.Store)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

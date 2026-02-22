@@ -155,6 +155,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `arguments` / `arg`,
     - `type_param` / `TypeVar` / `ParamSpec` / `TypeVarTuple`,
     - decorator propagation via `StmtKind::Decorated`.
+  - `compile(..., PyCF_ONLY_AST)` statement conversion now includes assignment variants:
+    - `AugAssign` (augmented-op to `_ast` operator-node mapping),
+    - `AnnAssign` with CPython `simple` field semantics
+      (`1` for name targets, `0` for non-name targets).
   - `_ast` metadata/hierarchy parity was extended for these node families:
     - metadata now includes CPython-shaped `_fields` / `_attributes` for `FunctionDef`,
       `AsyncFunctionDef`, `ClassDef`, `arguments`, `arg`, `type_param`, `TypeVar`,
@@ -168,10 +172,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/vm.rs::compile_only_ast_honors_operator_hierarchy`.
     - `tests/vm.rs::compile_only_ast_covers_common_statement_nodes`.
     - `tests/vm.rs::compile_only_ast_covers_function_class_and_type_param_nodes`.
+    - `tests/vm.rs::compile_only_ast_covers_augassign_and_annassign_nodes`.
   - differential CPython parity gates were expanded for AST-compile surfaces:
     - `tests/differential_cpython.rs::differential_compile_only_ast_assign_fields_and_match_args`
     - `tests/differential_cpython.rs::differential_compile_only_ast_operator_hierarchy_parity`.
     - `tests/differential_cpython.rs::differential_compile_only_ast_function_class_and_type_param_parity`.
+    - `tests/differential_cpython.rs::differential_compile_only_ast_augassign_and_annassign_parity`.
   - native codec keyword-argument parity improved for traceback formatting paths:
     - `str.encode`, `str.decode`, and `bytes.decode` now accept `encoding=`/`errors=` kwargs
       with duplicate/unexpected-keyword contract checks.

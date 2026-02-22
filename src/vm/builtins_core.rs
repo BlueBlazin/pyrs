@@ -24,9 +24,10 @@ use super::{
     with_bytes_like_source, xor_values,
 };
 use crate::ast::{
-    AssignTarget, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg, Constant as AstConstant,
-    DictEntry, ExceptHandler as AstExceptHandler, Expr, ExprKind, ImportAlias as AstImportAlias,
-    Module as AstModule, Parameter as AstParameter, Stmt, StmtKind, UnaryOp as AstUnaryOp,
+    AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
+    Constant as AstConstant, DictEntry, ExceptHandler as AstExceptHandler, Expr, ExprKind,
+    ImportAlias as AstImportAlias, Module as AstModule, Parameter as AstParameter, Stmt, StmtKind,
+    UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -3794,6 +3795,24 @@ impl Vm {
         }
     }
 
+    fn ast_aug_operator_class_name(op: &AstAugOp) -> &'static str {
+        match op {
+            AstAugOp::Add => "Add",
+            AstAugOp::Sub => "Sub",
+            AstAugOp::Mul => "Mult",
+            AstAugOp::MatMul => "MatMult",
+            AstAugOp::Div => "Div",
+            AstAugOp::Mod => "Mod",
+            AstAugOp::FloorDiv => "FloorDiv",
+            AstAugOp::Pow => "Pow",
+            AstAugOp::LShift => "LShift",
+            AstAugOp::RShift => "RShift",
+            AstAugOp::BitAnd => "BitAnd",
+            AstAugOp::BitXor => "BitXor",
+            AstAugOp::BitOr => "BitOr",
+        }
+    }
+
     fn convert_stmt_list_to_ast_values(
         &mut self,
         statements: &[Stmt],
@@ -4384,6 +4403,47 @@ impl Vm {
             StmtKind::Decorated { decorators, stmt } => {
                 let base_node = self.convert_stmt_to_ast_node(stmt)?;
                 self.apply_decorators_to_ast_node(base_node, decorators)
+            }
+            StmtKind::AugAssign { target, op, value } => {
+                let target_node = self.convert_assign_target_to_ast_expr(target)?;
+                let op_node =
+                    self.build_ast_node(Self::ast_aug_operator_class_name(op), None, Vec::new())?;
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                self.build_ast_node(
+                    "AugAssign",
+                    location,
+                    vec![
+                        ("target", target_node),
+                        ("op", op_node),
+                        ("value", value_node),
+                    ],
+                )
+            }
+            StmtKind::AnnAssign {
+                target,
+                annotation,
+                value,
+            } => {
+                let target_node = self.convert_assign_target_to_ast_expr(target)?;
+                let annotation_node = self.convert_expr_to_ast_node(annotation)?;
+                let value_node = match value {
+                    Some(expr) => self.convert_expr_to_ast_node(expr)?,
+                    None => Value::None,
+                };
+                let simple = match target {
+                    AssignTarget::Name(_) => 1,
+                    _ => 0,
+                };
+                self.build_ast_node(
+                    "AnnAssign",
+                    location,
+                    vec![
+                        ("target", target_node),
+                        ("annotation", annotation_node),
+                        ("value", value_node),
+                        ("simple", Value::Int(simple)),
+                    ],
+                )
             }
             StmtKind::Assign { targets, value } => {
                 let mut converted_targets = Vec::with_capacity(targets.len());
