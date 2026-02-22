@@ -48,6 +48,7 @@ Status: in progress (started 2026-02-22).
   - differential `.pyc` runtime traceback gates now compare pyrs vs CPython for:
     - NameError identifier-caret span parity from compiled bytecode execution.
     - `__context__` chain traceback-shape parity from compiled bytecode execution.
+    - `raise ... from None` suppressed-context traceback-shape parity.
   - traceback capture now uses `reraise_lasti_override` when available so reraised exceptions
     in exception-table cleanup paths preserve the original fault line (avoids line-0 fallback
     in `.pyc` context-chain traces).

@@ -113,6 +113,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_traceback_context_chain_matches_cpython_shape`
     - `tests/differential_cpython.rs::differential_traceback_direct_cause_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_traceback_identifier_caret_span_matches_cpython`.
+    - `tests/differential_cpython.rs::differential_traceback_suppressed_context_matches_cpython_shape`.
     - `tests/differential_cpython.rs::differential_syntax_error_shape_matches_cpython`.
     - `tests/differential_cpython.rs::differential_invalid_syntax_span_matches_cpython`
     - `tests/differential_cpython.rs::differential_unclosed_delimiter_shape_matches_cpython`
@@ -127,6 +128,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `tests/differential_cpython.rs::differential_open_bracket_with_colon_is_invalid_syntax`.
     - `tests/differential_cpython.rs::differential_pyc_traceback_identifier_caret_span_matches_cpython`.
     - `tests/differential_cpython.rs::differential_pyc_traceback_context_chain_matches_cpython_shape`.
+    - `tests/differential_cpython.rs::differential_pyc_traceback_suppressed_context_matches_cpython_shape`.
 - C-API no-op closure checkpoint (2026-02-22, latest):
   - Batch 1 from `docs/CAPI_NOOP_EXECUTION_ORDER.md` is closed:
     - `PyGILState_{Ensure,Release,GetThisThreadState}`,
