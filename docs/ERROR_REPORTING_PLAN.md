@@ -94,8 +94,11 @@ Status: in progress (started 2026-02-22).
     source and `.pyc` execution paths:
     - `differential_traceback_reraise_preserves_original_fault_line`
     - `differential_pyc_traceback_reraise_preserves_original_fault_line`.
-  - next gate: expand traceback parity coverage for explicit `raise exc` (non-bare rethrow) line
-    fidelity and chained-cause interactions in mixed source/`.pyc` paths.
+  - explicit `raise exc` (non-bare rethrow) now preserves existing traceback chains while adding
+    the current raise site, matching CPython ordering for source and `.pyc` execution:
+    - `differential_traceback_raise_exc_keeps_original_traceback_chain`
+    - `differential_pyc_traceback_raise_exc_keeps_original_traceback_chain`.
+  - next gate: expand traceback parity for `with_traceback(...)`/manual traceback mutation flows.
 
 ## Scope
 

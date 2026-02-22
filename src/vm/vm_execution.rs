@@ -7056,7 +7056,6 @@ impl Vm {
         exception
             .traceback_frames
             .iter()
-            .rev()
             .map(|frame| TraceFrame {
                 filename: frame.filename.clone(),
                 line: frame.line,
@@ -7073,11 +7072,7 @@ impl Vm {
         mut exc: Value,
         preserve_existing_traceback: bool,
     ) -> Result<(), RuntimeError> {
-        let mut traceback = if preserve_existing_traceback {
-            Self::existing_traceback_frames(&exc)
-        } else {
-            Vec::new()
-        };
+        let mut traceback = Self::existing_traceback_frames(&exc);
         let mut skip_current_frame_trace =
             preserve_existing_traceback && !traceback.is_empty();
         loop {
