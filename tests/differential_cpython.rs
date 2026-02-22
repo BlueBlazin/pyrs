@@ -631,3 +631,50 @@ fn differential_indentation_error_shape_matches_cpython() {
         caret_line_after_source(&ours, "    print(1)").expect("pyrs indentation caret");
     assert_eq!(py_caret, ours_caret, "indentation caret mismatch");
 }
+
+#[test]
+fn differential_unmatched_closing_delimiter_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "]";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    assert!(py.contains("SyntaxError: unmatched ']'"), "{}", py);
+    assert!(ours.contains("SyntaxError: unmatched ']'"), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    ]").expect("python unmatched caret");
+    let ours_caret = caret_line_after_source(&ours, "    ]").expect("pyrs unmatched caret");
+    assert_eq!(py_caret, ours_caret, "unmatched closing-delimiter caret mismatch");
+}
+
+#[test]
+fn differential_mismatched_closing_delimiter_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "([)]";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    let expected = "closing parenthesis ')' does not match opening parenthesis '['";
+    assert!(py.contains(expected), "{}", py);
+    assert!(ours.contains(expected), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    ([)]").expect("python mismatch caret");
+    let ours_caret = caret_line_after_source(&ours, "    ([)]").expect("pyrs mismatch caret");
+    assert_eq!(py_caret, ours_caret, "mismatched closing-delimiter caret mismatch");
+}
+
+#[test]
+fn differential_unterminated_triple_quoted_string_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = "x = \"\"\"a\nb";
+    let py = run_cpython_traceback(source).expect("CPython syntax error should run");
+    let ours = run_pyrs_traceback(source).expect("pyrs syntax error should run");
+    let expected = "unterminated triple-quoted string literal (detected at line 2)";
+    assert!(py.contains(expected), "{}", py);
+    assert!(ours.contains(expected), "{}", ours);
+    let py_caret = caret_line_after_source(&py, "    x = \"\"\"a").expect("python triple caret");
+    let ours_caret = caret_line_after_source(&ours, "    x = \"\"\"a").expect("pyrs triple caret");
+    assert_eq!(py_caret, ours_caret, "triple-quote caret mismatch");
+}

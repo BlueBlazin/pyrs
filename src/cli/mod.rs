@@ -196,12 +196,34 @@ struct SyntaxDiagnostic {
 }
 
 fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
-    if let Some((delimiter, line, column)) = detect_unclosed_delimiter(source) {
-        return SyntaxDiagnostic {
-            error_type: "SyntaxError",
-            message: format!("'{}' was never closed", delimiter),
-            line,
-            column,
+    if let Some(issue) = detect_delimiter_issue(source) {
+        return match issue {
+            DelimiterIssue::UnmatchedClose { close, line, column } => SyntaxDiagnostic {
+                error_type: "SyntaxError",
+                message: format!("unmatched '{}'", close),
+                line,
+                column,
+            },
+            DelimiterIssue::MismatchedClose {
+                close,
+                open,
+                line,
+                column,
+            } => SyntaxDiagnostic {
+                error_type: "SyntaxError",
+                message: format!(
+                    "closing parenthesis '{}' does not match opening parenthesis '{}'",
+                    close, open
+                ),
+                line,
+                column,
+            },
+            DelimiterIssue::UnclosedOpen { open, line, column } => SyntaxDiagnostic {
+                error_type: "SyntaxError",
+                message: format!("'{}' was never closed", open),
+                line,
+                column,
+            },
         };
     }
 
@@ -233,9 +255,23 @@ fn classify_syntax_error(source: &str, err: &ParseError) -> SyntaxDiagnostic {
     if message_lower.contains("unterminated string literal")
         && !message_lower.contains("(detected at line")
     {
+        let is_triple_quote = starts_with_triple_quote_at(source, err.line, err.column);
+        let detected_line = if is_triple_quote {
+            source.lines().count().max(err.line)
+        } else {
+            err.line
+        };
+        let message = if is_triple_quote {
+            format!(
+                "unterminated triple-quoted string literal (detected at line {})",
+                detected_line
+            )
+        } else {
+            format!("unterminated string literal (detected at line {})", detected_line)
+        };
         return SyntaxDiagnostic {
             error_type: "SyntaxError",
-            message: format!("unterminated string literal (detected at line {})", err.line),
+            message,
             line: err.line,
             column: err.column,
         };
@@ -290,7 +326,26 @@ fn source_line_and_caret_start(
         .map(|line| (line, caret_start))
 }
 
-fn detect_unclosed_delimiter(source: &str) -> Option<(char, usize, usize)> {
+enum DelimiterIssue {
+    UnmatchedClose {
+        close: char,
+        line: usize,
+        column: usize,
+    },
+    MismatchedClose {
+        close: char,
+        open: char,
+        line: usize,
+        column: usize,
+    },
+    UnclosedOpen {
+        open: char,
+        line: usize,
+        column: usize,
+    },
+}
+
+fn detect_delimiter_issue(source: &str) -> Option<DelimiterIssue> {
     let mut lexer = parser::lexer::Lexer::new(source);
     let tokens = lexer.tokenize().ok()?;
     let mut stack: Vec<(char, usize, usize)> = Vec::new();
@@ -300,24 +355,71 @@ fn detect_unclosed_delimiter(source: &str) -> Option<(char, usize, usize)> {
             parser::token::TokenKind::LBracket => stack.push(('[', token.line, token.column)),
             parser::token::TokenKind::LBrace => stack.push(('{', token.line, token.column)),
             parser::token::TokenKind::RParen => {
-                if stack.last().is_some_and(|(ch, _, _)| *ch == '(') {
-                    stack.pop();
+                if let Some((open, _, _)) = stack.last().copied() {
+                    if open == '(' {
+                        stack.pop();
+                    } else {
+                        return Some(DelimiterIssue::MismatchedClose {
+                            close: ')',
+                            open,
+                            line: token.line,
+                            column: token.column,
+                        });
+                    }
+                } else {
+                    return Some(DelimiterIssue::UnmatchedClose {
+                        close: ')',
+                        line: token.line,
+                        column: token.column,
+                    });
                 }
             }
             parser::token::TokenKind::RBracket => {
-                if stack.last().is_some_and(|(ch, _, _)| *ch == '[') {
-                    stack.pop();
+                if let Some((open, _, _)) = stack.last().copied() {
+                    if open == '[' {
+                        stack.pop();
+                    } else {
+                        return Some(DelimiterIssue::MismatchedClose {
+                            close: ']',
+                            open,
+                            line: token.line,
+                            column: token.column,
+                        });
+                    }
+                } else {
+                    return Some(DelimiterIssue::UnmatchedClose {
+                        close: ']',
+                        line: token.line,
+                        column: token.column,
+                    });
                 }
             }
             parser::token::TokenKind::RBrace => {
-                if stack.last().is_some_and(|(ch, _, _)| *ch == '{') {
-                    stack.pop();
+                if let Some((open, _, _)) = stack.last().copied() {
+                    if open == '{' {
+                        stack.pop();
+                    } else {
+                        return Some(DelimiterIssue::MismatchedClose {
+                            close: '}',
+                            open,
+                            line: token.line,
+                            column: token.column,
+                        });
+                    }
+                } else {
+                    return Some(DelimiterIssue::UnmatchedClose {
+                        close: '}',
+                        line: token.line,
+                        column: token.column,
+                    });
                 }
             }
             _ => {}
         }
     }
-    stack.pop()
+    stack
+        .pop()
+        .map(|(open, line, column)| DelimiterIssue::UnclosedOpen { open, line, column })
 }
 
 fn infer_syntax_caret_width(source_line: &str, start: usize) -> usize {
@@ -342,6 +444,20 @@ fn is_identifier_start(ch: char) -> bool {
 
 fn is_identifier_continue(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn starts_with_triple_quote_at(source: &str, line: usize, column: usize) -> bool {
+    let Some(line_text) = source.lines().nth(line.saturating_sub(1)) else {
+        return false;
+    };
+    let mut chars = line_text.chars();
+    for _ in 1..column {
+        if chars.next().is_none() {
+            return false;
+        }
+    }
+    let rest = chars.collect::<String>();
+    rest.starts_with("'''") || rest.starts_with("\"\"\"")
 }
 
 fn configure_vm_for_execution(
