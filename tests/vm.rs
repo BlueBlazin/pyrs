@@ -97,14 +97,14 @@ fn cpython_lib_path() -> Option<PathBuf> {
             return Some(path);
         }
     }
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
-        "/Users/$USER/Downloads/Python-3.14.3/Lib",
-        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
+        workspace.join(".local/Python-3.14.3/Lib"),
+        PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
     ];
     for candidate in candidates {
-        let path = PathBuf::from(candidate);
-        if path.join("ipaddress.py").is_file() {
-            return Some(path);
+        if candidate.join("ipaddress.py").is_file() {
+            return Some(candidate);
         }
     }
     None
