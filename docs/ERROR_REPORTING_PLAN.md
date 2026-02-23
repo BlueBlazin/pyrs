@@ -153,6 +153,10 @@ Status: in progress (started 2026-02-22).
     - `ListComp` / `DictComp` / `GeneratorExp`,
     - `Yield` / `YieldFrom`,
     - helper-node `comprehension` materialization for generator clauses.
+  - type-parameter AST conversion now preserves parser star markers:
+    - `T` -> `_ast.TypeVar(name='T', ...)`,
+    - `*Ts` -> `_ast.TypeVarTuple(name='Ts', ...)`,
+    - `**P` -> `_ast.ParamSpec(name='P', ...)`.
   - location-attribute propagation was tightened for AST helper nodes that expose location attrs:
     - `alias`, `keyword`, and `ExceptHandler` node conversion now materializes location fields
       instead of leaving `_attributes` unbound.
@@ -201,6 +205,7 @@ Status: in progress (started 2026-02-22).
     - `compile_only_ast_covers_match_and_pattern_nodes`.
     - `compile_only_ast_sets_location_attrs_on_alias_keyword_and_excepthandler`.
     - `compile_only_ast_covers_lambda_await_comprehension_and_yield_nodes`.
+    - `compile_only_ast_preserves_type_param_kinds_for_star_and_doublestar`.
   - next gate: close `tb_lasti`/`co_positions` precision parity (currently compatibility-safe
     fallback with `tb_lasti = -1` for runtime traceback objects) and extend AST-conversion
     coverage beyond current traceback-focused node set.

@@ -2552,17 +2552,19 @@ impl Parser {
             return Err(self.error_at(pos, "type parameter list cannot be empty"));
         }
         loop {
-            if matches!(
-                self.token_at(pos).kind,
-                TokenKind::Star | TokenKind::DoubleStar
-            ) {
+            let mut prefix = "";
+            if matches!(self.token_at(pos).kind, TokenKind::Star) {
+                prefix = "*";
+                pos += 1;
+            } else if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
+                prefix = "**";
                 pos += 1;
             }
             let token = self.token_at(pos);
             if token.kind != TokenKind::Name {
                 return Err(self.error_at(pos, "expected type parameter name"));
             }
-            params.push(token.lexeme.clone());
+            params.push(format!("{prefix}{}", token.lexeme));
             pos += 1;
             if matches!(self.token_at(pos).kind, TokenKind::Colon) {
                 let (_, next) = self.parse_expr_at(pos + 1)?;

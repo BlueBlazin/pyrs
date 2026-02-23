@@ -1159,6 +1159,17 @@ fn compile_only_ast_covers_lambda_await_comprehension_and_yield_nodes() {
 }
 
 #[test]
+fn compile_only_ast_preserves_type_param_kinds_for_star_and_doublestar() {
+    let source = "import _ast\nmod = compile('def f[T, *Ts, **P](x):\\n    return x\\nclass C[T, *Ts, **P]:\\n    pass\\n', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nfn = mod.body[0]\ncls = mod.body[1]\nfn_kinds = [type(tp).__name__ for tp in fn.type_params]\ncls_kinds = [type(tp).__name__ for tp in cls.type_params]\nfn_names = [tp.name for tp in fn.type_params]\ncls_names = [tp.name for tp in cls.type_params]\nok = fn_kinds == ['TypeVar', 'TypeVarTuple', 'ParamSpec'] and cls_kinds == ['TypeVar', 'TypeVarTuple', 'ParamSpec'] and fn_names == ['T', 'Ts', 'P'] and cls_names == ['T', 'Ts', 'P'] and all(isinstance(tp, _ast.type_param) for tp in fn.type_params + cls.type_params)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

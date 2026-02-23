@@ -2134,3 +2134,27 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_compile_only_ast_type_param_kind_parity_for_star_and_doublestar() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+mod = compile("def f[T, *Ts, **P](x):\n    return x\nclass C[T, *Ts, **P]:\n    pass\n", "<ast>", "exec", _ast.PyCF_ONLY_AST)
+fn = mod.body[0]
+cls = mod.body[1]
+result = {
+    "fn_kind_names": [type(tp).__name__ for tp in fn.type_params],
+    "cls_kind_names": [type(tp).__name__ for tp in cls.type_params],
+    "fn_param_names": [tp.name for tp in fn.type_params],
+    "cls_param_names": [tp.name for tp in cls.type_params],
+    "fn_type_param_base": all(isinstance(tp, _ast.type_param) for tp in fn.type_params),
+    "cls_type_param_base": all(isinstance(tp, _ast.type_param) for tp in cls.type_params),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}

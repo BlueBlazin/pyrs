@@ -3902,15 +3902,22 @@ impl Vm {
     ) -> Result<Vec<Value>, RuntimeError> {
         let mut nodes = Vec::with_capacity(type_params.len());
         for param in type_params {
-            nodes.push(self.build_ast_node(
-                "TypeVar",
-                location,
-                vec![
-                    ("name", Value::Str(param.clone())),
-                    ("bound", Value::None),
-                    ("default_value", Value::None),
-                ],
-            )?);
+            let (class_name, name_field, include_bound) =
+                if let Some(name) = param.strip_prefix("**") {
+                    ("ParamSpec", name, false)
+                } else if let Some(name) = param.strip_prefix('*') {
+                    ("TypeVarTuple", name, false)
+                } else {
+                    ("TypeVar", param.as_str(), true)
+                };
+            let mut fields = vec![
+                ("name", Value::Str(name_field.to_string())),
+                ("default_value", Value::None),
+            ];
+            if include_bound {
+                fields.insert(1, ("bound", Value::None));
+            }
+            nodes.push(self.build_ast_node(class_name, location, fields)?);
         }
         Ok(nodes)
     }
