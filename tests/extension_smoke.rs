@@ -6280,6 +6280,94 @@ PyInit_cpython_api_batch39_probe(void) {
 }
 
 #[test]
+fn cpython_compat_multiphase_exec_replaced_sys_modules_entry_is_canonicalized() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!("skipping cpython multiphase sys.modules replacement smoke (pyrs binary not found)");
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython multiphase sys.modules replacement smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_modexec_replace");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("capi_exec_replace_probe.c");
+    fs::write(
+        &source_path,
+        r#"#include "pyrs_cpython_compat.h"
+
+typedef struct {
+    int slot;
+    void *value;
+} PyModuleDef_Slot;
+
+#define Py_mod_exec 2
+
+static int
+exec_slot(PyObject *module) {
+    if (!module) {
+        return -1;
+    }
+    PyObject *sys_module = PyImport_ImportModule("sys");
+    if (!sys_module) {
+        return -1;
+    }
+    PyObject *modules = PyObject_GetAttrString(sys_module, "modules");
+    PyObject *name = PyObject_GetAttrString(module, "__name__");
+    int ok = 0;
+    if (modules && name) {
+        ok = (PyObject_SetItem(modules, name, sys_module) == 0) ? 1 : 0;
+    }
+    Py_XDECREF(name);
+    Py_XDECREF(modules);
+    Py_DECREF(sys_module);
+    return ok ? 0 : -1;
+}
+
+static PyModuleDef_Slot probe_slots[] = {
+    {Py_mod_exec, (void *)exec_slot},
+    {0, 0}
+};
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "capi_exec_replace_probe",
+    "multiphase module replacement probe",
+    0,
+    0,
+    probe_slots,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_capi_exec_replace_probe(void) {
+    return PyModuleDef_Init(&module_def);
+}
+"#,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename("capi_exec_replace_probe"));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("multiphase replacement extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import sys\nimport capi_exec_replace_probe as m\nfrom capi_exec_replace_probe import path as imported_path\nassert m is sys\nassert sys.modules['capi_exec_replace_probe'] is sys\nassert imported_path is sys.path",
+    )
+    .expect("multiphase replacement import should resolve canonical sys.modules entry");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
 fn cpython_compat_sys_abi_batch40_apis_work() {
     let Some(bin) = pyrs_bin() else {
         eprintln!("skipping cpython api batch40 smoke (pyrs binary not found)");

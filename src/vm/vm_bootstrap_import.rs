@@ -3,12 +3,13 @@ use super::{
     DEFAULT_PATH_HOOK, DefaultHasher, EXTENSION_FILE_LOADER, Frame, Hash, HashMap, HashSet, Hasher,
     ImportDirCacheEntry, InstanceObject, LOCAL_SHIM_MODULES, LOCAL_SHIM_PRECEDENCE_MODULES,
     ModuleObject, ModuleSourceInfo, NAMESPACE_LOADER, ObjRef, Object,
-    PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_JSON_MODULES, PURE_STDLIB_PATHLIB_MODULES,
-    PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES, PURE_STDLIB_TYPES_MODULES, Path, PathBuf,
-    Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE, SIGNAL_SIGINT, SIGNAL_SIGTERM,
-    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, SUBMODULE_TRACE_COUNT, Value, Vm,
-    cached_module_path, compiler, cpython, dict_get_value, dict_remove_value, dict_set_value,
-    matches_finder_kind, parse_uuid_like_string, parser, source_path_from_cache_path,
+    PURE_STDLIB_COLLECTIONS_MODULES, PURE_STDLIB_DECIMAL_MODULES, PURE_STDLIB_JSON_MODULES,
+    PURE_STDLIB_PATHLIB_MODULES, PURE_STDLIB_PICKLE_MODULES, PURE_STDLIB_RE_MODULES,
+    PURE_STDLIB_TYPES_MODULES, Path, PathBuf, Rc, RuntimeError, SIGNAL_DEFAULT, SIGNAL_IGNORE,
+    SIGNAL_SIGINT, SIGNAL_SIGTERM, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER,
+    SUBMODULE_TRACE_COUNT, Value, Vm, cached_module_path, compiler, cpython, dict_get_value,
+    dict_remove_value, dict_set_value, matches_finder_kind, parse_uuid_like_string, parser,
+    source_path_from_cache_path,
 };
 use crate::extensions::{
     PYRS_EXTENSION_MANIFEST_SUFFIX, find_shared_library_for_module, find_shared_library_for_package,
@@ -500,9 +501,15 @@ impl Vm {
                 err.offset, err.message
             ))
         })?;
-        let code = compiler::compile_module_with_filename(&module_ast, &source_filename).map_err(
-            |err| RuntimeError::new(format!("compile error in module '{name}': {}", err.message)),
-        )?;
+        let code = compiler::compile_module_with_filename(&module_ast, &source_filename)
+            .map_err(|err| {
+                let detail = if let Some(span) = err.span {
+                    format!("{} at {}:{}", err.message, span.line, span.column)
+                } else {
+                    err.message
+                };
+                RuntimeError::new(format!("compile error in module '{name}': {detail}"))
+            })?;
         self.mark_module_initializing(module);
         let code = Rc::new(code);
         let cells = self.build_cells(&code, Vec::new());
@@ -6846,8 +6853,23 @@ impl Vm {
                 let preserve = match value {
                     // Preserve explicit import blockers and user overrides.
                     Value::None => true,
-                    // Preserve sys.modules module entries unknown to `self.modules`.
-                    Value::Module(_) => !self.modules.contains_key(name),
+                    // Preserve sys.modules module entries unknown to `self.modules`
+                    // plus narrowly-scoped replacement cases that must survive cache
+                    // refresh (decimal aliasing and in-flight module init replacement).
+                    Value::Module(existing_module) => match self.modules.get(name) {
+                        None => true,
+                        Some(cached) => {
+                            if cached.id() == existing_module.id() {
+                                false
+                            } else {
+                                self.should_preserve_sys_modules_module_override(
+                                    name,
+                                    cached,
+                                    existing_module,
+                                )
+                            }
+                        }
+                    },
                     // Preserve non-module sentinels/extensions installed by user code.
                     _ => true,
                 };
@@ -6878,6 +6900,52 @@ impl Vm {
                 .globals
                 .insert("modules".to_string(), modules_dict);
         }
+    }
+
+    fn module_runtime_name(module: &ObjRef) -> Option<String> {
+        let module_kind = module.kind();
+        let Object::Module(module_data) = &*module_kind else {
+            return None;
+        };
+        Some(module_data.name.clone())
+    }
+
+    fn is_decimal_alias_override(name: &str, replacement: &ObjRef) -> bool {
+        if name != "decimal" {
+            return false;
+        }
+        matches!(
+            Self::module_runtime_name(replacement).as_deref(),
+            Some("_pydecimal")
+        )
+    }
+
+    fn is_active_initializing_module_frame(&self, name: &str, module: &ObjRef) -> bool {
+        self.frames.iter().rev().any(|frame| {
+            frame.is_module
+                && frame.module.id() == module.id()
+                && matches!(
+                    Self::module_runtime_name(&frame.module).as_deref(),
+                    Some(module_name) if module_name == name
+                )
+        })
+    }
+
+    fn should_preserve_sys_modules_module_override(
+        &self,
+        name: &str,
+        cached: &ObjRef,
+        replacement: &ObjRef,
+    ) -> bool {
+        if Self::is_decimal_alias_override(name, replacement) {
+            return true;
+        }
+        // During extension module initialization (Py_mod_exec), module code can
+        // intentionally replace sys.modules[name]. Preserve only for the active
+        // module frame and only while the cached module is still initializing.
+        Self::module_is_initializing(cached)
+            && !Self::module_is_initializing(replacement)
+            && self.is_active_initializing_module_frame(name, cached)
     }
 
     pub(super) fn unregister_module(&mut self, name: &str) {
@@ -7000,6 +7068,13 @@ impl Vm {
             }
         }
         for module_name in PURE_STDLIB_COLLECTIONS_MODULES {
+            if self.has_preferred_filesystem_module(module_name)
+                && self.module_preference_requires_unload(module_name)
+            {
+                self.unregister_module(module_name);
+            }
+        }
+        for module_name in PURE_STDLIB_DECIMAL_MODULES {
             if self.has_preferred_filesystem_module(module_name)
                 && self.module_preference_requires_unload(module_name)
             {
