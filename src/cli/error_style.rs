@@ -34,6 +34,17 @@ const LIGHT_PALETTE: TracebackPalette = TracebackPalette {
     error_range: "\x1b[31m",
 };
 
+// Safe default when terminal background is unknown: keep high-contrast blues/reds.
+const FALLBACK_PALETTE: TracebackPalette = TracebackPalette {
+    type_color: "\x1b[1;34m",
+    message_color: "\x1b[34m",
+    filename_color: "\x1b[36m",
+    line_no_color: "\x1b[36m",
+    frame_color: "\x1b[36m",
+    error_highlight: "\x1b[1;31m",
+    error_range: "\x1b[31m",
+};
+
 pub(super) fn format_error_for_stderr(message: &str) -> String {
     if !should_colorize_stderr() {
         return message.to_string();
@@ -79,7 +90,7 @@ fn select_traceback_palette() -> TracebackPalette {
             return LIGHT_PALETTE;
         }
     }
-    DARK_PALETTE
+    FALLBACK_PALETTE
 }
 
 fn colorize_error_message(message: &str, palette: TracebackPalette) -> String {
@@ -225,8 +236,8 @@ fn looks_like_exception_type(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        DARK_PALETTE, LIGHT_PALETTE, colorize_error_message, parse_colorfgbg_background_code,
-        select_traceback_palette,
+        DARK_PALETTE, FALLBACK_PALETTE, LIGHT_PALETTE, colorize_error_message,
+        parse_colorfgbg_background_code, select_traceback_palette,
     };
 
     #[test]
@@ -268,6 +279,23 @@ mod tests {
                 std::env::set_var("COLORFGBG", value);
             } else {
                 std::env::remove_var("COLORFGBG");
+            }
+        }
+    }
+
+    #[test]
+    fn falls_back_to_safe_palette_without_colorfgbg() {
+        let previous = std::env::var_os("COLORFGBG");
+        unsafe {
+            std::env::remove_var("COLORFGBG");
+        }
+        assert_eq!(
+            select_traceback_palette().type_color,
+            FALLBACK_PALETTE.type_color
+        );
+        unsafe {
+            if let Some(value) = previous {
+                std::env::set_var("COLORFGBG", value);
             }
         }
     }
