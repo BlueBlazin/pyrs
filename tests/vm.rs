@@ -10003,6 +10003,16 @@ fn executes_async_for_and_async_with() {
 }
 
 #[test]
+fn executes_async_comprehensions_and_await_in_comprehension_elements() {
+    let source = "import asyncio\nclass AsyncIter:\n    def __init__(self, n):\n        self.n = n\n        self.i = 0\n    def __aiter__(self):\n        return self\n    async def __anext__(self):\n        if self.i >= self.n:\n            raise StopAsyncIteration\n        out = self.i\n        self.i += 1\n        return out\nasync def plus_ten(x):\n    return x + 10\nasync def run_all():\n    lst = [x async for x in AsyncIter(4) if x % 2 == 0]\n    st = {x async for x in AsyncIter(5) if x % 2 == 1}\n    dct = {x: x * x async for x in AsyncIter(4)}\n    awaited = [await plus_ten(x) for x in range(3)]\n    agen = (x async for x in AsyncIter(3))\n    out = []\n    async for value in agen:\n        out.append(value)\n    return lst, st, dct, awaited, out\nresult = asyncio.run(run_all())\nok = (result[0] == [0, 2] and result[1] == {1, 3} and result[2] == {0: 0, 1: 1, 2: 4, 3: 9} and result[3] == [10, 11, 12] and result[4] == [0, 1, 2])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_anext_for_async_generator() {
     let source = "import asyncio\nasync def agen():\n    yield 3\n    yield 4\ng = agen()\na = asyncio.run(anext(g))\nb = asyncio.run(anext(g))\ndone = False\ntry:\n    asyncio.run(anext(g))\nexcept StopAsyncIteration:\n    done = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -12789,6 +12799,32 @@ fn executes_pure_decimal_getcontext_and_addition() {
     handle
         .join()
         .expect("pure-decimal-getcontext thread should complete");
+}
+
+#[test]
+fn decimal_alias_replacement_keeps_sys_modules_and_from_import_coherent() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping decimal alias coherence test (CPython Lib path not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("decimal-alias-coherence".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let lib_path = lib_path.to_string_lossy().replace('\\', "\\\\");
+            let source = format!(
+                "import sys\nsys.path = ['{lib_path}']\nimport statistics\nimport decimal\nfrom decimal import Decimal as D\nmod = sys.modules['decimal']\na = decimal.Decimal('1.25')\nb = D('2.75')\nok = (decimal is mod and D is mod.Decimal and str(a + b) == '4.00' and decimal.__file__.endswith('_pydecimal.py'))\n"
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn decimal alias coherence thread");
+    handle
+        .join()
+        .expect("decimal alias coherence thread should complete");
 }
 
 #[test]
