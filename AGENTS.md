@@ -125,6 +125,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       with current required-manifest probe coverage baseline at `2.6%`.
     - current mapped probe coverage baseline:
       `pass=578`, `fail=0`, `unprobed=0` (`100.0%` coverage).
+    - CI integrity gate now enforces inventory coverage closure and mapping hygiene:
+      - coverage check script: `scripts/check_language_feature_coverage.py`,
+      - enforced constraints: `fail=0`, `unprobed=0`, no unknown/unmapped probe ids,
+        minimum coverage `100%`,
+      - probe fanout guard is now enforced in CI (`max-probe-fanout <= 90`) with
+        top-fanout telemetry emitted in `perf/language_feature_coverage_latest.json`.
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`
