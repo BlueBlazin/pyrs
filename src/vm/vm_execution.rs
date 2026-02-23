@@ -8765,21 +8765,36 @@ impl Vm {
     }
 
     pub(super) fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
-        let mut entries = match &*class.kind() {
-            Object::Class(class_data) if !class_data.mro.is_empty() => class_data.mro.clone(),
-            Object::Class(class_data) => {
-                let mut entries = vec![class.clone()];
-                for base in &class_data.bases {
-                    for candidate in self.class_mro_entries(base) {
-                        if !entries.iter().any(|entry| entry.id() == candidate.id()) {
-                            entries.push(candidate);
-                        }
+        fn collect_mro_entries(vm: &Vm, class: &ObjRef, seen: &mut HashSet<u64>) -> Vec<ObjRef> {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return Vec::new();
+            };
+            if !class_data.mro.is_empty() {
+                let mut entries = Vec::new();
+                for entry in &class_data.mro {
+                    if seen.insert(entry.id()) {
+                        entries.push(entry.clone());
                     }
                 }
-                entries
+                return entries;
             }
-            _ => Vec::new(),
-        };
+            if !seen.insert(class.id()) {
+                return Vec::new();
+            }
+            let mut entries = vec![class.clone()];
+            for base in &class_data.bases {
+                for candidate in collect_mro_entries(vm, base, seen) {
+                    if !entries.iter().any(|entry| entry.id() == candidate.id()) {
+                        entries.push(candidate);
+                    }
+                }
+            }
+            entries
+        }
+
+        let mut seen: HashSet<u64> = HashSet::new();
+        let mut entries = collect_mro_entries(self, class, &mut seen);
         if let Some(object_idx) = entries.iter().position(|entry| {
             matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "object")
         })

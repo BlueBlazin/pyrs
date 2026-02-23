@@ -3,10 +3,41 @@ use std::ffi::c_void;
 use crate::runtime::{Object, Value};
 
 use super::{
-    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext,
-    c_name_to_string, cpython_debug_compare_value, cpython_set_error, cpython_tuple_items_ptr,
-    cpython_value_from_ptr, with_active_cpython_context_mut,
+    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, PyTuple_Type,
+    PY_TPFLAGS_TUPLE_SUBCLASS, c_name_to_string, cpython_debug_compare_value, cpython_set_error,
+    cpython_tuple_items_ptr, cpython_value_from_ptr, with_active_cpython_context_mut,
 };
+
+fn owned_ptr_is_tuple_like(context: &mut ModuleCapiContext, tuple: *mut c_void) -> bool {
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    if !context.owns_cpython_allocation_ptr(tuple)
+        || tuple.is_null()
+        || (tuple as usize) < MIN_VALID_PTR
+        || (tuple as usize) % std::mem::align_of::<CpythonObjectHead>() != 0
+    {
+        return false;
+    }
+    // SAFETY: tuple pointer shape is guarded above.
+    let type_ptr = unsafe {
+        tuple
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if type_ptr.is_null()
+        || (type_ptr as usize) < MIN_VALID_PTR
+        || (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() != 0
+    {
+        return false;
+    }
+    if type_ptr == std::ptr::addr_of_mut!(PyTuple_Type) {
+        return true;
+    }
+    // SAFETY: `type_ptr` is validated as a type-object pointer shape above.
+    let flags = unsafe { (*type_ptr).tp_flags };
+    (flags & PY_TPFLAGS_TUPLE_SUBCLASS) != 0
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyTuple_New(size: isize) -> *mut c_void {
@@ -43,7 +74,8 @@ pub unsafe extern "C" fn PyTuple_Size(tuple: *mut c_void) -> isize {
         return -1;
     }
     if let Ok(Some(size)) = with_active_cpython_context_mut(|context| {
-        if context.owns_cpython_allocation_ptr(tuple) {
+        let is_owned_tuple = owned_ptr_is_tuple_like(context, tuple);
+        if is_owned_tuple {
             // SAFETY: owned tuple pointers use CPython-compatible varobject header.
             let size = unsafe { (*tuple.cast::<CpythonVarObjectHead>()).ob_size };
             return Some(size.max(0));
@@ -74,7 +106,8 @@ pub unsafe extern "C" fn PyTuple_Size(tuple: *mut c_void) -> isize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyTuple_GetItem(tuple: *mut c_void, index: isize) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
-        if context.owns_cpython_allocation_ptr(tuple) {
+        let is_owned_tuple = owned_ptr_is_tuple_like(context, tuple);
+        if is_owned_tuple {
             // SAFETY: owned tuple pointers use CPython-compatible varobject header
             // followed by contiguous `PyObject*` item slots.
             unsafe {

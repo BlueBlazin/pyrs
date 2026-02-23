@@ -5944,6 +5944,22 @@ ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shi
 }
 
 #[test]
+fn datetime_fromisocalendar_supports_date_and_datetime_classes() {
+    let source = "import datetime\n\
+d = datetime.date.fromisocalendar(2024, 1, 1)\n\
+dt = datetime.datetime.fromisocalendar(2024, 9, 4)\n\
+ok = (\n\
+    d.isoformat() == '2024-01-01'\n\
+    and dt.isoformat() == '2024-02-29T00:00:00'\n\
+)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn threading_condition_supports_context_manager_protocol() {
     let source = r#"import threading
 c = threading.Condition()
@@ -15140,6 +15156,30 @@ ok = True
 for _ in range(40):
     value = np.array([0, 1, 2, 3]).reshape((2, 2)).sum(axis=0)
     ok = ok and int(value[0]) == 2 and int(value[1]) == 4
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_ndarray_subclass_inherits_array_finalize_descriptor() {
+    let source = r#"import numpy as np
+class M(np.ndarray):
+    pass
+ok = hasattr(M, "__array_finalize__")
+print(ok)
+"#;
+    run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_ndarray_view_subclass_preserves_dtype_descriptor_access() {
+    let source = r#"import numpy as np
+class M(np.ndarray):
+    pass
+base = np.array([1, 2])
+out = np.ndarray.view(base, M)
+ok = (type(out) is M) and hasattr(out, "dtype") and ("DType" in type(out.dtype).__name__)
 print(ok)
 "#;
     run_numpy_probe_subprocess(source);

@@ -1009,6 +1009,7 @@ pub struct Vm {
     active_generator_resume_boundary: Option<usize>,
     generator_resume_outcome: Option<GeneratorResumeOutcome>,
     run_stop_depth: Option<usize>,
+    suppress_metaclass_dispatch_depth: usize,
     pending_import_drain_depth: usize,
     signal_handlers: HashMap<i64, Value>,
     audit_hooks: Vec<Value>,
@@ -1262,6 +1263,7 @@ impl Vm {
             active_generator_resume_boundary: None,
             generator_resume_outcome: None,
             run_stop_depth: None,
+            suppress_metaclass_dispatch_depth: 0,
             pending_import_drain_depth: 0,
             signal_handlers: HashMap::new(),
             audit_hooks: Vec::new(),
@@ -3366,6 +3368,10 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::SysGetRefCount),
             );
             module_data.globals.insert(
+                "getsizeof".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetSizeOf),
+            );
+            module_data.globals.insert(
                 "getrecursionlimit".to_string(),
                 Value::Builtin(BuiltinFunction::SysGetRecursionLimit),
             );
@@ -3905,6 +3911,10 @@ impl Vm {
             module_data.globals.insert(
                 "spec_from_file_location".to_string(),
                 Value::Builtin(BuiltinFunction::ImportlibSpecFromFileLocation),
+            );
+            module_data.globals.insert(
+                "spec_from_loader".to_string(),
+                Value::Builtin(BuiltinFunction::FrozenImportlibSpecFromLoader),
             );
             module_data.globals.insert(
                 "module_from_spec".to_string(),
@@ -4581,6 +4591,15 @@ fn value_to_int(value: Value) -> Result<i64, RuntimeError> {
         Value::BigInt(value) => value
             .to_i64()
             .ok_or_else(|| RuntimeError::overflow_error("integer overflow")),
+        Value::Instance(instance_obj) => {
+            let Object::Instance(instance_data) = &*instance_obj.kind() else {
+                return Err(RuntimeError::type_error("unsupported operand type"));
+            };
+            let Some(backing) = instance_data.attrs.get(INT_BACKING_STORAGE_ATTR) else {
+                return Err(RuntimeError::type_error("unsupported operand type"));
+            };
+            value_to_int(backing.clone())
+        }
         other => {
             if std::env::var_os("PYRS_TRACE_VALUE_TO_INT").is_some() {
                 eprintln!("[value_to_int] unsupported value={}", format_repr(&other));
@@ -8461,17 +8480,33 @@ fn day_of_year(year: i32, month: u32, day: u32) -> u32 {
 }
 
 fn time_parts_from_value(value: &Value) -> Result<TimeParts, RuntimeError> {
-    let values = match value {
-        Value::Tuple(obj) => match &*obj.kind() {
-            Object::Tuple(values) => values.clone(),
-            _ => return Err(RuntimeError::new("invalid time tuple")),
-        },
-        Value::List(obj) => match &*obj.kind() {
-            Object::List(values) => values.clone(),
-            _ => return Err(RuntimeError::new("invalid time tuple")),
-        },
-        _ => return Err(RuntimeError::new("time tuple must be tuple or list")),
-    };
+    fn extract_time_sequence(value: &Value) -> Result<Vec<Value>, RuntimeError> {
+        match value {
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::new("invalid time tuple")),
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => Ok(values.clone()),
+                _ => Err(RuntimeError::new("invalid time tuple")),
+            },
+            Value::Instance(instance_obj) => {
+                let Object::Instance(instance_data) = &*instance_obj.kind() else {
+                    return Err(RuntimeError::new("invalid time tuple"));
+                };
+                if let Some(backing) = instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR) {
+                    return extract_time_sequence(backing);
+                }
+                if let Some(backing) = instance_data.attrs.get(LIST_BACKING_STORAGE_ATTR) {
+                    return extract_time_sequence(backing);
+                }
+                Err(RuntimeError::new("time tuple must be tuple or list"))
+            }
+            _ => Err(RuntimeError::new("time tuple must be tuple or list")),
+        }
+    }
+
+    let values = extract_time_sequence(value)?;
     if values.len() < 9 {
         return Err(RuntimeError::new("time tuple must have at least 9 items"));
     }
@@ -9452,28 +9487,41 @@ fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {
 }
 
 fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
-    let class_kind = class.kind();
-    let class_data = match &*class_kind {
-        Object::Class(class_data) => class_data,
-        _ => return Vec::new(),
-    };
-
-    if !class_data.mro.is_empty() {
-        let mut mro = class_data.mro.clone();
-        if let Some(object_idx) = mro.iter().position(|entry| {
-            matches!(&*entry.kind(), Object::Class(candidate) if candidate.name == "object")
-        })
-            && object_idx + 1 != mro.len() {
+    fn walk_recursive(class: &ObjRef, out: &mut Vec<ObjRef>, seen: &mut HashSet<u64>) {
+        let class_kind = class.kind();
+        let class_data = match &*class_kind {
+            Object::Class(class_data) => class_data,
+            _ => return,
+        };
+        if !class_data.mro.is_empty() {
+            let mut mro = class_data.mro.clone();
+            if let Some(object_idx) = mro.iter().position(|entry| {
+                matches!(&*entry.kind(), Object::Class(candidate) if candidate.name == "object")
+            })
+                && object_idx + 1 != mro.len()
+            {
                 let object_entry = mro.remove(object_idx);
                 mro.push(object_entry);
             }
-        return mro;
+            for entry in mro {
+                if seen.insert(entry.id()) {
+                    out.push(entry);
+                }
+            }
+            return;
+        }
+        if !seen.insert(class.id()) {
+            return;
+        }
+        out.push(class.clone());
+        for base in &class_data.bases {
+            walk_recursive(base, out, seen);
+        }
     }
 
-    let mut out = vec![class.clone()];
-    for base in &class_data.bases {
-        out.extend(class_attr_walk(base));
-    }
+    let mut out = Vec::new();
+    let mut seen: HashSet<u64> = HashSet::new();
+    walk_recursive(class, &mut out, &mut seen);
     out
 }
 

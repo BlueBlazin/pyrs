@@ -81,7 +81,7 @@ python3 scripts/probe_numpy_gate.py \
   --timeout 30
 ```
 
-## Current Snapshot (2026-02-22)
+## Current Snapshot (2026-02-23)
 
 - Direct mode only; CPython bridge mode was removed.
 - Base NumPy gate is green:
@@ -115,22 +115,28 @@ python3 scripts/probe_numpy_gate.py \
   - VM-global pointer registry is authoritative for pointer provenance/liveness.
   - Per-context owned-pointer shadow set has been removed.
   - Owned-pointer free transitions are centralized.
+- ndarray subclass descriptor parity update:
+  - `class M(np.ndarray): pass` now inherits `__array_finalize__` correctly.
+  - `np.ndarray.view(base, M)` now returns subtype instances with working descriptor access
+    (`out.dtype` no longer fails).
+  - regression tests landed:
+    - `tests/vm.rs::numpy_ndarray_subclass_inherits_array_finalize_descriptor`
+    - `tests/vm.rs::numpy_ndarray_view_subclass_preserves_dtype_descriptor_access`.
 
 ## Current P0 Blockers
 
 0. `numpy.ma.core` import is not closed (hard blocker for ndarray subclass semantics).
-   - Current failure point: `MaskedArray.dtype -> super().dtype` path.
-   - Observed behavior in `pyrs`:
-     - zero-arg `super()` on property getters in this path resolves against proxy/object state
-       instead of clean CPython subclass state.
-     - downstream descriptor resolution returns an unbound property/object path or hard-fails,
-       blocking `numpy.ma.core` import.
+   - Current failure shape in `pyrs`: stack overflow during import (`import numpy.ma.core`),
+     after the `MaskedArray.dtype -> super().dtype` descriptor-bind blocker was fixed.
+   - Observed behavior:
+     - import path reaches ndarray subclass/descriptor flows but eventually enters an
+       unbounded recursion path in runtime/C-API interaction.
    - CPython reference surfaces for closure:
      - `Objects/typeobject.c`: `super_getattro` resolution contract.
      - `Objects/descrobject.c`: data-descriptor binding contract (`getset_descriptor` / member descriptor).
    - Required closure direction:
-     - align super + descriptor resolution for extension-backed proxy receivers with CPython
-       MRO/descriptor ordering (root-cause fix; no per-attribute patching).
+     - finish root-cause closure of recursive proxy/descriptor dispatch in this import path
+       (no recursion-depth caps as final behavior; preserve CPython ordering/semantics).
 
 1. Pandas import path still fails in direct mode.
    - `pandas_import` and `pandas_series_sum` now fail later in the init chain at

@@ -10,6 +10,7 @@ use super::{
     PyObject_DelItem, PyObject_IsInstance, c_name_to_string, cpython_call_builtin,
     cpython_error_message_indicates_missing_attribute, cpython_is_reduce_probe_name,
     cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
+    cpython_type_name_for_object_ptr,
     cpython_trace_flag_enabled, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
     cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
@@ -28,6 +29,15 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
     };
     let trace_reduce_attr =
         cpython_trace_numpy_reduce_enabled() && cpython_is_reduce_probe_name(&name);
+    let trace_attr_max = name == "max" && cpython_trace_flag_enabled("PYRS_TRACE_ATTR_MAX");
+    if trace_attr_max {
+        eprintln!(
+            "[cpy-attr-max] getattr-string-enter object={:p} object_type={} attr={}",
+            object,
+            cpython_type_name_for_object_ptr(object),
+            name
+        );
+    }
     let trace_numpy_dtype_attr =
         cpython_trace_flag_enabled("PYRS_TRACE_NUMPY_DTYPE_ATTR") && name == "dtype";
     if trace_numpy_dtype_attr {
@@ -119,14 +129,25 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             }
             let is_owned = context.owns_cpython_allocation_ptr(object);
             let is_known_compat = context.cpython_handle_from_ptr(object).is_some();
-            let is_type_object = super::cpython_is_type_object_ptr(object);
+            // Runtime heap classes can be represented by compat pointers whose
+            // metatype metadata is still incomplete for strict pointer-shape
+            // detection. Treat already-mapped runtime class values as type
+            // objects so class attribute lookup stays on CPython tp_getattro.
+            let mapped_object_value = context.cpython_value_from_ptr(object);
+            let is_runtime_class_object = matches!(mapped_object_value, Some(Value::Class(_)));
+            let is_type_object =
+                super::cpython_is_type_object_ptr(object) || is_runtime_class_object;
             if is_proxy_trace {
                 eprintln!(
                     "[cpy-proxy] native getattr check object_ptr={:p} owned={} known_compat={} is_type={}",
                     object, is_owned, is_known_compat, is_type_object
                 );
             }
-            if is_known_compat && is_owned {
+            // Most owned compat objects route through runtime mappings to avoid
+            // recursive generic-getattr loops. Type objects are the exception:
+            // extension types publish descriptors/member slots on their own
+            // `tp_dict`, so class attribute lookup must stay native for parity.
+            if is_known_compat && is_owned && !is_type_object {
                 return None;
             }
             // SAFETY: object pointer comes from extension code; type pointer access mirrors CPython.
@@ -176,7 +197,7 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 let is_generic_getattro = tp_getattro == PyObject_GetAttr as *mut c_void
                     || tp_getattro == PyObject_GenericGetAttr as *mut c_void;
                 if is_owned && is_generic_getattro {
-                    // Keep owned-compat objects on the internal fallback path to avoid
+                    // Keep owned-compat non-type objects on the internal fallback path to avoid
                     // recursive/self-referential generic getattr behavior.
                 } else {
                 if trace_getattr_slots {
@@ -295,6 +316,13 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if trace_attr_max {
+                eprintln!(
+                    "[cpy-attr-max] getattr-string-native result={:p} result_type={}",
+                    result,
+                    cpython_type_name_for_object_ptr(result)
+                );
+            }
             if trace_exit_lookup {
                 eprintln!(
                     "[cpy-attr-exit-lookup] native-result object={:p} result={:p}",
@@ -573,6 +601,21 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void) -> *mut c_void {
+    let trace_attr_max = cpython_trace_flag_enabled("PYRS_TRACE_ATTR_MAX")
+        && with_active_cpython_context_mut(|context| {
+            matches!(
+                context.cpython_value_from_borrowed_ptr(name),
+                Some(Value::Str(text)) if text == "max"
+            )
+        })
+        .unwrap_or(false);
+    if trace_attr_max {
+        eprintln!(
+            "[cpy-attr-max] getattr-enter object={:p} object_type={}",
+            object,
+            cpython_type_name_for_object_ptr(object)
+        );
+    }
     let trace_exit_lookup = cpython_trace_flag_enabled("PYRS_TRACE_ATTR_EXIT_LOOKUP")
         && with_active_cpython_context_mut(|context| {
             context
@@ -741,6 +784,13 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
             Some(std::ptr::null_mut())
         });
         if let Some(result) = native_result {
+            if trace_attr_max {
+                eprintln!(
+                    "[cpy-attr-max] getattr-native result={:p} result_type={}",
+                    result,
+                    cpython_type_name_for_object_ptr(result)
+                );
+            }
             if trace_exit_lookup {
                 eprintln!(
                     "[cpy-attr-exit-lookup] get-attr native-result object={:p} result={:p}",
@@ -888,6 +938,13 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
     match cpython_call_builtin(BuiltinFunction::GetAttr, vec![object_value, name_value]) {
         Ok(value) => {
             let ptr = cpython_new_ptr_for_value(value);
+            if trace_attr_max {
+                eprintln!(
+                    "[cpy-attr-max] getattr-builtin result={:p} result_type={}",
+                    ptr,
+                    cpython_type_name_for_object_ptr(ptr)
+                );
+            }
             if let Some(attr_name) = trace_reduce_attr_name.as_deref() {
                 eprintln!(
                     "[numpy-reduce] PyObject_GetAttr builtin-result object={:p} attr={} result={:p}",

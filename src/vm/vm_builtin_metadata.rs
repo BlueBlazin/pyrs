@@ -944,6 +944,21 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::Dict),
                     BuiltinFunction::DictFromKeys,
                 )),
+            "keys" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictKeys, receiver))
+            }
             "__contains__"
                 if matches!(builtin, BuiltinFunction::Set | BuiltinFunction::FrozenSet) =>
             {
@@ -2890,18 +2905,50 @@ impl Vm {
         let Some(class_ref) = self.class_of_value(descriptor) else {
             return Ok((None, None, None));
         };
-        let get = class_attr_lookup(&class_ref, "__get__")
+        let mut get = class_attr_lookup(&class_ref, "__get__")
             .map(|method| self.bind_descriptor_method(method, descriptor))
             .transpose()?
             .flatten();
-        let set = class_attr_lookup(&class_ref, "__set__")
+        let mut set = class_attr_lookup(&class_ref, "__set__")
             .map(|method| self.bind_descriptor_method(method, descriptor))
             .transpose()?
             .flatten();
-        let delete = class_attr_lookup(&class_ref, "__delete__")
+        let mut delete = class_attr_lookup(&class_ref, "__delete__")
             .map(|method| self.bind_descriptor_method(method, descriptor))
             .transpose()?
             .flatten();
+        if (get.is_none() || set.is_none() || delete.is_none())
+            && Vm::cpython_proxy_raw_ptr_from_value(descriptor).is_some()
+        {
+            if get.is_none()
+                && let Some(method) = self.load_cpython_proxy_attr_for_value(descriptor, "__get__")
+            {
+                if let Some(bound) = self.bind_descriptor_method(method.clone(), descriptor)? {
+                    get = Some(bound);
+                } else {
+                    get = Some(method);
+                }
+            }
+            if set.is_none()
+                && let Some(method) = self.load_cpython_proxy_attr_for_value(descriptor, "__set__")
+            {
+                if let Some(bound) = self.bind_descriptor_method(method.clone(), descriptor)? {
+                    set = Some(bound);
+                } else {
+                    set = Some(method);
+                }
+            }
+            if delete.is_none()
+                && let Some(method) =
+                    self.load_cpython_proxy_attr_for_value(descriptor, "__delete__")
+            {
+                if let Some(bound) = self.bind_descriptor_method(method.clone(), descriptor)? {
+                    delete = Some(bound);
+                } else {
+                    delete = Some(method);
+                }
+            }
+        }
         Ok((get, set, delete))
     }
 
@@ -2972,6 +3019,9 @@ impl Vm {
         if let Value::Function(func) = attr.clone() {
             let bound = BoundMethod::new(func, class.clone());
             return Ok(Some(self.heap.alloc_bound_method(bound)));
+        }
+        if let Value::Builtin(builtin) = attr.clone() {
+            return Ok(Some(self.alloc_builtin_bound_method(builtin, class.clone())));
         }
         let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
         if let Some(getter) = getter {
@@ -3347,16 +3397,18 @@ impl Vm {
                     }
                     return Ok(InternalCallOutcome::Value(value));
                 }
-                if let Some(call_target) = self.resolve_metaclass_call_target(&class)? {
-                    if trace_class_call {
-                        eprintln!(
-                            "[class-call] metaclass-dispatch class={} target_type={} target_repr={}",
-                            class_name,
-                            self.value_type_name_for_error(&call_target),
-                            format_repr(&call_target)
-                        );
+                if self.suppress_metaclass_dispatch_depth == 0 {
+                    if let Some(call_target) = self.resolve_metaclass_call_target(&class)? {
+                        if trace_class_call {
+                            eprintln!(
+                                "[class-call] metaclass-dispatch class={} target_type={} target_repr={}",
+                                class_name,
+                                self.value_type_name_for_error(&call_target),
+                                format_repr(&call_target)
+                            );
+                        }
+                        return self.call_internal(call_target, args, kwargs);
                     }
-                    return self.call_internal(call_target, args, kwargs);
                 }
                 if let Some(message) = self.class_disallow_instantiation_message(&class) {
                     return Err(RuntimeError::new(message));
@@ -4067,7 +4119,32 @@ impl Vm {
             return Ok(AttrAccessOutcome::Value(Value::Int(proxy_flags)));
         }
         let mut descriptor_owner: Option<ObjRef> = None;
+        let proxy_base_attr = if is_cpython_proxy_class {
+            None
+        } else {
+            let mut value = None;
+            for candidate in class_attr_walk(class) {
+                let is_proxy_class = matches!(
+                    &*candidate.kind(),
+                    Object::Class(class_data)
+                        if matches!(
+                            class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                            Some(Value::Bool(true))
+                        )
+                );
+                if !is_proxy_class {
+                    continue;
+                }
+                if let Some(proxy_attr) = self.load_cpython_proxy_attr(&candidate, attr_name) {
+                    value = Some(proxy_attr);
+                    break;
+                }
+            }
+            value
+        };
         let attr = if let Some(attr) = class_attr_lookup(class, attr_name) {
+            attr
+        } else if let Some(attr) = proxy_base_attr {
             attr
         } else if attr_name == "__name__" || attr_name == "__qualname__" {
             Value::Str(class_name.clone())
@@ -4202,9 +4279,18 @@ impl Vm {
                         keys.sort();
                         let raw_ptr_present =
                             class_data.attrs.contains_key("__pyrs_cpython_proxy_ptr__");
+                        let raw_ptr_detail = class_data
+                            .attrs
+                            .get("__pyrs_cpython_proxy_ptr__")
+                            .and_then(|value| match value {
+                                Value::Int(raw) if *raw > 0 => Some(*raw as usize),
+                                _ => None,
+                            })
+                            .map(|raw_ptr| format!(" raw_ptr=0x{raw_ptr:x}"))
+                            .unwrap_or_default();
                         eprintln!(
-                            "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}",
-                            class_name, attr_name, raw_ptr_present
+                            "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}{}",
+                            class_name, attr_name, raw_ptr_present, raw_ptr_detail
                         );
                     }
                 }
@@ -4223,9 +4309,18 @@ impl Vm {
                     keys.sort();
                     let raw_ptr_present =
                         class_data.attrs.contains_key("__pyrs_cpython_proxy_ptr__");
+                    let raw_ptr_detail = class_data
+                        .attrs
+                        .get("__pyrs_cpython_proxy_ptr__")
+                        .and_then(|value| match value {
+                            Value::Int(raw) if *raw > 0 => Some(*raw as usize),
+                            _ => None,
+                        })
+                        .map(|raw_ptr| format!(" raw_ptr=0x{raw_ptr:x}"))
+                        .unwrap_or_default();
                     eprintln!(
-                        "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}",
-                        class_name, attr_name, raw_ptr_present
+                        "[proxy-class-miss] class={} attr={} raw_ptr_present={} attrs={keys:?}{}",
+                        class_name, attr_name, raw_ptr_present, raw_ptr_detail
                     );
                 }
             }
@@ -4437,6 +4532,15 @@ impl Vm {
             })
     }
 
+    pub(super) fn class_has_builtin_module_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "module",
+                _ => false,
+            })
+    }
+
     pub(super) fn class_has_builtin_type_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class)
             .iter()
@@ -4530,16 +4634,40 @@ impl Vm {
             }
             return Ok(created);
         }
-        self.call_builtin(
+        let created = self.call_builtin(
             BuiltinFunction::Type,
             vec![
-                Value::Class(metaclass),
+                Value::Class(metaclass.clone()),
                 args[0].clone(),
                 args[1].clone(),
                 args[2].clone(),
             ],
-            kwargs,
-        )
+            kwargs.clone(),
+        )?;
+        if let Some(init_callable) = class_attr_lookup_direct(&metaclass, "__init__")
+            .filter(|callable| !matches!(callable, Value::Builtin(BuiltinFunction::NoOp)))
+        {
+            let init_result = self.call_internal(
+                init_callable,
+                vec![
+                    created.clone(),
+                    args[0].clone(),
+                    args[1].clone(),
+                    args[2].clone(),
+                ],
+                kwargs,
+            )?;
+            match init_result {
+                InternalCallOutcome::Value(Value::None) => {}
+                InternalCallOutcome::Value(_) => {
+                    return Err(RuntimeError::new("__init__() should return None"));
+                }
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("metaclass __init__ failed"));
+                }
+            }
+        }
+        Ok(created)
     }
 
     pub(super) fn alloc_instance_for_class(&mut self, class: &ObjRef) -> ObjRef {
@@ -4940,13 +5068,33 @@ impl Vm {
         }
 
         let mut class_attr_owner: Option<ObjRef> = None;
-        let class_attr = class_attr_walk(&class_ref)
+        let mut class_attr = class_attr_walk(&class_ref)
             .into_iter()
             .find_map(|candidate| {
                 class_attr_lookup_direct(&candidate, attr_name).inspect(|_value| {
                     class_attr_owner = Some(candidate);
                 })
             });
+        if class_attr.is_none() {
+            for candidate in class_attr_walk(&class_ref) {
+                let is_proxy_class = matches!(
+                    &*candidate.kind(),
+                    Object::Class(class_data)
+                        if matches!(
+                            class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                            Some(Value::Bool(true))
+                        )
+                );
+                if !is_proxy_class {
+                    continue;
+                }
+                if let Some(proxy_attr) = self.load_cpython_proxy_attr(&candidate, attr_name) {
+                    class_attr_owner = Some(candidate);
+                    class_attr = Some(proxy_attr);
+                    break;
+                }
+            }
+        }
         if let Some(attr) = class_attr.clone() {
             let (getter, setter, deleter) = self.descriptor_hooks(&attr)?;
             if setter.is_some() || deleter.is_some() {
@@ -5212,9 +5360,51 @@ impl Vm {
             .position(|entry| entry.id() == start_class.id())
             .map(|idx| idx + 1)
             .unwrap_or(0);
+        if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
+            let start_name = match &*start_class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
+            let object_type_name = match &*object_type.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
+            let mro_names = mro
+                .iter()
+                .map(|entry| match &*entry.kind() {
+                    Object::Class(class_data) => format!("{}#{}", class_data.name, entry.id()),
+                    _ => format!("<non-class>#{}", entry.id()),
+                })
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            eprintln!(
+                "[super-dtype] start={}#{} object_type={}#{} start_idx={} mro={}",
+                start_name,
+                start_class.id(),
+                object_type_name,
+                object_type.id(),
+                start_idx,
+                mro_names
+            );
+        }
 
         for class in mro.into_iter().skip(start_idx) {
-            if let Some(attr) = class_attr_lookup_direct(&class, attr_name) {
+            let class_attr = class_attr_lookup_direct(&class, attr_name)
+                .or_else(|| self.load_cpython_proxy_attr(&class, attr_name));
+            if let Some(attr) = class_attr {
+                if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
+                    let class_name = match &*class.kind() {
+                        Object::Class(class_data) => class_data.name.clone(),
+                        _ => "<non-class>".to_string(),
+                    };
+                    eprintln!(
+                        "[super-dtype] owner={} attr_type={} proxy_ptr={:?} repr={}",
+                        class_name,
+                        self.value_type_name_for_error(&attr),
+                        Self::cpython_proxy_raw_ptr_from_value(&attr),
+                        format_repr(&attr)
+                    );
+                }
                 if let Some(bound) = self.bind_classmethod_attr(&object_type, &attr) {
                     return Ok(AttrAccessOutcome::Value(bound));
                 }
@@ -5238,7 +5428,26 @@ impl Vm {
                         self.alloc_builtin_bound_method(builtin, receiver.clone()),
                     ));
                 }
+                if Self::cpython_proxy_raw_ptr_from_value(&attr).is_some()
+                    && let Some(bound_result) =
+                        self.bind_cpython_descriptor_for_super(&attr, &receiver_value, &owner_value)
+                {
+                    return Ok(AttrAccessOutcome::Value(bound_result?));
+                }
                 let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
+                if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
+                    let getter_tag = getter
+                        .as_ref()
+                        .map(|value| {
+                            format!(
+                                "{} {}",
+                                self.value_type_name_for_error(value),
+                                format_repr(value)
+                            )
+                        })
+                        .unwrap_or_else(|| "<none>".to_string());
+                    eprintln!("[super-dtype] descriptor getter={getter_tag}");
+                }
                 if let Some(getter) = getter {
                     return Ok(
                         match self.call_internal(
@@ -5255,7 +5464,6 @@ impl Vm {
                 }
                 return Ok(AttrAccessOutcome::Value(attr));
             }
-
             if self.class_has_builtin_dict_base(&class) {
                 let dict_receiver = match &receiver_value {
                     Value::Dict(dict) => Some(dict.clone()),

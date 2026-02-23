@@ -372,7 +372,7 @@ use self::cpython_slot_runtime::{
     cpython_mapping_subscript_slot, cpython_sequence_item_slot, cpython_structseq_count_fields,
     cpython_try_binary_number_slot, cpython_try_richcompare_slot,
     cpython_unicode_decode_with_codec_in_context, cpython_unicode_encode_with_codec_in_context,
-    cpython_unicode_text_from_value, cpython_valid_type_ptr,
+    cpython_unicode_text_from_value, cpython_valid_type_ptr, PY_RUNTIME_MAPPING_METHODS,
 };
 use self::cpython_string_runtime::{
     c_name_to_string, c_wide_name_to_string, cpython_string_to_wide_units,
@@ -493,6 +493,7 @@ thread_local! {
     static PROXY_REFRESH_ACTIVE: Cell<bool> = const { Cell::new(false) };
     static CPY_PROXY_GET_ITER_ACTIVE: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
     static CPY_PROXY_ATTR_LOOKUP_ACTIVE: RefCell<Vec<(usize, String, bool)>> = const { RefCell::new(Vec::new()) };
+    static CPY_PROXY_ATTR_LOOKUP_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 struct ProxyRefreshReentryGuard;
@@ -525,6 +526,21 @@ struct ProxyAttrLookupReentryGuard {
 
 impl ProxyAttrLookupReentryGuard {
     fn enter(raw_ptr: usize, attr_name: &str, is_type_object: bool) -> Option<Self> {
+        const MAX_PROXY_ATTR_LOOKUP_DEPTH: usize = 256;
+        let depth_allowed = CPY_PROXY_ATTR_LOOKUP_DEPTH.with(|depth| {
+            let next = depth.get().saturating_add(1);
+            depth.set(next);
+            next <= MAX_PROXY_ATTR_LOOKUP_DEPTH
+        });
+        if !depth_allowed {
+            CPY_PROXY_ATTR_LOOKUP_DEPTH.with(|depth| {
+                let current = depth.get();
+                if current > 0 {
+                    depth.set(current - 1);
+                }
+            });
+            return None;
+        }
         let mut reentered = false;
         CPY_PROXY_ATTR_LOOKUP_ACTIVE.with(|active| {
             let mut stack = active.borrow_mut();
@@ -537,6 +553,12 @@ impl ProxyAttrLookupReentryGuard {
             stack.push((raw_ptr, attr_name.to_string(), is_type_object));
         });
         if reentered {
+            CPY_PROXY_ATTR_LOOKUP_DEPTH.with(|depth| {
+                let current = depth.get();
+                if current > 0 {
+                    depth.set(current - 1);
+                }
+            });
             None
         } else {
             Some(Self {
@@ -556,6 +578,12 @@ impl Drop for ProxyAttrLookupReentryGuard {
                 *ptr == self.raw_ptr && *is_type == self.is_type_object && *name == self.attr_name
             }) {
                 stack.remove(index);
+            }
+        });
+        CPY_PROXY_ATTR_LOOKUP_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current > 0 {
+                depth.set(current - 1);
             }
         });
     }
@@ -827,6 +855,9 @@ const CPY_SLOT_GETITEM_NAME: &[u8] = b"__getitem__\0";
 const CPY_SLOT_LEN_NAME: &[u8] = b"__len__\0";
 const CPY_SLOT_ITER_NAME: &[u8] = b"__iter__\0";
 const CPY_SLOT_SETITEM_NAME: &[u8] = b"__setitem__\0";
+const CPY_SLOT_GET_NAME: &[u8] = b"__get__\0";
+const CPY_SLOT_SET_NAME: &[u8] = b"__set__\0";
+const CPY_SLOT_DELETE_NAME: &[u8] = b"__delete__\0";
 const CPY_SLOT_INIT_NAME: &[u8] = b"__init__\0";
 
 static mut CPY_SLOT_LT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
@@ -910,6 +941,24 @@ static mut CPY_SLOT_ITER_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
 static mut CPY_SLOT_SETITEM_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
     ml_name: CPY_SLOT_SETITEM_NAME.as_ptr().cast::<c_char>(),
     ml_meth: Some(cpython_slot_dunder_setitem),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_GET_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_GET_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_get),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_SET_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_SET_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_set),
+    ml_flags: METH_VARARGS,
+    ml_doc: std::ptr::null(),
+};
+static mut CPY_SLOT_DELETE_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
+    ml_name: CPY_SLOT_DELETE_NAME.as_ptr().cast::<c_char>(),
+    ml_meth: Some(cpython_slot_dunder_delete),
     ml_flags: METH_VARARGS,
     ml_doc: std::ptr::null(),
 };
@@ -1844,6 +1893,15 @@ fn cpython_slot_len_iter_setitem_method_def(attr_name: &str) -> Option<*mut Cpyt
     }
 }
 
+fn cpython_slot_descriptor_method_def(attr_name: &str) -> Option<*mut CpythonMethodDef> {
+    match attr_name {
+        "__get__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_GET_METHOD_DEF)),
+        "__set__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_SET_METHOD_DEF)),
+        "__delete__" => Some(std::ptr::addr_of_mut!(CPY_SLOT_DELETE_METHOD_DEF)),
+        _ => None,
+    }
+}
+
 unsafe fn cpython_find_nb_bool_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
     let mut current = type_ptr;
     for _ in 0..64 {
@@ -2078,6 +2136,48 @@ unsafe fn cpython_find_setitem_slot(
     (std::ptr::null_mut(), std::ptr::null_mut())
 }
 
+unsafe fn cpython_find_descr_get_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is a type pointer from bounded hierarchy walk.
+        let slot = unsafe { (*current).tp_descr_get };
+        if !slot.is_null() {
+            return slot;
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    std::ptr::null_mut()
+}
+
+unsafe fn cpython_find_descr_set_slot(type_ptr: *mut CpythonTypeObject) -> *mut c_void {
+    let mut current = type_ptr;
+    for _ in 0..64 {
+        if current.is_null() {
+            break;
+        }
+        // SAFETY: `current` is a type pointer from bounded hierarchy walk.
+        let slot = unsafe { (*current).tp_descr_set };
+        if !slot.is_null() {
+            return slot;
+        }
+        // SAFETY: type hierarchy link read-only.
+        let next = unsafe { (*current).tp_base };
+        if next.is_null() || next == current {
+            break;
+        }
+        current = next;
+    }
+    std::ptr::null_mut()
+}
+
 unsafe fn cpython_slot_unary_available(type_ptr: *mut CpythonTypeObject, attr_name: &str) -> bool {
     match attr_name {
         "__bool__" => unsafe { !cpython_find_nb_bool_slot(type_ptr).is_null() },
@@ -2110,6 +2210,23 @@ unsafe fn cpython_slot_len_iter_setitem_available(
             // SAFETY: helper performs bounded type hierarchy walk.
             let (mapping_slot, sequence_slot) = unsafe { cpython_find_setitem_slot(type_ptr) };
             !mapping_slot.is_null() || !sequence_slot.is_null()
+        }
+        _ => false,
+    }
+}
+
+unsafe fn cpython_slot_descriptor_available(
+    type_ptr: *mut CpythonTypeObject,
+    attr_name: &str,
+) -> bool {
+    match attr_name {
+        "__get__" => {
+            // SAFETY: helper performs bounded type hierarchy walk.
+            unsafe { !cpython_find_descr_get_slot(type_ptr).is_null() }
+        }
+        "__set__" | "__delete__" => {
+            // SAFETY: helper performs bounded type hierarchy walk.
+            unsafe { !cpython_find_descr_set_slot(type_ptr).is_null() }
         }
         _ => false,
     }
@@ -2438,6 +2555,299 @@ unsafe extern "C" fn cpython_slot_dunder_getitem(
     }
     cpython_set_error("TypeError: descriptor '__getitem__' is unavailable for this object");
     std::ptr::null_mut()
+}
+
+unsafe extern "C" fn cpython_compat_descriptor_tp_descr_get(
+    descriptor: *mut c_void,
+    object: *mut c_void,
+    _owner: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if descriptor.is_null() {
+            context.set_error("descriptor __get__ received null descriptor");
+            return std::ptr::null_mut();
+        }
+        if object.is_null() {
+            unsafe { Py_XIncRef(descriptor) };
+            return descriptor;
+        }
+        let object_type = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        context
+            .resolve_descriptor_attr_ptr(descriptor, object, object_type, false)
+            .unwrap_or_else(|| {
+                context.set_error("descriptor metadata is unavailable");
+                std::ptr::null_mut()
+            })
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+unsafe extern "C" fn cpython_compat_descriptor_tp_descr_set(
+    descriptor: *mut c_void,
+    object: *mut c_void,
+    value: *mut c_void,
+) -> c_int {
+    with_active_cpython_context_mut(|context| {
+        if descriptor.is_null() || object.is_null() {
+            context.set_error("descriptor __set__ received null receiver");
+            return -1;
+        }
+        let object_type = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        context
+            .set_descriptor_attr_ptr(descriptor, object, object_type, value)
+            .unwrap_or_else(|| {
+                context.set_error("descriptor metadata is unavailable");
+                -1
+            })
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        -1
+    })
+}
+
+unsafe extern "C" fn cpython_slot_dunder_get(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    if args.is_null() {
+        cpython_set_error("TypeError: descriptor '__get__' requires an argument tuple");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `args` is expected to be a tuple pointer for METH_VARARGS call flow.
+    let argc = unsafe { PyTuple_Size(args) };
+    if argc < 0 {
+        return std::ptr::null_mut();
+    }
+    let (descriptor, instance, owner) = if !self_obj.is_null() {
+        if argc != 1 && argc != 2 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__get__' expected 1 or 2 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let instance = unsafe { PyTuple_GetItem(args, 0) };
+        let owner = if argc == 2 {
+            // SAFETY: arg tuple size validated above.
+            unsafe { PyTuple_GetItem(args, 1) }
+        } else {
+            std::ptr::null_mut()
+        };
+        (self_obj, instance, owner)
+    } else {
+        if argc != 2 && argc != 3 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__get__' expected 2 or 3 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let descriptor = unsafe { PyTuple_GetItem(args, 0) };
+        // SAFETY: arg tuple size validated above.
+        let instance = unsafe { PyTuple_GetItem(args, 1) };
+        let owner = if argc == 3 {
+            // SAFETY: arg tuple size validated above.
+            unsafe { PyTuple_GetItem(args, 2) }
+        } else {
+            std::ptr::null_mut()
+        };
+        (descriptor, instance, owner)
+    };
+    if descriptor.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: descriptor is expected to be a valid object pointer.
+    let descriptor_type = unsafe {
+        descriptor
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if descriptor_type.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: helper performs bounded type hierarchy walk.
+    let slot = unsafe { cpython_find_descr_get_slot(descriptor_type) };
+    if slot.is_null() {
+        cpython_set_error("TypeError: descriptor '__get__' is unavailable for this object");
+        return std::ptr::null_mut();
+    }
+    let descriptor_get: unsafe extern "C" fn(
+        *mut c_void,
+        *mut c_void,
+        *mut c_void,
+    ) -> *mut c_void =
+        // SAFETY: `tp_descr_get` follows descriptor-get ABI.
+        unsafe { std::mem::transmute(slot) };
+    let self_ptr = if instance.is_null() || instance == std::ptr::addr_of_mut!(_Py_NoneStruct).cast()
+    {
+        std::ptr::null_mut()
+    } else {
+        instance
+    };
+    // SAFETY: descriptor slot invocation follows CPython ABI.
+    unsafe { descriptor_get(descriptor, self_ptr, owner) }
+}
+
+unsafe extern "C" fn cpython_slot_dunder_set(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    if args.is_null() {
+        cpython_set_error("TypeError: descriptor '__set__' requires an argument tuple");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `args` is expected to be a tuple pointer for METH_VARARGS call flow.
+    let argc = unsafe { PyTuple_Size(args) };
+    if argc < 0 {
+        return std::ptr::null_mut();
+    }
+    let (descriptor, instance, value) = if !self_obj.is_null() {
+        if argc != 2 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__set__' expected 2 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let instance = unsafe { PyTuple_GetItem(args, 0) };
+        // SAFETY: arg tuple size validated above.
+        let value = unsafe { PyTuple_GetItem(args, 1) };
+        (self_obj, instance, value)
+    } else {
+        if argc != 3 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__set__' expected 3 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let descriptor = unsafe { PyTuple_GetItem(args, 0) };
+        // SAFETY: arg tuple size validated above.
+        let instance = unsafe { PyTuple_GetItem(args, 1) };
+        // SAFETY: arg tuple size validated above.
+        let value = unsafe { PyTuple_GetItem(args, 2) };
+        (descriptor, instance, value)
+    };
+    if descriptor.is_null() || instance.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: descriptor is expected to be a valid object pointer.
+    let descriptor_type = unsafe {
+        descriptor
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if descriptor_type.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: helper performs bounded type hierarchy walk.
+    let slot = unsafe { cpython_find_descr_set_slot(descriptor_type) };
+    if slot.is_null() {
+        cpython_set_error("TypeError: descriptor '__set__' is unavailable for this object");
+        return std::ptr::null_mut();
+    }
+    let descriptor_set: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
+        // SAFETY: `tp_descr_set` follows descriptor-set ABI.
+        unsafe { std::mem::transmute(slot) };
+    // SAFETY: descriptor slot invocation follows CPython ABI.
+    let status = unsafe { descriptor_set(descriptor, instance, value) };
+    if status < 0 {
+        return std::ptr::null_mut();
+    }
+    let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+    // SAFETY: singleton reference increment for Python-visible return value.
+    unsafe { Py_IncRef(none_ptr) };
+    none_ptr
+}
+
+unsafe extern "C" fn cpython_slot_dunder_delete(
+    self_obj: *mut c_void,
+    args: *mut c_void,
+) -> *mut c_void {
+    if args.is_null() {
+        cpython_set_error("TypeError: descriptor '__delete__' requires an argument tuple");
+        return std::ptr::null_mut();
+    }
+    // SAFETY: `args` is expected to be a tuple pointer for METH_VARARGS call flow.
+    let argc = unsafe { PyTuple_Size(args) };
+    if argc < 0 {
+        return std::ptr::null_mut();
+    }
+    let (descriptor, instance) = if !self_obj.is_null() {
+        if argc != 1 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__delete__' expected 1 argument, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let instance = unsafe { PyTuple_GetItem(args, 0) };
+        (self_obj, instance)
+    } else {
+        if argc != 2 {
+            cpython_set_error(format!(
+                "TypeError: descriptor '__delete__' expected 2 arguments, got {argc}"
+            ));
+            return std::ptr::null_mut();
+        }
+        // SAFETY: arg tuple size validated above.
+        let descriptor = unsafe { PyTuple_GetItem(args, 0) };
+        // SAFETY: arg tuple size validated above.
+        let instance = unsafe { PyTuple_GetItem(args, 1) };
+        (descriptor, instance)
+    };
+    if descriptor.is_null() || instance.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: descriptor is expected to be a valid object pointer.
+    let descriptor_type = unsafe {
+        descriptor
+            .cast::<CpythonObjectHead>()
+            .as_ref()
+            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+            .unwrap_or(std::ptr::null_mut())
+    };
+    if descriptor_type.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: helper performs bounded type hierarchy walk.
+    let slot = unsafe { cpython_find_descr_set_slot(descriptor_type) };
+    if slot.is_null() {
+        cpython_set_error("TypeError: descriptor '__delete__' is unavailable for this object");
+        return std::ptr::null_mut();
+    }
+    let descriptor_set: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
+        // SAFETY: `tp_descr_set` follows descriptor-set ABI.
+        unsafe { std::mem::transmute(slot) };
+    // SAFETY: descriptor slot invocation follows CPython ABI; delete passes null value.
+    let status = unsafe { descriptor_set(descriptor, instance, std::ptr::null_mut()) };
+    if status < 0 {
+        return std::ptr::null_mut();
+    }
+    let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
+    // SAFETY: singleton reference increment for Python-visible return value.
+    unsafe { Py_IncRef(none_ptr) };
+    none_ptr
 }
 
 unsafe extern "C" fn cpython_slot_dunder_len(
@@ -3012,6 +3422,8 @@ fn initialize_cpython_compat_type_objects() {
         PyType_Type.tp_setattro = cpython_type_tp_setattro as *mut c_void;
         PyType_Type.tp_as_mapping = std::ptr::addr_of_mut!(PY_TYPE_MAPPING_METHODS).cast();
         PyType_Type.tp_base = std::ptr::addr_of_mut!(PyBaseObject_Type);
+        PyBaseObject_Type.tp_alloc = PyType_GenericAlloc as *mut c_void;
+        PyBaseObject_Type.tp_new = PyType_GenericNew as *mut c_void;
         PyBaseObject_Type.tp_getattro = PyObject_GenericGetAttr as *mut c_void;
         PyBaseObject_Type.tp_setattro = PyObject_GenericSetAttr as *mut c_void;
         PyBaseObject_Type.tp_repr = cpython_object_tp_repr as *mut c_void;
@@ -3025,6 +3437,12 @@ fn initialize_cpython_compat_type_objects() {
         PyClassMethodDescr_Type.tp_call = cpython_method_descriptor_tp_call as *mut c_void;
         PyClassMethodDescr_Type.tp_descr_get =
             cpython_method_descriptor_tp_descr_get as *mut c_void;
+        PyMemberDescr_Type.tp_getattro = PyObject_GenericGetAttr as *mut c_void;
+        PyMemberDescr_Type.tp_descr_get = cpython_compat_descriptor_tp_descr_get as *mut c_void;
+        PyMemberDescr_Type.tp_descr_set = cpython_compat_descriptor_tp_descr_set as *mut c_void;
+        PyGetSetDescr_Type.tp_getattro = PyObject_GenericGetAttr as *mut c_void;
+        PyGetSetDescr_Type.tp_descr_get = cpython_compat_descriptor_tp_descr_get as *mut c_void;
+        PyGetSetDescr_Type.tp_descr_set = cpython_compat_descriptor_tp_descr_set as *mut c_void;
         PyMethod_Type.tp_call = cpython_method_tp_call as *mut c_void;
         PyFloat_Type.tp_new = cpython_float_tp_new as *mut c_void;
         PyUnicode_Type.tp_richcompare = PyUnicode_RichCompare as *mut c_void;
@@ -3805,13 +4223,6 @@ impl ModuleCapiContext {
         if Self::builtin_type_ptrs().contains(&object) {
             return true;
         }
-        // SAFETY: guarded by non-null + minimum-address + alignment checks.
-        let Some(type_obj) = (unsafe { object.cast::<CpythonTypeObject>().as_ref() }) else {
-            return false;
-        };
-        if !Self::is_probable_c_string_pointer(type_obj.tp_name) {
-            return false;
-        }
         // SAFETY: type pointer is validated above.
         let Some(head) = (unsafe { object.cast::<CpythonObjectHead>().as_ref() }) else {
             return false;
@@ -3821,15 +4232,31 @@ impl ModuleCapiContext {
         }
         let metatype = head.ob_type.cast::<CpythonTypeObject>();
         if metatype.is_null() {
-            return true;
-        }
-        if metatype == std::ptr::addr_of_mut!(PyType_Type) {
-            return true;
+            return false;
         }
         let metatype_addr = metatype as usize;
         if metatype_addr < MIN_VALID_PTR
             || metatype_addr % std::mem::align_of::<CpythonTypeObject>() != 0
         {
+            return false;
+        }
+        let py_type_type = std::ptr::addr_of_mut!(PyType_Type);
+        let metatype_is_type_family = if metatype == py_type_type {
+            true
+        } else {
+            // SAFETY: pointers are plausibility-checked above and only queried
+            // via CPython subtype relation helper.
+            unsafe { PyType_IsSubtype(metatype.cast::<c_void>(), py_type_type.cast::<c_void>()) != 0 }
+        };
+        if !metatype_is_type_family {
+            return false;
+        }
+        // SAFETY: `object` is now validated as an instance of `type` (or a
+        // metatype subtype), so reading `tp_name` is structure-safe.
+        let Some(type_obj) = (unsafe { object.cast::<CpythonTypeObject>().as_ref() }) else {
+            return false;
+        };
+        if !Self::is_probable_c_string_pointer(type_obj.tp_name) {
             return false;
         }
         // SAFETY: metatype pointer is plausibility-checked above.
@@ -3844,6 +4271,9 @@ impl ModuleCapiContext {
     fn is_probable_type_object_ptr(object: *mut c_void) -> bool {
         const MIN_VALID_PTR: usize = 0x1_0000_0000;
         if object.is_null() {
+            return false;
+        }
+        if !Self::is_probable_type_object_without_metatype(object) {
             return false;
         }
         // SAFETY: best-effort probe of object header only.
@@ -4851,6 +5281,44 @@ impl ModuleCapiContext {
         vm.capi_registry_pin_external_once(ptr as usize)
     }
 
+    fn class_special_method_mro_value(
+        &self,
+        class_attrs: &HashMap<String, Value>,
+        class_bases: &[ObjRef],
+        method_name: &str,
+    ) -> Option<Value> {
+        if let Some(value) = class_attrs.get(method_name) {
+            return Some(value.clone());
+        }
+        let mut seen = HashSet::new();
+        let mut pending = class_bases.to_vec();
+        while let Some(base_obj) = pending.pop() {
+            if !seen.insert(base_obj.id()) {
+                continue;
+            }
+            let base_kind = base_obj.kind();
+            let Object::Class(base_data) = &*base_kind else {
+                continue;
+            };
+            if let Some(value) = base_data.attrs.get(method_name) {
+                return Some(value.clone());
+            }
+            for base in base_data.bases.iter().rev() {
+                pending.push(base.clone());
+            }
+        }
+        None
+    }
+
+    fn class_supports_mapping_subscript_slot(
+        &self,
+        class_attrs: &HashMap<String, Value>,
+        class_bases: &[ObjRef],
+    ) -> bool {
+        self.class_special_method_mro_value(class_attrs, class_bases, "__getitem__")
+            .is_some_and(|value| !matches!(value, Value::None))
+    }
+
     fn alloc_cpython_ptr_for_handle(&mut self, handle: PyrsObjectHandle) -> *mut c_void {
         if let Some(existing) = self.cpython_ptr_by_handle.get(&handle).copied() {
             if std::env::var_os("PYRS_TRACE_CPY_PTRS").is_some() {
@@ -4933,6 +5401,7 @@ impl ModuleCapiContext {
                 match &slot.value {
                     Value::Class(class_obj) => match &*class_obj.kind() {
                         Object::Class(class_data) => Some((
+                            class_obj.clone(),
                             class_data.name.clone(),
                             class_data.attrs.clone(),
                             class_data.metaclass.clone(),
@@ -4944,12 +5413,7 @@ impl ModuleCapiContext {
                 },
                 match &slot.value {
                     Value::Instance(instance_obj) => match &*instance_obj.kind() {
-                        Object::Instance(instance_data) => match &*instance_data.class.kind() {
-                            Object::Class(class_data) if class_data.name == "_thread.lock" => {
-                                Some(instance_data.class.clone())
-                            }
-                            _ => None,
-                        },
+                        Object::Instance(instance_data) => Some(instance_data.class.clone()),
                         _ => None,
                     },
                     _ => None,
@@ -5322,7 +5786,14 @@ impl ModuleCapiContext {
             }
             self.sync_module_compat_from_value(raw_module, module_obj, refcount);
             raw_module.cast::<CpythonCompatObject>()
-        } else if let Some((class_name, class_attrs, class_metaclass, class_bases)) = class_state {
+        } else if let Some((
+            class_obj,
+            class_name,
+            class_attrs,
+            class_metaclass,
+            class_bases,
+        )) = class_state
+        {
             // SAFETY: allocate storage for CPython type-compatible header.
             let raw_type = unsafe { malloc(std::mem::size_of::<CpythonTypeObject>()) }
                 .cast::<CpythonTypeObject>();
@@ -5365,6 +5836,13 @@ impl ModuleCapiContext {
                     (!ptr.is_null()).then_some(ptr.cast::<CpythonTypeObject>())
                 })
                 .unwrap_or_else(|| std::ptr::addr_of_mut!(PyBaseObject_Type));
+            let needs_native_base_inheritance = class_bases.iter().any(|base| {
+                Self::cpython_proxy_raw_ptr_from_value(&Value::Class(base.clone())).is_some()
+            });
+            let native_base_inheritance_enabled = needs_native_base_inheritance
+                && std::env::var_os("PYRS_DISABLE_NATIVE_BASE_READY").is_none();
+            let supports_mapping_subscript =
+                self.class_supports_mapping_subscript_slot(&class_attrs, &class_bases);
             let exception_subclass_flag = if self.vm.is_null() {
                 0
             } else {
@@ -5377,7 +5855,17 @@ impl ModuleCapiContext {
                 }
             };
             let tp_basicsize = {
-                let default = std::mem::size_of::<CpythonCompatObject>() as isize;
+                let inherited_base = if tp_base_ptr.is_null() {
+                    std::mem::size_of::<CpythonObjectHead>() as isize
+                } else {
+                    // SAFETY: `tp_base_ptr` is either a static builtin type or a
+                    // compat type object materialized in this context.
+                    unsafe { (*tp_base_ptr).tp_basicsize }
+                };
+                // For heap classes, never under-allocate compared to the base
+                // type. This is critical for extension-backed subclasses such as
+                // `numpy.ma.MaskedArray` (base: `numpy.ndarray`).
+                let default = inherited_base.max(std::mem::size_of::<CpythonCompatObject>() as isize);
                 let module_name = class_attrs.get("__module__").and_then(|value| match value {
                     Value::Str(name) => Some(name.as_str()),
                     _ => None,
@@ -5391,6 +5879,11 @@ impl ModuleCapiContext {
                     (Some("datetime"), "timezone") => 32,
                     _ => default,
                 }
+            };
+            let type_subclass_flag = if tp_base_ptr == std::ptr::addr_of_mut!(PyType_Type) {
+                PY_TPFLAGS_TYPE_SUBCLASS
+            } else {
+                0
             };
             // SAFETY: `raw_type` points to writable CpythonTypeObject storage.
             unsafe {
@@ -5409,18 +5902,39 @@ impl ModuleCapiContext {
                     tp_repr: std::ptr::null_mut(),
                     tp_as_number: std::ptr::null_mut(),
                     tp_as_sequence: std::ptr::null_mut(),
-                    tp_as_mapping: std::ptr::null_mut(),
+                    tp_as_mapping: if supports_mapping_subscript {
+                        std::ptr::addr_of_mut!(PY_RUNTIME_MAPPING_METHODS).cast::<c_void>()
+                    } else {
+                        std::ptr::null_mut()
+                    },
                     tp_hash: std::ptr::null_mut(),
-                    tp_call: cpython_type_tp_call as *mut c_void,
+                    // Class objects are instances of `type`; constructor-call behavior is
+                    // driven by `type.tp_call` on the metatype, not by overriding this slot
+                    // on each class object.
+                    tp_call: std::ptr::null_mut(),
                     tp_str: std::ptr::null_mut(),
-                    tp_getattro: std::ptr::null_mut(),
-                    tp_setattro: std::ptr::null_mut(),
+                    // Native-proxy subclasses inherit slot behavior from C bases through
+                    // PyType_Ready; regular runtime classes keep the generic object protocol.
+                    tp_getattro: if native_base_inheritance_enabled {
+                        std::ptr::null_mut()
+                    } else {
+                        PyObject_GenericGetAttr as *mut c_void
+                    },
+                    tp_setattro: if native_base_inheritance_enabled {
+                        std::ptr::null_mut()
+                    } else {
+                        PyObject_GenericSetAttr as *mut c_void
+                    },
                     tp_as_buffer: std::ptr::null_mut(),
                     tp_flags: PY_TPFLAGS_HEAPTYPE
                         | PY_TPFLAGS_BASETYPE
-                        | PY_TPFLAGS_TYPE_SUBCLASS
+                        | type_subclass_flag
                         | exception_subclass_flag
-                        | PY_TPFLAGS_READY,
+                        | if native_base_inheritance_enabled {
+                            0
+                        } else {
+                            PY_TPFLAGS_READY
+                        },
                     tp_doc: std::ptr::null(),
                     tp_traverse: std::ptr::null_mut(),
                     tp_clear: std::ptr::null_mut(),
@@ -5437,8 +5951,16 @@ impl ModuleCapiContext {
                     tp_descr_set: std::ptr::null_mut(),
                     tp_dictoffset: 0,
                     tp_init: std::ptr::null_mut(),
-                    tp_alloc: PyType_GenericAlloc as *mut c_void,
-                    tp_new: PyType_GenericNew as *mut c_void,
+                    tp_alloc: if native_base_inheritance_enabled {
+                        std::ptr::null_mut()
+                    } else {
+                        PyType_GenericAlloc as *mut c_void
+                    },
+                    tp_new: if native_base_inheritance_enabled {
+                        std::ptr::null_mut()
+                    } else {
+                        PyType_GenericNew as *mut c_void
+                    },
                     tp_free: std::ptr::null_mut(),
                     tp_is_gc: std::ptr::null_mut(),
                     tp_bases: std::ptr::null_mut(),
@@ -5454,6 +5976,25 @@ impl ModuleCapiContext {
                     tp_versions_used: 0,
                 });
                 (*raw_type).tp_base = tp_base_ptr;
+            }
+            if native_base_inheritance_enabled
+                && unsafe { PyType_Ready(raw_type.cast::<c_void>()) } != 0
+            {
+                // SAFETY: `raw_type` is uniquely owned in this failure path.
+                unsafe {
+                    free(raw_type.cast());
+                }
+                return std::ptr::null_mut();
+            }
+            if std::env::var_os("PYRS_TRACE_TYPED_CACHE_SUBSCRIPT").is_some()
+                && class_name.contains("TypedCache")
+            {
+                eprintln!(
+                    "[typed-cache-subscript] class name={} id={} mapped_getitem_slot={}",
+                    class_name,
+                    class_obj.id(),
+                    supports_mapping_subscript
+                );
             }
             raw_type.cast::<CpythonCompatObject>()
         } else if let Some((function_obj, receiver_obj)) = bound_method_state.as_ref() {
@@ -5613,7 +6154,17 @@ impl ModuleCapiContext {
                     Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => {
                         Some(*raw_ptr as usize as *mut c_void)
                     }
-                    _ => None,
+                    _ => {
+                        if std::env::var_os("PYRS_TRACE_PROXY_PTR_MISS").is_some() {
+                            let mut keys = class_data.attrs.keys().cloned().collect::<Vec<_>>();
+                            keys.sort();
+                            eprintln!(
+                                "[proxy-ptr-miss] kind=class class={} attrs={keys:?}",
+                                class_data.name
+                            );
+                        }
+                        None
+                    }
                 }
             }
             Value::Instance(instance_obj) => {
@@ -5624,7 +6175,21 @@ impl ModuleCapiContext {
                     Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => {
                         Some(*raw_ptr as usize as *mut c_void)
                     }
-                    _ => None,
+                    _ => {
+                        if std::env::var_os("PYRS_TRACE_PROXY_PTR_MISS").is_some() {
+                            let class_name = match &*instance_data.class.kind() {
+                                Object::Class(class_data) => class_data.name.clone(),
+                                _ => "<non-class>".to_string(),
+                            };
+                            let mut keys = instance_data.attrs.keys().cloned().collect::<Vec<_>>();
+                            keys.sort();
+                            eprintln!(
+                                "[proxy-ptr-miss] kind=instance class={} attrs={keys:?}",
+                                class_name
+                            );
+                        }
+                        None
+                    }
                 }
             }
             _ => None,
@@ -6327,7 +6892,7 @@ impl ModuleCapiContext {
                     .and_then(|ty| c_name_to_string(ty.tp_name).ok())
                     .unwrap_or_else(|| "<unknown>".to_string())
             };
-            if object_type == expected_type {
+            if is_type_object {
                 // SAFETY: object_type indicates `object` has PyTypeObject layout.
                 let (tp_name, tp_dict, tp_base) = unsafe {
                     let ty = object.cast::<CpythonTypeObject>();
@@ -6336,8 +6901,8 @@ impl ModuleCapiContext {
                     (tp_name, (*ty).tp_dict, (*ty).tp_base)
                 };
                 eprintln!(
-                    "[cpy-proxy] create proxy type-object ptr={:p} object_type={:p} object_type_name={} tp_name={} tp_dict={:p} tp_base={:p}",
-                    object, object_type, object_type_name, tp_name, tp_dict, tp_base
+                    "[cpy-proxy] create proxy type-object ptr={:p} object_type={:p} object_type_name={} expected_type={:p} tp_name={} tp_dict={:p} tp_base={:p}",
+                    object, object_type, object_type_name, expected_type, tp_name, tp_dict, tp_base
                 );
             } else {
                 eprintln!(
@@ -6353,46 +6918,37 @@ impl ModuleCapiContext {
                     &*type_proxy_class.kind(),
                     Object::Class(class_data) if is_cpython_proxy_class(class_data)
                 );
-                if !is_proxy_type_class {
-                    if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
-                        let class_name = match &*type_proxy_class.kind() {
-                            Object::Class(class_data) => class_data.name.clone(),
-                            _ => "<non-class>".to_string(),
-                        };
-                        eprintln!(
-                            "[cpy-proxy] non-proxy type class fallback object_ptr={:p} type_ptr={:p} class={}",
-                            object, object_type, class_name
-                        );
-                    }
-                    // Continue through generic fallback path below.
-                } else {
-                    if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
-                        let class_name = match &*type_proxy_class.kind() {
-                            Object::Class(class_data) => class_data.name.clone(),
-                            _ => "<non-class>".to_string(),
-                        };
-                        eprintln!(
-                            "[cpy-proxy] instance uses type-proxy class={} object_ptr={:p} type_ptr={:p}",
-                            class_name, object, object_type
-                        );
-                    }
-                    // SAFETY: VM pointer is valid for the C-API context lifetime.
-                    let vm = unsafe { &mut *self.vm };
-                    match vm
-                        .heap
-                        .alloc_instance(InstanceObject::new(type_proxy_class.clone()))
-                    {
-                        Value::Instance(instance_obj) => {
-                            if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
-                                instance_data.attrs.insert(
-                                    CPY_PROXY_PTR_ATTR.to_string(),
-                                    Value::Int(object as usize as i64),
-                                );
-                            }
-                            return Some(Value::Instance(instance_obj));
+                if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
+                    let class_name = match &*type_proxy_class.kind() {
+                        Object::Class(class_data) => class_data.name.clone(),
+                        _ => "<non-class>".to_string(),
+                    };
+                    let source = if is_proxy_type_class {
+                        "type-proxy"
+                    } else {
+                        "runtime-class"
+                    };
+                    eprintln!(
+                        "[cpy-proxy] instance uses {} class={} object_ptr={:p} type_ptr={:p}",
+                        source, class_name, object, object_type
+                    );
+                }
+                // SAFETY: VM pointer is valid for the C-API context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                match vm
+                    .heap
+                    .alloc_instance(InstanceObject::new(type_proxy_class.clone()))
+                {
+                    Value::Instance(instance_obj) => {
+                        if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
+                            instance_data.attrs.insert(
+                                CPY_PROXY_PTR_ATTR.to_string(),
+                                Value::Int(object as usize as i64),
+                            );
                         }
-                        other => return Some(other),
+                        return Some(Value::Instance(instance_obj));
                     }
+                    other => return Some(other),
                 }
             } else if std::env::var_os("PYRS_TRACE_PROXY_CLASS_SOURCE").is_some() {
                 let owns_type_ptr = self.owns_cpython_allocation_ptr(object_type.cast::<c_void>());
@@ -6702,26 +7258,35 @@ impl ModuleCapiContext {
             // them through initialization paths.
             let likely_type_object = unsafe {
                 const MIN_VALID_PTR: usize = 0x1_0000_0000;
-                object
-                    .cast::<CpythonObjectHead>()
-                    .as_ref()
-                    .map(|head| head.ob_type.cast::<CpythonTypeObject>())
-                    .filter(|type_ptr| !type_ptr.is_null())
-                    .map(|type_ptr| {
-                        let type_addr = type_ptr as usize;
-                        if type_addr < MIN_VALID_PTR
-                            || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
-                        {
-                            return false;
-                        }
-                        let py_type =
-                            std::ptr::addr_of_mut!(PyType_Type).cast::<CpythonTypeObject>();
-                        type_ptr == py_type
-                            || ((*type_ptr).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
-                            || PyType_IsSubtype(type_ptr.cast::<c_void>(), py_type.cast::<c_void>())
-                                != 0
-                    })
-                    .unwrap_or(false)
+                let object_addr = object as usize;
+                if object_addr < MIN_VALID_PTR
+                    || object_addr % std::mem::align_of::<CpythonObjectHead>() != 0
+                {
+                    false
+                } else {
+                    object
+                        .cast::<CpythonObjectHead>()
+                        .as_ref()
+                        .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                        .filter(|type_ptr| !type_ptr.is_null())
+                        .map(|type_ptr| {
+                            let type_addr = type_ptr as usize;
+                            if type_addr < MIN_VALID_PTR
+                                || type_addr % std::mem::align_of::<CpythonTypeObject>() != 0
+                            {
+                                return false;
+                            }
+                            let py_type =
+                                std::ptr::addr_of_mut!(PyType_Type).cast::<CpythonTypeObject>();
+                            type_ptr == py_type
+                                || ((*type_ptr).tp_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0
+                                || PyType_IsSubtype(
+                                    type_ptr.cast::<c_void>(),
+                                    py_type.cast::<c_void>(),
+                                ) != 0
+                        })
+                        .unwrap_or(false)
+                }
             };
             if likely_type_object && let Some(proxy) = self.cpython_external_proxy_value(object) {
                 let proxy =
@@ -7343,15 +7908,7 @@ impl ModuleCapiContext {
         object_type: *mut CpythonTypeObject,
         is_type_object: bool,
     ) -> Option<*mut c_void> {
-        let descriptor_key = descriptor_ptr as usize;
-        let descriptor_kind = if let Some(kind) = self.cpython_descriptors.get(&descriptor_key) {
-            *kind
-        } else {
-            let kind = CPYTHON_DESCRIPTOR_REGISTRY
-                .with(|registry| registry.borrow().get(&descriptor_key).copied())?;
-            self.cpython_descriptors.insert(descriptor_key, kind);
-            kind
-        };
+        let descriptor_kind = self.descriptor_kind_for_ptr(descriptor_ptr)?;
         match descriptor_kind {
             CpythonDescriptorKind::Method {
                 owner_type,
@@ -7487,6 +8044,67 @@ impl ModuleCapiContext {
         }
     }
 
+    fn descriptor_kind_for_ptr(&mut self, descriptor_ptr: *mut c_void) -> Option<CpythonDescriptorKind> {
+        let descriptor_key = descriptor_ptr as usize;
+        if let Some(kind) = self.cpython_descriptors.get(&descriptor_key) {
+            return Some(*kind);
+        }
+        let kind =
+            CPYTHON_DESCRIPTOR_REGISTRY.with(|registry| registry.borrow().get(&descriptor_key).copied())?;
+        self.cpython_descriptors.insert(descriptor_key, kind);
+        Some(kind)
+    }
+
+    fn set_descriptor_attr_ptr(
+        &mut self,
+        descriptor_ptr: *mut c_void,
+        object: *mut c_void,
+        object_type: *mut CpythonTypeObject,
+        value: *mut c_void,
+    ) -> Option<c_int> {
+        let descriptor_kind = self.descriptor_kind_for_ptr(descriptor_ptr)?;
+        match descriptor_kind {
+            CpythonDescriptorKind::Method { .. } => {
+                self.set_error("TypeError: descriptor is not writable");
+                Some(-1)
+            }
+            CpythonDescriptorKind::GetSet { owner_type, getset } => {
+                if owner_type.is_null() || getset.is_null() {
+                    self.set_error("descriptor getset metadata is invalid");
+                    return Some(-1);
+                }
+                if object_type.is_null()
+                    || unsafe { PyType_IsSubtype(object_type.cast(), owner_type.cast()) } == 0
+                {
+                    self.set_error("descriptor getset requires subtype instance");
+                    return Some(-1);
+                }
+                let setter = unsafe { (*getset).set };
+                if setter.is_null() {
+                    self.set_error("AttributeError: attribute is not writable");
+                    return Some(-1);
+                }
+                let set: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
+                    unsafe { std::mem::transmute(setter) };
+                let closure = unsafe { (*getset).closure };
+                Some(unsafe { set(object, value, closure) })
+            }
+            CpythonDescriptorKind::Member { owner_type, member } => {
+                if owner_type.is_null() || member.is_null() {
+                    self.set_error("descriptor member metadata is invalid");
+                    return Some(-1);
+                }
+                if object_type.is_null()
+                    || unsafe { PyType_IsSubtype(object_type.cast(), owner_type.cast()) } == 0
+                {
+                    self.set_error("descriptor member requires subtype instance");
+                    return Some(-1);
+                }
+                Some(unsafe { PyMember_SetOne(object.cast::<c_char>(), member.cast::<c_void>(), value) })
+            }
+        }
+    }
+
     fn load_member_attr_ptr(
         &mut self,
         object: *mut c_void,
@@ -7614,6 +8232,19 @@ impl ModuleCapiContext {
         {
             return std::ptr::null_mut();
         }
+        if self.owns_cpython_allocation_ptr(mapping_ptr) {
+            return std::ptr::null_mut();
+        }
+        let mapping_ptr_known_live = if self.vm.is_null() {
+            false
+        } else {
+            // SAFETY: VM pointer is valid for active C-API context lifetime.
+            let vm = unsafe { &*self.vm };
+            vm.capi_registry_contains_live_or_pending(mapping_ptr as usize)
+        };
+        if !mapping_ptr_known_live && self.cpython_handle_from_ptr(mapping_ptr).is_none() {
+            return std::ptr::null_mut();
+        }
         let key_c_name = match CString::new(key) {
             Ok(name) => name,
             Err(_) => return std::ptr::null_mut(),
@@ -7729,36 +8360,14 @@ impl ModuleCapiContext {
                 .map(|head| head.ob_type)
                 .unwrap_or(std::ptr::null_mut())
         };
-        let expected_type = std::ptr::addr_of_mut!(PyType_Type).cast();
-        let is_type_object = if object_type.is_null() {
-            false
-        } else if object_type == expected_type {
-            true
-        } else {
-            const MIN_VALID_PTR: usize = 0x1_0000_0000;
-            let type_align = std::mem::align_of::<CpythonTypeObject>();
-            let object_type_addr = object_type as usize;
-            if object_type_addr < MIN_VALID_PTR || (object_type_addr % type_align) != 0 {
-                false
-            } else {
-                let metatype = object_type.cast::<CpythonTypeObject>();
-                // SAFETY: `metatype` pointer shape is validated above.
-                let metatype_flags = unsafe { (*metatype).tp_flags };
-                if (metatype_flags & PY_TPFLAGS_TYPE_SUBCLASS) != 0 {
-                    true
-                } else {
-                    // SAFETY: subtype check has additional defensive guards in implementation.
-                    unsafe {
-                        PyType_IsSubtype(
-                            object_type.cast::<c_void>(),
-                            expected_type.cast::<c_void>(),
-                        ) != 0
-                    }
-                }
-            }
-        };
+        let expected_type = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
+        // Use object-level type-object detection (not type-flag checks on `ob_type` alone):
+        // instances have `ob_type` pointing at a type object, but are not type objects.
+        let is_type_object = cpython_is_type_object_ptr(object);
         let trace_type_attr =
             attr_name == "type" && std::env::var_os("PYRS_TRACE_PROXY_TYPE_ATTR").is_some();
+        let trace_attr_max =
+            attr_name == "max" && std::env::var_os("PYRS_TRACE_ATTR_MAX").is_some();
         let trace_lookup_branch = std::env::var_os("PYRS_TRACE_PROXY_LOOKUP_BRANCH").is_some();
         let trace_repr_lookup = std::env::var_os("PYRS_TRACE_PROXY_REPR_LOOKUP").is_some()
             && matches!(attr_name, "__repr__" | "__str__");
@@ -7779,6 +8388,12 @@ impl ModuleCapiContext {
         } else {
             object_type.cast::<CpythonTypeObject>()
         };
+        if trace_attr_max {
+            eprintln!(
+                "[cpy-lookup-max] object={:p} object_type={:p} is_type_object={} start_current={:p}",
+                object, object_type, is_type_object, current
+            );
+        }
         let key = Value::Str(attr_name.to_string());
         for _ in 0..64 {
             if current.is_null() {
@@ -7826,17 +8441,16 @@ impl ModuleCapiContext {
                     current, dict_ptr, base_ptr
                 );
             }
-            let dict_is_owned = !dict_ptr.is_null() && self.owns_cpython_allocation_ptr(dict_ptr);
-            if !dict_ptr.is_null() && !dict_is_owned {
-                // External tp_dict pointers are common for proxied native types.
-                // Probe through the C-API dictionary surface so slot-wrapper descriptors
-                // materialized by PyType_Ready are visible here.
+            if !dict_ptr.is_null() {
+                // Probe through the C-API mapping surface first. This works for both
+                // external tp_dict pointers and compat-owned dict objects whose runtime
+                // mapping was not materialized yet.
                 let external_value_ptr = self.external_mapping_get_item_string(dict_ptr, attr_name);
                 if !external_value_ptr.is_null() {
                     let mut descriptor_rejected_for_slot_fallback = false;
                     let trace_generate_state_lookup = attr_name == "generate_state"
                         && std::env::var_os("PYRS_TRACE_GETATTR_GENERATE_STATE").is_some();
-                    // SAFETY: best-effort descriptor probe on external tp_dict entry.
+                    // SAFETY: best-effort descriptor probe on tp_dict entry.
                     let descriptor_type = unsafe {
                         external_value_ptr
                             .cast::<CpythonObjectHead>()
@@ -7867,6 +8481,16 @@ impl ModuleCapiContext {
                     if !descriptor_type.is_null() {
                         // SAFETY: descriptor type pointer was loaded from object header above.
                         let descriptor_get = unsafe { (*descriptor_type).tp_descr_get };
+                        if trace_attr_max {
+                            let descriptor_type_name = unsafe {
+                                c_name_to_string((*descriptor_type).tp_name)
+                                    .unwrap_or_else(|_| "<invalid>".to_string())
+                            };
+                            eprintln!(
+                                "[cpy-lookup-max] descriptor value_ptr={:p} descriptor_type={:p} descriptor_type_name={} descriptor_get={:p}",
+                                external_value_ptr, descriptor_type, descriptor_type_name, descriptor_get
+                            );
+                        }
                         if trace_generate_state_lookup {
                             eprintln!(
                                 "[generate-state-lookup] descriptor_get={:p}",
@@ -7891,9 +8515,22 @@ impl ModuleCapiContext {
                             } else {
                                 object
                             };
+                            if trace_attr_max {
+                                eprintln!(
+                                    "[cpy-lookup-max] descriptor bind self_ptr={:p} owner_ptr={:p}",
+                                    self_ptr, owner_ptr
+                                );
+                            }
                             // SAFETY: descriptor access mirrors CPython descriptor invocation.
                             let bound =
                                 unsafe { descriptor_get(external_value_ptr, self_ptr, owner_ptr) };
+                            if trace_attr_max {
+                                eprintln!(
+                                    "[cpy-lookup-max] descriptor result={:p} pyerr={:p}",
+                                    bound,
+                                    unsafe { PyErr_Occurred() }
+                                );
+                            }
                             if trace_generate_state_lookup {
                                 eprintln!(
                                     "[generate-state-lookup] descriptor_get_result={:p} pyerr={:p} self_ptr={:p} owner_ptr={:p}",
@@ -7932,6 +8569,87 @@ impl ModuleCapiContext {
                         }
                     }
                     if !descriptor_rejected_for_slot_fallback {
+                        if !is_type_object {
+                            if let Some(descriptor_value) =
+                                self.cpython_value_from_borrowed_ptr(external_value_ptr)
+                            {
+                                if trace_attr_max {
+                                    eprintln!(
+                                        "[cpy-lookup-max] runtime descriptor fallback descriptor_tag={}",
+                                        cpython_value_debug_tag(&descriptor_value)
+                                    );
+                                }
+                                match cpython_getattr_in_context(
+                                    self,
+                                    descriptor_value.clone(),
+                                    "__get__",
+                                ) {
+                                    Ok(getter) => {
+                                        if let Some(instance_value) =
+                                            self.cpython_value_from_ptr_or_proxy(object)
+                                        {
+                                            let owner_value = self
+                                                .cpython_value_from_ptr_or_proxy(
+                                                    object_type.cast::<c_void>(),
+                                                )
+                                                .unwrap_or(Value::None);
+                                            match cpython_call_internal_in_context(
+                                                self,
+                                                getter,
+                                                vec![instance_value, owner_value],
+                                                HashMap::new(),
+                                            ) {
+                                                Ok(bound_value) => {
+                                                    let bound_ptr =
+                                                        self.alloc_cpython_ptr_for_value(bound_value);
+                                                    if !bound_ptr.is_null() {
+                                                        if trace_attr_max {
+                                                            eprintln!(
+                                                                "[cpy-lookup-max] runtime descriptor __get__ fallback bound_ptr={:p}",
+                                                                bound_ptr
+                                                            );
+                                                        }
+                                                        if trace_lookup_branch {
+                                                            eprintln!(
+                                                                "[proxy-lookup-branch] attr={} branch=dict_external_runtime_descriptor object={:p} current={:p} value_ptr={:p}",
+                                                                attr_name, object, current, bound_ptr
+                                                            );
+                                                        }
+                                                        return Some(bound_ptr);
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    if trace_attr_max {
+                                                        eprintln!(
+                                                            "[cpy-lookup-max] runtime descriptor __get__ call failed err={}",
+                                                            err
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        } else if trace_attr_max {
+                                            eprintln!(
+                                                "[cpy-lookup-max] runtime descriptor fallback missing instance mapping"
+                                            );
+                                        }
+                                    }
+                                    Err(err) => {
+                                        if trace_attr_max {
+                                            eprintln!(
+                                                "[cpy-lookup-max] runtime descriptor missing __get__ err={}",
+                                                err
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if trace_attr_max {
+                            eprintln!(
+                                "[cpy-lookup-max] returning external value without descriptor binding ptr={:p}",
+                                external_value_ptr
+                            );
+                        }
                         if trace_lookup_branch {
                             eprintln!(
                                 "[proxy-lookup-branch] attr={} branch=dict_external_value object={:p} current={:p} value_ptr={:p}",
@@ -7946,7 +8664,8 @@ impl ModuleCapiContext {
                         attr_name, object, current
                     );
                 }
-            } else if !dict_ptr.is_null()
+            }
+            if !dict_ptr.is_null()
                 && let Some(Value::Dict(dict_obj)) = self.cpython_value_from_ptr(dict_ptr)
                 && let Some(value) = dict_get_value(&dict_obj, &key)
             {
@@ -8273,6 +8992,25 @@ impl ModuleCapiContext {
                             eprintln!(
                                 "[proxy-lookup-branch] attr={} branch={} object={:p} current={:p} value_ptr={:p}",
                                 attr_name, branch, object, current, callable_ptr
+                            );
+                        }
+                        return Some(callable_ptr);
+                    }
+                }
+                if let Some(method_def) = cpython_slot_descriptor_method_def(attr_name)
+                    && unsafe { cpython_slot_descriptor_available(current, attr_name) }
+                {
+                    let callable_ptr = self.alloc_cpython_method_cfunction_ptr(
+                        method_def,
+                        object,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    );
+                    if !callable_ptr.is_null() {
+                        if trace_lookup_branch {
+                            eprintln!(
+                                "[proxy-lookup-branch] attr={} branch=tp_descriptor_bound_slot_wrapper object={:p} current={:p} value_ptr={:p}",
+                                attr_name, object, current, callable_ptr
                             );
                         }
                         return Some(callable_ptr);
@@ -8985,12 +9723,19 @@ impl ModuleCapiContext {
         if self.owns_cpython_allocation_ptr(callable)
             && type_ptr == std::ptr::addr_of_mut!(PyType_Type)
         {
-            let allow_owned_type_call = self.cpython_known_type_ptrs.contains(&(callable as usize));
+            let allow_owned_type_call = self.cpython_known_type_ptrs.contains(&(callable as usize))
+                || self
+                    .cpython_value_from_ptr(callable)
+                    .is_some_and(|value| matches!(value, Value::Class(_)));
             if !allow_owned_type_call {
                 if trace_calls {
+                    let mapped = self
+                        .cpython_value_from_ptr(callable)
+                        .map(|value| cpython_value_debug_tag(&value))
+                        .unwrap_or_else(|| "<none>".to_string());
                     eprintln!(
-                        "[cpy-call] skip native callable={:p} reason=owned-compat-type-object",
-                        callable
+                        "[cpy-call] skip native callable={:p} reason=owned-compat-type-object mapped={}",
+                        callable, mapped
                     );
                 }
                 return None;
@@ -9163,6 +9908,24 @@ impl ModuleCapiContext {
                 refcount: 1,
             },
         );
+        if let Some(name_text) = self
+            .capsules
+            .get(&handle)
+            .and_then(|slot| slot.name.as_ref())
+            .and_then(|name| name.to_str().ok())
+            .map(|text| text.to_string())
+        {
+            let _ = self.sync_exported_capsule(
+                Some(name_text.as_str()),
+                pointer as usize,
+                0,
+                None,
+                false,
+            );
+            if let Some(slot) = self.capsules.get_mut(&handle) {
+                slot.exported_name = Some(name_text);
+            }
+        }
         Ok(handle)
     }
 
@@ -10356,16 +11119,51 @@ impl ModuleCapiContext {
         let requested_name = raw
             .to_str()
             .map_err(|_| "capsule name must be utf-8".to_string())?;
+        let trace_capsule_import = std::env::var_os("PYRS_TRACE_CPY_CAPSULE_IMPORT").is_some();
         if self.vm.is_null() {
             return Err("capsule_import missing VM context".to_string());
         }
-        // SAFETY: VM pointer is valid for the context lifetime.
-        let vm = unsafe { &mut *self.vm };
-        if requested_name == PYRS_DATETIME_CAPSULE_NAME {
-            vm.ensure_builtin_datetime_capi_capsule();
+        {
+            // SAFETY: VM pointer is valid for the context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            if requested_name == PYRS_DATETIME_CAPSULE_NAME {
+                vm.ensure_builtin_datetime_capi_capsule();
+            }
+            if let Some(entry) = vm.extension_capsule_registry.get(requested_name) {
+                if trace_capsule_import {
+                    eprintln!(
+                        "[capsule-import] registry-hit name={} ptr=0x{:x}",
+                        requested_name, entry.pointer
+                    );
+                }
+                return Ok(entry.pointer as *mut c_void);
+            }
         }
-        if let Some(entry) = vm.extension_capsule_registry.get(requested_name) {
-            return Ok(entry.pointer as *mut c_void);
+        if let Some((pointer, context, destructor)) = self.capsules.values().find_map(|slot| {
+            let slot_name = slot.name.as_ref()?.to_str().ok()?;
+            if slot_name == requested_name {
+                Some((slot.pointer, slot.context, slot.destructor))
+            } else {
+                None
+            }
+        }) {
+            // SAFETY: VM pointer is valid for the context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.extension_capsule_registry.insert(
+                requested_name.to_string(),
+                crate::vm::ExtensionCapsuleRegistryEntry {
+                    pointer,
+                    context,
+                    destructor,
+                },
+            );
+            if trace_capsule_import {
+                eprintln!(
+                    "[capsule-import] context-capsule-hit name={} ptr=0x{:x}",
+                    requested_name, pointer
+                );
+            }
+            return Ok(pointer as *mut c_void);
         }
         let mut parts = requested_name.split('.');
         let Some(module_name) = parts.next() else {
@@ -10380,20 +11178,93 @@ impl ModuleCapiContext {
                 requested_name
             ));
         }
-        let mut object = vm
-            .builtin_import_module(vec![Value::Str(module_name.to_string())], HashMap::new())
-            .map_err(|_| {
-                format!(
-                    "PyCapsule_Import could not import module \"{}\"",
-                    module_name
-                )
-            })?;
+        let mut object = {
+            // SAFETY: VM pointer is valid for the context lifetime.
+            let vm = unsafe { &mut *self.vm };
+            vm.builtin_import_module(vec![Value::Str(module_name.to_string())], HashMap::new())
+                .map_err(|_| {
+                    if trace_capsule_import {
+                        eprintln!(
+                            "[capsule-import] import-fail module={} requested={}",
+                            module_name, requested_name
+                        );
+                    }
+                    format!(
+                        "PyCapsule_Import could not import module \"{}\"",
+                        module_name
+                    )
+                })?
+        };
         for part in parts {
-            object = vm
-                .builtin_getattr(vec![object, Value::Str(part.to_string())], HashMap::new())
-                .map_err(|_| format!("PyCapsule_Import \"{}\" is not valid", requested_name))?;
+            object = {
+                // SAFETY: VM pointer is valid for the context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                vm.builtin_getattr(vec![object, Value::Str(part.to_string())], HashMap::new())
+                    .map_err(|_| {
+                        if trace_capsule_import {
+                            eprintln!(
+                                "[capsule-import] getattr-fail module={} attr={} requested={}",
+                                module_name, part, requested_name
+                            );
+                        }
+                        format!("PyCapsule_Import \"{}\" is not valid", requested_name)
+                    })?
+            };
         }
-        let _ = object;
+        if trace_capsule_import {
+            eprintln!(
+                "[capsule-import] resolved-object name={} tag={}",
+                requested_name,
+                cpython_value_debug_tag(&object)
+            );
+        }
+        if let Some(capsule_ptr) = Self::cpython_proxy_raw_ptr_from_value(&object)
+            && let Some(capsule_handle) = self.cpython_handle_from_ptr(capsule_ptr)
+            && self.capsules.contains_key(&capsule_handle)
+        {
+            if trace_capsule_import {
+                eprintln!(
+                    "[capsule-import] proxy-hit name={} raw_ptr={:p} handle={}",
+                    requested_name, capsule_ptr, capsule_handle
+                );
+            }
+            let pointer = self.capsule_get_pointer(capsule_handle, name)?;
+            if let Some(slot) = self.capsules.get(&capsule_handle) {
+                // SAFETY: VM pointer is valid for the context lifetime.
+                let vm = unsafe { &mut *self.vm };
+                vm.extension_capsule_registry.insert(
+                    requested_name.to_string(),
+                    crate::vm::ExtensionCapsuleRegistryEntry {
+                        pointer: slot.pointer,
+                        context: slot.context,
+                        destructor: slot.destructor,
+                    },
+                );
+                if trace_capsule_import {
+                    eprintln!(
+                        "[capsule-import] registry-insert name={} pointer=0x{:x}",
+                        requested_name, slot.pointer
+                    );
+                }
+            }
+            return Ok(pointer);
+        }
+        if trace_capsule_import {
+            let proxy_ptr =
+                Self::cpython_proxy_raw_ptr_from_value(&object).unwrap_or(std::ptr::null_mut());
+            let handle = if proxy_ptr.is_null() {
+                None
+            } else {
+                self.cpython_handle_from_ptr(proxy_ptr)
+            };
+            eprintln!(
+                "[capsule-import] miss name={} object_tag={} proxy_ptr={:p} handle={:?}",
+                requested_name,
+                cpython_value_debug_tag(&object),
+                proxy_ptr,
+                handle
+            );
+        }
         Err(format!(
             "PyCapsule_Import \"{}\" is not valid",
             requested_name

@@ -136,6 +136,19 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
         minimum coverage `100%`,
       - probe fanout guard is now enforced in CI (`max-probe-fanout <= 90`) with
         top-fanout telemetry emitted in `perf/language_feature_coverage_latest.json`.
+- Scientific-stack/native-subclass checkpoint (2026-02-23, latest):
+  - fixed runtime class/proxy attribute parity for NumPy ndarray subclasses:
+    - class/instance attribute lookup now supports CPython-proxy base fallback for inherited attrs
+      (`__array_finalize__`, dtype/getset descriptors),
+    - `np.ndarray.view(base, Subclass)` no longer loses subtype descriptor access (`out.dtype` works),
+    - new regressions added in `tests/vm.rs`:
+      - `numpy_ndarray_subclass_inherits_array_finalize_descriptor`
+      - `numpy_ndarray_view_subclass_preserves_dtype_descriptor_access`.
+  - hardened recursion/cycle safety in class hierarchy walkers:
+    - `class_attr_walk` and `class_mro_entries` now track visited class ids.
+  - current P0 blocker:
+    - `import numpy.ma.core` still overflows stack in debug bring-up flow and requires targeted
+      root-cause closure before scientific-stack gate can be marked stable.
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`
