@@ -118,6 +118,20 @@ python3 scripts/probe_numpy_gate.py \
 
 ## Current P0 Blockers
 
+0. `numpy.ma.core` import is not closed (hard blocker for ndarray subclass semantics).
+   - Current failure point: `MaskedArray.dtype -> super().dtype` path.
+   - Observed behavior in `pyrs`:
+     - zero-arg `super()` on property getters in this path resolves against proxy/object state
+       instead of clean CPython subclass state.
+     - downstream descriptor resolution returns an unbound property/object path or hard-fails,
+       blocking `numpy.ma.core` import.
+   - CPython reference surfaces for closure:
+     - `Objects/typeobject.c`: `super_getattro` resolution contract.
+     - `Objects/descrobject.c`: data-descriptor binding contract (`getset_descriptor` / member descriptor).
+   - Required closure direction:
+     - align super + descriptor resolution for extension-backed proxy receivers with CPython
+       MRO/descriptor ordering (root-cause fix; no per-attribute patching).
+
 1. Pandas import path still fails in direct mode.
    - `pandas_import` and `pandas_series_sum` now fail later in the init chain at
      `pandas._libs.tslibs.dtypes` with:
