@@ -4560,6 +4560,62 @@ impl Vm {
                     vec![("value", value_node), ("slice", index_node), ("ctx", ctx)],
                 )
             }
+            ExprKind::TemplateLiteral {
+                strings,
+                interpolations,
+            } => {
+                let mut values = Vec::new();
+                for (idx, text) in strings.iter().enumerate() {
+                    if !text.is_empty() {
+                        values.push(self.build_ast_node(
+                            "Constant",
+                            location,
+                            vec![("value", Value::Str(text.clone()))],
+                        )?);
+                    }
+                    if let Some(interpolation) = interpolations.get(idx) {
+                        let value_node = self.convert_expr_to_ast_node(&interpolation.value)?;
+                        let conversion = interpolation.conversion.map(|ch| ch as i64).unwrap_or(-1);
+                        let format_spec = if interpolation
+                            .format_spec
+                            .as_ref()
+                            .is_some_and(|spec| !spec.is_empty())
+                        {
+                            self.build_ast_node(
+                                "Constant",
+                                location,
+                                vec![(
+                                    "value",
+                                    Value::Str(
+                                        interpolation
+                                            .format_spec
+                                            .as_ref()
+                                            .cloned()
+                                            .unwrap_or_default(),
+                                    ),
+                                )],
+                            )?
+                        } else {
+                            Value::None
+                        };
+                        values.push(self.build_ast_node(
+                            "Interpolation",
+                            location,
+                            vec![
+                                ("value", value_node),
+                                ("str", Value::Str(interpolation.expression.clone())),
+                                ("conversion", Value::Int(conversion)),
+                                ("format_spec", format_spec),
+                            ],
+                        )?);
+                    }
+                }
+                self.build_ast_node(
+                    "TemplateStr",
+                    location,
+                    vec![("values", self.heap.alloc_list(values))],
+                )
+            }
             ExprKind::Slice { lower, upper, step } => {
                 let lower_node = match lower {
                     Some(value) => self.convert_expr_to_ast_node(value)?,

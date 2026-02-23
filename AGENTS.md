@@ -71,6 +71,22 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- Source-language parity checkpoint (2026-02-23, latest):
+  - Template string literals (`t"..."`) are now source-compiled through the same runtime
+    interpolation/template substrate used by translated CPython bytecode:
+    - parser now tokenizes dedicated template-string prefix forms (`t`, `tr`, `rt`) and
+      rejects incompatible prefix mixes (`f+t`, `b+t`, `u+t`) with CPython-compatible errors,
+    - parser enforces CPython template-literal adjacency rules (no mixing template and
+      regular string/bytes literals in the same implicit-concatenation run),
+    - compiler emits `BUILD_INTERPOLATION` + `BUILD_TEMPLATE` for source template literals
+      (no fallback string lowering),
+    - runtime class display now renders CPython-style class repr shape (`<class 'module.Name'>`),
+      allowing template type display parity (`<class 'string.templatelib.Template'>`).
+  - Language-feature manifest gate landed:
+    - inventory: `docs/LANGUAGE_FEATURE_MANIFEST.json`,
+    - validator/probe runner: `scripts/check_language_feature_manifest.py`,
+    - latest artifact: `perf/language_feature_manifest_latest.json`,
+    - policy: fail on missing/unknown manifest ids and required-feature probe mismatches.
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "target": "CPython 3.14 source-language feature probes",
+  "features": [
+    {
+      "id": "template_literal_basic_type",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "type/strings/interpolation metadata parity against CPython probe"
+    },
+    {
+      "id": "template_literal_debug_and_concat",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "debug conversion defaults and adjacent concatenation parity against CPython probe"
+    },
+    {
+      "id": "template_literal_mixed_literal_rejected",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "reject mixed t-string/non-t-string literal runs with CPython-compatible error class/message family"
+    },
+    {
+      "id": "template_literal_incompatible_f_prefix_rejected",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "reject f+t prefix combination"
+    },
+    {
+      "id": "template_literal_incompatible_b_prefix_rejected",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "reject b+t prefix combination"
+    },
+    {
+      "id": "template_literal_incompatible_u_prefix_rejected",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "reject u+t prefix combination"
+    }
+  ]
+}

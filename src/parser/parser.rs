@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::{
     AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, DictEntry,
     ExceptHandler, Expr, ExprKind, FloatLiteral, ImportAlias, MatchCase, Module, Parameter,
-    Pattern, Span, Stmt, StmtKind, UnaryOp,
+    Pattern, Span, Stmt, StmtKind, TemplateInterpolation, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -77,6 +77,20 @@ struct FStringFieldParts {
     debug: bool,
     conversion: Option<char>,
     format_spec: Option<String>,
+}
+
+struct TemplateFieldParts {
+    expr_for_eval: String,
+    expr_for_metadata: String,
+    debug_prefix: Option<String>,
+    conversion: Option<char>,
+    format_spec: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TemplateLiteralParts {
+    strings: Vec<String>,
+    interpolations: Vec<TemplateInterpolation>,
 }
 
 fn find_top_level_fstring_delimiter(field: &str) -> Option<(usize, char)> {
@@ -1500,9 +1514,10 @@ impl Parser {
                     (self.make_expr(pos, ExprKind::Constant(value)), pos + 1)
                 }
             }
-            TokenKind::String | TokenKind::Bytes | TokenKind::FString => {
-                self.parse_string_sequence(pos)?
-            }
+            TokenKind::String
+            | TokenKind::Bytes
+            | TokenKind::FString
+            | TokenKind::TemplateString => self.parse_string_sequence(pos)?,
             TokenKind::Ellipsis => (
                 self.make_expr(pos, ExprKind::Name("Ellipsis".to_string())),
                 pos + 1,
@@ -1584,11 +1599,12 @@ impl Parser {
     }
 
     fn parse_string_sequence(&mut self, pos: usize) -> ParseResult<Expr> {
+        let start = pos;
         let mut pos = pos;
         let mut pieces: Vec<Expr> = Vec::new();
         while matches!(
             self.token_at(pos).kind,
-            TokenKind::String | TokenKind::Bytes | TokenKind::FString
+            TokenKind::String | TokenKind::Bytes | TokenKind::FString | TokenKind::TemplateString
         ) {
             let token = self.token_at(pos).clone();
             let piece = match token.kind {
@@ -1597,10 +1613,63 @@ impl Parser {
                 }
                 TokenKind::Bytes => self.make_bytes_literal_expr(pos, token.lexeme),
                 TokenKind::FString => self.parse_fstring_literal(pos, &token.lexeme)?,
+                TokenKind::TemplateString => {
+                    self.parse_template_literal_expr(pos, &token.lexeme)?
+                }
                 _ => unreachable!(),
             };
             pieces.push(piece);
             pos += 1;
+        }
+        let saw_template = pieces
+            .iter()
+            .any(|expr| matches!(&expr.node, ExprKind::TemplateLiteral { .. }));
+        let saw_non_template = pieces
+            .iter()
+            .any(|expr| !matches!(&expr.node, ExprKind::TemplateLiteral { .. }));
+        if saw_template && saw_non_template {
+            return Err(self.error_at(
+                pos,
+                "cannot mix t-string literals with string or bytes literals",
+            ));
+        }
+        if saw_template {
+            let mut merged = TemplateLiteralParts {
+                strings: Vec::new(),
+                interpolations: Vec::new(),
+            };
+            for piece in pieces {
+                let ExprKind::TemplateLiteral {
+                    strings,
+                    interpolations,
+                } = piece.node
+                else {
+                    unreachable!();
+                };
+                if merged.strings.is_empty() {
+                    merged.strings = strings;
+                    merged.interpolations = interpolations;
+                    continue;
+                }
+                let mut strings_iter = strings.into_iter();
+                if let Some(first) = strings_iter.next() {
+                    if let Some(last) = merged.strings.last_mut() {
+                        last.push_str(&first);
+                    }
+                }
+                merged.strings.extend(strings_iter);
+                merged.interpolations.extend(interpolations);
+            }
+            return Ok((
+                self.make_expr(
+                    start,
+                    ExprKind::TemplateLiteral {
+                        strings: merged.strings,
+                        interpolations: merged.interpolations,
+                    },
+                ),
+                pos,
+            ));
         }
         let mut iter = pieces.into_iter();
         let mut expr = iter
@@ -2866,6 +2935,207 @@ impl Parser {
             };
         }
         Ok(expr)
+    }
+
+    fn parse_template_literal_expr(
+        &mut self,
+        pos: usize,
+        content: &str,
+    ) -> Result<Expr, ParseError> {
+        let parts = self.parse_template_literal_parts(pos, content)?;
+        Ok(self.make_expr(
+            pos,
+            ExprKind::TemplateLiteral {
+                strings: parts.strings,
+                interpolations: parts.interpolations,
+            },
+        ))
+    }
+
+    fn parse_template_literal_parts(
+        &mut self,
+        pos: usize,
+        content: &str,
+    ) -> Result<TemplateLiteralParts, ParseError> {
+        let mut strings = Vec::new();
+        let mut interpolations = Vec::new();
+        let mut literal = String::new();
+        let mut chars = content.char_indices().peekable();
+
+        while let Some((idx, ch)) = chars.next() {
+            if ch == '{' {
+                if matches!(chars.peek(), Some((_, '{'))) {
+                    chars.next();
+                    literal.push('{');
+                    continue;
+                }
+                strings.push(std::mem::take(&mut literal));
+
+                let expr_start = idx + ch.len_utf8();
+                let mut depth = 1usize;
+                let mut expr_end = None;
+                for (inner_idx, inner_ch) in chars.by_ref() {
+                    if inner_ch == '{' {
+                        depth += 1;
+                    } else if inner_ch == '}' {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            expr_end = Some(inner_idx);
+                            break;
+                        }
+                    }
+                }
+                let end = expr_end.ok_or_else(|| self.error_at(pos, "unterminated t-string"))?;
+                let field_text = &content[expr_start..end];
+                let parts = self
+                    .split_template_field_parts(field_text)
+                    .map_err(|message| self.error_at(pos, message))?;
+                let value = self
+                    .parse_embedded_expr(&parts.expr_for_eval)
+                    .map_err(|err| {
+                        self.error_at(pos, format!("invalid t-string expression: {}", err.message))
+                    })?;
+                if let Some(debug_prefix) = parts.debug_prefix
+                    && let Some(last) = strings.last_mut()
+                {
+                    last.push_str(&debug_prefix);
+                }
+                interpolations.push(TemplateInterpolation {
+                    value: Box::new(value),
+                    expression: parts.expr_for_metadata,
+                    conversion: parts.conversion,
+                    format_spec: parts.format_spec,
+                });
+                continue;
+            }
+
+            if ch == '}' {
+                if matches!(chars.peek(), Some((_, '}'))) {
+                    chars.next();
+                    literal.push('}');
+                    continue;
+                }
+                return Err(self.error_at(pos, "single '}' is not allowed in t-string"));
+            }
+
+            literal.push(ch);
+        }
+
+        strings.push(literal);
+        // Keep CPython invariant: strings has exactly one more entry than interpolations.
+        if strings.len() != interpolations.len() + 1 {
+            return Err(self.error_at(pos, "invalid t-string structure"));
+        }
+        // Ensure at least one string fragment exists for t"".
+        if strings.is_empty() {
+            strings.push(String::new());
+        }
+        // Normalize missing format specs to empty string at runtime layer.
+        for interpolation in &mut interpolations {
+            if interpolation.format_spec.is_none() {
+                interpolation.format_spec = Some(String::new());
+            }
+        }
+        Ok(TemplateLiteralParts {
+            strings,
+            interpolations,
+        })
+    }
+
+    fn split_template_field_parts(&self, field: &str) -> Result<TemplateFieldParts, String> {
+        let delimiter = find_top_level_fstring_delimiter(field);
+        let expr_end = delimiter.map(|(idx, _)| idx).unwrap_or(field.len());
+        let expr_region = &field[..expr_end];
+        let mut expr_for_eval = expr_region.to_string();
+        let mut debug_prefix = None;
+        let trimmed = expr_region.trim_end();
+
+        let debug = trimmed.ends_with('=')
+            && !trimmed.ends_with("==")
+            && !trimmed.ends_with("!=")
+            && !trimmed.ends_with("<=")
+            && !trimmed.ends_with(">=")
+            && !trimmed.ends_with(":=");
+        if debug {
+            let eq_idx = trimmed
+                .rfind('=')
+                .ok_or_else(|| "t-string: valid expression required before '='".to_string())?;
+            expr_for_eval = trimmed[..eq_idx].to_string();
+            debug_prefix = Some(expr_region.to_string());
+        }
+
+        let expr_for_metadata = expr_for_eval.trim_end().to_string();
+        if expr_for_metadata.is_empty() {
+            let suffix = match delimiter.map(|(_, kind)| kind) {
+                Some('!') => "!",
+                Some(':') => ":",
+                _ => "}",
+            };
+            return Err(format!(
+                "t-string: valid expression required before '{suffix}'"
+            ));
+        }
+
+        let mut conversion = None;
+        let mut format_spec = None;
+        if let Some((idx, kind)) = delimiter {
+            match kind {
+                '!' => {
+                    let mut rest = &field[idx + 1..];
+                    if rest.chars().next().is_some_and(char::is_whitespace) {
+                        return Err(
+                            "t-string: conversion type must come right after the exclamation mark"
+                                .to_string(),
+                        );
+                    }
+                    if rest.is_empty() {
+                        return Err("t-string: missing conversion character".to_string());
+                    }
+                    let conv_end = rest
+                        .chars()
+                        .take_while(|ch| ch.is_ascii_alphabetic())
+                        .map(char::len_utf8)
+                        .sum::<usize>()
+                        .max(1);
+                    let conv_text = &rest[..conv_end.min(rest.len())];
+                    let conv = conv_text
+                        .chars()
+                        .next()
+                        .ok_or_else(|| "t-string: missing conversion character".to_string())?;
+                    if conv_text.len() != conv.len_utf8() || !matches!(conv, 'r' | 's' | 'a') {
+                        return Err(format!(
+                            "t-string: invalid conversion character '{}': expected 's', 'r', or 'a'",
+                            conv_text
+                        ));
+                    }
+                    conversion = Some(conv);
+                    rest = &rest[conv.len_utf8()..];
+                    let rest = rest.trim_start();
+                    if !rest.is_empty() {
+                        if !rest.starts_with(':') {
+                            return Err("t-string: expecting ':' or '}'".to_string());
+                        }
+                        format_spec = Some(rest[1..].to_string());
+                    }
+                }
+                ':' => {
+                    format_spec = Some(field[idx + 1..].to_string());
+                }
+                _ => return Err("invalid t-string field delimiter".to_string()),
+            }
+        }
+
+        if debug && conversion.is_none() && format_spec.is_none() {
+            conversion = Some('r');
+        }
+
+        Ok(TemplateFieldParts {
+            expr_for_eval,
+            expr_for_metadata,
+            debug_prefix,
+            conversion,
+            format_spec,
+        })
     }
 
     fn parse_embedded_expr(&self, source: &str) -> Result<Expr, ParseError> {

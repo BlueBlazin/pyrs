@@ -293,6 +293,21 @@ fn strip_expr(expr: &Expr) -> Expr {
             upper: upper.as_ref().map(|expr| Box::new(strip_expr(expr))),
             step: step.as_ref().map(|expr| Box::new(strip_expr(expr))),
         },
+        ExprKind::TemplateLiteral {
+            strings,
+            interpolations,
+        } => ExprKind::TemplateLiteral {
+            strings: strings.clone(),
+            interpolations: interpolations
+                .iter()
+                .map(|interpolation| pyrs::ast::TemplateInterpolation {
+                    value: Box::new(strip_expr(&interpolation.value)),
+                    expression: interpolation.expression.clone(),
+                    conversion: interpolation.conversion,
+                    format_spec: interpolation.format_spec.clone(),
+                })
+                .collect(),
+        },
     };
     spanned_expr(node)
 }
@@ -1864,13 +1879,66 @@ fn parses_raw_string_with_escaped_quote() {
 fn parses_template_string_prefix() {
     let module = parser::parse_module("x = t\"hello\"\n").expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::Assign { value, .. } => {
-            assert_eq!(
-                value,
-                &spanned_expr(ExprKind::Constant(Constant::Str("hello".to_string())))
-            );
-        }
+        StmtKind::Assign { value, .. } => match &value.node {
+            ExprKind::TemplateLiteral {
+                strings,
+                interpolations,
+            } => {
+                assert_eq!(strings, &vec!["hello".to_string()]);
+                assert!(interpolations.is_empty());
+            }
+            other => panic!("unexpected template literal shape: {other:?}"),
+        },
         other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_template_string_with_interpolation_metadata() {
+    let module = parser::parse_module("x = t\"a={value!r:>6}\"\n").expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::Assign { value, .. } => match &value.node {
+            ExprKind::TemplateLiteral {
+                strings,
+                interpolations,
+            } => {
+                assert_eq!(strings, &vec!["a=".to_string(), "".to_string()]);
+                assert_eq!(interpolations.len(), 1);
+                let interpolation = &interpolations[0];
+                assert_eq!(interpolation.expression, "value");
+                assert_eq!(interpolation.conversion, Some('r'));
+                assert_eq!(interpolation.format_spec.as_deref(), Some(">6"));
+            }
+            other => panic!("unexpected expr: {other:?}"),
+        },
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_mixed_template_and_normal_string_literals() {
+    let err = parser::parse_module("x = 'a' t'b'\n").expect_err("parse should fail");
+    assert!(
+        err.message
+            .contains("cannot mix t-string literals with string or bytes literals"),
+        "unexpected parse error: {}",
+        err.message
+    );
+}
+
+#[test]
+fn rejects_incompatible_template_string_prefixes() {
+    for (source, expected) in [
+        ("x = tf'{x}'\n", "'f' and 't' prefixes are incompatible"),
+        ("x = bt'raw'\n", "'b' and 't' prefixes are incompatible"),
+        ("x = ut'raw'\n", "'u' and 't' prefixes are incompatible"),
+    ] {
+        let err = parser::parse_module(source).expect_err("parse should fail");
+        assert!(
+            err.message.contains(expected),
+            "unexpected parse error for {source:?}: {}",
+            err.message
+        );
     }
 }
 

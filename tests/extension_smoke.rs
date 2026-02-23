@@ -176,10 +176,7 @@ fn run_command_with_timeout(
                 if start.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!(
-                        "{context} timed out after {}s",
-                        timeout.as_secs()
-                    ));
+                    return Err(format!("{context} timed out after {}s", timeout.as_secs()));
                 }
                 thread::sleep(Duration::from_millis(50));
             }
@@ -191,8 +188,12 @@ fn run_command_with_timeout(
 }
 
 fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<(), String> {
-    let source_bytes = fs::read(source_path)
-        .map_err(|err| format!("failed to read extension source {}: {err}", source_path.display()))?;
+    let source_bytes = fs::read(source_path).map_err(|err| {
+        format!(
+            "failed to read extension source {}: {err}",
+            source_path.display()
+        )
+    })?;
     let toolchain = "cc -fPIC dynamiclib/shared";
     let cache_key = extension_smoke_cache_key("plain", &source_bytes, toolchain);
     let cache_path = extension_smoke_cache_path(output_path, &cache_key);
@@ -254,8 +255,12 @@ fn compile_shared_extension_with_cpython_compat(
     source_path: &Path,
     output_path: &Path,
 ) -> Result<(), String> {
-    let source_bytes = fs::read(source_path)
-        .map_err(|err| format!("failed to read extension source {}: {err}", source_path.display()))?;
+    let source_bytes = fs::read(source_path).map_err(|err| {
+        format!(
+            "failed to read extension source {}: {err}",
+            source_path.display()
+        )
+    })?;
     let toolchain = "cc -fPIC compat dynamiclib/shared";
     let cache_key = extension_smoke_cache_key("cpython_compat", &source_bytes, toolchain);
     let cache_path = extension_smoke_cache_path(output_path, &cache_key);
@@ -352,8 +357,12 @@ fn compile_shared_extension_with_build_vars(
     output_path: &Path,
     build_vars: &HashMap<String, String>,
 ) -> Result<(), String> {
-    let source_bytes = fs::read(source_path)
-        .map_err(|err| format!("failed to read extension source {}: {err}", source_path.display()))?;
+    let source_bytes = fs::read(source_path).map_err(|err| {
+        format!(
+            "failed to read extension source {}: {err}",
+            source_path.display()
+        )
+    })?;
     let mut toolchain = String::new();
     toolchain.push_str(build_vars.get("CC").map(String::as_str).unwrap_or("cc"));
     toolchain.push('|');
@@ -6282,7 +6291,9 @@ PyInit_cpython_api_batch39_probe(void) {
 #[test]
 fn cpython_compat_multiphase_exec_replaced_sys_modules_entry_is_canonicalized() {
     let Some(bin) = pyrs_bin() else {
-        eprintln!("skipping cpython multiphase sys.modules replacement smoke (pyrs binary not found)");
+        eprintln!(
+            "skipping cpython multiphase sys.modules replacement smoke (pyrs binary not found)"
+        );
         return;
     };
     if !has_c_compiler() {
@@ -6351,7 +6362,9 @@ PyInit_capi_exec_replace_probe(void) {
     )
     .expect("source should be written");
 
-    let library_path = temp_root.join(importable_module_library_filename("capi_exec_replace_probe"));
+    let library_path = temp_root.join(importable_module_library_filename(
+        "capi_exec_replace_probe",
+    ));
     compile_shared_extension_with_cpython_compat(&source_path, &library_path)
         .expect("multiphase replacement extension should build");
 

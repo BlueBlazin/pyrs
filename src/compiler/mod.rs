@@ -1316,6 +1316,17 @@ fn record_scope_activity_expr(
             declared_globals,
             declared_nonlocals,
         ),
+        ExprKind::TemplateLiteral { interpolations, .. } => {
+            for interpolation in interpolations {
+                record_scope_activity_expr(
+                    &interpolation.value,
+                    seen_use,
+                    seen_assign,
+                    declared_globals,
+                    declared_nonlocals,
+                );
+            }
+        }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(lower) = lower {
                 record_scope_activity_expr(
@@ -1816,6 +1827,11 @@ fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
             }
         }
         ExprKind::YieldFrom { value } => collect_locals_namedexpr_expr(value, locals),
+        ExprKind::TemplateLiteral { interpolations, .. } => {
+            for interpolation in interpolations {
+                collect_locals_namedexpr_expr(&interpolation.value, locals);
+            }
+        }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(lower) = lower {
                 collect_locals_namedexpr_expr(lower, locals);
@@ -2240,6 +2256,11 @@ fn collect_uses_expr(
             )?;
             child_free.extend(scope.freevars);
         }
+        ExprKind::TemplateLiteral { interpolations, .. } => {
+            for interpolation in interpolations {
+                collect_uses_expr(&interpolation.value, uses, child_free, enclosing)?;
+            }
+        }
         ExprKind::Slice { lower, upper, step } => {
             if let Some(expr) = lower.as_ref() {
                 collect_uses_expr(expr, uses, child_free, enclosing)?;
@@ -2497,7 +2518,10 @@ fn stmt_contains_await_exprs(stmt: &Stmt) -> bool {
             ..
         } => {
             expr_has_await(context)
-                || target.as_ref().map(assign_target_has_await).unwrap_or(false)
+                || target
+                    .as_ref()
+                    .map(assign_target_has_await)
+                    .unwrap_or(false)
                 || body_contains_await_exprs(body)
         }
         StmtKind::Try {
@@ -2561,7 +2585,7 @@ fn stmt_contains_await_exprs(stmt: &Stmt) -> bool {
         | StmtKind::Delete { .. }
         | StmtKind::Pass
         | StmtKind::Break
-            | StmtKind::Continue => false,
+        | StmtKind::Continue => false,
     }
 }
 
@@ -2572,9 +2596,7 @@ fn assign_target_has_await(target: &AssignTarget) -> bool {
             items.iter().any(assign_target_has_await)
         }
         AssignTarget::Starred(inner) => assign_target_has_await(inner),
-        AssignTarget::Subscript { value, index } => {
-            expr_has_await(value) || expr_has_await(index)
-        }
+        AssignTarget::Subscript { value, index } => expr_has_await(value) || expr_has_await(index),
         AssignTarget::Attribute { value, .. } => expr_has_await(value),
     }
 }
@@ -2636,6 +2658,9 @@ fn expr_has_yield(expr: &Expr) -> bool {
                 .iter()
                 .any(|clause| expr_has_yield(&clause.iter) || clause.ifs.iter().any(expr_has_yield))
         }
+        ExprKind::TemplateLiteral { interpolations, .. } => interpolations
+            .iter()
+            .any(|interpolation| expr_has_yield(&interpolation.value)),
         ExprKind::Lambda { .. } | ExprKind::Name(_) | ExprKind::Constant(_) => false,
         ExprKind::Slice { lower, upper, step } => {
             lower
@@ -2715,6 +2740,9 @@ fn expr_has_await(expr: &Expr) -> bool {
                     || clause.ifs.iter().any(expr_has_await)
             })
         }
+        ExprKind::TemplateLiteral { interpolations, .. } => interpolations
+            .iter()
+            .any(|interpolation| expr_has_await(&interpolation.value)),
         ExprKind::Yield { value } => value
             .as_ref()
             .map(|expr| expr_has_await(expr))
@@ -3410,6 +3438,10 @@ impl Compiler {
                 compiler.emit(Opcode::LoadAttr, Some(idx << 1));
                 Ok(())
             }
+            ExprKind::TemplateLiteral {
+                strings,
+                interpolations,
+            } => compiler.compile_template_literal(strings, interpolations),
             ExprKind::Slice { lower, upper, step } => {
                 compiler.compile_slice_part(lower)?;
                 compiler.compile_slice_part(upper)?;
@@ -3476,6 +3508,40 @@ impl Compiler {
         } else {
             self.emit(Opcode::LoadConst, Some(0));
         }
+        Ok(())
+    }
+
+    fn compile_template_literal(
+        &mut self,
+        strings: &[String],
+        interpolations: &[crate::ast::TemplateInterpolation],
+    ) -> Result<(), CompileError> {
+        if strings.len() != interpolations.len() + 1 {
+            return Err(self.syntax_error_here("invalid template literal structure"));
+        }
+
+        for string in strings {
+            self.emit_const(Value::Str(string.clone()));
+        }
+        self.emit(Opcode::BuildTuple, Some(strings.len() as u32));
+
+        for interpolation in interpolations {
+            self.compile_expr(&interpolation.value)?;
+            self.emit_const(Value::Str(interpolation.expression.clone()));
+            let has_format = interpolation
+                .format_spec
+                .as_ref()
+                .is_some_and(|spec| !spec.is_empty());
+            if let Some(format_spec) = interpolation.format_spec.as_ref()
+                && !format_spec.is_empty()
+            {
+                self.emit_const(Value::Str(format_spec.clone()));
+            }
+            let arg = template_interpolation_arg(interpolation.conversion, has_format)?;
+            self.emit(Opcode::BuildInterpolation, Some(arg));
+        }
+        self.emit(Opcode::BuildTuple, Some(interpolations.len() as u32));
+        self.emit(Opcode::BuildTemplate, None);
         Ok(())
     }
 
@@ -6084,6 +6150,29 @@ fn pack_call_counts(positional: u32, keywords: u32) -> Result<u32, CompileError>
         return Err(CompileError::new("too many call arguments"));
     }
     Ok((keywords << 16) | positional)
+}
+
+fn template_interpolation_arg(
+    conversion: Option<char>,
+    has_format_spec: bool,
+) -> Result<u32, CompileError> {
+    let conversion_code = match conversion {
+        None => 0u32,
+        Some('s') => 1u32,
+        Some('r') => 2u32,
+        Some('a') => 3u32,
+        Some(other) => {
+            return Err(CompileError::new(format!(
+                "invalid template interpolation conversion: {other}",
+            )));
+        }
+    };
+    let mut arg = 2u32;
+    arg |= conversion_code << 2;
+    if has_format_spec {
+        arg |= 1;
+    }
+    Ok(arg)
 }
 
 fn constant_to_value(constant: &Constant) -> Value {

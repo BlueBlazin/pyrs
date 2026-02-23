@@ -8199,11 +8199,7 @@ impl Vm {
             if let Some(caret_line) =
                 render_traceback_caret_line(&source_line, line, column, end_line, end_column)
             {
-                if should_suppress_explicit_raise_caret(
-                    &source_line,
-                    column,
-                    exception_name,
-                ) {
+                if should_suppress_explicit_raise_caret(&source_line, column, exception_name) {
                     return;
                 }
                 output.push_str("    ");
@@ -12606,11 +12602,7 @@ fn should_suppress_explicit_raise_caret(
     let Some(after_raise) = trimmed.strip_prefix("raise") else {
         return false;
     };
-    if !after_raise
-        .chars()
-        .next()
-        .is_some_and(char::is_whitespace)
-    {
+    if !after_raise.chars().next().is_some_and(char::is_whitespace) {
         return false;
     }
     let after_raise_trimmed = after_raise.trim_start();
@@ -12624,22 +12616,25 @@ fn should_suppress_explicit_raise_caret(
     if raised_expr_head.is_empty() {
         return false;
     }
-    let raised_type_name = raised_expr_head
-        .rsplit('.')
-        .next()
-        .unwrap_or_default();
+    let raised_type_name = raised_expr_head.rsplit('.').next().unwrap_or_default();
     if raised_type_name != exception_name {
         return false;
     }
 
-    let leading_ws = source_line.chars().take_while(|ch| ch.is_whitespace()).count();
+    let leading_ws = source_line
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .count();
     let start = start_column.saturating_sub(1);
     let raise_start = leading_ws;
     let raise_end = raise_start + "raise".chars().count();
     if start >= raise_start && start < raise_end {
         return true;
     }
-    let raise_gap = after_raise.chars().take_while(|ch| ch.is_whitespace()).count();
+    let raise_gap = after_raise
+        .chars()
+        .take_while(|ch| ch.is_whitespace())
+        .count();
     let expr_start = leading_ws + "raise".chars().count() + raise_gap;
     let expr_end = expr_start + raised_expr_head.chars().count();
     start >= expr_start && start < expr_end

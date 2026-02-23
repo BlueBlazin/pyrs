@@ -46,6 +46,25 @@ jobs:
       - name: Audit scaffolding drift
         run: python3 scripts/audit_scaffolding.py
 
+      - name: Build debug pyrs binary (language feature gate)
+        run: cargo build -q --bin pyrs
+
+      - name: Validate source-language feature manifest
+        run: |
+          python3 scripts/check_language_feature_manifest.py \
+            --pyrs target/debug/pyrs \
+            --cpython-bin python3 \
+            --manifest docs/LANGUAGE_FEATURE_MANIFEST.json \
+            --out perf/language_feature_manifest_latest.json
+
+      - name: Upload language feature manifest artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: language-feature-manifest
+          path: perf/language_feature_manifest_latest.json
+          if-no-files-found: ignore
+
       - name: Upload C-API no-op inventory artifact
         if: always()
         uses: actions/upload-artifact@v4

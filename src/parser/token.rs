@@ -97,6 +97,7 @@ pub enum TokenKind {
     AtEqual,
     Semicolon,
     FString,
+    TemplateString,
     Keyword(Keyword),
     EndMarker,
 }

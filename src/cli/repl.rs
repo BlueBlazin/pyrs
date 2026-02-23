@@ -371,9 +371,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                         eprintln!(
                             "{}",
                             error_style::format_error_for_stderr(&format_parse_error(
-                                &pending,
-                                "<stdin>",
-                                &parse_err,
+                                &pending, "<stdin>", &parse_err,
                             ))
                         );
                         pending.clear();

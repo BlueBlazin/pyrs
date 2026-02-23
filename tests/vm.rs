@@ -15588,7 +15588,8 @@ f()
     let err = vm.execute(&code).expect_err("execution should fail");
     assert!(err.message.contains("raise ValueError(\"boom\")"));
     assert!(
-        !err.message.contains("raise ValueError(\"boom\")\n               ^"),
+        !err.message
+            .contains("raise ValueError(\"boom\")\n               ^"),
         "unexpected caret on explicit raise constructor:\n{}",
         err.message
     );
@@ -15628,6 +15629,69 @@ fn keyerror_single_arg_string_uses_repr_semantics() {
     let source = r#"s = str(KeyError("k"))
 i = str(KeyError(1))
 ok = (s == "'k'" and i == "1")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn template_literal_runtime_type_and_payload_match_cpython_shape() {
+    let source = r#"variety = 'Stilton'
+template = t'Try some {variety} cheese!'
+interp = template.interpolations[0]
+ok = (
+    repr(type(template)) == "<class 'string.templatelib.Template'>"
+    and template.strings == ('Try some ', ' cheese!')
+    and len(template.interpolations) == 1
+    and interp.value == 'Stilton'
+    and interp.expression == 'variety'
+    and interp.conversion is None
+    and interp.format_spec == ''
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn template_literal_debug_field_defaults_and_format_spec_match_cpython_shape() {
+    let source = r#"x = 7
+t1 = t'{x=}'
+t2 = t'{x=:>4}'
+i1 = t1.interpolations[0]
+i2 = t2.interpolations[0]
+ok = (
+    t1.strings == ('x=', '')
+    and i1.expression == 'x'
+    and i1.conversion == 'r'
+    and i1.format_spec == ''
+    and t2.strings == ('x=', '')
+    and i2.expression == 'x'
+    and i2.conversion is None
+    and i2.format_spec == '>4'
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn template_literal_adjacent_concatenation_matches_cpython_layout() {
+    let source = r#"x = t'a{1}' t'b{2}'
+ok = (
+    x.strings == ('a', 'b', '')
+    and [i.expression for i in x.interpolations] == ['1', '2']
+    and [i.value for i in x.interpolations] == [1, 2]
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

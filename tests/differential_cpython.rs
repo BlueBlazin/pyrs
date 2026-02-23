@@ -291,6 +291,54 @@ fn differential_corpus_matches_cpython() {
     }
 }
 
+#[test]
+fn differential_template_literal_basic_shape_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"variety = "Stilton"
+template = t"Try some {variety} cheese!"
+interp = template.interpolations[0]
+result = {
+    "type": repr(type(template)),
+    "strings": list(template.strings),
+    "interp": [interp.value, interp.expression, interp.conversion, interp.format_spec],
+}
+"#;
+    let py = run_cpython_json(source).expect("cpython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(py.as_str()),
+        normalize_jsonish(ours.as_str())
+    );
+}
+
+#[test]
+fn differential_template_literal_debug_and_concat_matches_cpython() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"x = 7
+t1 = t"{x=}"
+t2 = t"{x=:>4}"
+t3 = t"a{1}" t"b{2}"
+result = {
+    "t1_strings": list(t1.strings),
+    "t1_interp": [[i.expression, i.conversion, i.format_spec, i.value] for i in t1.interpolations],
+    "t2_strings": list(t2.strings),
+    "t2_interp": [[i.expression, i.conversion, i.format_spec, i.value] for i in t2.interpolations],
+    "t3_strings": list(t3.strings),
+    "t3_interp": [[i.expression, i.conversion, i.format_spec, i.value] for i in t3.interpolations],
+}
+"#;
+    let py = run_cpython_json(source).expect("cpython should run");
+    let ours = run_pyrs_json(source).expect("pyrs should run");
+    assert_eq!(
+        normalize_jsonish(py.as_str()),
+        normalize_jsonish(ours.as_str())
+    );
+}
+
 #[derive(Clone, Copy)]
 enum Op {
     Add,

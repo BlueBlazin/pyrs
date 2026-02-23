@@ -273,7 +273,10 @@ mod tests {
         unsafe {
             std::env::set_var("COLORFGBG", "15;7");
         }
-        assert_eq!(select_traceback_palette().type_color, LIGHT_PALETTE.type_color);
+        assert_eq!(
+            select_traceback_palette().type_color,
+            LIGHT_PALETTE.type_color
+        );
         // SAFETY: restoring process environment for test isolation.
         unsafe {
             if let Some(value) = previous {

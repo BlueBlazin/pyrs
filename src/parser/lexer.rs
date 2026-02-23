@@ -691,6 +691,8 @@ impl<'a> Lexer<'a> {
         let mut has_f = false;
         let mut has_r = false;
         let mut has_b = false;
+        let mut has_u = false;
+        let mut has_t = false;
         for ch in prefix.chars() {
             let lowered = ch.to_ascii_lowercase();
             if !matches!(lowered, 'r' | 'u' | 'b' | 'f' | 't') {
@@ -705,9 +707,39 @@ impl<'a> Lexer<'a> {
             if lowered == 'b' {
                 has_b = true;
             }
+            if lowered == 'u' {
+                has_u = true;
+            }
+            if lowered == 't' {
+                has_t = true;
+            }
             if !seen.insert(lowered) {
                 return Ok(None);
             }
+        }
+        if has_t && has_f {
+            return Err(LexError::new(
+                "'f' and 't' prefixes are incompatible",
+                self.offset,
+                self.line,
+                self.column,
+            ));
+        }
+        if has_t && has_b {
+            return Err(LexError::new(
+                "'b' and 't' prefixes are incompatible",
+                self.offset,
+                self.line,
+                self.column,
+            ));
+        }
+        if has_t && has_u {
+            return Err(LexError::new(
+                "'u' and 't' prefixes are incompatible",
+                self.offset,
+                self.line,
+                self.column,
+            ));
         }
         if has_f && has_b {
             return Err(LexError::new(
@@ -721,13 +753,15 @@ impl<'a> Lexer<'a> {
         for _ in 0..prefix.len() {
             self.advance();
         }
-        let content = if has_f {
+        let content = if has_f || has_t {
             self.consume_fstring(quote, has_r)?
         } else {
             self.consume_string(quote, has_r)?
         };
         let kind = if has_f {
             TokenKind::FString
+        } else if has_t {
+            TokenKind::TemplateString
         } else if has_b {
             TokenKind::Bytes
         } else {

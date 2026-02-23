@@ -7430,7 +7430,30 @@ pub fn format_value(value: &Value) -> String {
             _ => "<module ?>".to_string(),
         },
         Value::Class(obj) => match &*obj.kind() {
-            Object::Class(class) => format!("<class {}>", class.name),
+            Object::Class(class) => {
+                let module = class
+                    .attrs
+                    .get("__module__")
+                    .and_then(|value| match value {
+                        Value::Str(name) => Some(name.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("builtins");
+                let qualname = class
+                    .attrs
+                    .get("__qualname__")
+                    .and_then(|value| match value {
+                        Value::Str(name) => Some(name.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or(class.name.as_str());
+                let full_name = if module == "builtins" {
+                    qualname.to_string()
+                } else {
+                    format!("{module}.{qualname}")
+                };
+                format!("<class '{full_name}'>")
+            }
             _ => "<class ?>".to_string(),
         },
         Value::Instance(obj) => match &*obj.kind() {

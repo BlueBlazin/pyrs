@@ -182,6 +182,14 @@ pub struct Parameter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateInterpolation {
+    pub value: Box<Expr>,
+    pub expression: String,
+    pub conversion: Option<char>,
+    pub format_spec: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
     Name(String),
     Constant(Constant),
@@ -261,6 +269,10 @@ pub enum ExprKind {
         lower: Option<Box<Expr>>,
         upper: Option<Box<Expr>>,
         step: Option<Box<Expr>>,
+    },
+    TemplateLiteral {
+        strings: Vec<String>,
+        interpolations: Vec<TemplateInterpolation>,
     },
 }
 

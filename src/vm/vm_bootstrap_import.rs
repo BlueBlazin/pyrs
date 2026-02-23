@@ -230,6 +230,12 @@ impl Vm {
         self.configure_bootstrap_ast_class("BinOp", &["left", "op", "right"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("UnaryOp", &["op", "operand"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Compare", &["left", "ops", "comparators"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class(
+            "Interpolation",
+            &["value", "str", "conversion", "format_spec"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class("TemplateStr", &["values"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("BoolOp", &["op", "values"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("IfExp", &["test", "body", "orelse"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("NamedExpr", &["target", "value"], &LOC_ATTRS);
@@ -501,15 +507,16 @@ impl Vm {
                 err.offset, err.message
             ))
         })?;
-        let code = compiler::compile_module_with_filename(&module_ast, &source_filename)
-            .map_err(|err| {
+        let code = compiler::compile_module_with_filename(&module_ast, &source_filename).map_err(
+            |err| {
                 let detail = if let Some(span) = err.span {
                     format!("{} at {}:{}", err.message, span.line, span.column)
                 } else {
                     err.message
                 };
                 RuntimeError::new(format!("compile error in module '{name}': {detail}"))
-            })?;
+            },
+        )?;
         self.mark_module_initializing(module);
         let code = Rc::new(code);
         let cells = self.build_cells(&code, Vec::new());
