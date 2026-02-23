@@ -7079,7 +7079,7 @@ impl Vm {
             return false;
         };
         if last.frame_id != 0 && frame.frame_id != 0 {
-            return last.frame_id == frame.frame_id;
+            return last.frame_id == frame.frame_id && last.lasti == frame.lasti;
         }
         last == frame
     }
@@ -7499,13 +7499,7 @@ impl Vm {
                 }
             }
         }
-        let preserve_existing_traceback =
-            matches!(&exc, Value::Exception(exc_data) if !exc_data.traceback_frames.is_empty());
-        if preserve_existing_traceback {
-            self.unwind_exception_preserving_traceback(exc)
-        } else {
-            self.unwind_exception(exc)
-        }
+        self.unwind_exception(exc)
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {

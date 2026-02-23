@@ -265,6 +265,10 @@ fn strip_expr(expr: &Expr) -> Expr {
             elt: Box::new(strip_expr(elt)),
             clauses: clauses.iter().map(strip_comp_clause).collect(),
         },
+        ExprKind::SetComp { elt, clauses } => ExprKind::SetComp {
+            elt: Box::new(strip_expr(elt)),
+            clauses: clauses.iter().map(strip_comp_clause).collect(),
+        },
         ExprKind::DictComp {
             key,
             value,

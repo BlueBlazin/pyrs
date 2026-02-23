@@ -4,8 +4,9 @@ use pyrs::{
     runtime::{BuiltinFunction, Object, Value},
     vm::Vm,
 };
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn list_values(value: Option<Value>) -> Option<Vec<Value>> {
@@ -199,6 +200,31 @@ fn run_numpy_failure_subprocess(source: &str) -> Option<(i32, String, String)> {
         .arg(source)
         .output()
         .ok()?;
+    Some((
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    ))
+}
+
+fn run_numpy_failure_stdin_subprocess(source: &str) -> Option<(i32, String, String)> {
+    let lib_path = cpython_lib_path()?;
+    let site_packages = numpy_site_packages_path()?;
+    let pyrs_bin = pyrs_binary_path()?;
+    let mut child = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .env("PYTHONPATH", &site_packages)
+        .arg("-S")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    {
+        let mut stdin = child.stdin.take()?;
+        stdin.write_all(source.as_bytes()).ok()?;
+    }
+    let output = child.wait_with_output().ok()?;
     Some((
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -14713,6 +14739,24 @@ fn numpy_np_float_attribute_error_traceback_does_not_duplicate_caller_frame() {
     assert_eq!(
         caller_count, 1,
         "expected exactly one caller frame; output was:\n{}",
+        combined
+    );
+}
+
+#[test]
+fn numpy_np_float_attribute_error_from_stdin_does_not_duplicate_stdin_frame() {
+    let source = "import numpy as np\nnp.float(0.5)\n";
+    let Some((status, stdout, stderr)) = run_numpy_failure_stdin_subprocess(source) else {
+        return;
+    };
+    assert_ne!(status, 0, "np.float should fail");
+    let combined = format!("{stdout}{stderr}");
+    let stdin_count = combined
+        .matches("File \"<stdin>\", line 2, in <module>")
+        .count();
+    assert_eq!(
+        stdin_count, 1,
+        "expected exactly one <stdin> caller frame; output was:\n{}",
         combined
     );
 }
