@@ -238,6 +238,10 @@ pub enum ExprKind {
         elt: Box<Expr>,
         clauses: Vec<ComprehensionClause>,
     },
+    SetComp {
+        elt: Box<Expr>,
+        clauses: Vec<ComprehensionClause>,
+    },
     DictComp {
         key: Box<Expr>,
         value: Box<Expr>,

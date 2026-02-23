@@ -235,6 +235,7 @@ impl Vm {
         self.configure_bootstrap_ast_class("Lambda", &["args", "body"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Await", &["value"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("ListComp", &["elt", "generators"], &LOC_ATTRS);
+        self.configure_bootstrap_ast_class("SetComp", &["elt", "generators"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("DictComp", &["key", "value", "generators"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("GeneratorExp", &["elt", "generators"], &LOC_ATTRS);
         self.configure_bootstrap_ast_class("Yield", &["value"], &LOC_ATTRS);
@@ -655,6 +656,7 @@ impl Vm {
             "Lambda",
             "Await",
             "ListComp",
+            "SetComp",
             "DictComp",
             "GeneratorExp",
             "Yield",
@@ -4382,6 +4384,11 @@ impl Vm {
                     "ListComp",
                     self.heap
                         .alloc_class(ClassObject::new("ListComp".to_string(), Vec::new())),
+                ),
+                (
+                    "SetComp",
+                    self.heap
+                        .alloc_class(ClassObject::new("SetComp".to_string(), Vec::new())),
                 ),
                 (
                     "DictComp",

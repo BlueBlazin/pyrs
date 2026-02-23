@@ -150,7 +150,7 @@ Status: in progress (started 2026-02-22).
   - `compile(..., PyCF_ONLY_AST)` expression conversion now covers previously-fallback families:
     - `Lambda`,
     - `Await`,
-    - `ListComp` / `DictComp` / `GeneratorExp`,
+    - `ListComp` / `SetComp` / `DictComp` / `GeneratorExp`,
     - `Yield` / `YieldFrom`,
     - helper-node `comprehension` materialization for generator clauses.
   - type-parameter AST conversion now preserves parser star markers:

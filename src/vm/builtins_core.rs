@@ -4387,6 +4387,19 @@ impl Vm {
                     ],
                 )
             }
+            ExprKind::SetComp { elt, clauses } => {
+                let elt_node = self.convert_expr_to_ast_node(elt)?;
+                let generators =
+                    self.convert_comprehension_clauses_to_ast_nodes(clauses, location)?;
+                self.build_ast_node(
+                    "SetComp",
+                    location,
+                    vec![
+                        ("elt", elt_node),
+                        ("generators", self.heap.alloc_list(generators)),
+                    ],
+                )
+            }
             ExprKind::DictComp {
                 key,
                 value,

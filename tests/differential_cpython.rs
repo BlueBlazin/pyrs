@@ -2109,6 +2109,7 @@ fn differential_compile_only_ast_lambda_await_comprehension_and_yield_parity() {
 import _ast
 lam = compile("lambda x, /, y=2, *args, z, **kw: x + y", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
 lst = compile("[x async for x in xs if x > 0]", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
+st = compile("{x for x in xs if x > 0}", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
 dct = compile("{x: x + 1 for x in xs if x > 0}", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
 gen = compile("(x for x in xs if x > 0)", "<ast>", "eval", _ast.PyCF_ONLY_AST).body
 await_node = compile("async def f():\n    return await g()\n", "<ast>", "exec", _ast.PyCF_ONLY_AST).body[0].body[0].value
@@ -2122,6 +2123,10 @@ result = {
     "listcomp_gen_type": type(lst.generators[0]).__name__,
     "listcomp_gen_base": isinstance(lst.generators[0], _ast.comprehension),
     "listcomp_is_async": lst.generators[0].is_async,
+    "setcomp_type": type(st).__name__,
+    "setcomp_gen_type": type(st.generators[0]).__name__,
+    "setcomp_gen_base": isinstance(st.generators[0], _ast.comprehension),
+    "setcomp_is_async": st.generators[0].is_async,
     "dictcomp_type": type(dct).__name__,
     "dictcomp_is_async": dct.generators[0].is_async,
     "genexp_type": type(gen).__name__,

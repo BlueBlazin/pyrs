@@ -3147,14 +3147,16 @@ impl Parser {
             if self.is_comprehension_start(pos) {
                 let (clauses, next) = self.parse_comp_clauses(pos)?;
                 let pos = self.expect_kind(next, TokenKind::RBrace)?;
-                let generator = self.make_expr(
-                    start,
-                    ExprKind::GeneratorExp {
-                        elt: Box::new(first_key),
-                        clauses,
-                    },
-                );
-                return Ok((self.make_set_call(start, generator), pos));
+                return Ok((
+                    self.make_expr(
+                        start,
+                        ExprKind::SetComp {
+                            elt: Box::new(first_key),
+                            clauses,
+                        },
+                    ),
+                    pos,
+                ));
             }
 
             let mut elements = vec![SequenceElement::Expr(first_key)];

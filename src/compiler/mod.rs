@@ -1348,6 +1348,7 @@ fn record_scope_activity_expr(
         // Nested lexical scopes: declaration-order checks are scope-local.
         ExprKind::Lambda { .. }
         | ExprKind::ListComp { .. }
+        | ExprKind::SetComp { .. }
         | ExprKind::DictComp { .. }
         | ExprKind::GeneratorExp { .. } => {}
     }
@@ -1782,7 +1783,9 @@ fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
             kwarg.as_ref(),
             locals,
         ),
-        ExprKind::ListComp { elt, clauses } | ExprKind::GeneratorExp { elt, clauses } => {
+        ExprKind::ListComp { elt, clauses }
+        | ExprKind::SetComp { elt, clauses }
+        | ExprKind::GeneratorExp { elt, clauses } => {
             collect_locals_namedexpr_expr(elt, locals);
             for clause in clauses {
                 collect_locals_namedexpr_target(&clause.target, locals);
@@ -2191,6 +2194,20 @@ fn collect_uses_expr(
             )?;
             child_free.extend(scope.freevars);
         }
+        ExprKind::SetComp { elt, clauses } => {
+            let body = build_list_comp_body(elt, clauses);
+            let scope = analyze_scope(
+                ScopeType::Function,
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                &body,
+                enclosing,
+            )?;
+            child_free.extend(scope.freevars);
+        }
         ExprKind::GeneratorExp { elt, clauses } => {
             let body = build_genexpr_body(elt, clauses);
             let scope = analyze_scope(
@@ -2452,7 +2469,9 @@ fn expr_has_yield(expr: &Expr) -> bool {
             expr_has_yield(test) || expr_has_yield(body) || expr_has_yield(orelse)
         }
         ExprKind::NamedExpr { value, .. } | ExprKind::Await { value } => expr_has_yield(value),
-        ExprKind::ListComp { elt, clauses } | ExprKind::GeneratorExp { elt, clauses } => {
+        ExprKind::ListComp { elt, clauses }
+        | ExprKind::SetComp { elt, clauses }
+        | ExprKind::GeneratorExp { elt, clauses } => {
             if expr_has_yield(elt) {
                 return true;
             }
@@ -2992,6 +3011,26 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::ListComp { elt, clauses } => compiler.compile_list_comp(elt, clauses),
+            ExprKind::SetComp { elt, clauses } => {
+                let generator_expr = Expr {
+                    node: ExprKind::GeneratorExp {
+                        elt: elt.clone(),
+                        clauses: clauses.clone(),
+                    },
+                    span,
+                };
+                let call_expr = Expr {
+                    node: ExprKind::Call {
+                        func: Box::new(Expr {
+                            node: ExprKind::Name("set".to_string()),
+                            span,
+                        }),
+                        args: vec![CallArg::Positional(generator_expr)],
+                    },
+                    span,
+                };
+                compiler.compile_expr(&call_expr)
+            }
             ExprKind::DictComp {
                 key,
                 value,

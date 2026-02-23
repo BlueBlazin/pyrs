@@ -167,7 +167,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - `compile(..., PyCF_ONLY_AST)` expression conversion now covers previously fallback-heavy
     families:
     - `Lambda`, `Await`,
-    - `ListComp` / `DictComp` / `GeneratorExp`,
+    - `ListComp` / `SetComp` / `DictComp` / `GeneratorExp`,
     - `Yield` / `YieldFrom`,
     - generator-clause helper node `comprehension`.
   - type-parameter AST conversion now preserves star-kind semantics from parser type params:
