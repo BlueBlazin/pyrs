@@ -89,6 +89,7 @@ fn select_traceback_palette() -> TracebackPalette {
         if is_light_background_code(code) {
             return LIGHT_PALETTE;
         }
+        return DARK_PALETTE;
     }
     FALLBACK_PALETTE
 }

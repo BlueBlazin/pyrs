@@ -14777,6 +14777,21 @@ fn numpy_np_float_attribute_error_traceback_does_not_duplicate_caller_frame() {
         "expected exactly one caller frame; output was:\n{}",
         combined
     );
+    let mut unexpected_inner_raise_caret = false;
+    let lines: Vec<&str> = combined.lines().collect();
+    for pair in lines.windows(2) {
+        if pair[0].contains("raise AttributeError(__former_attrs__[attr], name=None)")
+            && pair[1].trim_start().starts_with('^')
+        {
+            unexpected_inner_raise_caret = true;
+            break;
+        }
+    }
+    assert!(
+        !unexpected_inner_raise_caret,
+        "numpy __getattr__ traceback should not highlight explicit raise constructor:\n{}",
+        combined
+    );
 }
 
 #[test]
@@ -15554,6 +15569,56 @@ fn traceback_caret_skips_statement_keyword_ranges() {
     assert!(
         !err.message.contains("\n    ^"),
         "unexpected keyword caret highlight:\n{}",
+        err.message
+    );
+}
+
+#[test]
+fn traceback_caret_suppresses_explicit_raise_constructor_spans() {
+    let source = r#"def f():
+    raise ValueError("boom")
+
+f()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module_with_filename(&module, "<caret-raise-constructor-test>")
+        .expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.cache_source_text("<caret-raise-constructor-test>", source);
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("raise ValueError(\"boom\")"));
+    assert!(
+        !err.message.contains("raise ValueError(\"boom\")\n               ^"),
+        "unexpected caret on explicit raise constructor:\n{}",
+        err.message
+    );
+}
+
+#[test]
+fn traceback_caret_keeps_raise_expression_eval_failures() {
+    let source = r#"def f():
+    raise foo()
+
+f()
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module_with_filename(&module, "<caret-raise-eval-test>")
+        .expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.cache_source_text("<caret-raise-eval-test>", source);
+    let err = vm.execute(&code).expect_err("execution should fail");
+    assert!(err.message.contains("raise foo()"));
+    let mut caret_after_raise = false;
+    let lines: Vec<&str> = err.message.lines().collect();
+    for pair in lines.windows(2) {
+        if pair[0].contains("raise foo()") && pair[1].trim_start().starts_with('^') {
+            caret_after_raise = true;
+            break;
+        }
+    }
+    assert!(
+        caret_after_raise,
+        "expected caret under failing raise expression:\n{}",
         err.message
     );
 }

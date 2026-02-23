@@ -8155,6 +8155,7 @@ impl Vm {
                 frame.end_line,
                 frame.end_column,
                 &frame.name,
+                Some(&exception.name),
             );
         }
     }
@@ -8169,6 +8170,7 @@ impl Vm {
                 frame.end_line,
                 frame.end_column,
                 &frame.name,
+                None,
             );
         }
     }
@@ -8182,6 +8184,7 @@ impl Vm {
         end_line: usize,
         end_column: usize,
         name: &str,
+        exception_name: Option<&str>,
     ) {
         output.push_str(&format!(
             "  File \"{}\", line {}, in {}\n",
@@ -8196,6 +8199,13 @@ impl Vm {
             if let Some(caret_line) =
                 render_traceback_caret_line(&source_line, line, column, end_line, end_column)
             {
+                if should_suppress_explicit_raise_caret(
+                    &source_line,
+                    column,
+                    exception_name,
+                ) {
+                    return;
+                }
                 output.push_str("    ");
                 output.push_str(&caret_line);
                 output.push('\n');
@@ -12579,4 +12589,58 @@ fn is_statement_keyword(word: &str) -> bool {
             | "async"
             | "await"
     )
+}
+
+fn should_suppress_explicit_raise_caret(
+    source_line: &str,
+    start_column: usize,
+    exception_name: Option<&str>,
+) -> bool {
+    let Some(exception_name) = exception_name else {
+        return false;
+    };
+    if start_column == 0 {
+        return false;
+    }
+    let trimmed = source_line.trim_start();
+    let Some(after_raise) = trimmed.strip_prefix("raise") else {
+        return false;
+    };
+    if !after_raise
+        .chars()
+        .next()
+        .is_some_and(char::is_whitespace)
+    {
+        return false;
+    }
+    let after_raise_trimmed = after_raise.trim_start();
+    if after_raise_trimmed.is_empty() {
+        return false;
+    }
+    let raised_expr_head: String = after_raise_trimmed
+        .chars()
+        .take_while(|ch| is_identifier_continue(*ch) || *ch == '.')
+        .collect();
+    if raised_expr_head.is_empty() {
+        return false;
+    }
+    let raised_type_name = raised_expr_head
+        .rsplit('.')
+        .next()
+        .unwrap_or_default();
+    if raised_type_name != exception_name {
+        return false;
+    }
+
+    let leading_ws = source_line.chars().take_while(|ch| ch.is_whitespace()).count();
+    let start = start_column.saturating_sub(1);
+    let raise_start = leading_ws;
+    let raise_end = raise_start + "raise".chars().count();
+    if start >= raise_start && start < raise_end {
+        return true;
+    }
+    let raise_gap = after_raise.chars().take_while(|ch| ch.is_whitespace()).count();
+    let expr_start = leading_ws + "raise".chars().count() + raise_gap;
+    let expr_end = expr_start + raised_expr_head.chars().count();
+    start >= expr_start && start < expr_end
 }
