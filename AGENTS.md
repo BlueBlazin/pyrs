@@ -102,8 +102,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - builtin/container class subscripting (`list[int]`, `dict[str, int]`, etc.) now
       materializes `GenericAlias` even before `types` import;
       `types.GenericAlias` import later reuses the same canonical class identity.
-  - Language feature gate now includes runtime type-param cross-reference parity probe
-    (`runtime_type_param_cross_references`) and is green at `14/14` required probes.
+  - Language feature gate now includes:
+    - runtime type-param cross-reference parity probe
+      (`runtime_type_param_cross_references`),
+    - builtin generic-subscript parity probe
+      (`runtime_builtin_generic_alias_without_types_import`),
+    and is green at `15/15` required probes.
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`

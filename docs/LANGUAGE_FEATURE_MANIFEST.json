@@ -52,6 +52,13 @@
       "closure_criteria": "type-parameter bounds/defaults can reference prior type parameters with CPython parity"
     },
     {
+      "id": "runtime_builtin_generic_alias_without_types_import",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "builtin generic subscripting (e.g. list[int]) produces GenericAlias before explicit types import, with CPython parity"
+    },
+    {
       "id": "runtime_type_alias_type_params",
       "required": true,
       "status": "implemented",

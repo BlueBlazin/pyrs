@@ -123,6 +123,24 @@ result = {
 """,
     },
     {
+        "id": "runtime_builtin_generic_alias_without_types_import",
+        "mode": "json_result",
+        "source": """before = type(list[int]).__name__
+import types
+alias = list[int]
+result = {
+    "before_type": before,
+    "isinstance": isinstance(alias, types.GenericAlias),
+    "origin_is_list": getattr(alias, "__origin__", None) is list,
+    "arg0_is_int": (
+        hasattr(alias, "__args__")
+        and len(alias.__args__) == 1
+        and alias.__args__[0] is int
+    ),
+}
+""",
+    },
+    {
         "id": "runtime_type_alias_type_params",
         "mode": "json_result",
         "source": """type Pair[T] = tuple[T, T]

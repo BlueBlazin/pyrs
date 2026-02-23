@@ -2353,3 +2353,28 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_runtime_builtin_generic_alias_without_types_import_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+before = type(list[int]).__name__
+import types
+alias = list[int]
+result = {
+    "before_type": before,
+    "isinstance": isinstance(alias, types.GenericAlias),
+    "origin_is_list": getattr(alias, "__origin__", None) is list,
+    "arg0_is_int": (
+        hasattr(alias, "__args__")
+        and len(alias.__args__) == 1
+        and alias.__args__[0] is int
+    ),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
