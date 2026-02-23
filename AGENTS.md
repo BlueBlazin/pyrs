@@ -23,6 +23,8 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Prefer direct command execution from the existing working directory (no wrapper like `zsh -lc 'cd ... && ...'` unless direct execution fails).
 - Prefer setting environment variables in a separate step before running commands; use inline `ENV=... cmd` only as a fallback when the direct approach is not viable.
 - Hard rule for this workspace: do not run commands in inline-env form (`ENV=... cmd`) when a separate environment setup step is possible.
+- Do not prepend `mkdir -p perf` to profiling commands; `perf/` already exists in this workspace.
+- For profiling commands (especially `cargo flamegraph`), never run inline env form (for example `MY_ENV_VAR=foo cargo flamegraph ...`); set env vars in a separate step first, then run the command cleanly.
 
 ## Local CPython Source/Lib Baseline
 - Use local untracked CPython checkout at `.local/Python-3.14.3` as the primary reference root.
