@@ -105,6 +105,16 @@ force dark palette:    PYRS_REPL_THEME=dark
 force light palette:   PYRS_REPL_THEME=light
 ```
 
+CLI error coloring (tracebacks/syntax diagnostics):
+
+```text
+auto (TTY-aware):      default
+force on:              FORCE_COLOR=1  (or PYTHON_COLORS=1)
+force off:             NO_COLOR=1     (or PYTHON_COLORS=0)
+```
+
+`pyrs` auto-tunes traceback colors for dark/light terminals using `COLORFGBG` when available.
+
 Run from piped stdin (non-interactive mode):
 
 ```bash
