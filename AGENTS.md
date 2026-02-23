@@ -112,9 +112,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - generator: `scripts/generate_language_feature_inventory.py`,
     - inventory artifact: `docs/LANGUAGE_FEATURE_INVENTORY.json`,
     - summary/report artifact: `perf/language_feature_inventory_report_latest.json`,
+    - probe mapping artifact: `docs/LANGUAGE_FEATURE_PROBE_MAP.json`,
+    - inventory coverage report: `perf/language_feature_coverage_latest.json`,
     - current baseline: `578` rows (`188` public grammar rules, `61` internal
       `invalid_*` grammar rules, `69` tokens, `260` reference headings),
       with current required-manifest probe coverage baseline at `2.6%`.
+    - current mapped probe coverage baseline:
+      `pass=68`, `fail=0`, `unprobed=510` (`11.76%` coverage).
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`

@@ -18,6 +18,7 @@ Use this file to find canonical ownership quickly.
 - `docs/STUB_ACCOUNTING.md`: partial/stub implementation ledger.
 - `docs/LANGUAGE_FEATURE_INVENTORY.md`: source-derived CPython 3.14 language-feature inventory baseline and regeneration flow.
 - `docs/LANGUAGE_FEATURE_INVENTORY.json`: machine-readable full inventory extracted from CPython grammar/tokens/reference docs.
+- `docs/LANGUAGE_FEATURE_PROBE_MAP.json`: mapping from current manifest probes to inventory rows for pass/fail/unprobed accounting.
 - `docs/CAPI_NOOP_INVENTORY.md`: intentional C-API no-op/placeholder inventory with closure criteria.
 - `docs/NOOP_BUILTIN_CLASSIFICATION.md`: split current no-op builtin inventory into production-facing vs test-only symbols.
 - `docs/ALGO_AUDIT_BACKLOG.md`: algorithmic/semantic risk backlog.

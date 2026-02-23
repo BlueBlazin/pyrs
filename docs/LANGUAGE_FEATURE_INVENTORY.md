@@ -17,6 +17,8 @@ This document is the authoritative, source-derived inventory baseline for CPytho
 ## Generated Artifacts
 - Full machine-readable inventory: `docs/LANGUAGE_FEATURE_INVENTORY.json`
 - Baseline coverage report: `perf/language_feature_inventory_report_latest.json`
+- Probe-to-inventory mapping: `docs/LANGUAGE_FEATURE_PROBE_MAP.json`
+- Inventory pass/fail/unprobed report: `perf/language_feature_coverage_latest.json`
 
 ## Current Baseline (Generated)
 - Total inventory rows: `578`
@@ -27,6 +29,11 @@ This document is the authoritative, source-derived inventory baseline for CPytho
 - Reference headings: `260`
 - Current required parity probes in manifest (`docs/LANGUAGE_FEATURE_MANIFEST.json`): `15`
 - Required-probe-to-inventory baseline: `2.6%`
+- Current mapped inventory coverage:
+  - `pass`: `68`
+  - `fail`: `0`
+  - `unprobed`: `510`
+  - `coverage`: `11.76%` (`68/578`)
 
 ## Important Interpretation
 - This inventory is complete as a **source-derived accounting baseline**.
@@ -40,4 +47,15 @@ python3 scripts/generate_language_feature_inventory.py \
   --manifest docs/LANGUAGE_FEATURE_MANIFEST.json \
   --out-inventory docs/LANGUAGE_FEATURE_INVENTORY.json \
   --out-report perf/language_feature_inventory_report_latest.json
+
+python3 scripts/check_language_feature_manifest.py \
+  --pyrs target/debug/pyrs \
+  --manifest docs/LANGUAGE_FEATURE_MANIFEST.json \
+  --out perf/language_feature_manifest_latest.json
+
+python3 scripts/check_language_feature_coverage.py \
+  --inventory docs/LANGUAGE_FEATURE_INVENTORY.json \
+  --probe-results perf/language_feature_manifest_latest.json \
+  --probe-map docs/LANGUAGE_FEATURE_PROBE_MAP.json \
+  --out perf/language_feature_coverage_latest.json
 ```

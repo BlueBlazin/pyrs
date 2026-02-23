@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "target": "Mapping from manifest probes to CPython 3.14 source-language inventory rows",
+  "mappings": [
+    {
+      "probe_id": "pattern_matching_sequence_and_mapping",
+      "selectors": [
+        { "kind": "grammar_rule", "id": "grammar::match_stmt" },
+        { "kind": "grammar_rule", "id": "grammar::case_block" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::pattern" },
+        { "kind": "grammar_rule", "id": "grammar::mapping_pattern" },
+        { "kind": "grammar_rule", "id": "grammar::sequence_pattern" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "match statement" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "patterns" }
+      ]
+    },
+    {
+      "probe_id": "exception_group_except_star_split",
+      "selectors": [
+        { "kind": "grammar_rule", "id": "grammar::except_star_block" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "except* clause" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "try statement" }
+      ]
+    },
+    {
+      "probe_id": "positional_only_and_kwonly_calling",
+      "selectors": [
+        { "kind": "grammar_rule", "id": "grammar::slash_no_default" },
+        { "kind": "grammar_rule", "id": "grammar::slash_with_default" },
+        { "kind": "grammar_rule", "id": "grammar::star_etc" },
+        { "kind": "grammar_rule", "id": "grammar::kwds" },
+        { "kind": "grammar_rule", "id": "grammar::lambda_slash_no_default" },
+        { "kind": "grammar_rule", "id": "grammar::lambda_slash_with_default" },
+        { "kind": "reference_heading", "chapter": "expressions", "title_contains": "Calls" }
+      ]
+    },
+    {
+      "probe_id": "runtime_function_type_params",
+      "selectors": [
+        { "kind": "grammar_rule", "id": "grammar::function_def" },
+        { "kind": "grammar_rule", "id": "grammar::function_def_raw" },
+        { "kind": "grammar_rule", "id": "grammar::type_params" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::type_param" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Type parameter lists" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Generic functions" }
+      ]
+    },
+    {
+      "probe_id": "runtime_class_type_params",
+      "selectors": [
+        { "kind": "grammar_rule", "id": "grammar::class_def" },
+        { "kind": "grammar_rule", "id": "grammar::class_def_raw" },
+        { "kind": "grammar_rule", "id": "grammar::type_params" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::type_param" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Type parameter lists" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Generic classes" }
+      ]
+    },
+    {
+      "probe_id": "runtime_type_param_bound_constraints_defaults",
+      "selectors": [
+        { "kind": "grammar_rule", "id_prefix": "grammar::type_param" },
+        { "kind": "grammar_rule", "id": "grammar::type_params" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Type parameter lists" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Generic functions" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Generic classes" }
+      ]
+    },
+    {
+      "probe_id": "runtime_type_param_cross_references",
+      "selectors": [
+        { "kind": "grammar_rule", "id_prefix": "grammar::type_param" },
+        { "kind": "grammar_rule", "id": "grammar::type_params" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Type parameter lists" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Generic functions" }
+      ]
+    },
+    {
+      "probe_id": "runtime_builtin_generic_alias_without_types_import",
+      "selectors": [
+        { "kind": "grammar_rule", "id": "grammar::primary" },
+        { "kind": "grammar_rule", "id": "grammar::slices" },
+        { "kind": "grammar_rule", "id": "grammar::slice" },
+        { "kind": "reference_heading", "chapter": "expressions", "title_contains": "Subscriptions" },
+        { "kind": "reference_heading", "chapter": "datamodel", "title_contains": "__class_getitem__" }
+      ]
+    },
+    {
+      "probe_id": "runtime_type_alias_type_params",
+      "selectors": [
+        { "kind": "grammar_rule", "id": "grammar::type_alias" },
+        { "kind": "grammar_rule", "id": "grammar::type_params" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::type_param" },
+        { "kind": "reference_heading", "chapter": "simple_stmts", "title_contains": "type statement" },
+        { "kind": "reference_heading", "chapter": "compound_stmts", "title_contains": "Generic type aliases" }
+      ]
+    },
+    {
+      "probe_id": "template_literal_basic_type",
+      "selectors": [
+        { "kind": "token", "id": "token::TSTRING_START" },
+        { "kind": "token", "id": "token::TSTRING_MIDDLE" },
+        { "kind": "token", "id": "token::TSTRING_END" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::tstring" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "t-strings" },
+        { "kind": "reference_heading", "chapter": "expressions", "title_contains": "String literal concatenation" }
+      ]
+    },
+    {
+      "probe_id": "template_literal_debug_and_concat",
+      "selectors": [
+        { "kind": "token", "id": "token::TSTRING_START" },
+        { "kind": "token", "id": "token::TSTRING_MIDDLE" },
+        { "kind": "token", "id": "token::TSTRING_END" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::tstring" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "t-strings" },
+        { "kind": "reference_heading", "chapter": "expressions", "title_contains": "String literal concatenation" }
+      ]
+    },
+    {
+      "probe_id": "template_literal_mixed_literal_rejected",
+      "selectors": [
+        { "kind": "token", "id": "token::TSTRING_START" },
+        { "kind": "token", "id": "token::TSTRING_MIDDLE" },
+        { "kind": "token", "id": "token::TSTRING_END" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::tstring" },
+        { "kind": "reference_heading", "chapter": "expressions", "title_contains": "String literal concatenation" }
+      ]
+    },
+    {
+      "probe_id": "template_literal_incompatible_f_prefix_rejected",
+      "selectors": [
+        { "kind": "token", "id": "token::TSTRING_START" },
+        { "kind": "token", "id": "token::FSTRING_START" },
+        { "kind": "grammar_rule", "id": "grammar::fstring" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::tstring" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "String prefixes" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "t-strings" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "f-strings" }
+      ]
+    },
+    {
+      "probe_id": "template_literal_incompatible_b_prefix_rejected",
+      "selectors": [
+        { "kind": "token", "id": "token::TSTRING_START" },
+        { "kind": "token", "id": "token::STRING" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::tstring" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "String prefixes" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "Bytes literals" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "t-strings" }
+      ]
+    },
+    {
+      "probe_id": "template_literal_incompatible_u_prefix_rejected",
+      "selectors": [
+        { "kind": "token", "id": "token::TSTRING_START" },
+        { "kind": "token", "id": "token::STRING" },
+        { "kind": "grammar_rule", "id_prefix": "grammar::tstring" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "String prefixes" },
+        { "kind": "reference_heading", "chapter": "lexical_analysis", "title_contains": "t-strings" }
+      ]
+    }
+  ]
+}
