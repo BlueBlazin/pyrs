@@ -224,29 +224,65 @@ result = {
 """,
     },
     {
-        "id": "umbrella_grammar_public_surface",
+        "id": "grammar_section_statements_surface",
         "mode": "json_result",
-        "source": """class C[T]:
-    x = 1
+        "source": """x = 0
+import math as m
+from math import sqrt as s
+
+def g():
+    global x
+    x = 3
+    y = 4
+    def inner():
+        nonlocal y
+        y = 5
+    inner()
+    assert y == 5
+    del y
+    return x
+
+result = {
+    "g": g(),
+    "sqrt": s(9),
+    "import_ok": int(m.pi),
+}
+""",
+    },
+    {
+        "id": "grammar_section_compound_surface",
+        "mode": "json_result",
+        "source": """from contextlib import nullcontext
+
+class C[T]:
     def m(self, y):
         return y + 1
 
 def f(a, /, b = 2, *, c = 3):
+    acc = 0
+    if a:
+        acc += 1
     for i in [1, 2]:
-        if i == 2:
-            break
-    while False:
-        continue
+        if i == 1:
+            continue
+        acc += i
+    j = 0
+    while j < 1:
+        j += 1
+    else:
+        acc += 1
     try:
         raise ExceptionGroup("eg", [ValueError(1), TypeError(2)])
     except* ValueError as e:
-        left = len(e.exceptions)
+        acc += len(e.exceptions)
     except* TypeError as e:
-        right = len(e.exceptions)
+        acc += len(e.exceptions)
+    with nullcontext(5) as n:
+        acc += n
     match {"k": 5}:
         case {"k": q}:
-            matched = q
-    return a + b + c + left + right + matched
+            acc += q
+    return acc + b + c
 
 type Alias[X] = list[X]
 result = {
@@ -258,14 +294,67 @@ result = {
 """,
     },
     {
-        "id": "umbrella_grammar_invalid_syntax_surface",
+        "id": "grammar_section_expressions_surface",
         "mode": "json_result",
-        "source": """ok = False
-try:
-    compile("def broken(:\\n    pass\\n", "<broken>", "exec")
-except SyntaxError:
-    ok = True
-result = {"syntax_error": ok}
+        "source": """vals = [x * x for x in range(5) if x % 2 == 0]
+gen = sum(x for x in range(4))
+lam = (lambda a, b = 2, *, c = 3: a + b + c)(1, c = 4)
+wal = (y := 5) + y
+sub = ([10, 20, 30][1], {"a": 1}["a"], (1, 2, 3)[0])
+arith = ((2 + 3) * 4 - 5) // 3
+bitwise = (7 & 3, 7 | 3, 7 ^ 3, 8 >> 1, 1 << 3)
+result = {
+    "vals": vals,
+    "gen": gen,
+    "lam": lam,
+    "wal": wal,
+    "sub": sub,
+    "arith": arith,
+    "bitwise": bitwise,
+}
+""",
+    },
+    {
+        "id": "grammar_section_literals_surface",
+        "mode": "json_result",
+        "source": """raw = r"a\\nb"
+escaped = "a\\nb"
+bytes_data = b"abc"
+ftext = f"{1+2}"
+template = t"v={1+2}"
+nums = [0b11, 0o7, 0x10, 1_000, 1.25e2, 3j]
+d = {"a": 1, **{"b": 2}}
+s = {1, 2, 3}
+result = {
+    "raw": raw,
+    "escaped_len": len(escaped),
+    "bytes": list(bytes_data),
+    "ftext": ftext,
+    "template_strings": list(template.strings),
+    "nums0": nums[0],
+    "dict_keys": sorted(d.keys()),
+    "set_len": len(s),
+}
+""",
+    },
+    {
+        "id": "grammar_section_invalid_syntax_surface",
+        "mode": "json_result",
+        "source": """sources = [
+    "def broken(:\\n    pass\\n",
+    "x = (1 2)\\n",
+    "if True print(1)\\n",
+    "a if b\\n",
+]
+flags = []
+for src in sources:
+    try:
+        compile(src, "<broken>", "exec")
+    except SyntaxError:
+        flags.append(True)
+    else:
+        flags.append(False)
+result = {"ok": all(flags), "n": len(flags)}
 """,
     },
     {

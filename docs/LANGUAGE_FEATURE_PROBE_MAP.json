@@ -450,24 +450,6 @@
       ]
     },
     {
-      "probe_id": "umbrella_grammar_public_surface",
-      "selectors": [
-        {
-          "kind": "grammar_rule",
-          "internal": false
-        }
-      ]
-    },
-    {
-      "probe_id": "umbrella_grammar_invalid_syntax_surface",
-      "selectors": [
-        {
-          "kind": "grammar_rule",
-          "internal": true
-        }
-      ]
-    },
-    {
       "probe_id": "umbrella_reference_expressions_surface",
       "selectors": [
         {
@@ -536,6 +518,155 @@
         {
           "kind": "reference_heading",
           "chapter": "lexical_analysis"
+        }
+      ]
+    },
+    {
+      "probe_id": "grammar_section_statements_surface",
+      "selectors": [
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "STARTING RULES"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "GENERAL STATEMENTS"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "SIMPLE STATEMENTS"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Import statements"
+        }
+      ]
+    },
+    {
+      "probe_id": "grammar_section_compound_surface",
+      "selectors": [
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Common elements"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Class definitions"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Function definitions"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Function parameters"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "If statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "While statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "For statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "With statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Try statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Except statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Match statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Type statement"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Type parameter declaration"
+        }
+      ]
+    },
+    {
+      "probe_id": "grammar_section_expressions_surface",
+      "selectors": [
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "EXPRESSIONS"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Comparison operators"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Bitwise operators"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Arithmetic operators"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Primary elements"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Lambda functions"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "FUNCTION CALL ARGUMENTS"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Generic targets"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Targets for del statements"
+        }
+      ]
+    },
+    {
+      "probe_id": "grammar_section_literals_surface",
+      "selectors": [
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "LITERALS"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Dicts"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "Comprehensions & Generators"
+        },
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "TYPING ELEMENTS"
+        }
+      ]
+    },
+    {
+      "probe_id": "grammar_section_invalid_syntax_surface",
+      "selectors": [
+        {
+          "kind": "grammar_rule",
+          "grammar_section": "INVALID RULES"
         }
       ]
     }

@@ -22,7 +22,13 @@ def selector_matches(feature: dict[str, Any], selector: dict[str, Any]) -> bool:
         return False
     if "id_prefix" in selector and not feature.get("id", "").startswith(selector["id_prefix"]):
         return False
+    if "id_regex" in selector:
+        feature_id = feature.get("id", "")
+        if re.search(selector["id_regex"], feature_id) is None:
+            return False
     if "chapter" in selector and feature.get("chapter") != selector["chapter"]:
+        return False
+    if "grammar_section" in selector and feature.get("grammar_section") != selector["grammar_section"]:
         return False
     if "title_contains" in selector:
         title = feature.get("title", "")

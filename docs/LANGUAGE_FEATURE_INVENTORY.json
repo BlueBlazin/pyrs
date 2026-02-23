@@ -2,6 +2,7 @@
   "cpython_root": "/Users/$USER/Downloads/Python-3.14.3",
   "features": [
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::annotated_rhs",
       "internal": false,
       "kind": "grammar_rule",
@@ -12,6 +13,7 @@
       "title": "annotated_rhs"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::annotation",
       "internal": false,
       "kind": "grammar_rule",
@@ -22,6 +24,7 @@
       "title": "annotation"
     },
     {
+      "grammar_section": "FUNCTION CALL ARGUMENTS",
       "id": "grammar::args",
       "internal": false,
       "kind": "grammar_rule",
@@ -32,6 +35,7 @@
       "title": "args"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::as_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -42,6 +46,7 @@
       "title": "as_pattern"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::assert_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -52,6 +57,7 @@
       "title": "assert_stmt"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::assignment",
       "internal": false,
       "kind": "grammar_rule",
@@ -62,6 +68,7 @@
       "title": "assignment"
     },
     {
+      "grammar_section": "EXPRESSIONS",
       "id": "grammar::assignment_expression",
       "internal": false,
       "kind": "grammar_rule",
@@ -72,6 +79,7 @@
       "title": "assignment_expression"
     },
     {
+      "grammar_section": "Primary elements",
       "id": "grammar::atom",
       "internal": false,
       "kind": "grammar_rule",
@@ -82,6 +90,7 @@
       "title": "atom"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::attr",
       "internal": false,
       "kind": "grammar_rule",
@@ -92,6 +101,7 @@
       "title": "attr"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::augassign",
       "internal": false,
       "kind": "grammar_rule",
@@ -102,6 +112,7 @@
       "title": "augassign"
     },
     {
+      "grammar_section": "Bitwise operators",
       "id": "grammar::bitwise_and",
       "internal": false,
       "kind": "grammar_rule",
@@ -112,6 +123,7 @@
       "title": "bitwise_and"
     },
     {
+      "grammar_section": "Bitwise operators",
       "id": "grammar::bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -122,6 +134,7 @@
       "title": "bitwise_or"
     },
     {
+      "grammar_section": "Bitwise operators",
       "id": "grammar::bitwise_xor",
       "internal": false,
       "kind": "grammar_rule",
@@ -132,6 +145,7 @@
       "title": "bitwise_xor"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::break_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -142,6 +156,7 @@
       "title": "break_stmt"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::capture_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -152,6 +167,7 @@
       "title": "capture_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::case_block",
       "internal": false,
       "kind": "grammar_rule",
@@ -162,6 +178,7 @@
       "title": "case_block"
     },
     {
+      "grammar_section": "Class definitions",
       "id": "grammar::class_def",
       "internal": false,
       "kind": "grammar_rule",
@@ -172,6 +189,7 @@
       "title": "class_def"
     },
     {
+      "grammar_section": "Class definitions",
       "id": "grammar::class_def_raw",
       "internal": false,
       "kind": "grammar_rule",
@@ -182,6 +200,7 @@
       "title": "class_def_raw"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::class_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -192,6 +211,7 @@
       "title": "class_pattern"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::compare_op_bitwise_or_pair",
       "internal": false,
       "kind": "grammar_rule",
@@ -202,6 +222,7 @@
       "title": "compare_op_bitwise_or_pair"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::comparison",
       "internal": false,
       "kind": "grammar_rule",
@@ -212,6 +233,7 @@
       "title": "comparison"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::complex_number",
       "internal": false,
       "kind": "grammar_rule",
@@ -222,6 +244,7 @@
       "title": "complex_number"
     },
     {
+      "grammar_section": "GENERAL STATEMENTS",
       "id": "grammar::compound_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -232,6 +255,7 @@
       "title": "compound_stmt"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::continue_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -242,6 +266,7 @@
       "title": "continue_stmt"
     },
     {
+      "grammar_section": "Common elements",
       "id": "grammar::decorators",
       "internal": false,
       "kind": "grammar_rule",
@@ -252,6 +277,7 @@
       "title": "decorators"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::default",
       "internal": false,
       "kind": "grammar_rule",
@@ -262,6 +288,7 @@
       "title": "default"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::del_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -272,6 +299,7 @@
       "title": "del_stmt"
     },
     {
+      "grammar_section": "Targets for del statements",
       "id": "grammar::del_t_atom",
       "internal": false,
       "kind": "grammar_rule",
@@ -282,6 +310,7 @@
       "title": "del_t_atom"
     },
     {
+      "grammar_section": "Targets for del statements",
       "id": "grammar::del_targets",
       "internal": false,
       "kind": "grammar_rule",
@@ -292,6 +321,7 @@
       "title": "del_targets"
     },
     {
+      "grammar_section": "Dicts",
       "id": "grammar::dict",
       "internal": false,
       "kind": "grammar_rule",
@@ -302,6 +332,7 @@
       "title": "dict"
     },
     {
+      "grammar_section": "Comprehensions & Generators",
       "id": "grammar::dictcomp",
       "internal": false,
       "kind": "grammar_rule",
@@ -312,6 +343,7 @@
       "title": "dictcomp"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::dotted_as_name",
       "internal": false,
       "kind": "grammar_rule",
@@ -322,6 +354,7 @@
       "title": "dotted_as_name"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::dotted_as_names",
       "internal": false,
       "kind": "grammar_rule",
@@ -332,6 +365,7 @@
       "title": "dotted_as_names"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::dotted_name",
       "internal": false,
       "kind": "grammar_rule",
@@ -342,6 +376,7 @@
       "title": "dotted_name"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::double_star_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -352,6 +387,7 @@
       "title": "double_star_pattern"
     },
     {
+      "grammar_section": "Dicts",
       "id": "grammar::double_starred_kvpair",
       "internal": false,
       "kind": "grammar_rule",
@@ -362,6 +398,7 @@
       "title": "double_starred_kvpair"
     },
     {
+      "grammar_section": "Dicts",
       "id": "grammar::double_starred_kvpairs",
       "internal": false,
       "kind": "grammar_rule",
@@ -372,6 +409,7 @@
       "title": "double_starred_kvpairs"
     },
     {
+      "grammar_section": "If statement",
       "id": "grammar::elif_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -382,6 +420,7 @@
       "title": "elif_stmt"
     },
     {
+      "grammar_section": "If statement",
       "id": "grammar::else_block",
       "internal": false,
       "kind": "grammar_rule",
@@ -392,6 +431,7 @@
       "title": "else_block"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::eq_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -402,6 +442,7 @@
       "title": "eq_bitwise_or"
     },
     {
+      "grammar_section": "STARTING RULES",
       "id": "grammar::eval",
       "internal": false,
       "kind": "grammar_rule",
@@ -412,6 +453,7 @@
       "title": "eval"
     },
     {
+      "grammar_section": "Except statement",
       "id": "grammar::except_block",
       "internal": false,
       "kind": "grammar_rule",
@@ -422,6 +464,7 @@
       "title": "except_block"
     },
     {
+      "grammar_section": "Except statement",
       "id": "grammar::except_star_block",
       "internal": false,
       "kind": "grammar_rule",
@@ -432,6 +475,7 @@
       "title": "except_star_block"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::expression_without_invalid",
       "internal": false,
       "kind": "grammar_rule",
@@ -442,6 +486,7 @@
       "title": "expression_without_invalid"
     },
     {
+      "grammar_section": "EXPRESSIONS",
       "id": "grammar::expressions",
       "internal": false,
       "kind": "grammar_rule",
@@ -452,6 +497,7 @@
       "title": "expressions"
     },
     {
+      "grammar_section": "STARTING RULES",
       "id": "grammar::file",
       "internal": false,
       "kind": "grammar_rule",
@@ -462,6 +508,7 @@
       "title": "file"
     },
     {
+      "grammar_section": "Except statement",
       "id": "grammar::finally_block",
       "internal": false,
       "kind": "grammar_rule",
@@ -472,6 +519,7 @@
       "title": "finally_block"
     },
     {
+      "grammar_section": "Comprehensions & Generators",
       "id": "grammar::for_if_clause",
       "internal": false,
       "kind": "grammar_rule",
@@ -482,6 +530,7 @@
       "title": "for_if_clause"
     },
     {
+      "grammar_section": "Comprehensions & Generators",
       "id": "grammar::for_if_clauses",
       "internal": false,
       "kind": "grammar_rule",
@@ -492,6 +541,7 @@
       "title": "for_if_clauses"
     },
     {
+      "grammar_section": "For statement",
       "id": "grammar::for_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -502,6 +552,7 @@
       "title": "for_stmt"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::fstring",
       "internal": false,
       "kind": "grammar_rule",
@@ -512,6 +563,7 @@
       "title": "fstring"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::fstring_conversion",
       "internal": false,
       "kind": "grammar_rule",
@@ -522,6 +574,7 @@
       "title": "fstring_conversion"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::fstring_format_spec",
       "internal": false,
       "kind": "grammar_rule",
@@ -532,6 +585,7 @@
       "title": "fstring_format_spec"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::fstring_full_format_spec",
       "internal": false,
       "kind": "grammar_rule",
@@ -542,6 +596,7 @@
       "title": "fstring_full_format_spec"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::fstring_middle",
       "internal": false,
       "kind": "grammar_rule",
@@ -552,6 +607,7 @@
       "title": "fstring_middle"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::fstring_replacement_field",
       "internal": false,
       "kind": "grammar_rule",
@@ -562,6 +618,7 @@
       "title": "fstring_replacement_field"
     },
     {
+      "grammar_section": "STARTING RULES",
       "id": "grammar::func_type",
       "internal": false,
       "kind": "grammar_rule",
@@ -572,6 +629,7 @@
       "title": "func_type"
     },
     {
+      "grammar_section": "TYPING ELEMENTS",
       "id": "grammar::func_type_comment",
       "internal": false,
       "kind": "grammar_rule",
@@ -582,6 +640,7 @@
       "title": "func_type_comment"
     },
     {
+      "grammar_section": "Function definitions",
       "id": "grammar::function_def",
       "internal": false,
       "kind": "grammar_rule",
@@ -592,6 +651,7 @@
       "title": "function_def"
     },
     {
+      "grammar_section": "Function definitions",
       "id": "grammar::function_def_raw",
       "internal": false,
       "kind": "grammar_rule",
@@ -602,6 +662,7 @@
       "title": "function_def_raw"
     },
     {
+      "grammar_section": "Comprehensions & Generators",
       "id": "grammar::genexp",
       "internal": false,
       "kind": "grammar_rule",
@@ -612,6 +673,7 @@
       "title": "genexp"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::global_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -622,6 +684,7 @@
       "title": "global_stmt"
     },
     {
+      "grammar_section": "Primary elements",
       "id": "grammar::group",
       "internal": false,
       "kind": "grammar_rule",
@@ -632,6 +695,7 @@
       "title": "group"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::group_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -642,6 +706,7 @@
       "title": "group_pattern"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::gt_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -652,6 +717,7 @@
       "title": "gt_bitwise_or"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::gte_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -662,6 +728,7 @@
       "title": "gte_bitwise_or"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::guard",
       "internal": false,
       "kind": "grammar_rule",
@@ -672,6 +739,7 @@
       "title": "guard"
     },
     {
+      "grammar_section": "If statement",
       "id": "grammar::if_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -682,6 +750,7 @@
       "title": "if_stmt"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::imaginary_number",
       "internal": false,
       "kind": "grammar_rule",
@@ -692,6 +761,7 @@
       "title": "imaginary_number"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::import_from",
       "internal": false,
       "kind": "grammar_rule",
@@ -702,6 +772,7 @@
       "title": "import_from"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::import_from_as_name",
       "internal": false,
       "kind": "grammar_rule",
@@ -712,6 +783,7 @@
       "title": "import_from_as_name"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::import_from_as_names",
       "internal": false,
       "kind": "grammar_rule",
@@ -722,6 +794,7 @@
       "title": "import_from_as_names"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::import_from_targets",
       "internal": false,
       "kind": "grammar_rule",
@@ -732,6 +805,7 @@
       "title": "import_from_targets"
     },
     {
+      "grammar_section": "Import statements",
       "id": "grammar::import_name",
       "internal": false,
       "kind": "grammar_rule",
@@ -742,6 +816,7 @@
       "title": "import_name"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::import_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -752,6 +827,7 @@
       "title": "import_stmt"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::in_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -762,6 +838,7 @@
       "title": "in_bitwise_or"
     },
     {
+      "grammar_section": "STARTING RULES",
       "id": "grammar::interactive",
       "internal": false,
       "kind": "grammar_rule",
@@ -772,6 +849,7 @@
       "title": "interactive"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_ann_assign_target",
       "internal": true,
       "kind": "grammar_rule",
@@ -782,6 +860,7 @@
       "title": "invalid_ann_assign_target"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_arguments",
       "internal": true,
       "kind": "grammar_rule",
@@ -792,6 +871,7 @@
       "title": "invalid_arguments"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_arithmetic",
       "internal": true,
       "kind": "grammar_rule",
@@ -802,6 +882,7 @@
       "title": "invalid_arithmetic"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_as_pattern",
       "internal": true,
       "kind": "grammar_rule",
@@ -812,6 +893,7 @@
       "title": "invalid_as_pattern"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_assignment",
       "internal": true,
       "kind": "grammar_rule",
@@ -822,6 +904,7 @@
       "title": "invalid_assignment"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_block",
       "internal": true,
       "kind": "grammar_rule",
@@ -832,6 +915,7 @@
       "title": "invalid_block"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_case_block",
       "internal": true,
       "kind": "grammar_rule",
@@ -842,6 +926,7 @@
       "title": "invalid_case_block"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_class_argument_pattern",
       "internal": true,
       "kind": "grammar_rule",
@@ -852,6 +937,7 @@
       "title": "invalid_class_argument_pattern"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_class_def_raw",
       "internal": true,
       "kind": "grammar_rule",
@@ -862,6 +948,7 @@
       "title": "invalid_class_def_raw"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_class_pattern",
       "internal": true,
       "kind": "grammar_rule",
@@ -872,6 +959,7 @@
       "title": "invalid_class_pattern"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_comprehension",
       "internal": true,
       "kind": "grammar_rule",
@@ -882,6 +970,7 @@
       "title": "invalid_comprehension"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_def_raw",
       "internal": true,
       "kind": "grammar_rule",
@@ -892,6 +981,7 @@
       "title": "invalid_def_raw"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_default",
       "internal": true,
       "kind": "grammar_rule",
@@ -902,6 +992,7 @@
       "title": "invalid_default"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_del_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -912,6 +1003,7 @@
       "title": "invalid_del_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_dict_comprehension",
       "internal": true,
       "kind": "grammar_rule",
@@ -922,6 +1014,7 @@
       "title": "invalid_dict_comprehension"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_dotted_as_name",
       "internal": true,
       "kind": "grammar_rule",
@@ -932,6 +1025,7 @@
       "title": "invalid_dotted_as_name"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_double_starred_kvpairs",
       "internal": true,
       "kind": "grammar_rule",
@@ -942,6 +1036,7 @@
       "title": "invalid_double_starred_kvpairs"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_double_type_comments",
       "internal": true,
       "kind": "grammar_rule",
@@ -952,6 +1047,7 @@
       "title": "invalid_double_type_comments"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_elif_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -962,6 +1058,7 @@
       "title": "invalid_elif_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_else_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -972,6 +1069,7 @@
       "title": "invalid_else_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_except_star_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -982,6 +1080,7 @@
       "title": "invalid_except_star_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_except_star_stmt_indent",
       "internal": true,
       "kind": "grammar_rule",
@@ -992,6 +1091,7 @@
       "title": "invalid_except_star_stmt_indent"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_except_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1002,6 +1102,7 @@
       "title": "invalid_except_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_except_stmt_indent",
       "internal": true,
       "kind": "grammar_rule",
@@ -1012,6 +1113,7 @@
       "title": "invalid_except_stmt_indent"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_expression",
       "internal": true,
       "kind": "grammar_rule",
@@ -1022,6 +1124,7 @@
       "title": "invalid_expression"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_factor",
       "internal": true,
       "kind": "grammar_rule",
@@ -1032,6 +1135,7 @@
       "title": "invalid_factor"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_finally_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1042,6 +1146,7 @@
       "title": "invalid_finally_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_for_if_clause",
       "internal": true,
       "kind": "grammar_rule",
@@ -1052,6 +1157,7 @@
       "title": "invalid_for_if_clause"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_for_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1062,6 +1168,7 @@
       "title": "invalid_for_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_for_target",
       "internal": true,
       "kind": "grammar_rule",
@@ -1072,6 +1179,7 @@
       "title": "invalid_for_target"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_fstring_conversion_character",
       "internal": true,
       "kind": "grammar_rule",
@@ -1082,6 +1190,7 @@
       "title": "invalid_fstring_conversion_character"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_fstring_replacement_field",
       "internal": true,
       "kind": "grammar_rule",
@@ -1092,6 +1201,7 @@
       "title": "invalid_fstring_replacement_field"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_group",
       "internal": true,
       "kind": "grammar_rule",
@@ -1102,6 +1212,7 @@
       "title": "invalid_group"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_if_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1112,6 +1223,7 @@
       "title": "invalid_if_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_import",
       "internal": true,
       "kind": "grammar_rule",
@@ -1122,6 +1234,7 @@
       "title": "invalid_import"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_import_from_as_name",
       "internal": true,
       "kind": "grammar_rule",
@@ -1132,6 +1245,7 @@
       "title": "invalid_import_from_as_name"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_import_from_targets",
       "internal": true,
       "kind": "grammar_rule",
@@ -1142,6 +1256,7 @@
       "title": "invalid_import_from_targets"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_kvpair",
       "internal": true,
       "kind": "grammar_rule",
@@ -1152,6 +1267,7 @@
       "title": "invalid_kvpair"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_kwarg",
       "internal": true,
       "kind": "grammar_rule",
@@ -1162,6 +1278,7 @@
       "title": "invalid_kwarg"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_kwds",
       "internal": true,
       "kind": "grammar_rule",
@@ -1172,6 +1289,7 @@
       "title": "invalid_kwds"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_lambda_kwds",
       "internal": true,
       "kind": "grammar_rule",
@@ -1182,6 +1300,7 @@
       "title": "invalid_lambda_kwds"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_lambda_parameters",
       "internal": true,
       "kind": "grammar_rule",
@@ -1192,6 +1311,7 @@
       "title": "invalid_lambda_parameters"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_lambda_parameters_helper",
       "internal": true,
       "kind": "grammar_rule",
@@ -1202,6 +1322,7 @@
       "title": "invalid_lambda_parameters_helper"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_lambda_star_etc",
       "internal": true,
       "kind": "grammar_rule",
@@ -1212,6 +1333,7 @@
       "title": "invalid_lambda_star_etc"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_legacy_expression",
       "internal": true,
       "kind": "grammar_rule",
@@ -1222,6 +1344,7 @@
       "title": "invalid_legacy_expression"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_match_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1232,6 +1355,7 @@
       "title": "invalid_match_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_parameters",
       "internal": true,
       "kind": "grammar_rule",
@@ -1242,6 +1366,7 @@
       "title": "invalid_parameters"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_parameters_helper",
       "internal": true,
       "kind": "grammar_rule",
@@ -1252,6 +1377,7 @@
       "title": "invalid_parameters_helper"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_star_etc",
       "internal": true,
       "kind": "grammar_rule",
@@ -1262,6 +1388,7 @@
       "title": "invalid_star_etc"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_starred_expression",
       "internal": true,
       "kind": "grammar_rule",
@@ -1272,6 +1399,7 @@
       "title": "invalid_starred_expression"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_starred_expression_unpacking",
       "internal": true,
       "kind": "grammar_rule",
@@ -1282,6 +1410,7 @@
       "title": "invalid_starred_expression_unpacking"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_string_tstring_concat",
       "internal": true,
       "kind": "grammar_rule",
@@ -1292,6 +1421,7 @@
       "title": "invalid_string_tstring_concat"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_try_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1302,6 +1432,7 @@
       "title": "invalid_try_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_tstring_conversion_character",
       "internal": true,
       "kind": "grammar_rule",
@@ -1312,6 +1443,7 @@
       "title": "invalid_tstring_conversion_character"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_tstring_replacement_field",
       "internal": true,
       "kind": "grammar_rule",
@@ -1322,6 +1454,7 @@
       "title": "invalid_tstring_replacement_field"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_type_param",
       "internal": true,
       "kind": "grammar_rule",
@@ -1332,6 +1465,7 @@
       "title": "invalid_type_param"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_type_params",
       "internal": true,
       "kind": "grammar_rule",
@@ -1342,6 +1476,7 @@
       "title": "invalid_type_params"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_while_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1352,6 +1487,7 @@
       "title": "invalid_while_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_with_item",
       "internal": true,
       "kind": "grammar_rule",
@@ -1362,6 +1498,7 @@
       "title": "invalid_with_item"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_with_stmt",
       "internal": true,
       "kind": "grammar_rule",
@@ -1372,6 +1509,7 @@
       "title": "invalid_with_stmt"
     },
     {
+      "grammar_section": "INVALID RULES",
       "id": "grammar::invalid_with_stmt_indent",
       "internal": true,
       "kind": "grammar_rule",
@@ -1382,6 +1520,7 @@
       "title": "invalid_with_stmt_indent"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::is_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -1392,6 +1531,7 @@
       "title": "is_bitwise_or"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::isnot_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -1402,6 +1542,7 @@
       "title": "isnot_bitwise_or"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::items_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1412,6 +1553,7 @@
       "title": "items_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::key_value_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1422,6 +1564,7 @@
       "title": "key_value_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::keyword_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1432,6 +1575,7 @@
       "title": "keyword_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::keyword_patterns",
       "internal": false,
       "kind": "grammar_rule",
@@ -1442,6 +1586,7 @@
       "title": "keyword_patterns"
     },
     {
+      "grammar_section": "Dicts",
       "id": "grammar::kvpair",
       "internal": false,
       "kind": "grammar_rule",
@@ -1452,6 +1597,7 @@
       "title": "kvpair"
     },
     {
+      "grammar_section": "FUNCTION CALL ARGUMENTS",
       "id": "grammar::kwarg_or_double_starred",
       "internal": false,
       "kind": "grammar_rule",
@@ -1462,6 +1608,7 @@
       "title": "kwarg_or_double_starred"
     },
     {
+      "grammar_section": "FUNCTION CALL ARGUMENTS",
       "id": "grammar::kwarg_or_starred",
       "internal": false,
       "kind": "grammar_rule",
@@ -1472,6 +1619,7 @@
       "title": "kwarg_or_starred"
     },
     {
+      "grammar_section": "FUNCTION CALL ARGUMENTS",
       "id": "grammar::kwargs",
       "internal": false,
       "kind": "grammar_rule",
@@ -1482,6 +1630,7 @@
       "title": "kwargs"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::kwds",
       "internal": false,
       "kind": "grammar_rule",
@@ -1492,6 +1641,7 @@
       "title": "kwds"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_kwds",
       "internal": false,
       "kind": "grammar_rule",
@@ -1502,6 +1652,7 @@
       "title": "lambda_kwds"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_param",
       "internal": false,
       "kind": "grammar_rule",
@@ -1512,6 +1663,7 @@
       "title": "lambda_param"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_param_maybe_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1522,6 +1674,7 @@
       "title": "lambda_param_maybe_default"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_param_no_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1532,6 +1685,7 @@
       "title": "lambda_param_no_default"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_param_with_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1542,6 +1696,7 @@
       "title": "lambda_param_with_default"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_parameters",
       "internal": false,
       "kind": "grammar_rule",
@@ -1552,6 +1707,7 @@
       "title": "lambda_parameters"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_params",
       "internal": false,
       "kind": "grammar_rule",
@@ -1562,6 +1718,7 @@
       "title": "lambda_params"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_slash_no_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1572,6 +1729,7 @@
       "title": "lambda_slash_no_default"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_slash_with_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1582,6 +1740,7 @@
       "title": "lambda_slash_with_default"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambda_star_etc",
       "internal": false,
       "kind": "grammar_rule",
@@ -1592,6 +1751,7 @@
       "title": "lambda_star_etc"
     },
     {
+      "grammar_section": "Lambda functions",
       "id": "grammar::lambdef",
       "internal": false,
       "kind": "grammar_rule",
@@ -1602,6 +1762,7 @@
       "title": "lambdef"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::list",
       "internal": false,
       "kind": "grammar_rule",
@@ -1612,6 +1773,7 @@
       "title": "list"
     },
     {
+      "grammar_section": "Comprehensions & Generators",
       "id": "grammar::listcomp",
       "internal": false,
       "kind": "grammar_rule",
@@ -1622,6 +1784,7 @@
       "title": "listcomp"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::literal_expr",
       "internal": false,
       "kind": "grammar_rule",
@@ -1632,6 +1795,7 @@
       "title": "literal_expr"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::literal_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1642,6 +1806,7 @@
       "title": "literal_pattern"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::lt_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -1652,6 +1817,7 @@
       "title": "lt_bitwise_or"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::lte_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -1662,6 +1828,7 @@
       "title": "lte_bitwise_or"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::mapping_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1672,6 +1839,7 @@
       "title": "mapping_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::match_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -1682,6 +1850,7 @@
       "title": "match_stmt"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::maybe_sequence_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1692,6 +1861,7 @@
       "title": "maybe_sequence_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::maybe_star_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1702,6 +1872,7 @@
       "title": "maybe_star_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::name_or_attr",
       "internal": false,
       "kind": "grammar_rule",
@@ -1712,6 +1883,7 @@
       "title": "name_or_attr"
     },
     {
+      "grammar_section": "EXPRESSIONS",
       "id": "grammar::named_expression",
       "internal": false,
       "kind": "grammar_rule",
@@ -1722,6 +1894,7 @@
       "title": "named_expression"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::nonlocal_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -1732,6 +1905,7 @@
       "title": "nonlocal_stmt"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::noteq_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -1742,6 +1916,7 @@
       "title": "noteq_bitwise_or"
     },
     {
+      "grammar_section": "Comparison operators",
       "id": "grammar::notin_bitwise_or",
       "internal": false,
       "kind": "grammar_rule",
@@ -1752,6 +1927,7 @@
       "title": "notin_bitwise_or"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::open_sequence_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1762,6 +1938,7 @@
       "title": "open_sequence_pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::or_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1772,6 +1949,7 @@
       "title": "or_pattern"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::param",
       "internal": false,
       "kind": "grammar_rule",
@@ -1782,6 +1960,7 @@
       "title": "param"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::param_maybe_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1792,6 +1971,7 @@
       "title": "param_maybe_default"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::param_no_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1802,6 +1982,7 @@
       "title": "param_no_default"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::param_no_default_star_annotation",
       "internal": false,
       "kind": "grammar_rule",
@@ -1812,6 +1993,7 @@
       "title": "param_no_default_star_annotation"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::param_star_annotation",
       "internal": false,
       "kind": "grammar_rule",
@@ -1822,6 +2004,7 @@
       "title": "param_star_annotation"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::param_with_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -1832,6 +2015,7 @@
       "title": "param_with_default"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::parameters",
       "internal": false,
       "kind": "grammar_rule",
@@ -1842,6 +2026,7 @@
       "title": "parameters"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::params",
       "internal": false,
       "kind": "grammar_rule",
@@ -1852,6 +2037,7 @@
       "title": "params"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::pass_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -1862,6 +2048,7 @@
       "title": "pass_stmt"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1872,6 +2059,7 @@
       "title": "pattern"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::pattern_capture_target",
       "internal": false,
       "kind": "grammar_rule",
@@ -1882,6 +2070,7 @@
       "title": "pattern_capture_target"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::patterns",
       "internal": false,
       "kind": "grammar_rule",
@@ -1892,6 +2081,7 @@
       "title": "patterns"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::positional_patterns",
       "internal": false,
       "kind": "grammar_rule",
@@ -1902,6 +2092,7 @@
       "title": "positional_patterns"
     },
     {
+      "grammar_section": "Arithmetic operators",
       "id": "grammar::power",
       "internal": false,
       "kind": "grammar_rule",
@@ -1912,6 +2103,7 @@
       "title": "power"
     },
     {
+      "grammar_section": "Primary elements",
       "id": "grammar::primary",
       "internal": false,
       "kind": "grammar_rule",
@@ -1922,6 +2114,7 @@
       "title": "primary"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::raise_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -1932,6 +2125,7 @@
       "title": "raise_stmt"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::real_number",
       "internal": false,
       "kind": "grammar_rule",
@@ -1942,6 +2136,7 @@
       "title": "real_number"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::return_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -1952,6 +2147,7 @@
       "title": "return_stmt"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::sequence_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -1962,6 +2158,7 @@
       "title": "sequence_pattern"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::set",
       "internal": false,
       "kind": "grammar_rule",
@@ -1972,6 +2169,7 @@
       "title": "set"
     },
     {
+      "grammar_section": "Comprehensions & Generators",
       "id": "grammar::setcomp",
       "internal": false,
       "kind": "grammar_rule",
@@ -1982,6 +2180,7 @@
       "title": "setcomp"
     },
     {
+      "grammar_section": "Bitwise operators",
       "id": "grammar::shift_expr",
       "internal": false,
       "kind": "grammar_rule",
@@ -1992,6 +2191,7 @@
       "title": "shift_expr"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::signed_number",
       "internal": false,
       "kind": "grammar_rule",
@@ -2002,6 +2202,7 @@
       "title": "signed_number"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::signed_real_number",
       "internal": false,
       "kind": "grammar_rule",
@@ -2012,6 +2213,7 @@
       "title": "signed_real_number"
     },
     {
+      "grammar_section": "GENERAL STATEMENTS",
       "id": "grammar::simple_stmts",
       "internal": false,
       "kind": "grammar_rule",
@@ -2022,6 +2224,7 @@
       "title": "simple_stmts"
     },
     {
+      "grammar_section": "GENERAL STATEMENTS",
       "id": "grammar::single_compound_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -2032,6 +2235,7 @@
       "title": "single_compound_stmt"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::single_subscript_attribute_target",
       "internal": false,
       "kind": "grammar_rule",
@@ -2042,6 +2246,7 @@
       "title": "single_subscript_attribute_target"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::single_target",
       "internal": false,
       "kind": "grammar_rule",
@@ -2052,6 +2257,7 @@
       "title": "single_target"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::slash_no_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -2062,6 +2268,7 @@
       "title": "slash_no_default"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::slash_with_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -2072,6 +2279,7 @@
       "title": "slash_with_default"
     },
     {
+      "grammar_section": "Primary elements",
       "id": "grammar::slice",
       "internal": false,
       "kind": "grammar_rule",
@@ -2082,6 +2290,7 @@
       "title": "slice"
     },
     {
+      "grammar_section": "Primary elements",
       "id": "grammar::slices",
       "internal": false,
       "kind": "grammar_rule",
@@ -2092,6 +2301,7 @@
       "title": "slices"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::star_annotation",
       "internal": false,
       "kind": "grammar_rule",
@@ -2102,6 +2312,7 @@
       "title": "star_annotation"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::star_atom",
       "internal": false,
       "kind": "grammar_rule",
@@ -2112,6 +2323,7 @@
       "title": "star_atom"
     },
     {
+      "grammar_section": "Function parameters",
       "id": "grammar::star_etc",
       "internal": false,
       "kind": "grammar_rule",
@@ -2122,6 +2334,7 @@
       "title": "star_etc"
     },
     {
+      "grammar_section": "EXPRESSIONS",
       "id": "grammar::star_expressions",
       "internal": false,
       "kind": "grammar_rule",
@@ -2132,6 +2345,7 @@
       "title": "star_expressions"
     },
     {
+      "grammar_section": "EXPRESSIONS",
       "id": "grammar::star_named_expression",
       "internal": false,
       "kind": "grammar_rule",
@@ -2142,6 +2356,7 @@
       "title": "star_named_expression"
     },
     {
+      "grammar_section": "EXPRESSIONS",
       "id": "grammar::star_named_expressions",
       "internal": false,
       "kind": "grammar_rule",
@@ -2152,6 +2367,7 @@
       "title": "star_named_expressions"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::star_targets",
       "internal": false,
       "kind": "grammar_rule",
@@ -2162,6 +2378,7 @@
       "title": "star_targets"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::star_targets_list_seq",
       "internal": false,
       "kind": "grammar_rule",
@@ -2172,6 +2389,7 @@
       "title": "star_targets_list_seq"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::star_targets_tuple_seq",
       "internal": false,
       "kind": "grammar_rule",
@@ -2182,6 +2400,7 @@
       "title": "star_targets_tuple_seq"
     },
     {
+      "grammar_section": "FUNCTION CALL ARGUMENTS",
       "id": "grammar::starred_expression",
       "internal": false,
       "kind": "grammar_rule",
@@ -2192,6 +2411,7 @@
       "title": "starred_expression"
     },
     {
+      "grammar_section": "GENERAL STATEMENTS",
       "id": "grammar::statement",
       "internal": false,
       "kind": "grammar_rule",
@@ -2202,6 +2422,7 @@
       "title": "statement"
     },
     {
+      "grammar_section": "GENERAL STATEMENTS",
       "id": "grammar::statement_newline",
       "internal": false,
       "kind": "grammar_rule",
@@ -2212,6 +2433,7 @@
       "title": "statement_newline"
     },
     {
+      "grammar_section": "GENERAL STATEMENTS",
       "id": "grammar::statements",
       "internal": false,
       "kind": "grammar_rule",
@@ -2222,6 +2444,7 @@
       "title": "statements"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::string",
       "internal": false,
       "kind": "grammar_rule",
@@ -2232,6 +2455,7 @@
       "title": "string"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::subject_expr",
       "internal": false,
       "kind": "grammar_rule",
@@ -2242,6 +2466,7 @@
       "title": "subject_expr"
     },
     {
+      "grammar_section": "Arithmetic operators",
       "id": "grammar::sum",
       "internal": false,
       "kind": "grammar_rule",
@@ -2252,6 +2477,7 @@
       "title": "sum"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::t_lookahead",
       "internal": false,
       "kind": "grammar_rule",
@@ -2262,6 +2488,7 @@
       "title": "t_lookahead"
     },
     {
+      "grammar_section": "Generic targets",
       "id": "grammar::t_primary",
       "internal": false,
       "kind": "grammar_rule",
@@ -2272,6 +2499,7 @@
       "title": "t_primary"
     },
     {
+      "grammar_section": "Arithmetic operators",
       "id": "grammar::term",
       "internal": false,
       "kind": "grammar_rule",
@@ -2282,6 +2510,7 @@
       "title": "term"
     },
     {
+      "grammar_section": "Try statement",
       "id": "grammar::try_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -2292,6 +2521,7 @@
       "title": "try_stmt"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::tstring_format_spec",
       "internal": false,
       "kind": "grammar_rule",
@@ -2302,6 +2532,7 @@
       "title": "tstring_format_spec"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::tstring_format_spec_replacement_field",
       "internal": false,
       "kind": "grammar_rule",
@@ -2312,6 +2543,7 @@
       "title": "tstring_format_spec_replacement_field"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::tstring_full_format_spec",
       "internal": false,
       "kind": "grammar_rule",
@@ -2322,6 +2554,7 @@
       "title": "tstring_full_format_spec"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::tstring_middle",
       "internal": false,
       "kind": "grammar_rule",
@@ -2332,6 +2565,7 @@
       "title": "tstring_middle"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::tstring_replacement_field",
       "internal": false,
       "kind": "grammar_rule",
@@ -2342,6 +2576,7 @@
       "title": "tstring_replacement_field"
     },
     {
+      "grammar_section": "LITERALS",
       "id": "grammar::tuple",
       "internal": false,
       "kind": "grammar_rule",
@@ -2352,6 +2587,7 @@
       "title": "tuple"
     },
     {
+      "grammar_section": "Type statement",
       "id": "grammar::type_alias",
       "internal": false,
       "kind": "grammar_rule",
@@ -2362,6 +2598,7 @@
       "title": "type_alias"
     },
     {
+      "grammar_section": "TYPING ELEMENTS",
       "id": "grammar::type_expressions",
       "internal": false,
       "kind": "grammar_rule",
@@ -2372,6 +2609,7 @@
       "title": "type_expressions"
     },
     {
+      "grammar_section": "Type parameter declaration",
       "id": "grammar::type_param_bound",
       "internal": false,
       "kind": "grammar_rule",
@@ -2382,6 +2620,7 @@
       "title": "type_param_bound"
     },
     {
+      "grammar_section": "Type parameter declaration",
       "id": "grammar::type_param_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -2392,6 +2631,7 @@
       "title": "type_param_default"
     },
     {
+      "grammar_section": "Type parameter declaration",
       "id": "grammar::type_param_seq",
       "internal": false,
       "kind": "grammar_rule",
@@ -2402,6 +2642,7 @@
       "title": "type_param_seq"
     },
     {
+      "grammar_section": "Type parameter declaration",
       "id": "grammar::type_param_starred_default",
       "internal": false,
       "kind": "grammar_rule",
@@ -2412,6 +2653,7 @@
       "title": "type_param_starred_default"
     },
     {
+      "grammar_section": "Type parameter declaration",
       "id": "grammar::type_params",
       "internal": false,
       "kind": "grammar_rule",
@@ -2422,6 +2664,7 @@
       "title": "type_params"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::value_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -2432,6 +2675,7 @@
       "title": "value_pattern"
     },
     {
+      "grammar_section": "While statement",
       "id": "grammar::while_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -2442,6 +2686,7 @@
       "title": "while_stmt"
     },
     {
+      "grammar_section": "Match statement",
       "id": "grammar::wildcard_pattern",
       "internal": false,
       "kind": "grammar_rule",
@@ -2452,6 +2697,7 @@
       "title": "wildcard_pattern"
     },
     {
+      "grammar_section": "With statement",
       "id": "grammar::with_item",
       "internal": false,
       "kind": "grammar_rule",
@@ -2462,6 +2708,7 @@
       "title": "with_item"
     },
     {
+      "grammar_section": "With statement",
       "id": "grammar::with_stmt",
       "internal": false,
       "kind": "grammar_rule",
@@ -2472,6 +2719,7 @@
       "title": "with_stmt"
     },
     {
+      "grammar_section": "EXPRESSIONS",
       "id": "grammar::yield_expr",
       "internal": false,
       "kind": "grammar_rule",
@@ -2482,6 +2730,7 @@
       "title": "yield_expr"
     },
     {
+      "grammar_section": "SIMPLE STATEMENTS",
       "id": "grammar::yield_stmt",
       "internal": false,
       "kind": "grammar_rule",

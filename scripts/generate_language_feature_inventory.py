@@ -97,7 +97,22 @@ def parse_rst_headings(path: Path) -> list[dict[str, Any]]:
 def parse_grammar_rules(path: Path) -> list[dict[str, Any]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     features: list[dict[str, Any]] = []
+    current_section = "UNCLASSIFIED"
+
     for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            if "START OF INVALID RULES" in stripped:
+                current_section = "INVALID RULES"
+            elif idx < len(lines):
+                next_line = lines[idx].strip()
+                if next_line.startswith("#"):
+                    marker = next_line[1:].strip()
+                    if marker and len(set(marker)) == 1 and marker[0] in "=-~^*":
+                        heading = stripped[1:].strip()
+                        if heading:
+                            current_section = normalize_title(heading)
+
         match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]*\])?:", line)
         if not match:
             continue
@@ -112,6 +127,7 @@ def parse_grammar_rules(path: Path) -> list[dict[str, Any]]:
                     "line": idx,
                 },
                 "internal": name.startswith("invalid_"),
+                "grammar_section": current_section,
             }
         )
     return features

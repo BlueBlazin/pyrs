@@ -34,7 +34,8 @@ This document is the authoritative, source-derived inventory baseline for CPytho
   - `fail`: `0`
   - `unprobed`: `0`
   - `coverage`: `100.0%` (`578/578`)
-  - current probe run baseline: `26/26` probes passing
+  - current probe run baseline: `29/29` probes passing
+  - grammar accounting now uses section-level probes (not only single public/invalid umbrellas)
 
 ## Important Interpretation
 - This inventory is complete as a **source-derived accounting baseline**.
