@@ -83,8 +83,9 @@ unsafe extern "C" {
     fn free(ptr: *mut c_void);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct TraceFrame {
+    frame_id: usize,
     filename: String,
     line: usize,
     column: usize,
@@ -201,6 +202,7 @@ const INSTANCE_DICT_STORAGE_ATTR: &str = "__pyrs_instance_dict_storage__";
 static MONOTONIC_START: OnceLock<Instant> = OnceLock::new();
 static OPCODE_METADATA: OnceLock<OpcodeMetadata> = OnceLock::new();
 static SUBMODULE_TRACE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static NEXT_VM_FRAME_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StructEndian {
@@ -729,6 +731,7 @@ fn env_var_present_cached(name: &'static str) -> bool {
 }
 
 struct Frame {
+    frame_id: usize,
     code: Rc<CodeObject>,
     ip: usize,
     last_ip: usize,
@@ -782,6 +785,7 @@ impl Frame {
         let fast_locals_len = code.fast_local_count;
         let instruction_len = code.instructions.len();
         Self {
+            frame_id: NEXT_VM_FRAME_ID.fetch_add(1, AtomicOrdering::Relaxed),
             code,
             ip: 0,
             last_ip: 0,

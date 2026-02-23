@@ -2081,6 +2081,7 @@ pub struct ExceptionObject {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExceptionTracebackFrame {
+    pub frame_id: usize,
     pub filename: String,
     pub line: usize,
     pub column: usize,

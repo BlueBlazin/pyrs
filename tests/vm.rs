@@ -187,6 +187,25 @@ fn run_numpy_probe_subprocess(source: &str) {
     );
 }
 
+fn run_numpy_failure_subprocess(source: &str) -> Option<(i32, String, String)> {
+    let lib_path = cpython_lib_path()?;
+    let site_packages = numpy_site_packages_path()?;
+    let pyrs_bin = pyrs_binary_path()?;
+    let output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .env("PYTHONPATH", &site_packages)
+        .arg("-S")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .ok()?;
+    Some((
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        String::from_utf8_lossy(&output.stderr).to_string(),
+    ))
+}
+
 fn unique_temp_dir(prefix: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "{prefix}_{}",
@@ -14677,6 +14696,25 @@ ok = ("array([" in text and "<ndarray instance>" not in text and "0.5" in text a
 print(ok)
 "#;
     run_numpy_probe_subprocess(source);
+}
+
+#[test]
+fn numpy_np_float_attribute_error_traceback_does_not_duplicate_caller_frame() {
+    let Some((status, stdout, stderr)) =
+        run_numpy_failure_subprocess("import numpy as np; np.float(0.5)")
+    else {
+        return;
+    };
+    assert_ne!(status, 0, "np.float should fail");
+    let combined = format!("{stdout}{stderr}");
+    let caller_count = combined
+        .matches("File \"<string>\", line 1, in <module>")
+        .count();
+    assert_eq!(
+        caller_count, 1,
+        "expected exactly one caller frame; output was:\n{}",
+        combined
+    );
 }
 
 #[test]

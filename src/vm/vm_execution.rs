@@ -7062,6 +7062,7 @@ impl Vm {
             .traceback_frames
             .iter()
             .map(|frame| TraceFrame {
+                frame_id: frame.frame_id,
                 filename: frame.filename.clone(),
                 line: frame.line,
                 column: frame.column,
@@ -7071,6 +7072,24 @@ impl Vm {
                 name: frame.name.clone(),
             })
             .collect()
+    }
+
+    fn traceback_tail_matches_frame(traceback: &[TraceFrame], frame: &TraceFrame) -> bool {
+        let Some(last) = traceback.last() else {
+            return false;
+        };
+        if last.frame_id != 0 && frame.frame_id != 0 {
+            return last.frame_id == frame.frame_id;
+        }
+        last == frame
+    }
+
+    fn push_traceback_frame(traceback: &mut Vec<TraceFrame>, frame: TraceFrame) -> bool {
+        if Self::traceback_tail_matches_frame(traceback, &frame) {
+            return false;
+        }
+        traceback.push(frame);
+        true
     }
 
     pub(super) fn traceback_value_from_frames(
@@ -7159,6 +7178,10 @@ impl Vm {
                 "__pyrs_tb_end_column__".to_string(),
                 Value::Int(frame.end_column as i64),
             );
+            instance.attrs.insert(
+                "__pyrs_tb_frame_id__".to_string(),
+                Value::Int(frame.frame_id as i64),
+            );
             instance
                 .attrs
                 .insert("tb_lineno".to_string(), Value::Int(frame.line as i64));
@@ -7231,7 +7254,12 @@ impl Vm {
                         Some(Value::Int(value)) if *value >= 0 => *value as usize,
                         _ => 0,
                     };
+                    let frame_id = match node_data.attrs.get("__pyrs_tb_frame_id__") {
+                        Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                        _ => 0,
+                    };
                     frames.push(ExceptionTracebackFrame {
+                        frame_id,
                         filename,
                         line,
                         column,
@@ -7272,22 +7300,29 @@ impl Vm {
                 return Err(self.runtime_error_from_unhandled_exception(message, &exc));
             };
 
-            if skip_current_frame_trace {
-                skip_current_frame_trace = false;
-            } else {
-                traceback.push(Self::frame_trace(frame));
-                Self::attach_traceback_to_exception(&mut exc, &traceback);
-            }
-
             if let Some(stop_depth) = self.run_stop_depth
                 && frame_depth <= stop_depth
             {
+                if !skip_current_frame_trace {
+                    let current_frame_trace = Self::frame_trace(frame);
+                    if Self::push_traceback_frame(&mut traceback, current_frame_trace) {
+                        Self::attach_traceback_to_exception(&mut exc, &traceback);
+                    }
+                }
                 // Stop-depth calls (`run_pending_import_frames`) must not consume
                 // caller handlers/blocks; leave the frame intact and bubble the
                 // pending exception back to the outer run loop.
                 frame.active_exception = Some(exc.clone());
                 let message = self.format_traceback(&traceback, &exc);
                 return Err(self.runtime_error_from_unhandled_exception(message, &exc));
+            }
+
+            if skip_current_frame_trace {
+                skip_current_frame_trace = false;
+            } else {
+                if Self::push_traceback_frame(&mut traceback, Self::frame_trace(frame)) {
+                    Self::attach_traceback_to_exception(&mut exc, &traceback);
+                }
             }
 
             if let Some(block) = frame.blocks.pop() {
@@ -7387,6 +7422,7 @@ impl Vm {
         exception.traceback_frames = frames
             .iter()
             .map(|frame| ExceptionTracebackFrame {
+                frame_id: frame.frame_id,
                 filename: frame.filename.clone(),
                 line: frame.line,
                 column: frame.column,
@@ -7463,7 +7499,13 @@ impl Vm {
                 }
             }
         }
-        self.unwind_exception(exc)
+        let preserve_existing_traceback =
+            matches!(&exc, Value::Exception(exc_data) if !exc_data.traceback_frames.is_empty());
+        if preserve_existing_traceback {
+            self.unwind_exception_preserving_traceback(exc)
+        } else {
+            self.unwind_exception(exc)
+        }
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
@@ -8006,6 +8048,7 @@ impl Vm {
         let end_line = location.map(|loc| loc.end_line).unwrap_or(0);
         let end_column = location.map(|loc| loc.end_column).unwrap_or(0);
         TraceFrame {
+            frame_id: frame.frame_id,
             filename: frame.code.filename.clone(),
             line,
             column,
