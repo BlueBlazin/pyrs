@@ -6,7 +6,7 @@ cd "$ROOT_DIR"
 
 PYRS_BIN="${PYRS_BIN:-target/release/pyrs}"
 CPYTHON_BIN="${CPYTHON_BIN:-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3}"
-CPYTHON_LIB="${CPYTHON_LIB:-/Users/$USER/Downloads/Python-3.14.3/Lib}"
+CPYTHON_LIB="${CPYTHON_LIB:-$ROOT_DIR/.local/Python-3.14.3/Lib}"
 OUTPUT_FILE="${OUTPUT_FILE:-perf/dict_backend_bench.txt}"
 PREV_PICKLE_SEC="${PREV_PICKLE_SEC:-39.87}"
 

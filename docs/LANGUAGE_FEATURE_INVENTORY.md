@@ -3,16 +3,16 @@
 This document is the authoritative, source-derived inventory baseline for CPython 3.14 language features.
 
 ## Canonical Sources
-- `/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram`
-- `/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/toplevel_components.rst`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst`
-- `/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst`
+- `.local/Python-3.14.3/Grammar/python.gram`
+- `.local/Python-3.14.3/Grammar/Tokens`
+- `.local/Python-3.14.3/Doc/reference/lexical_analysis.rst`
+- `.local/Python-3.14.3/Doc/reference/simple_stmts.rst`
+- `.local/Python-3.14.3/Doc/reference/compound_stmts.rst`
+- `.local/Python-3.14.3/Doc/reference/expressions.rst`
+- `.local/Python-3.14.3/Doc/reference/toplevel_components.rst`
+- `.local/Python-3.14.3/Doc/reference/import.rst`
+- `.local/Python-3.14.3/Doc/reference/executionmodel.rst`
+- `.local/Python-3.14.3/Doc/reference/datamodel.rst`
 
 ## Generated Artifacts
 - Full machine-readable inventory: `docs/LANGUAGE_FEATURE_INVENTORY.json`
@@ -49,7 +49,7 @@ This document is the authoritative, source-derived inventory baseline for CPytho
 ## Regeneration
 ```bash
 python3 scripts/generate_language_feature_inventory.py \
-  --cpython-root /Users/$USER/Downloads/Python-3.14.3 \
+  --cpython-root .local/Python-3.14.3 \
   --manifest docs/LANGUAGE_FEATURE_MANIFEST.json \
   --out-inventory docs/LANGUAGE_FEATURE_INVENTORY.json \
   --out-report perf/language_feature_inventory_report_latest.json

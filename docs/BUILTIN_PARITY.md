@@ -11,7 +11,7 @@ Builtin drift is a production risk:
 
 ## Source-of-Truth
 
-- CPython builtin implementation: `/Users/$USER/Downloads/Python-3.14.3/Python/bltinmodule.c`
+- CPython builtin implementation: `.local/Python-3.14.3/Python/bltinmodule.c`
 - Runtime target for comparison: `target/debug/pyrs` (or `PYRS_BIN`)
 
 ## Gate Command

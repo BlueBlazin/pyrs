@@ -55,7 +55,7 @@ def resolve_stable_abi_toml(cli_path: pathlib.Path | None) -> pathlib.Path:
         candidates.append(pathlib.Path(cpython_src) / "Misc" / "stable_abi.toml")
 
     # Local machine default used by this project.
-    candidates.append(pathlib.Path("/Users/$USER/Downloads/Python-3.14.3/Misc/stable_abi.toml"))
+    candidates.append(REPO_ROOT / ".local" / "Python-3.14.3" / "Misc" / "stable_abi.toml")
 
     for candidate in candidates:
         if candidate.exists():

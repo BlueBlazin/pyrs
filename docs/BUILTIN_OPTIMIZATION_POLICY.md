@@ -10,10 +10,10 @@ This document defines how builtin performance work is prioritized and validated.
 
 ## CPython References
 
-- Eval/dispatch: `/Users/$USER/Downloads/Python-3.14.3/Python/ceval.c`
-- Specialized opcode cases: `/Users/$USER/Downloads/Python-3.14.3/Python/generated_cases.c.h`
-- Call/vectorcall behavior: `/Users/$USER/Downloads/Python-3.14.3/Objects/call.c`
-- Builtins implementation: `/Users/$USER/Downloads/Python-3.14.3/Python/bltinmodule.c`
+- Eval/dispatch: `.local/Python-3.14.3/Python/ceval.c`
+- Specialized opcode cases: `.local/Python-3.14.3/Python/generated_cases.c.h`
+- Call/vectorcall behavior: `.local/Python-3.14.3/Objects/call.c`
+- Builtins implementation: `.local/Python-3.14.3/Python/bltinmodule.c`
 
 ## Heat Classes
 

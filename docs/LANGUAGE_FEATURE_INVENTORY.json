@@ -1,5 +1,5 @@
 {
-  "cpython_root": "/Users/$USER/Downloads/Python-3.14.3",
+  "cpython_root": ".local/Python-3.14.3",
   "features": [
     {
       "grammar_section": "SIMPLE STATEMENTS",
@@ -7,7 +7,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 168
       },
       "title": "annotated_rhs"
@@ -18,7 +18,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 372
       },
       "title": "annotation"
@@ -29,7 +29,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1060
       },
       "title": "args"
@@ -40,7 +40,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 506
       },
       "title": "as_pattern"
@@ -51,7 +51,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 213
       },
       "title": "assert_stmt"
@@ -62,7 +62,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 151
       },
       "title": "assignment"
@@ -73,7 +73,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 733
       },
       "title": "assignment_expression"
@@ -84,7 +84,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 873
       },
       "title": "atom"
@@ -95,7 +95,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 576
       },
       "title": "attr"
@@ -106,7 +106,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 170
       },
       "title": "augassign"
@@ -117,7 +117,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 808
       },
       "title": "bitwise_and"
@@ -128,7 +128,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 800
       },
       "title": "bitwise_or"
@@ -139,7 +139,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 804
       },
       "title": "bitwise_xor"
@@ -150,7 +150,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 195
       },
       "title": "break_stmt"
@@ -161,7 +161,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 563
       },
       "title": "capture_pattern"
@@ -172,7 +172,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 490
       },
       "title": "case_block"
@@ -183,7 +183,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 269
       },
       "title": "class_def"
@@ -194,7 +194,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 273
       },
       "title": "class_def_raw"
@@ -205,7 +205,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 636
       },
       "title": "class_pattern"
@@ -216,7 +216,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 773
       },
       "title": "compare_op_bitwise_or_pair"
@@ -227,7 +227,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 764
       },
       "title": "comparison"
@@ -238,7 +238,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 543
       },
       "title": "complex_number"
@@ -249,7 +249,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 137
       },
       "title": "compound_stmt"
@@ -260,7 +260,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 198
       },
       "title": "continue_stmt"
@@ -271,7 +271,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 264
       },
       "title": "decorators"
@@ -282,7 +282,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 374
       },
       "title": "default"
@@ -293,7 +293,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 207
       },
       "title": "del_stmt"
@@ -304,7 +304,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1157
       },
       "title": "del_t_atom"
@@ -315,7 +315,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1150
       },
       "title": "del_targets"
@@ -326,7 +326,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1007
       },
       "title": "dict"
@@ -337,7 +337,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1049
       },
       "title": "dictcomp"
@@ -348,7 +348,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 244
       },
       "title": "dotted_as_name"
@@ -359,7 +359,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 242
       },
       "title": "dotted_as_names"
@@ -370,7 +370,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 249
       },
       "title": "dotted_name"
@@ -381,7 +381,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 633
       },
       "title": "double_star_pattern"
@@ -392,7 +392,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1017
       },
       "title": "double_starred_kvpair"
@@ -403,7 +403,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1015
       },
       "title": "double_starred_kvpairs"
@@ -414,7 +414,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 384
       },
       "title": "elif_stmt"
@@ -425,7 +425,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 389
       },
       "title": "else_block"
@@ -436,7 +436,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 785
       },
       "title": "eq_bitwise_or"
@@ -447,7 +447,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 91
       },
       "title": "eval"
@@ -458,7 +458,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 446
       },
       "title": "except_block"
@@ -469,7 +469,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 460
       },
       "title": "except_star_block"
@@ -480,7 +480,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1221
       },
       "title": "expression_without_invalid"
@@ -491,7 +491,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 700
       },
       "title": "expressions"
@@ -502,7 +502,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 89
       },
       "title": "file"
@@ -513,7 +513,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 473
       },
       "title": "finally_block"
@@ -524,7 +524,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1029
       },
       "title": "for_if_clause"
@@ -535,7 +535,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1026
       },
       "title": "for_if_clauses"
@@ -546,7 +546,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 403
       },
       "title": "for_stmt"
@@ -557,7 +557,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 962
       },
       "title": "fstring"
@@ -568,7 +568,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 955
       },
       "title": "fstring_conversion"
@@ -579,7 +579,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 959
       },
       "title": "fstring_format_spec"
@@ -590,7 +590,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 957
       },
       "title": "fstring_full_format_spec"
@@ -601,7 +601,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 948
       },
       "title": "fstring_middle"
@@ -612,7 +612,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 951
       },
       "title": "fstring_replacement_field"
@@ -623,7 +623,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 92
       },
       "title": "func_type"
@@ -634,7 +634,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1184
       },
       "title": "func_type_comment"
@@ -645,7 +645,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 284
       },
       "title": "function_def"
@@ -656,7 +656,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 288
       },
       "title": "function_def_raw"
@@ -667,7 +667,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1045
       },
       "title": "genexp"
@@ -678,7 +678,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 201
       },
       "title": "global_stmt"
@@ -689,7 +689,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 885
       },
       "title": "group"
@@ -700,7 +700,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 584
       },
       "title": "group_pattern"
@@ -711,7 +711,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 791
       },
       "title": "gt_bitwise_or"
@@ -722,7 +722,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 790
       },
       "title": "gte_bitwise_or"
@@ -733,7 +733,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 495
       },
       "title": "guard"
@@ -744,7 +744,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 379
       },
       "title": "if_stmt"
@@ -755,7 +755,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 560
       },
       "title": "imaginary_number"
@@ -766,7 +766,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 225
       },
       "title": "import_from"
@@ -777,7 +777,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 237
       },
       "title": "import_from_as_name"
@@ -788,7 +788,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 235
       },
       "title": "import_from_as_names"
@@ -799,7 +799,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 230
       },
       "title": "import_from_targets"
@@ -810,7 +810,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 223
       },
       "title": "import_name"
@@ -821,7 +821,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 215
       },
       "title": "import_stmt"
@@ -832,7 +832,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 793
       },
       "title": "in_bitwise_or"
@@ -843,7 +843,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 90
       },
       "title": "interactive"
@@ -854,7 +854,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1291
       },
       "title": "invalid_ann_assign_target"
@@ -865,7 +865,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1196
       },
       "title": "invalid_arguments"
@@ -876,7 +876,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1560
       },
       "title": "invalid_arithmetic"
@@ -887,7 +887,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1455
       },
       "title": "invalid_as_pattern"
@@ -898,7 +898,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1271
       },
       "title": "invalid_assignment"
@@ -909,7 +909,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1298
       },
       "title": "invalid_block"
@@ -920,7 +920,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1451
       },
       "title": "invalid_case_block"
@@ -931,7 +931,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1465
       },
       "title": "invalid_class_argument_pattern"
@@ -942,7 +942,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1491
       },
       "title": "invalid_class_def_raw"
@@ -953,7 +953,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1460
       },
       "title": "invalid_class_pattern"
@@ -964,7 +964,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1300
       },
       "title": "invalid_comprehension"
@@ -975,7 +975,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1487
       },
       "title": "invalid_def_raw"
@@ -986,7 +986,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1324
       },
       "title": "invalid_default"
@@ -997,7 +997,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1295
       },
       "title": "invalid_del_stmt"
@@ -1008,7 +1008,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1308
       },
       "title": "invalid_dict_comprehension"
@@ -1019,7 +1019,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1389
       },
       "title": "invalid_dotted_as_name"
@@ -1030,7 +1030,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1496
       },
       "title": "invalid_double_starred_kvpairs"
@@ -1041,7 +1041,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1364
       },
       "title": "invalid_double_type_comments"
@@ -1052,7 +1052,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1471
       },
       "title": "invalid_elif_stmt"
@@ -1063,7 +1063,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1475
       },
       "title": "invalid_else_stmt"
@@ -1074,7 +1074,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1429
       },
       "title": "invalid_except_star_stmt"
@@ -1085,7 +1085,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1444
       },
       "title": "invalid_except_star_stmt_indent"
@@ -1096,7 +1096,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1421
       },
       "title": "invalid_except_stmt"
@@ -1107,7 +1107,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1440
       },
       "title": "invalid_except_stmt_indent"
@@ -1118,7 +1118,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1242
       },
       "title": "invalid_expression"
@@ -1129,7 +1129,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1562
       },
       "title": "invalid_factor"
@@ -1140,7 +1140,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1437
       },
       "title": "invalid_finally_stmt"
@@ -1151,7 +1151,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1371
       },
       "title": "invalid_for_if_clause"
@@ -1162,7 +1162,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1483
       },
       "title": "invalid_for_stmt"
@@ -1173,7 +1173,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1375
       },
       "title": "invalid_for_target"
@@ -1184,7 +1184,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1528
       },
       "title": "invalid_fstring_conversion_character"
@@ -1195,7 +1195,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1510
       },
       "title": "invalid_fstring_replacement_field"
@@ -1206,7 +1206,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1379
       },
       "title": "invalid_group"
@@ -1217,7 +1217,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1467
       },
       "title": "invalid_if_stmt"
@@ -1228,7 +1228,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1384
       },
       "title": "invalid_import"
@@ -1239,7 +1239,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1393
       },
       "title": "invalid_import_from_as_name"
@@ -1250,7 +1250,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1398
       },
       "title": "invalid_import_from_targets"
@@ -1261,7 +1261,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1500
       },
       "title": "invalid_kvpair"
@@ -1272,7 +1272,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1209
       },
       "title": "invalid_kwarg"
@@ -1283,7 +1283,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1332
       },
       "title": "invalid_kwds"
@@ -1294,7 +1294,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1360
       },
       "title": "invalid_lambda_kwds"
@@ -1305,7 +1305,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1339
       },
       "title": "invalid_lambda_parameters"
@@ -1316,7 +1316,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1352
       },
       "title": "invalid_lambda_parameters_helper"
@@ -1327,7 +1327,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1355
       },
       "title": "invalid_lambda_star_etc"
@@ -1338,7 +1338,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1225
       },
       "title": "invalid_legacy_expression"
@@ -1349,7 +1349,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1447
       },
       "title": "invalid_match_stmt"
@@ -1360,7 +1360,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1311
       },
       "title": "invalid_parameters"
@@ -1371,7 +1371,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1336
       },
       "title": "invalid_parameters_helper"
@@ -1382,7 +1382,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1326
       },
       "title": "invalid_star_etc"
@@ -1393,7 +1393,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1507
       },
       "title": "invalid_starred_expression"
@@ -1404,7 +1404,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1505
       },
       "title": "invalid_starred_expression_unpacking"
@@ -1415,7 +1415,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1554
       },
       "title": "invalid_string_tstring_concat"
@@ -1426,7 +1426,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1413
       },
       "title": "invalid_try_stmt"
@@ -1437,7 +1437,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1550
       },
       "title": "invalid_tstring_conversion_character"
@@ -1448,7 +1448,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1532
       },
       "title": "invalid_tstring_replacement_field"
@@ -1459,7 +1459,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1230
       },
       "title": "invalid_type_param"
@@ -1470,7 +1470,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1565
       },
       "title": "invalid_type_params"
@@ -1481,7 +1481,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1479
       },
       "title": "invalid_while_stmt"
@@ -1492,7 +1492,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1367
       },
       "title": "invalid_with_item"
@@ -1503,7 +1503,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1404
       },
       "title": "invalid_with_stmt"
@@ -1514,7 +1514,7 @@
       "internal": true,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1407
       },
       "title": "invalid_with_stmt_indent"
@@ -1525,7 +1525,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 795
       },
       "title": "is_bitwise_or"
@@ -1536,7 +1536,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 794
       },
       "title": "isnot_bitwise_or"
@@ -1547,7 +1547,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 626
       },
       "title": "items_pattern"
@@ -1558,7 +1558,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 629
       },
       "title": "key_value_pattern"
@@ -1569,7 +1569,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 664
       },
       "title": "keyword_pattern"
@@ -1580,7 +1580,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 661
       },
       "title": "keyword_patterns"
@@ -1591,7 +1591,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1021
       },
       "title": "kvpair"
@@ -1602,7 +1602,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1084
       },
       "title": "kwarg_or_double_starred"
@@ -1613,7 +1613,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1078
       },
       "title": "kwarg_or_starred"
@@ -1624,7 +1624,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1068
       },
       "title": "kwargs"
@@ -1635,7 +1635,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 341
       },
       "title": "kwds"
@@ -1646,7 +1646,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 930
       },
       "title": "lambda_kwds"
@@ -1657,7 +1657,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 943
       },
       "title": "lambda_param"
@@ -1668,7 +1668,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 940
       },
       "title": "lambda_param_maybe_default"
@@ -1679,7 +1679,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 934
       },
       "title": "lambda_param_no_default"
@@ -1690,7 +1690,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 937
       },
       "title": "lambda_param_with_default"
@@ -1701,7 +1701,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 904
       },
       "title": "lambda_parameters"
@@ -1712,7 +1712,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 896
       },
       "title": "lambda_params"
@@ -1723,7 +1723,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 914
       },
       "title": "lambda_slash_no_default"
@@ -1734,7 +1734,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 918
       },
       "title": "lambda_slash_with_default"
@@ -1745,7 +1745,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 922
       },
       "title": "lambda_star_etc"
@@ -1756,7 +1756,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 892
       },
       "title": "lambdef"
@@ -1767,7 +1767,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 995
       },
       "title": "list"
@@ -1778,7 +1778,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1037
       },
       "title": "listcomp"
@@ -1789,7 +1789,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 535
       },
       "title": "literal_expr"
@@ -1800,7 +1800,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 526
       },
       "title": "literal_pattern"
@@ -1811,7 +1811,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 789
       },
       "title": "lt_bitwise_or"
@@ -1822,7 +1822,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 788
       },
       "title": "lte_bitwise_or"
@@ -1833,7 +1833,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 608
       },
       "title": "mapping_pattern"
@@ -1844,7 +1844,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 480
       },
       "title": "match_stmt"
@@ -1855,7 +1855,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 595
       },
       "title": "maybe_sequence_pattern"
@@ -1866,7 +1866,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 598
       },
       "title": "maybe_star_pattern"
@@ -1877,7 +1877,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 580
       },
       "title": "name_or_attr"
@@ -1888,7 +1888,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 738
       },
       "title": "named_expression"
@@ -1899,7 +1899,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 204
       },
       "title": "nonlocal_stmt"
@@ -1910,7 +1910,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 786
       },
       "title": "noteq_bitwise_or"
@@ -1921,7 +1921,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 792
       },
       "title": "notin_bitwise_or"
@@ -1932,7 +1932,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 591
       },
       "title": "open_sequence_pattern"
@@ -1943,7 +1943,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 511
       },
       "title": "or_pattern"
@@ -1954,7 +1954,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 370
       },
       "title": "param"
@@ -1965,7 +1965,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 367
       },
       "title": "param_maybe_default"
@@ -1976,7 +1976,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 358
       },
       "title": "param_no_default"
@@ -1987,7 +1987,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 361
       },
       "title": "param_no_default_star_annotation"
@@ -1998,7 +1998,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 371
       },
       "title": "param_star_annotation"
@@ -2009,7 +2009,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 364
       },
       "title": "param_with_default"
@@ -2020,7 +2020,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 311
       },
       "title": "parameters"
@@ -2031,7 +2031,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 307
       },
       "title": "params"
@@ -2042,7 +2042,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 192
       },
       "title": "pass_stmt"
@@ -2053,7 +2053,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 502
       },
       "title": "pattern"
@@ -2064,7 +2064,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 566
       },
       "title": "pattern_capture_target"
@@ -2075,7 +2075,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 497
       },
       "title": "patterns"
@@ -2086,7 +2086,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 658
       },
       "title": "positional_patterns"
@@ -2097,7 +2097,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 841
       },
       "title": "power"
@@ -2108,7 +2108,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 854
       },
       "title": "primary"
@@ -2119,7 +2119,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 188
       },
       "title": "raise_stmt"
@@ -2130,7 +2130,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 557
       },
       "title": "real_number"
@@ -2141,7 +2141,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 185
       },
       "title": "return_stmt"
@@ -2152,7 +2152,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 587
       },
       "title": "sequence_pattern"
@@ -2163,7 +2163,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1002
       },
       "title": "set"
@@ -2174,7 +2174,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1041
       },
       "title": "setcomp"
@@ -2185,7 +2185,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 812
       },
       "title": "shift_expr"
@@ -2196,7 +2196,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 549
       },
       "title": "signed_number"
@@ -2207,7 +2207,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 553
       },
       "title": "signed_real_number"
@@ -2218,7 +2218,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 115
       },
       "title": "simple_stmts"
@@ -2229,7 +2229,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 105
       },
       "title": "single_compound_stmt"
@@ -2240,7 +2240,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1129
       },
       "title": "single_subscript_attribute_target"
@@ -2251,7 +2251,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1124
       },
       "title": "single_target"
@@ -2262,7 +2262,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 324
       },
       "title": "slash_no_default"
@@ -2273,7 +2273,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 327
       },
       "title": "slash_with_default"
@@ -2284,7 +2284,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 869
       },
       "title": "slice"
@@ -2295,7 +2295,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 865
       },
       "title": "slices"
@@ -2306,7 +2306,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 373
       },
       "title": "star_annotation"
@@ -2317,7 +2317,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1118
       },
       "title": "star_atom"
@@ -2328,7 +2328,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 331
       },
       "title": "star_etc"
@@ -2339,7 +2339,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 717
       },
       "title": "star_expressions"
@@ -2350,7 +2350,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 729
       },
       "title": "star_named_expression"
@@ -2361,7 +2361,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 727
       },
       "title": "star_named_expressions"
@@ -2372,7 +2372,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1097
       },
       "title": "star_targets"
@@ -2383,7 +2383,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1102
       },
       "title": "star_targets_list_seq"
@@ -2394,7 +2394,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1104
       },
       "title": "star_targets_tuple_seq"
@@ -2405,7 +2405,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1073
       },
       "title": "starred_expression"
@@ -2416,7 +2416,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 99
       },
       "title": "statement"
@@ -2427,7 +2427,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 109
       },
       "title": "statement_newline"
@@ -2438,7 +2438,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 97
       },
       "title": "statements"
@@ -2449,7 +2449,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 989
       },
       "title": "string"
@@ -2460,7 +2460,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 485
       },
       "title": "subject_expr"
@@ -2471,7 +2471,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 821
       },
       "title": "sum"
@@ -2482,7 +2482,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1145
       },
       "title": "t_lookahead"
@@ -2493,7 +2493,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1133
       },
       "title": "t_primary"
@@ -2504,7 +2504,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 826
       },
       "title": "term"
@@ -2515,7 +2515,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 434
       },
       "title": "try_stmt"
@@ -2526,7 +2526,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 969
       },
       "title": "tstring_format_spec"
@@ -2537,7 +2537,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 965
       },
       "title": "tstring_format_spec_replacement_field"
@@ -2548,7 +2548,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 972
       },
       "title": "tstring_full_format_spec"
@@ -2559,7 +2559,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 978
       },
       "title": "tstring_middle"
@@ -2570,7 +2570,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 974
       },
       "title": "tstring_replacement_field"
@@ -2581,7 +2581,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 998
       },
       "title": "tuple"
@@ -2592,7 +2592,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 670
       },
       "title": "type_alias"
@@ -2603,7 +2603,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 1167
       },
       "title": "type_expressions"
@@ -2614,7 +2614,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 691
       },
       "title": "type_param_bound"
@@ -2625,7 +2625,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 692
       },
       "title": "type_param_default"
@@ -2636,7 +2636,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 683
       },
       "title": "type_param_seq"
@@ -2647,7 +2647,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 694
       },
       "title": "type_param_starred_default"
@@ -2658,7 +2658,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 678
       },
       "title": "type_params"
@@ -2669,7 +2669,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 573
       },
       "title": "value_pattern"
@@ -2680,7 +2680,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 396
       },
       "title": "while_stmt"
@@ -2691,7 +2691,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 570
       },
       "title": "wildcard_pattern"
@@ -2702,7 +2702,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 426
       },
       "title": "with_item"
@@ -2713,7 +2713,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 414
       },
       "title": "with_stmt"
@@ -2724,7 +2724,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 713
       },
       "title": "yield_expr"
@@ -2735,7 +2735,7 @@
       "internal": false,
       "kind": "grammar_rule",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+        "file": ".local/Python-3.14.3/Grammar/python.gram",
         "line": 211
       },
       "title": "yield_stmt"
@@ -2752,7 +2752,7 @@
         "Mapping Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1039
       },
       "title": "Mapping Patterns"
@@ -2769,7 +2769,7 @@
         "Class Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1089
       },
       "title": "Class Patterns"
@@ -2784,7 +2784,7 @@
         "The !while statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 108
       },
       "title": "The !while statement"
@@ -2799,7 +2799,7 @@
         "Function definitions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1206
       },
       "title": "Function definitions"
@@ -2814,7 +2814,7 @@
         "Class definitions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1394
       },
       "title": "Class definitions"
@@ -2829,7 +2829,7 @@
         "The !for statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 141
       },
       "title": "The !for statement"
@@ -2844,7 +2844,7 @@
         "Coroutines"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1502
       },
       "title": "Coroutines"
@@ -2860,7 +2860,7 @@
         "Coroutine function definition"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1510
       },
       "title": "Coroutine function definition"
@@ -2876,7 +2876,7 @@
         "The !async for statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1544
       },
       "title": "The !async for statement"
@@ -2892,7 +2892,7 @@
         "The !async with statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1589
       },
       "title": "The !async with statement"
@@ -2907,7 +2907,7 @@
         "Type parameter lists"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1635
       },
       "title": "Type parameter lists"
@@ -2923,7 +2923,7 @@
         "Generic functions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1746
       },
       "title": "Generic functions"
@@ -2939,7 +2939,7 @@
         "Generic classes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1806
       },
       "title": "Generic classes"
@@ -2955,7 +2955,7 @@
         "Generic type aliases"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1848
       },
       "title": "Generic type aliases"
@@ -2970,7 +2970,7 @@
         "Annotations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 1873
       },
       "title": "Annotations"
@@ -2985,7 +2985,7 @@
         "The !try statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 204
       },
       "title": "The !try statement"
@@ -3001,7 +3001,7 @@
         "!except clause"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 240
       },
       "title": "!except clause"
@@ -3017,7 +3017,7 @@
         "!except* clause"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 335
       },
       "title": "!except* clause"
@@ -3033,7 +3033,7 @@
         "!else clause"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 405
       },
       "title": "!else clause"
@@ -3049,7 +3049,7 @@
         "!finally clause"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 419
       },
       "title": "!finally clause"
@@ -3064,7 +3064,7 @@
         "The !with statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 481
       },
       "title": "The !with statement"
@@ -3078,7 +3078,7 @@
         "Compound statements"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 4
       },
       "title": "Compound statements"
@@ -3093,7 +3093,7 @@
         "The !match statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 599
       },
       "title": "The !match statement"
@@ -3109,7 +3109,7 @@
         "Overview"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 643
       },
       "title": "Overview"
@@ -3125,7 +3125,7 @@
         "Guards"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 703
       },
       "title": "Guards"
@@ -3141,7 +3141,7 @@
         "Irrefutable Case Blocks"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 742
       },
       "title": "Irrefutable Case Blocks"
@@ -3157,7 +3157,7 @@
         "Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 766
       },
       "title": "Patterns"
@@ -3174,7 +3174,7 @@
         "OR Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 804
       },
       "title": "OR Patterns"
@@ -3191,7 +3191,7 @@
         "AS Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 825
       },
       "title": "AS Patterns"
@@ -3206,7 +3206,7 @@
         "The !if statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 83
       },
       "title": "The !if statement"
@@ -3223,7 +3223,7 @@
         "Literal Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 844
       },
       "title": "Literal Patterns"
@@ -3240,7 +3240,7 @@
         "Capture Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 874
       },
       "title": "Capture Patterns"
@@ -3257,7 +3257,7 @@
         "Wildcard Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 899
       },
       "title": "Wildcard Patterns"
@@ -3274,7 +3274,7 @@
         "Value Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 916
       },
       "title": "Value Patterns"
@@ -3291,7 +3291,7 @@
         "Group Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 943
       },
       "title": "Group Patterns"
@@ -3308,7 +3308,7 @@
         "Sequence Patterns"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
         "line": 957
       },
       "title": "Sequence Patterns"
@@ -3325,7 +3325,7 @@
         "Other writable attributes on module objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1091
       },
       "title": "Other writable attributes on module objects"
@@ -3342,7 +3342,7 @@
         "Module dictionaries"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1119
       },
       "title": "Module dictionaries"
@@ -3358,7 +3358,7 @@
         "Custom classes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1141
       },
       "title": "Custom classes"
@@ -3375,7 +3375,7 @@
         "Special attributes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1183
       },
       "title": "Special attributes"
@@ -3390,7 +3390,7 @@
         "The standard type hierarchy"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 119
       },
       "title": "The standard type hierarchy"
@@ -3405,7 +3405,7 @@
         "Objects, values and types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 11
       },
       "title": "Objects, values and types"
@@ -3422,7 +3422,7 @@
         "Special methods"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1296
       },
       "title": "Special methods"
@@ -3438,7 +3438,7 @@
         "Class instances"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1321
       },
       "title": "Class instances"
@@ -3455,7 +3455,7 @@
         "Special attributes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1359
       },
       "title": "Special attributes"
@@ -3471,7 +3471,7 @@
         "I/O objects (also known as file objects)"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1377
       },
       "title": "I/O objects (also known as file objects)"
@@ -3487,7 +3487,7 @@
         "Internal types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1406
       },
       "title": "Internal types"
@@ -3504,7 +3504,7 @@
         "Code objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1420
       },
       "title": "Code objects"
@@ -3522,7 +3522,7 @@
         "Special read-only attributes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1453
       },
       "title": "Special read-only attributes"
@@ -3538,7 +3538,7 @@
         "None"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 145
       },
       "title": "None"
@@ -3556,7 +3556,7 @@
         "Methods on code objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1554
       },
       "title": "Methods on code objects"
@@ -3572,7 +3572,7 @@
         "NotImplemented"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 156
       },
       "title": "NotImplemented"
@@ -3589,7 +3589,7 @@
         "Frame objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1636
       },
       "title": "Frame objects"
@@ -3607,7 +3607,7 @@
         "Special read-only attributes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1654
       },
       "title": "Special read-only attributes"
@@ -3625,7 +3625,7 @@
         "Special writable attributes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1702
       },
       "title": "Special writable attributes"
@@ -3643,7 +3643,7 @@
         "Frame object methods"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1728
       },
       "title": "Frame object methods"
@@ -3660,7 +3660,7 @@
         "Traceback objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1753
       },
       "title": "Traceback objects"
@@ -3676,7 +3676,7 @@
         "Ellipsis"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 181
       },
       "title": "Ellipsis"
@@ -3693,7 +3693,7 @@
         "Slice objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1836
       },
       "title": "Slice objects"
@@ -3710,7 +3710,7 @@
         "Static method objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1866
       },
       "title": "Static method objects"
@@ -3727,7 +3727,7 @@
         "Class method objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1878
       },
       "title": "Class method objects"
@@ -3742,7 +3742,7 @@
         "Special method names"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1890
       },
       "title": "Special method names"
@@ -3758,7 +3758,7 @@
         "Basic customization"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 1924
       },
       "title": "Basic customization"
@@ -3774,7 +3774,7 @@
         "numbers.Number"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 192
       },
       "title": "numbers.Number"
@@ -3791,7 +3791,7 @@
         "numbers.Integral"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 225
       },
       "title": "numbers.Integral"
@@ -3807,7 +3807,7 @@
         "Customizing attribute access"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2274
       },
       "title": "Customizing attribute access"
@@ -3824,7 +3824,7 @@
         "Customizing module attribute access"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2364
       },
       "title": "Customizing module attribute access"
@@ -3841,7 +3841,7 @@
         "Implementing Descriptors"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2427
       },
       "title": "Implementing Descriptors"
@@ -3858,7 +3858,7 @@
         "Invoking Descriptors"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2484
       },
       "title": "Invoking Descriptors"
@@ -3875,7 +3875,7 @@
         "__slots__"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2583
       },
       "title": "__slots__"
@@ -3892,7 +3892,7 @@
         "numbers.Real (float)"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 263
       },
       "title": "numbers.Real (float)"
@@ -3908,7 +3908,7 @@
         "Customizing class creation"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2668
       },
       "title": "Customizing class creation"
@@ -3925,7 +3925,7 @@
         "Metaclasses"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2740
       },
       "title": "Metaclasses"
@@ -3942,7 +3942,7 @@
         "Resolving MRO entries"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2778
       },
       "title": "Resolving MRO entries"
@@ -3959,7 +3959,7 @@
         "Determining the appropriate metaclass"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2805
       },
       "title": "Determining the appropriate metaclass"
@@ -3976,7 +3976,7 @@
         "numbers.Complex (complex)"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 281
       },
       "title": "numbers.Complex (complex)"
@@ -3993,7 +3993,7 @@
         "Preparing the class namespace"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2827
       },
       "title": "Preparing the class namespace"
@@ -4010,7 +4010,7 @@
         "Executing the class body"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2851
       },
       "title": "Executing the class body"
@@ -4027,7 +4027,7 @@
         "Creating the class object"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2871
       },
       "title": "Creating the class object"
@@ -4044,7 +4044,7 @@
         "Uses for metaclasses"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2926
       },
       "title": "Uses for metaclasses"
@@ -4060,7 +4060,7 @@
         "Customizing instance and subclass checks"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2935
       },
       "title": "Customizing instance and subclass checks"
@@ -4076,7 +4076,7 @@
         "Sequences"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 294
       },
       "title": "Sequences"
@@ -4092,7 +4092,7 @@
         "Emulating generic types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 2975
       },
       "title": "Emulating generic types"
@@ -4109,7 +4109,7 @@
         "The purpose of *__class_getitem__*"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3008
       },
       "title": "The purpose of *__class_getitem__*"
@@ -4126,7 +4126,7 @@
         "*__class_getitem__* versus *__getitem__*"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3030
       },
       "title": "*__class_getitem__* versus *__getitem__*"
@@ -4142,7 +4142,7 @@
         "Emulating callable objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3118
       },
       "title": "Emulating callable objects"
@@ -4158,7 +4158,7 @@
         "Emulating container types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3133
       },
       "title": "Emulating container types"
@@ -4175,7 +4175,7 @@
         "Immutable sequences"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 326
       },
       "title": "Immutable sequences"
@@ -4191,7 +4191,7 @@
         "Emulating numeric types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3312
       },
       "title": "Emulating numeric types"
@@ -4207,7 +4207,7 @@
         "With Statement Context Managers"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3491
       },
       "title": "With Statement Context Managers"
@@ -4223,7 +4223,7 @@
         "Customizing positional arguments in class pattern matching"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3542
       },
       "title": "Customizing positional arguments in class pattern matching"
@@ -4239,7 +4239,7 @@
         "Emulating buffer types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3574
       },
       "title": "Emulating buffer types"
@@ -4255,7 +4255,7 @@
         "Annotations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3613
       },
       "title": "Annotations"
@@ -4271,7 +4271,7 @@
         "Special method lookup"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3660
       },
       "title": "Special method lookup"
@@ -4286,7 +4286,7 @@
         "Coroutines"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3737
       },
       "title": "Coroutines"
@@ -4302,7 +4302,7 @@
         "Awaitable Objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3741
       },
       "title": "Awaitable Objects"
@@ -4318,7 +4318,7 @@
         "Coroutine Objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3777
       },
       "title": "Coroutine Objects"
@@ -4334,7 +4334,7 @@
         "Asynchronous Iterators"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3838
       },
       "title": "Asynchronous Iterators"
@@ -4351,7 +4351,7 @@
         "Mutable sequences"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 386
       },
       "title": "Mutable sequences"
@@ -4367,7 +4367,7 @@
         "Asynchronous Context Managers"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 3887
       },
       "title": "Asynchronous Context Managers"
@@ -4383,7 +4383,7 @@
         "Set types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 425
       },
       "title": "Set types"
@@ -4399,7 +4399,7 @@
         "Mappings"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 464
       },
       "title": "Mappings"
@@ -4416,7 +4416,7 @@
         "Dictionaries"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 481
       },
       "title": "Dictionaries"
@@ -4432,7 +4432,7 @@
         "Callable types"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 517
       },
       "title": "Callable types"
@@ -4449,7 +4449,7 @@
         "User-defined functions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 532
       },
       "title": "User-defined functions"
@@ -4467,7 +4467,7 @@
         "Special read-only attributes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 545
       },
       "title": "Special read-only attributes"
@@ -4485,7 +4485,7 @@
         "Special writable attributes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 579
       },
       "title": "Special writable attributes"
@@ -4499,7 +4499,7 @@
         "Data model"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 5
       },
       "title": "Data model"
@@ -4516,7 +4516,7 @@
         "Instance methods"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 677
       },
       "title": "Instance methods"
@@ -4533,7 +4533,7 @@
         "Generator functions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 759
       },
       "title": "Generator functions"
@@ -4550,7 +4550,7 @@
         "Coroutine functions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 777
       },
       "title": "Coroutine functions"
@@ -4567,7 +4567,7 @@
         "Asynchronous generator functions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 790
       },
       "title": "Asynchronous generator functions"
@@ -4584,7 +4584,7 @@
         "Built-in functions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 815
       },
       "title": "Built-in functions"
@@ -4601,7 +4601,7 @@
         "Built-in methods"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 839
       },
       "title": "Built-in methods"
@@ -4618,7 +4618,7 @@
         "Classes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 856
       },
       "title": "Classes"
@@ -4635,7 +4635,7 @@
         "Class Instances"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 866
       },
       "title": "Class Instances"
@@ -4651,7 +4651,7 @@
         "Modules"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 875
       },
       "title": "Modules"
@@ -4668,7 +4668,7 @@
         "Import-related attributes on module objects"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/datamodel.rst",
         "line": 913
       },
       "title": "Import-related attributes on module objects"
@@ -4684,7 +4684,7 @@
         "Resolution of names"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 100
       },
       "title": "Resolution of names"
@@ -4699,7 +4699,7 @@
         "Structure of a program"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 14
       },
       "title": "Structure of a program"
@@ -4715,7 +4715,7 @@
         "Annotation scopes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 190
       },
       "title": "Annotation scopes"
@@ -4731,7 +4731,7 @@
         "Lazy evaluation"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 246
       },
       "title": "Lazy evaluation"
@@ -4747,7 +4747,7 @@
         "Builtins and restricted execution"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 296
       },
       "title": "Builtins and restricted execution"
@@ -4763,7 +4763,7 @@
         "Interaction with dynamic features"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 319
       },
       "title": "Interaction with dynamic features"
@@ -4778,7 +4778,7 @@
         "Exceptions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 346
       },
       "title": "Exceptions"
@@ -4793,7 +4793,7 @@
         "Naming and binding"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 39
       },
       "title": "Naming and binding"
@@ -4808,7 +4808,7 @@
         "Runtime Components"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 403
       },
       "title": "Runtime Components"
@@ -4824,7 +4824,7 @@
         "General Computing Model"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 406
       },
       "title": "General Computing Model"
@@ -4840,7 +4840,7 @@
         "Python Runtime Model"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 468
       },
       "title": "Python Runtime Model"
@@ -4856,7 +4856,7 @@
         "Binding of names"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 48
       },
       "title": "Binding of names"
@@ -4870,7 +4870,7 @@
         "Execution model"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
         "line": 5
       },
       "title": "Execution model"
@@ -4886,7 +4886,7 @@
         "Slicings"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1010
       },
       "title": "Slicings"
@@ -4902,7 +4902,7 @@
         "Calls"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1073
       },
       "title": "Calls"
@@ -4917,7 +4917,7 @@
         "Await expression"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1267
       },
       "title": "Await expression"
@@ -4932,7 +4932,7 @@
         "The power operator"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1281
       },
       "title": "The power operator"
@@ -4948,7 +4948,7 @@
         "Literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 129
       },
       "title": "Literals"
@@ -4963,7 +4963,7 @@
         "Unary arithmetic and bitwise operations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1317
       },
       "title": "Unary arithmetic and bitwise operations"
@@ -4978,7 +4978,7 @@
         "Binary arithmetic operations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1365
       },
       "title": "Binary arithmetic operations"
@@ -4993,7 +4993,7 @@
         "Shifting operations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1493
       },
       "title": "Shifting operations"
@@ -5008,7 +5008,7 @@
         "Binary bitwise operations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1522
       },
       "title": "Binary bitwise operations"
@@ -5023,7 +5023,7 @@
         "Comparisons"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1563
       },
       "title": "Comparisons"
@@ -5039,7 +5039,7 @@
         "Value comparisons"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1607
       },
       "title": "Value comparisons"
@@ -5056,7 +5056,7 @@
         "String literal concatenation"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 162
       },
       "title": "String literal concatenation"
@@ -5072,7 +5072,7 @@
         "Membership test operations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1773
       },
       "title": "Membership test operations"
@@ -5088,7 +5088,7 @@
         "Identity comparisons"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1823
       },
       "title": "Identity comparisons"
@@ -5103,7 +5103,7 @@
         "Boolean operations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1837
       },
       "title": "Boolean operations"
@@ -5118,7 +5118,7 @@
         "Assignment expressions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1889
       },
       "title": "Assignment expressions"
@@ -5133,7 +5133,7 @@
         "Conditional expressions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1928
       },
       "title": "Conditional expressions"
@@ -5148,7 +5148,7 @@
         "Lambdas"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1955
       },
       "title": "Lambdas"
@@ -5163,7 +5163,7 @@
         "Expression lists"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 1983
       },
       "title": "Expression lists"
@@ -5178,7 +5178,7 @@
         "Evaluation order"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 2032
       },
       "title": "Evaluation order"
@@ -5193,7 +5193,7 @@
         "Operator precedence"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 2053
       },
       "title": "Operator precedence"
@@ -5209,7 +5209,7 @@
         "Parenthesized forms"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 214
       },
       "title": "Parenthesized forms"
@@ -5225,7 +5225,7 @@
         "Displays for lists, sets and dictionaries"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 248
       },
       "title": "Displays for lists, sets and dictionaries"
@@ -5240,7 +5240,7 @@
         "Arithmetic conversions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 25
       },
       "title": "Arithmetic conversions"
@@ -5256,7 +5256,7 @@
         "List displays"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 327
       },
       "title": "List displays"
@@ -5272,7 +5272,7 @@
         "Set displays"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 353
       },
       "title": "Set displays"
@@ -5288,7 +5288,7 @@
         "Dictionary displays"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 381
       },
       "title": "Dictionary displays"
@@ -5304,7 +5304,7 @@
         "Generator expressions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 445
       },
       "title": "Generator expressions"
@@ -5319,7 +5319,7 @@
         "Atoms"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 47
       },
       "title": "Atoms"
@@ -5335,7 +5335,7 @@
         "Yield expressions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 501
       },
       "title": "Yield expressions"
@@ -5349,7 +5349,7 @@
         "Expressions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 5
       },
       "title": "Expressions"
@@ -5366,7 +5366,7 @@
         "Generator-iterator methods"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 616
       },
       "title": "Generator-iterator methods"
@@ -5382,7 +5382,7 @@
         "Identifiers (Names)"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 64
       },
       "title": "Identifiers (Names)"
@@ -5399,7 +5399,7 @@
         "Examples"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 704
       },
       "title": "Examples"
@@ -5416,7 +5416,7 @@
         "Asynchronous generator functions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 739
       },
       "title": "Asynchronous generator functions"
@@ -5433,7 +5433,7 @@
         "Asynchronous generator-iterator methods"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 804
       },
       "title": "Asynchronous generator-iterator methods"
@@ -5450,7 +5450,7 @@
         "Private name mangling"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 85
       },
       "title": "Private name mangling"
@@ -5465,7 +5465,7 @@
         "Primaries"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 887
       },
       "title": "Primaries"
@@ -5481,7 +5481,7 @@
         "Attribute references"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 901
       },
       "title": "Attribute references"
@@ -5497,7 +5497,7 @@
         "Subscriptions"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/expressions.rst",
         "line": 935
       },
       "title": "Subscriptions"
@@ -5513,7 +5513,7 @@
         "Namespace packages"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 128
       },
       "title": "Namespace packages"
@@ -5528,7 +5528,7 @@
         "Searching"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 159
       },
       "title": "Searching"
@@ -5544,7 +5544,7 @@
         "The module cache"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 174
       },
       "title": "The module cache"
@@ -5560,7 +5560,7 @@
         "Finders and loaders"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 209
       },
       "title": "Finders and loaders"
@@ -5576,7 +5576,7 @@
         "Import hooks"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 248
       },
       "title": "Import hooks"
@@ -5592,7 +5592,7 @@
         "The meta path"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 275
       },
       "title": "The meta path"
@@ -5607,7 +5607,7 @@
         "Loading"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 343
       },
       "title": "Loading"
@@ -5623,7 +5623,7 @@
         "Loaders"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 413
       },
       "title": "Loaders"
@@ -5639,7 +5639,7 @@
         "Submodules"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 485
       },
       "title": "Submodules"
@@ -5654,7 +5654,7 @@
         "importlib"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 50
       },
       "title": "importlib"
@@ -5670,7 +5670,7 @@
         "Module specs"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 520
       },
       "title": "Module specs"
@@ -5686,7 +5686,7 @@
         "__path__ attributes on modules"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 547
       },
       "title": "__path__ attributes on modules"
@@ -5702,7 +5702,7 @@
         "Module reprs"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 574
       },
       "title": "Module reprs"
@@ -5716,7 +5716,7 @@
         "The import system"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 5
       },
       "title": "The import system"
@@ -5732,7 +5732,7 @@
         "Cached bytecode invalidation"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 609
       },
       "title": "Cached bytecode invalidation"
@@ -5747,7 +5747,7 @@
         "Packages"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 61
       },
       "title": "Packages"
@@ -5762,7 +5762,7 @@
         "The Path Based Finder"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 635
       },
       "title": "The Path Based Finder"
@@ -5778,7 +5778,7 @@
         "Path entry finders"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 684
       },
       "title": "Path entry finders"
@@ -5794,7 +5794,7 @@
         "Path entry finder protocol"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 774
       },
       "title": "Path entry finder protocol"
@@ -5809,7 +5809,7 @@
         "Replacing the standard import system"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 828
       },
       "title": "Replacing the standard import system"
@@ -5824,7 +5824,7 @@
         "Package Relative Imports"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 848
       },
       "title": "Package Relative Imports"
@@ -5839,7 +5839,7 @@
         "Special considerations for __main__"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 889
       },
       "title": "Special considerations for __main__"
@@ -5855,7 +5855,7 @@
         "__main__.__spec__"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 902
       },
       "title": "__main__.__spec__"
@@ -5871,7 +5871,7 @@
         "Regular packages"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 92
       },
       "title": "Regular packages"
@@ -5886,7 +5886,7 @@
         "References"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/import.rst",
         "line": 934
       },
       "title": "References"
@@ -5902,7 +5902,7 @@
         "f-strings"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1039
       },
       "title": "f-strings"
@@ -5918,7 +5918,7 @@
         "Physical lines"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 112
       },
       "title": "Physical lines"
@@ -5934,7 +5934,7 @@
         "t-strings"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1197
       },
       "title": "t-strings"
@@ -5950,7 +5950,7 @@
         "Formal grammar for f-strings"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1210
       },
       "title": "Formal grammar for f-strings"
@@ -5965,7 +5965,7 @@
         "Numeric literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1301
       },
       "title": "Numeric literals"
@@ -5981,7 +5981,7 @@
         "Integer literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1334
       },
       "title": "Integer literals"
@@ -5997,7 +5997,7 @@
         "Floating-point literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1407
       },
       "title": "Floating-point literals"
@@ -6013,7 +6013,7 @@
         "Comments"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 143
       },
       "title": "Comments"
@@ -6029,7 +6029,7 @@
         "Imaginary literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1469
       },
       "title": "Imaginary literals"
@@ -6044,7 +6044,7 @@
         "Operators and delimiters"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 1532
       },
       "title": "Operators and delimiters"
@@ -6060,7 +6060,7 @@
         "Encoding declarations"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 157
       },
       "title": "Encoding declarations"
@@ -6076,7 +6076,7 @@
         "Explicit line joining"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 202
       },
       "title": "Explicit line joining"
@@ -6092,7 +6092,7 @@
         "Implicit line joining"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 227
       },
       "title": "Implicit line joining"
@@ -6108,7 +6108,7 @@
         "Blank lines"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 247
       },
       "title": "Blank lines"
@@ -6124,7 +6124,7 @@
         "Indentation"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 263
       },
       "title": "Indentation"
@@ -6140,7 +6140,7 @@
         "Whitespace between tokens"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 343
       },
       "title": "Whitespace between tokens"
@@ -6156,7 +6156,7 @@
         "End marker"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 364
       },
       "title": "End marker"
@@ -6171,7 +6171,7 @@
         "Other tokens"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 373
       },
       "title": "Other tokens"
@@ -6186,7 +6186,7 @@
         "Names (identifiers and keywords)"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 389
       },
       "title": "Names (identifiers and keywords)"
@@ -6202,7 +6202,7 @@
         "Keywords"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 424
       },
       "title": "Keywords"
@@ -6218,7 +6218,7 @@
         "Soft Keywords"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 448
       },
       "title": "Soft Keywords"
@@ -6234,7 +6234,7 @@
         "Reserved classes of identifiers"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 476
       },
       "title": "Reserved classes of identifiers"
@@ -6250,7 +6250,7 @@
         "Non-ASCII characters in names"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 524
       },
       "title": "Non-ASCII characters in names"
@@ -6264,7 +6264,7 @@
         "Lexical analysis"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 5
       },
       "title": "Lexical analysis"
@@ -6279,7 +6279,7 @@
         "Literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 613
       },
       "title": "Literals"
@@ -6294,7 +6294,7 @@
         "String and Bytes literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 633
       },
       "title": "String and Bytes literals"
@@ -6310,7 +6310,7 @@
         "Triple-quoted strings"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 675
       },
       "title": "Triple-quoted strings"
@@ -6326,7 +6326,7 @@
         "String prefixes"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 700
       },
       "title": "String prefixes"
@@ -6342,7 +6342,7 @@
         "Formal grammar"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 734
       },
       "title": "Formal grammar"
@@ -6358,7 +6358,7 @@
         "Escape sequences"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 780
       },
       "title": "Escape sequences"
@@ -6375,7 +6375,7 @@
         "Ignored end of line"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 828
       },
       "title": "Ignored end of line"
@@ -6392,7 +6392,7 @@
         "Escaped characters"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 842
       },
       "title": "Escaped characters"
@@ -6409,7 +6409,7 @@
         "Octal character"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 860
       },
       "title": "Octal character"
@@ -6424,7 +6424,7 @@
         "Line structure"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 87
       },
       "title": "Line structure"
@@ -6441,7 +6441,7 @@
         "Hexadecimal character"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 885
       },
       "title": "Hexadecimal character"
@@ -6458,7 +6458,7 @@
         "Named Unicode character"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 901
       },
       "title": "Named Unicode character"
@@ -6475,7 +6475,7 @@
         "Hexadecimal Unicode characters"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 920
       },
       "title": "Hexadecimal Unicode characters"
@@ -6492,7 +6492,7 @@
         "Unrecognized escape sequences"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 941
       },
       "title": "Unrecognized escape sequences"
@@ -6508,7 +6508,7 @@
         "Bytes literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 971
       },
       "title": "Bytes literals"
@@ -6524,7 +6524,7 @@
         "Logical lines"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 97
       },
       "title": "Logical lines"
@@ -6540,7 +6540,7 @@
         "Raw string literals"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
         "line": 997
       },
       "title": "Raw string literals"
@@ -6555,7 +6555,7 @@
         "The !nonlocal statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 1004
       },
       "title": "The !nonlocal statement"
@@ -6570,7 +6570,7 @@
         "The !type statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 1038
       },
       "title": "The !type statement"
@@ -6586,7 +6586,7 @@
         "Augmented assignment statements"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 260
       },
       "title": "Augmented assignment statements"
@@ -6602,7 +6602,7 @@
         "Annotated assignment statements"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 319
       },
       "title": "Annotated assignment statements"
@@ -6617,7 +6617,7 @@
         "Expression statements"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 36
       },
       "title": "Expression statements"
@@ -6632,7 +6632,7 @@
         "The !assert statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 381
       },
       "title": "The !assert statement"
@@ -6647,7 +6647,7 @@
         "The !pass statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 424
       },
       "title": "The !pass statement"
@@ -6662,7 +6662,7 @@
         "The !del statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 446
       },
       "title": "The !del statement"
@@ -6677,7 +6677,7 @@
         "The !return statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 485
       },
       "title": "The !return statement"
@@ -6692,7 +6692,7 @@
         "The !yield statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 522
       },
       "title": "The !yield statement"
@@ -6707,7 +6707,7 @@
         "The !raise statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 558
       },
       "title": "The !raise statement"
@@ -6721,7 +6721,7 @@
         "Simple statements"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 5
       },
       "title": "Simple statements"
@@ -6736,7 +6736,7 @@
         "The !break statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 683
       },
       "title": "The !break statement"
@@ -6751,7 +6751,7 @@
         "The !continue statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 717
       },
       "title": "The !continue statement"
@@ -6766,7 +6766,7 @@
         "Assignment statements"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 72
       },
       "title": "Assignment statements"
@@ -6781,7 +6781,7 @@
         "The !import statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 742
       },
       "title": "The !import statement"
@@ -6797,7 +6797,7 @@
         "Future statements"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 875
       },
       "title": "Future statements"
@@ -6812,7 +6812,7 @@
         "The !global statement"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
         "line": 961
       },
       "title": "The !global statement"
@@ -6827,7 +6827,7 @@
         "Expression input"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/toplevel_components.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/toplevel_components.rst",
         "line": 101
       },
       "title": "Expression input"
@@ -6842,7 +6842,7 @@
         "Complete Python programs"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/toplevel_components.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/toplevel_components.rst",
         "line": 18
       },
       "title": "Complete Python programs"
@@ -6856,7 +6856,7 @@
         "Top-level components"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/toplevel_components.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/toplevel_components.rst",
         "line": 5
       },
       "title": "Top-level components"
@@ -6871,7 +6871,7 @@
         "File input"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/toplevel_components.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/toplevel_components.rst",
         "line": 64
       },
       "title": "File input"
@@ -6886,7 +6886,7 @@
         "Interactive input"
       ],
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/toplevel_components.rst",
+        "file": ".local/Python-3.14.3/Doc/reference/toplevel_components.rst",
         "line": 85
       },
       "title": "Interactive input"
@@ -6895,7 +6895,7 @@
       "id": "token::AMPER",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 26
       },
       "title": "AMPER"
@@ -6904,7 +6904,7 @@
       "id": "token::AMPEREQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 48
       },
       "title": "AMPEREQUAL"
@@ -6913,7 +6913,7 @@
       "id": "token::AT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 56
       },
       "title": "AT"
@@ -6922,7 +6922,7 @@
       "id": "token::ATEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 57
       },
       "title": "ATEQUAL"
@@ -6931,7 +6931,7 @@
       "id": "token::CIRCUMFLEX",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 39
       },
       "title": "CIRCUMFLEX"
@@ -6940,7 +6940,7 @@
       "id": "token::CIRCUMFLEXEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 50
       },
       "title": "CIRCUMFLEXEQUAL"
@@ -6949,7 +6949,7 @@
       "id": "token::COLON",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 18
       },
       "title": "COLON"
@@ -6958,7 +6958,7 @@
       "id": "token::COLONEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 60
       },
       "title": "COLONEQUAL"
@@ -6967,7 +6967,7 @@
       "id": "token::COMMA",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 19
       },
       "title": "COMMA"
@@ -6976,7 +6976,7 @@
       "id": "token::COMMENT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 73
       },
       "title": "COMMENT"
@@ -6985,7 +6985,7 @@
       "id": "token::DEDENT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 12
       },
       "title": "DEDENT"
@@ -6994,7 +6994,7 @@
       "id": "token::DOT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 30
       },
       "title": "DOT"
@@ -7003,7 +7003,7 @@
       "id": "token::DOUBLESLASH",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 54
       },
       "title": "DOUBLESLASH"
@@ -7012,7 +7012,7 @@
       "id": "token::DOUBLESLASHEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 55
       },
       "title": "DOUBLESLASHEQUAL"
@@ -7021,7 +7021,7 @@
       "id": "token::DOUBLESTAR",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 42
       },
       "title": "DOUBLESTAR"
@@ -7030,7 +7030,7 @@
       "id": "token::DOUBLESTAREQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 53
       },
       "title": "DOUBLESTAREQUAL"
@@ -7039,7 +7039,7 @@
       "id": "token::ELLIPSIS",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 59
       },
       "title": "ELLIPSIS"
@@ -7048,7 +7048,7 @@
       "id": "token::ENCODING",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 78
       },
       "title": "ENCODING"
@@ -7057,7 +7057,7 @@
       "id": "token::ENDMARKER",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 6
       },
       "title": "ENDMARKER"
@@ -7066,7 +7066,7 @@
       "id": "token::EQEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 34
       },
       "title": "EQEQUAL"
@@ -7075,7 +7075,7 @@
       "id": "token::EQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 29
       },
       "title": "EQUAL"
@@ -7084,7 +7084,7 @@
       "id": "token::ERRORTOKEN",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 75
       },
       "title": "ERRORTOKEN"
@@ -7093,7 +7093,7 @@
       "id": "token::EXCLAMATION",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 61
       },
       "title": "EXCLAMATION"
@@ -7102,7 +7102,7 @@
       "id": "token::FSTRING_END",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 69
       },
       "title": "FSTRING_END"
@@ -7111,7 +7111,7 @@
       "id": "token::FSTRING_MIDDLE",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 68
       },
       "title": "FSTRING_MIDDLE"
@@ -7120,7 +7120,7 @@
       "id": "token::FSTRING_START",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 67
       },
       "title": "FSTRING_START"
@@ -7129,7 +7129,7 @@
       "id": "token::GREATER",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 28
       },
       "title": "GREATER"
@@ -7138,7 +7138,7 @@
       "id": "token::GREATEREQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 37
       },
       "title": "GREATEREQUAL"
@@ -7147,7 +7147,7 @@
       "id": "token::INDENT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 11
       },
       "title": "INDENT"
@@ -7156,7 +7156,7 @@
       "id": "token::LBRACE",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 32
       },
       "title": "LBRACE"
@@ -7165,7 +7165,7 @@
       "id": "token::LEFTSHIFT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 40
       },
       "title": "LEFTSHIFT"
@@ -7174,7 +7174,7 @@
       "id": "token::LEFTSHIFTEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 51
       },
       "title": "LEFTSHIFTEQUAL"
@@ -7183,7 +7183,7 @@
       "id": "token::LESS",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 27
       },
       "title": "LESS"
@@ -7192,7 +7192,7 @@
       "id": "token::LESSEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 36
       },
       "title": "LESSEQUAL"
@@ -7201,7 +7201,7 @@
       "id": "token::LPAR",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 14
       },
       "title": "LPAR"
@@ -7210,7 +7210,7 @@
       "id": "token::LSQB",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 16
       },
       "title": "LSQB"
@@ -7219,7 +7219,7 @@
       "id": "token::MINEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 44
       },
       "title": "MINEQUAL"
@@ -7228,7 +7228,7 @@
       "id": "token::MINUS",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 22
       },
       "title": "MINUS"
@@ -7237,7 +7237,7 @@
       "id": "token::NAME",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 7
       },
       "title": "NAME"
@@ -7246,7 +7246,7 @@
       "id": "token::NEWLINE",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 10
       },
       "title": "NEWLINE"
@@ -7255,7 +7255,7 @@
       "id": "token::NL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 74
       },
       "title": "NL"
@@ -7264,7 +7264,7 @@
       "id": "token::NOTEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 35
       },
       "title": "NOTEQUAL"
@@ -7273,7 +7273,7 @@
       "id": "token::NUMBER",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 8
       },
       "title": "NUMBER"
@@ -7282,7 +7282,7 @@
       "id": "token::OP",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 63
       },
       "title": "OP"
@@ -7291,7 +7291,7 @@
       "id": "token::PERCENT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 31
       },
       "title": "PERCENT"
@@ -7300,7 +7300,7 @@
       "id": "token::PERCENTEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 47
       },
       "title": "PERCENTEQUAL"
@@ -7309,7 +7309,7 @@
       "id": "token::PLUS",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 21
       },
       "title": "PLUS"
@@ -7318,7 +7318,7 @@
       "id": "token::PLUSEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 43
       },
       "title": "PLUSEQUAL"
@@ -7327,7 +7327,7 @@
       "id": "token::RARROW",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 58
       },
       "title": "RARROW"
@@ -7336,7 +7336,7 @@
       "id": "token::RBRACE",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 33
       },
       "title": "RBRACE"
@@ -7345,7 +7345,7 @@
       "id": "token::RIGHTSHIFT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 41
       },
       "title": "RIGHTSHIFT"
@@ -7354,7 +7354,7 @@
       "id": "token::RIGHTSHIFTEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 52
       },
       "title": "RIGHTSHIFTEQUAL"
@@ -7363,7 +7363,7 @@
       "id": "token::RPAR",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 15
       },
       "title": "RPAR"
@@ -7372,7 +7372,7 @@
       "id": "token::RSQB",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 17
       },
       "title": "RSQB"
@@ -7381,7 +7381,7 @@
       "id": "token::SEMI",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 20
       },
       "title": "SEMI"
@@ -7390,7 +7390,7 @@
       "id": "token::SLASH",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 24
       },
       "title": "SLASH"
@@ -7399,7 +7399,7 @@
       "id": "token::SLASHEQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 46
       },
       "title": "SLASHEQUAL"
@@ -7408,7 +7408,7 @@
       "id": "token::SOFT_KEYWORD",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 66
       },
       "title": "SOFT_KEYWORD"
@@ -7417,7 +7417,7 @@
       "id": "token::STAR",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 23
       },
       "title": "STAR"
@@ -7426,7 +7426,7 @@
       "id": "token::STAREQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 45
       },
       "title": "STAREQUAL"
@@ -7435,7 +7435,7 @@
       "id": "token::STRING",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 9
       },
       "title": "STRING"
@@ -7444,7 +7444,7 @@
       "id": "token::TILDE",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 38
       },
       "title": "TILDE"
@@ -7453,7 +7453,7 @@
       "id": "token::TSTRING_END",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 72
       },
       "title": "TSTRING_END"
@@ -7462,7 +7462,7 @@
       "id": "token::TSTRING_MIDDLE",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 71
       },
       "title": "TSTRING_MIDDLE"
@@ -7471,7 +7471,7 @@
       "id": "token::TSTRING_START",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 70
       },
       "title": "TSTRING_START"
@@ -7480,7 +7480,7 @@
       "id": "token::TYPE_COMMENT",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 65
       },
       "title": "TYPE_COMMENT"
@@ -7489,7 +7489,7 @@
       "id": "token::TYPE_IGNORE",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 64
       },
       "title": "TYPE_IGNORE"
@@ -7498,7 +7498,7 @@
       "id": "token::VBAR",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 25
       },
       "title": "VBAR"
@@ -7507,7 +7507,7 @@
       "id": "token::VBAREQUAL",
       "kind": "token",
       "source": {
-        "file": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens",
+        "file": ".local/Python-3.14.3/Grammar/Tokens",
         "line": 49
       },
       "title": "VBAREQUAL"
@@ -7515,18 +7515,18 @@
   ],
   "schema_version": 1,
   "sources": {
-    "grammar": "/Users/$USER/Downloads/Python-3.14.3/Grammar/python.gram",
+    "grammar": ".local/Python-3.14.3/Grammar/python.gram",
     "reference_files": [
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/lexical_analysis.rst",
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/simple_stmts.rst",
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/compound_stmts.rst",
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/expressions.rst",
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/toplevel_components.rst",
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/import.rst",
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/executionmodel.rst",
-      "/Users/$USER/Downloads/Python-3.14.3/Doc/reference/datamodel.rst"
+      ".local/Python-3.14.3/Doc/reference/lexical_analysis.rst",
+      ".local/Python-3.14.3/Doc/reference/simple_stmts.rst",
+      ".local/Python-3.14.3/Doc/reference/compound_stmts.rst",
+      ".local/Python-3.14.3/Doc/reference/expressions.rst",
+      ".local/Python-3.14.3/Doc/reference/toplevel_components.rst",
+      ".local/Python-3.14.3/Doc/reference/import.rst",
+      ".local/Python-3.14.3/Doc/reference/executionmodel.rst",
+      ".local/Python-3.14.3/Doc/reference/datamodel.rst"
     ],
-    "tokens": "/Users/$USER/Downloads/Python-3.14.3/Grammar/Tokens"
+    "tokens": ".local/Python-3.14.3/Grammar/Tokens"
   },
   "target": "CPython 3.14 source-language inventory"
 }

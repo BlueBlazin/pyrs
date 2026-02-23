@@ -18,6 +18,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
 
 @dataclass(frozen=True)
 class ProbeCase:
@@ -35,7 +37,7 @@ def detect_cpython_lib(explicit: str | None) -> pathlib.Path:
         candidates.append(pathlib.Path(env))
     candidates.extend(
         [
-            pathlib.Path("/Users/$USER/Downloads/Python-3.14.3/Lib"),
+            REPO_ROOT / ".local" / "Python-3.14.3" / "Lib",
             pathlib.Path("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14"),
         ]
     )

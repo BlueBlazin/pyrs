@@ -24,6 +24,11 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Prefer setting environment variables in a separate step before running commands; use inline `ENV=... cmd` only as a fallback when the direct approach is not viable.
 - Hard rule for this workspace: do not run commands in inline-env form (`ENV=... cmd`) when a separate environment setup step is possible.
 
+## Local CPython Source/Lib Baseline
+- Use local untracked CPython checkout at `.local/Python-3.14.3` as the primary reference root.
+- Use `.local/Python-3.14.3/Lib` as the default `PYRS_CPYTHON_LIB` for local probes.
+- Keep `/.local/` untracked (git-ignored); never commit the copied CPython tree.
+
 ## Test Execution Cadence
 - Do not run full `cargo test -q` for every change; full suite takes ~20 minutes with local incremental churn.
 - Default to targeted tests for touched surfaces first.

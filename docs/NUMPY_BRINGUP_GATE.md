@@ -38,7 +38,7 @@ Base gate:
 ```bash
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
-  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --cpython-lib .local/Python-3.14.3/Lib \
   --out perf/numpy_gate_latest.json \
   --timeout 20
 ```
@@ -48,7 +48,7 @@ Direct-mode gate + scientific stack:
 ```bash
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
-  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --cpython-lib .local/Python-3.14.3/Lib \
   --include-scientific-stack \
   --probe-local-stack \
   --python-probe-bin .venv-ext314/bin/python \
@@ -61,7 +61,7 @@ Local site-packages probe mode:
 ```bash
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
-  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --cpython-lib .local/Python-3.14.3/Lib \
   --probe-local-numpy \
   --python-probe-bin python3 \
   --out perf/numpy_gate_local_probe_latest.json \
@@ -73,7 +73,7 @@ Source-build mode:
 ```bash
 python3 scripts/probe_numpy_gate.py \
   --pyrs target/debug/pyrs \
-  --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib \
+  --cpython-lib .local/Python-3.14.3/Lib \
   --numpy-src /path/to/numpy/source/tree \
   --python-build-bin python3 \
   --build-timeout 1800 \

@@ -27,22 +27,22 @@ Do not rely on stale point-in-time numbers in this document.
 ## CPython Reference Map
 
 - Eval/dispatch specialization:
-  - `/Users/$USER/Downloads/Python-3.14.3/Python/ceval.c`
-  - `/Users/$USER/Downloads/Python-3.14.3/Python/generated_cases.c.h`
+  - `.local/Python-3.14.3/Python/ceval.c`
+  - `.local/Python-3.14.3/Python/generated_cases.c.h`
 - Frame model and lifecycle:
-  - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_frame.h`
-  - `/Users/$USER/Downloads/Python-3.14.3/Python/frame.c`
+  - `.local/Python-3.14.3/Include/internal/pycore_frame.h`
+  - `.local/Python-3.14.3/Python/frame.c`
 - Call/vectorcall:
-  - `/Users/$USER/Downloads/Python-3.14.3/Objects/call.c`
-  - `/Users/$USER/Downloads/Python-3.14.3/Include/cpython/abstract.h`
+  - `.local/Python-3.14.3/Objects/call.c`
+  - `.local/Python-3.14.3/Include/cpython/abstract.h`
 - Integer model:
-  - `/Users/$USER/Downloads/Python-3.14.3/Objects/longobject.c`
+  - `.local/Python-3.14.3/Objects/longobject.c`
 - Unicode/interning model:
-  - `/Users/$USER/Downloads/Python-3.14.3/Objects/unicodeobject.c`
-  - `/Users/$USER/Downloads/Python-3.14.3/Include/internal/pycore_unicodeobject.h`
+  - `.local/Python-3.14.3/Objects/unicodeobject.c`
+  - `.local/Python-3.14.3/Include/internal/pycore_unicodeobject.h`
 - Dict/set internals:
-  - `/Users/$USER/Downloads/Python-3.14.3/Objects/dictobject.c`
-  - `/Users/$USER/Downloads/Python-3.14.3/Objects/setobject.c`
+  - `.local/Python-3.14.3/Objects/dictobject.c`
+  - `.local/Python-3.14.3/Objects/setobject.c`
 
 ## Backlog
 

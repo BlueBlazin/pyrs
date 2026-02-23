@@ -170,7 +170,7 @@ You can run against a real CPython 3.14 `Lib/` directory now.
 Recommended (pinned local CPython tree):
 
 ```bash
-PYRS_CPYTHON_LIB=/path/to/Python-3.14.3/Lib cargo run -- path/to/script.py
+PYRS_CPYTHON_LIB=.local/Python-3.14.3/Lib cargo run -- path/to/script.py
 ```
 
 How stdlib loading works in `pyrs`:
@@ -185,9 +185,9 @@ How stdlib loading works in `pyrs`:
 
 Do we keep a local copy in this repo?
 
-- Not required.
-- You point `pyrs` at a filesystem `Lib/` tree.
-- If you want reproducibility, keep a local pinned CPython checkout (e.g. `Python-3.14.3/Lib`) and set `PYRS_CPYTHON_LIB`.
+- Yes (recommended): keep an untracked local CPython checkout at `.local/Python-3.14.3`.
+- We currently use `.local/Python-3.14.3/Lib` for stdlib/import probes and `.local/Python-3.14.3` for source/doc references.
+- `/.local/` is git-ignored to prevent accidental commits.
 
 ## Safety Note for Parity Runs
 

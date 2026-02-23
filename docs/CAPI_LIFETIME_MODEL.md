@@ -93,9 +93,9 @@ Source references used for this model:
   - [Defining extension modules](https://docs.python.org/3.14/c-api/extension-modules.html)
   - [Module definitions](https://docs.python.org/3.14/c-api/module.html#module-definitions)
 - CPython source in local tree:
-  - `/Users/$USER/Downloads/Python-3.14.3/Include/object.h`
-  - `/Users/$USER/Downloads/Python-3.14.3/Include/refcount.h`
-  - `/Users/$USER/Downloads/Python-3.14.3/Objects/object.c`
+  - `.local/Python-3.14.3/Include/object.h`
+  - `.local/Python-3.14.3/Include/refcount.h`
+  - `.local/Python-3.14.3/Objects/object.c`
 
 Key contract we must follow:
 - API boundaries explicitly define borrowed/new/stolen references.

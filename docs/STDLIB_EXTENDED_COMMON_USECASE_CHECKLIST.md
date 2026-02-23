@@ -9,8 +9,8 @@ Source artifact: `perf/stdlib_compat_extended_latest.json`
 - Import pass: `50/50`
 - Common-usecase smoke pass: `50/50`
 - Runtime: `target/debug/pyrs`
-- CPython Lib: `/Users/$USER/Downloads/Python-3.14.3/Lib`
-- Probe command: `python3 scripts/probe_stdlib_extended.py --pyrs target/debug/pyrs --cpython-lib /Users/$USER/Downloads/Python-3.14.3/Lib --out perf/stdlib_compat_extended_latest.json --timeout 20`
+- CPython Lib: `.local/Python-3.14.3/Lib`
+- Probe command: `python3 scripts/probe_stdlib_extended.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --out perf/stdlib_compat_extended_latest.json --timeout 20`
 - Current failing modules: none.
 
 ## Checklist

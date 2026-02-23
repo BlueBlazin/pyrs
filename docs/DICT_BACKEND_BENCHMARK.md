@@ -7,7 +7,7 @@ Refresh with `scripts/bench_dict_backend.sh` and update this file in the same co
 
 1. `pyrs` release binary: `target/release/pyrs`
 2. CPython binary: `python3.10`
-3. CPython stdlib path: `/Users/$USER/Downloads/Python-3.14.3/Lib`
+3. CPython stdlib path: `.local/Python-3.14.3/Lib`
 
 ## Command
 

@@ -2,6 +2,10 @@
 
 Use this file to find canonical ownership quickly.
 
+## Local CPython Reference Root
+- Preferred local CPython 3.14.3 checkout path: `.local/Python-3.14.3` (untracked, git-ignored).
+- Preferred stdlib path for probes/runtime wiring: `.local/Python-3.14.3/Lib`.
+
 ## Planning and Release
 - `docs/ROADMAP.md`: milestone order, execution strategy, and exit criteria.
 - `docs/PRODUCTION_READINESS.md`: release blockers and completion requirements.
