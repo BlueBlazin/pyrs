@@ -3247,6 +3247,8 @@ impl Vm {
             "typing.placeholder".to_string(),
             Vec::new(),
         ));
+        let typing_generic_alias_class =
+            self.alloc_bootstrap_class_value("_GenericAlias", "typing");
         self.install_builtin_module(
             "typing",
             &[
@@ -3318,6 +3320,7 @@ impl Vm {
                 ("Self", typing_placeholder.clone()),
                 ("LiteralString", typing_placeholder.clone()),
                 ("TypeAlias", typing_placeholder.clone()),
+                ("_GenericAlias", typing_generic_alias_class.clone()),
                 ("ParamSpecArgs", typing_placeholder.clone()),
                 ("ParamSpecKwargs", typing_placeholder.clone()),
                 ("Concatenate", typing_placeholder.clone()),

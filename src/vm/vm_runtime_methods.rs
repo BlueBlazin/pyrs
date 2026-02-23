@@ -775,6 +775,40 @@ impl Vm {
         }
     }
 
+    fn typing_generic_alias_class(&self) -> Option<ObjRef> {
+        let module = self.modules.get("typing")?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        match module_data.globals.get("_GenericAlias") {
+            Some(Value::Class(class)) => Some(class.clone()),
+            _ => None,
+        }
+    }
+
+    fn ensure_typing_generic_alias_class(&mut self) -> Option<ObjRef> {
+        if let Some(class) = self.typing_generic_alias_class() {
+            return Some(class);
+        }
+        if self.import_module("typing").is_ok() {
+            return self.typing_generic_alias_class();
+        }
+        None
+    }
+
+    fn origin_prefers_typing_generic_alias(&self, origin: &Value) -> bool {
+        let Value::Class(class) = origin else {
+            return false;
+        };
+        let Object::Class(class_data) = &*class.kind() else {
+            return false;
+        };
+        matches!(
+            class_data.attrs.get("__type_params__"),
+            Some(Value::Tuple(_))
+        )
+    }
+
     pub(super) fn ensure_generic_alias_class(&mut self) -> ObjRef {
         const CACHE_KEY: &str = "__types_generic_alias__";
         if let Some(existing) = self.generic_alias_class() {
@@ -805,7 +839,12 @@ impl Vm {
     }
 
     pub(super) fn alloc_generic_alias_instance(&mut self, origin: Value, index: Value) -> Value {
-        let alias_class = self.ensure_generic_alias_class();
+        let alias_class = if self.origin_prefers_typing_generic_alias(&origin) {
+            self.ensure_typing_generic_alias_class()
+                .unwrap_or_else(|| self.ensure_generic_alias_class())
+        } else {
+            self.ensure_generic_alias_class()
+        };
         let alias = self.heap.alloc_instance(InstanceObject::new(alias_class));
         if let Value::Instance(instance) = &alias
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()

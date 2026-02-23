@@ -5208,33 +5208,27 @@ impl Vm {
                 "compile() mode must be 'exec', 'eval', or 'single'",
             ));
         }
+        let syntax_error =
+            |message: String| RuntimeError::with_exception("SyntaxError", Some(message));
         self.cache_source_text(&filename, &source_text);
         if mode == "eval" {
-            let expr_ast = parser::parse_expression(&source_text).map_err(|err| {
-                RuntimeError::new(format!(
-                    "compile() parse error at {}: {}",
-                    err.offset, err.message
-                ))
-            })?;
+            let expr_ast =
+                parser::parse_expression(&source_text).map_err(|err| syntax_error(err.message))?;
             if request_ast {
                 return self.convert_expression_to_ast_node(&expr_ast);
             }
             let code = compiler::compile_expression_with_filename(&expr_ast, &filename)
-                .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?;
+                .map_err(|err| syntax_error(err.message))?;
             return Ok(Value::Code(Rc::new(code)));
         }
 
-        let module_ast = parser::parse_module(&source_text).map_err(|err| {
-            RuntimeError::new(format!(
-                "compile() parse error at {}: {}",
-                err.offset, err.message
-            ))
-        })?;
+        let module_ast =
+            parser::parse_module(&source_text).map_err(|err| syntax_error(err.message))?;
         if request_ast {
             return self.convert_module_to_ast_node(&module_ast);
         }
         let code = compiler::compile_module_with_filename(&module_ast, &filename)
-            .map_err(|err| RuntimeError::new(format!("compile() error: {}", err.message)))?;
+            .map_err(|err| syntax_error(err.message))?;
         // `single` currently reuses module-compilation shape until REPL-specific
         // code object semantics are modeled separately.
         Ok(Value::Code(Rc::new(code)))

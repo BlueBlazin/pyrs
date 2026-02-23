@@ -1303,6 +1303,28 @@ fn runtime_builtin_generic_alias_works_without_types_import() {
 }
 
 #[test]
+fn runtime_user_generic_class_subscript_uses_typing_generic_alias() {
+    let source = "import sys\nclass C[T]:\n    pass\nalias = C[int]\nok = ('typing' in sys.modules and type(alias).__module__ == 'typing' and type(alias).__name__ == '_GenericAlias' and getattr(alias, '__origin__', None) is C and hasattr(alias, '__args__') and len(alias.__args__) == 1 and alias.__args__[0] is int)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn compile_parse_error_raises_syntax_error_type() {
+    let source = "ok = False\ntry:\n    compile('def broken(:\\n    pass\\n', '<broken>', 'exec')\nexcept SyntaxError:\n    ok = True\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

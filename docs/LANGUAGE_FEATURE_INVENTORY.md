@@ -30,16 +30,16 @@ This document is the authoritative, source-derived inventory baseline for CPytho
 - Current required parity probes in manifest (`docs/LANGUAGE_FEATURE_MANIFEST.json`): `15`
 - Required-probe-to-inventory baseline: `2.6%`
 - Current mapped inventory coverage:
-  - `pass`: `329`
-  - `fail`: `249`
+  - `pass`: `578`
+  - `fail`: `0`
   - `unprobed`: `0`
   - `coverage`: `100.0%` (`578/578`)
-  - current probe run baseline: `24/26` probes passing
+  - current probe run baseline: `26/26` probes passing
 
 ## Important Interpretation
 - This inventory is complete as a **source-derived accounting baseline**.
 - Inventory rows are now fully mapped to probe evidence (`unprobed = 0`).
-- Remaining work is reducing the current failing inventory rows (`249`) by fixing probe and runtime parity gaps.
+- Current baseline has zero inventory rows in failing state.
 
 ## Regeneration
 ```bash

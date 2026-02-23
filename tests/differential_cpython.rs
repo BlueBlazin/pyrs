@@ -2378,3 +2378,48 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_runtime_user_generic_class_alias_shape_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import sys
+class C[T]:
+    pass
+alias = C[int]
+result = {
+    "typing_loaded": "typing" in sys.modules,
+    "alias_type_module": type(alias).__module__,
+    "alias_type_name": type(alias).__name__,
+    "origin_is_c": getattr(alias, "__origin__", None) is C,
+    "arg0_is_int": (
+        hasattr(alias, "__args__")
+        and len(alias.__args__) == 1
+        and alias.__args__[0] is int
+    ),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
+fn differential_compile_parse_error_raises_syntaxerror_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+ok = False
+try:
+    compile("def broken(:\n    pass\n", "<broken>", "exec")
+except SyntaxError:
+    ok = True
+result = {"syntax_error": ok}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
