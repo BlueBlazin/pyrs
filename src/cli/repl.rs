@@ -16,7 +16,7 @@ use reedline::{
 };
 use reedline::{EditCommand, Highlighter, Hinter};
 
-use super::{format_compile_error, format_syntax_error};
+use super::{error_style, format_compile_error, format_syntax_error};
 use crate::VERSION;
 use crate::ast::{AssignTarget, Module, StmtKind};
 use crate::compiler;
@@ -333,7 +333,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                         }
                     };
                     if let Err(err) = result {
-                        eprintln!("{err}");
+                        eprintln!("{}", error_style::format_error_for_stderr(&err));
                     } else {
                         refresh_completion_state(vm, &completion_state);
                     }
@@ -358,7 +358,7 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                             true,
                             timing_enabled,
                         ) {
-                            eprintln!("{err}");
+                            eprintln!("{}", error_style::format_error_for_stderr(&err));
                         } else {
                             apply_completion_refresh_plan(vm, &completion_state, completion_plan);
                         }
@@ -368,7 +368,14 @@ fn run_interactive_session(vm: &mut Vm, import_site: bool) -> Result<(), String>
                         if repl_input_is_incomplete(&pending, &parse_err) {
                             continue;
                         }
-                        eprintln!("{}", format_parse_error(&pending, "<stdin>", &parse_err));
+                        eprintln!(
+                            "{}",
+                            error_style::format_error_for_stderr(&format_parse_error(
+                                &pending,
+                                "<stdin>",
+                                &parse_err,
+                            ))
+                        );
                         pending.clear();
                     }
                 }

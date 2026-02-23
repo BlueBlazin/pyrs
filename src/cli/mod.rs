@@ -1,5 +1,6 @@
 //! CLI entry point and argument handling.
 
+mod error_style;
 mod repl;
 
 use std::collections::HashSet;
@@ -73,7 +74,7 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
             Some(path) => match run_bytecode(&path) {
                 Ok(()) => 0,
                 Err(err) => {
-                    eprintln!("{err}");
+                    eprintln!("{}", error_style::format_error_for_stderr(&err));
                     2
                 }
             },
@@ -90,7 +91,7 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
             Some(source) => match run_command(&source, import_site) {
                 Ok(()) => 0,
                 Err(err) => {
-                    eprintln!("{err}");
+                    eprintln!("{}", error_style::format_error_for_stderr(&err));
                     2
                 }
             },
@@ -102,7 +103,7 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
         Some(path) => match run_file(&path, import_site) {
             Ok(()) => 0,
             Err(err) => {
-                eprintln!("{err}");
+                eprintln!("{}", error_style::format_error_for_stderr(&err));
                 2
             }
         },
