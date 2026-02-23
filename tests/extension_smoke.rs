@@ -60,6 +60,90 @@ fn extension_smoke_subprocess_timeout() -> Duration {
     Duration::from_secs(secs.max(1))
 }
 
+fn extension_smoke_compile_timeout() -> Duration {
+    let secs = std::env::var("PYRS_EXTENSION_SMOKE_COMPILE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(120);
+    Duration::from_secs(secs.max(1))
+}
+
+fn extension_smoke_timing_enabled() -> bool {
+    std::env::var("PYRS_EXTENSION_SMOKE_TIMING")
+        .ok()
+        .map(|value| {
+            let lower = value.to_ascii_lowercase();
+            matches!(lower.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+fn extension_smoke_cache_enabled() -> bool {
+    std::env::var("PYRS_EXTENSION_SMOKE_CACHE")
+        .ok()
+        .map(|value| {
+            let lower = value.to_ascii_lowercase();
+            !matches!(lower.as_str(), "0" | "false" | "no" | "off")
+        })
+        .unwrap_or(true)
+}
+
+fn extension_smoke_cache_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("PYRS_EXTENSION_SMOKE_CACHE_DIR") {
+        return PathBuf::from(path);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("extension_smoke_cache")
+}
+
+fn extension_smoke_cache_key(mode: &str, source: &[u8], toolchain: &str) -> String {
+    // deterministic, dependency-free FNV-1a digest for cache keys
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in mode.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    for byte in toolchain.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    for byte in source {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn extension_smoke_cache_path(output_path: &Path, key: &str) -> PathBuf {
+    let suffix = output_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .filter(|ext| !ext.is_empty())
+        .map(|ext| format!(".{ext}"))
+        .unwrap_or_else(|| ".bin".to_string());
+    extension_smoke_cache_dir().join(format!("{key}{suffix}"))
+}
+
+fn extension_smoke_source_is_cacheable(source: &[u8]) -> bool {
+    // Some probes intentionally validate __FILE__/source-path behavior.
+    // Reusing a cached binary would preserve the original compile path and
+    // break those semantics once temporary source files are removed.
+    !(source.windows("__FILE__".len()).any(|w| w == b"__FILE__")
+        || source
+            .windows("PyErr_ProgramText(".len())
+            .any(|w| w == b"PyErr_ProgramText("))
+}
+
+fn extension_smoke_log_timing(stage: &str, subject: &str, elapsed: Duration) {
+    if extension_smoke_timing_enabled() {
+        eprintln!(
+            "extension-smoke timing: stage={stage} subject={subject} elapsed={:.3}s",
+            elapsed.as_secs_f64()
+        );
+    }
+}
+
 fn run_command_with_timeout(
     mut cmd: Command,
     timeout: Duration,
@@ -107,6 +191,24 @@ fn run_command_with_timeout(
 }
 
 fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<(), String> {
+    let source_bytes = fs::read(source_path)
+        .map_err(|err| format!("failed to read extension source {}: {err}", source_path.display()))?;
+    let toolchain = "cc -fPIC dynamiclib/shared";
+    let cache_key = extension_smoke_cache_key("plain", &source_bytes, toolchain);
+    let cache_path = extension_smoke_cache_path(output_path, &cache_key);
+    let cacheable = extension_smoke_source_is_cacheable(&source_bytes);
+    if extension_smoke_cache_enabled() && cacheable && cache_path.is_file() {
+        fs::copy(&cache_path, output_path).map_err(|err| {
+            format!(
+                "failed to copy cached extension {} -> {}: {err}",
+                cache_path.display(),
+                output_path.display()
+            )
+        })?;
+        extension_smoke_log_timing("compile_cache_hit", &cache_key, Duration::from_secs(0));
+        return Ok(());
+    }
+
     let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include");
     let mut cmd = Command::new("cc");
     cmd.arg("-fPIC");
@@ -128,9 +230,9 @@ fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<()
         .arg("-o")
         .arg(output_path);
 
-    let output = cmd
-        .output()
-        .map_err(|err| format!("failed to invoke C compiler: {err}"))?;
+    let start = Instant::now();
+    let output = run_command_with_timeout(cmd, extension_smoke_compile_timeout(), "C compiler")?;
+    extension_smoke_log_timing("compile", &cache_key, start.elapsed());
     if !output.status.success() {
         return Err(format!(
             "C compiler failed (status={}):\nstdout:\n{}\nstderr:\n{}",
@@ -139,6 +241,12 @@ fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<()
             String::from_utf8_lossy(&output.stderr)
         ));
     }
+    if extension_smoke_cache_enabled() && cacheable {
+        if let Some(parent) = cache_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::copy(output_path, &cache_path);
+    }
     Ok(())
 }
 
@@ -146,6 +254,24 @@ fn compile_shared_extension_with_cpython_compat(
     source_path: &Path,
     output_path: &Path,
 ) -> Result<(), String> {
+    let source_bytes = fs::read(source_path)
+        .map_err(|err| format!("failed to read extension source {}: {err}", source_path.display()))?;
+    let toolchain = "cc -fPIC compat dynamiclib/shared";
+    let cache_key = extension_smoke_cache_key("cpython_compat", &source_bytes, toolchain);
+    let cache_path = extension_smoke_cache_path(output_path, &cache_key);
+    let cacheable = extension_smoke_source_is_cacheable(&source_bytes);
+    if extension_smoke_cache_enabled() && cacheable && cache_path.is_file() {
+        fs::copy(&cache_path, output_path).map_err(|err| {
+            format!(
+                "failed to copy cached extension {} -> {}: {err}",
+                cache_path.display(),
+                output_path.display()
+            )
+        })?;
+        extension_smoke_log_timing("compile_cache_hit", &cache_key, Duration::from_secs(0));
+        return Ok(());
+    }
+
     let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include");
     let mut cmd = Command::new("cc");
     cmd.arg("-fPIC");
@@ -168,9 +294,9 @@ fn compile_shared_extension_with_cpython_compat(
         .arg("-o")
         .arg(output_path);
 
-    let output = cmd
-        .output()
-        .map_err(|err| format!("failed to invoke C compiler: {err}"))?;
+    let start = Instant::now();
+    let output = run_command_with_timeout(cmd, extension_smoke_compile_timeout(), "C compiler")?;
+    extension_smoke_log_timing("compile", &cache_key, start.elapsed());
     if !output.status.success() {
         return Err(format!(
             "C compiler failed (status={}):\nstdout:\n{}\nstderr:\n{}",
@@ -178,6 +304,12 @@ fn compile_shared_extension_with_cpython_compat(
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ));
+    }
+    if extension_smoke_cache_enabled() && cacheable {
+        if let Some(parent) = cache_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::copy(output_path, &cache_path);
     }
     Ok(())
 }
@@ -220,6 +352,27 @@ fn compile_shared_extension_with_build_vars(
     output_path: &Path,
     build_vars: &HashMap<String, String>,
 ) -> Result<(), String> {
+    let source_bytes = fs::read(source_path)
+        .map_err(|err| format!("failed to read extension source {}: {err}", source_path.display()))?;
+    let mut toolchain = String::new();
+    toolchain.push_str(build_vars.get("CC").map(String::as_str).unwrap_or("cc"));
+    toolchain.push('|');
+    toolchain.push_str(build_vars.get("CFLAGS").map(String::as_str).unwrap_or(""));
+    let cache_key = extension_smoke_cache_key("build_vars", &source_bytes, &toolchain);
+    let cache_path = extension_smoke_cache_path(output_path, &cache_key);
+    let cacheable = extension_smoke_source_is_cacheable(&source_bytes);
+    if extension_smoke_cache_enabled() && cacheable && cache_path.is_file() {
+        fs::copy(&cache_path, output_path).map_err(|err| {
+            format!(
+                "failed to copy cached extension {} -> {}: {err}",
+                cache_path.display(),
+                output_path.display()
+            )
+        })?;
+        extension_smoke_log_timing("compile_cache_hit", &cache_key, Duration::from_secs(0));
+        return Ok(());
+    }
+
     let include_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include");
     let compiler_cmd = build_vars
         .get("CC")
@@ -257,9 +410,13 @@ fn compile_shared_extension_with_build_vars(
         .arg(source_path)
         .arg("-o")
         .arg(output_path);
-    let output = cmd
-        .output()
-        .map_err(|err| format!("failed to invoke configured C compiler: {err}"))?;
+    let start = Instant::now();
+    let output = run_command_with_timeout(
+        cmd,
+        extension_smoke_compile_timeout(),
+        "configured C compiler",
+    )?;
+    extension_smoke_log_timing("compile", &cache_key, start.elapsed());
     if !output.status.success() {
         return Err(format!(
             "configured C compiler failed (status={}):\nstdout:\n{}\nstderr:\n{}",
@@ -267,6 +424,12 @@ fn compile_shared_extension_with_build_vars(
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ));
+    }
+    if extension_smoke_cache_enabled() && cacheable {
+        if let Some(parent) = cache_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let _ = fs::copy(output_path, &cache_path);
     }
     Ok(())
 }
@@ -298,7 +461,9 @@ fn run_import_snippet(bin: &Path, temp_root: &Path, snippet_body: &str) -> Resul
     let timeout = extension_smoke_subprocess_timeout();
     let mut cmd = Command::new(bin);
     cmd.arg("-S").arg("-c").arg(snippet);
+    let start = Instant::now();
     let output = run_command_with_timeout(cmd, timeout, "extension smoke subprocess")?;
+    extension_smoke_log_timing("subprocess", "import_snippet", start.elapsed());
     if !output.status.success() {
         return Err(format!(
             "extension smoke failed (status={}):\nstdout:\n{}\nstderr:\n{}",
@@ -324,7 +489,9 @@ fn run_import_snippet_expect_error(
     let timeout = extension_smoke_subprocess_timeout();
     let mut cmd = Command::new(bin);
     cmd.arg("-S").arg("-c").arg(snippet);
+    let start = Instant::now();
     let output = run_command_with_timeout(cmd, timeout, "extension smoke subprocess")?;
+    extension_smoke_log_timing("subprocess", "import_snippet_expect_error", start.elapsed());
     if output.status.success() {
         return Err("expected import failure but subprocess succeeded".to_string());
     }

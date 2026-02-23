@@ -23,6 +23,7 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 - Prefer direct command execution from the existing working directory (no wrapper like `zsh -lc 'cd ... && ...'` unless direct execution fails).
 - Prefer setting environment variables in a separate step before running commands; use inline `ENV=... cmd` only as a fallback when the direct approach is not viable.
 - Hard rule for this workspace: do not run commands in inline-env form (`ENV=... cmd`) when a separate environment setup step is possible.
+- Do not set `RUST_TEST_THREADS=1` by default. Use single-threaded test execution only for targeted race/flakiness diagnosis, then return to default parallel execution.
 
 ## Active Execution Lock (2026-02-16)
 - Primary focus is C-API closure for native scientific-stack support.

@@ -76,3 +76,23 @@ This enforces anti-scaffolding invariants:
 - obsolete local-shim toggle API is absent.
 - `docs/NOOP_BUILTIN_INVENTORY.txt` stays in sync with `print_noop_inventory`.
 - C-API no-op inventory drift check is green.
+
+## Extension Smoke Runtime Controls
+
+`tests/extension_smoke.rs` compiles native probes and runs many subprocess imports, so it has explicit controls for reliability/perf triage:
+
+- `PYRS_EXTENSION_SMOKE_TIMEOUT_SECS`:
+  - per-subprocess import timeout (default: `120`).
+- `PYRS_EXTENSION_SMOKE_COMPILE_TIMEOUT_SECS`:
+  - per-compile timeout for native probe builds (default: `120`).
+- `PYRS_EXTENSION_SMOKE_TIMING`:
+  - if set to `1`/`true`, emits per-stage timing lines (`compile`, `compile_cache_hit`, `subprocess`).
+- `PYRS_EXTENSION_SMOKE_CACHE`:
+  - enabled by default; set to `0` to disable extension build cache.
+- `PYRS_EXTENSION_SMOKE_CACHE_DIR`:
+  - override cache directory (default: `target/extension_smoke_cache`).
+
+Notes:
+
+- Cache is content-addressed by probe source + compile mode/flags.
+- Cache is automatically bypassed for path-sensitive probes that validate `__FILE__` / `PyErr_ProgramText(...)` semantics.
