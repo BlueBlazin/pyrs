@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn pyrs_bin() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("PYRS_SUBPROCESS_BIN") {
@@ -48,6 +50,60 @@ fn has_c_compiler() -> bool {
         .output()
         .map(|out| out.status.success())
         .unwrap_or(false)
+}
+
+fn extension_smoke_subprocess_timeout() -> Duration {
+    let secs = std::env::var("PYRS_EXTENSION_SMOKE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(120);
+    Duration::from_secs(secs.max(1))
+}
+
+fn run_command_with_timeout(
+    mut cmd: Command,
+    timeout: Duration,
+    context: &str,
+) -> Result<Output, String> {
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|err| format!("failed to spawn {context}: {err}"))?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    let _ = pipe.read_to_end(&mut stdout);
+                }
+                let mut stderr = Vec::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = pipe.read_to_end(&mut stderr);
+                }
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "{context} timed out after {}s",
+                        timeout.as_secs()
+                    ));
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => {
+                return Err(format!("failed to poll {context}: {err}"));
+            }
+        }
+    }
 }
 
 fn compile_shared_extension(source_path: &Path, output_path: &Path) -> Result<(), String> {
@@ -239,12 +295,10 @@ fn run_import_snippet(bin: &Path, temp_root: &Path, snippet_body: &str) -> Resul
         python_string_literal(temp_root),
         snippet_body
     );
-    let output = Command::new(bin)
-        .arg("-S")
-        .arg("-c")
-        .arg(snippet)
-        .output()
-        .map_err(|err| format!("pyrs subprocess failed: {err}"))?;
+    let timeout = extension_smoke_subprocess_timeout();
+    let mut cmd = Command::new(bin);
+    cmd.arg("-S").arg("-c").arg(snippet);
+    let output = run_command_with_timeout(cmd, timeout, "extension smoke subprocess")?;
     if !output.status.success() {
         return Err(format!(
             "extension smoke failed (status={}):\nstdout:\n{}\nstderr:\n{}",
@@ -267,12 +321,10 @@ fn run_import_snippet_expect_error(
         python_string_literal(temp_root),
         snippet_body
     );
-    let output = Command::new(bin)
-        .arg("-S")
-        .arg("-c")
-        .arg(snippet)
-        .output()
-        .map_err(|err| format!("pyrs subprocess failed: {err}"))?;
+    let timeout = extension_smoke_subprocess_timeout();
+    let mut cmd = Command::new(bin);
+    cmd.arg("-S").arg("-c").arg(snippet);
+    let output = run_command_with_timeout(cmd, timeout, "extension smoke subprocess")?;
     if output.status.success() {
         return Err("expected import failure but subprocess succeeded".to_string());
     }
