@@ -16,6 +16,78 @@ Probe = dict[str, Any]
 
 PROBES: list[Probe] = [
     {
+        "id": "pattern_matching_sequence_and_mapping",
+        "mode": "json_result",
+        "source": """items = [{"x": 2, "y": 3}, [1, 2, 3], "other"]
+out = []
+for item in items:
+    match item:
+        case {"x": a, "y": b}:
+            out.append(["map", a + b])
+        case [first, *rest]:
+            out.append(["seq", first, len(rest)])
+        case _:
+            out.append(["other", None])
+result = out
+""",
+    },
+    {
+        "id": "exception_group_except_star_split",
+        "mode": "json_result",
+        "source": """try:
+    raise ExceptionGroup("eg", [ValueError(1), TypeError(2)])
+except* ValueError as eg:
+    left = [len(eg.exceptions), type(eg.exceptions[0]).__name__]
+except* TypeError as tg:
+    right = [len(tg.exceptions), type(tg.exceptions[0]).__name__]
+result = {"left": left, "right": right}
+""",
+    },
+    {
+        "id": "positional_only_and_kwonly_calling",
+        "mode": "json_result",
+        "source": """def f(a, /, b=2, *, c=3):
+    return [a, b, c]
+result = [f(1), f(1, 4, c=5)]
+""",
+    },
+    {
+        "id": "runtime_function_type_params",
+        "mode": "json_result",
+        "source": """def ident[T, *Ts, **P](x):
+    return x
+params = ident.__type_params__
+result = {
+    "kind_names": [type(tp).__name__ for tp in params],
+    "names": [tp.__name__ for tp in params],
+    "call_result": ident(7),
+}
+""",
+    },
+    {
+        "id": "runtime_class_type_params",
+        "mode": "json_result",
+        "source": """class Box[T, *Ts, **P]:
+    pass
+params = Box.__type_params__
+result = {
+    "kind_names": [type(tp).__name__ for tp in params],
+    "names": [tp.__name__ for tp in params],
+}
+""",
+    },
+    {
+        "id": "runtime_type_alias_type_params",
+        "mode": "json_result",
+        "source": """type Pair[T] = tuple[T, T]
+result = {
+    "type_name": type(Pair).__name__,
+    "names": [tp.__name__ for tp in Pair.__type_params__],
+    "repr": repr(Pair),
+}
+""",
+    },
+    {
         "id": "template_literal_basic_type",
         "mode": "json_result",
         "source": """variety = "Stilton"

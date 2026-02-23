@@ -3,6 +3,48 @@
   "target": "CPython 3.14 source-language feature probes",
   "features": [
     {
+      "id": "pattern_matching_sequence_and_mapping",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "pattern matching sequence/mapping runtime behavior matches CPython probe"
+    },
+    {
+      "id": "exception_group_except_star_split",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "except* splits ExceptionGroup members by type with CPython parity"
+    },
+    {
+      "id": "positional_only_and_kwonly_calling",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "positional-only and keyword-only parameter binding matches CPython probe"
+    },
+    {
+      "id": "runtime_function_type_params",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "__type_params__ is populated for generic functions with correct kinds/names"
+    },
+    {
+      "id": "runtime_class_type_params",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "__type_params__ is populated for generic classes with correct kinds/names"
+    },
+    {
+      "id": "runtime_type_alias_type_params",
+      "required": false,
+      "status": "planned",
+      "owner": "milestone13",
+      "closure_criteria": "generic `type Alias[T] = ...` runtime object parity (`TypeAliasType`, `__type_params__`, repr) matches CPython"
+    },
+    {
       "id": "template_literal_basic_type",
       "required": true,
       "status": "implemented",

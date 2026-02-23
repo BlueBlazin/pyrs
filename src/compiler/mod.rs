@@ -2994,10 +2994,15 @@ impl Compiler {
                 metaclass,
                 keywords,
                 body,
-            } => {
-                let _ = type_params;
-                compiler.compile_class_def(name, bases, metaclass.as_ref(), keywords, body, true)
-            }
+            } => compiler.compile_class_def(
+                name,
+                type_params,
+                bases,
+                metaclass.as_ref(),
+                keywords,
+                body,
+                true,
+            ),
             StmtKind::Delete { targets } => compiler.compile_delete(targets),
             StmtKind::Decorated { decorators, stmt } => {
                 compiler.compile_decorated_stmt(decorators, stmt)
@@ -3946,6 +3951,25 @@ impl Compiler {
         Ok(())
     }
 
+    fn classify_type_param_for_intrinsic(raw: &str) -> (u32, String) {
+        if let Some(name) = raw.strip_prefix("**") {
+            (8, name.to_string())
+        } else if let Some(name) = raw.strip_prefix('*') {
+            (9, name.to_string())
+        } else {
+            (7, raw.to_string())
+        }
+    }
+
+    fn emit_type_params_tuple(&mut self, type_params: &[String]) {
+        for raw in type_params {
+            let (intrinsic, name) = Self::classify_type_param_for_intrinsic(raw);
+            self.emit_const(Value::Str(name));
+            self.emit(Opcode::CallIntrinsic1, Some(intrinsic));
+        }
+        self.emit(Opcode::BuildTuple, Some(type_params.len() as u32));
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn compile_function_def_stmt(
         &mut self,
@@ -4001,6 +4025,10 @@ impl Compiler {
             if drop_annotations { None } else { returns },
             func_code,
         )?;
+        if !type_params.is_empty() {
+            self.emit_type_params_tuple(type_params);
+            self.emit(Opcode::CallIntrinsic2, Some(4));
+        }
         if store_target {
             self.emit_store_name_scoped(name)?;
         }
@@ -4010,6 +4038,7 @@ impl Compiler {
     fn compile_class_def(
         &mut self,
         name: &str,
+        type_params: &[String],
         bases: &[Expr],
         metaclass: Option<&Expr>,
         keywords: &[(String, Expr)],
@@ -4035,7 +4064,19 @@ impl Compiler {
         }
         self.emit(Opcode::BuildDict, Some(keywords.len() as u32));
         self.emit(Opcode::BuildClass, Some(code_idx));
-        if store_target {
+        if !type_params.is_empty() {
+            let class_temp = self.fresh_temp("class_tp");
+            self.emit_store_name(&class_temp);
+            self.emit_load_name(&class_temp)?;
+            self.emit_type_params_tuple(type_params);
+            let type_params_idx = self.code.add_name("__type_params__".to_string());
+            self.emit(Opcode::StoreAttr, Some(type_params_idx));
+            self.emit_load_name(&class_temp)?;
+            if store_target {
+                self.emit_store_name_scoped(name)?;
+            }
+            self.emit_delete_name(&class_temp);
+        } else if store_target {
             self.emit_store_name_scoped(name)?;
         }
         Ok(())
@@ -4110,10 +4151,15 @@ impl Compiler {
                 metaclass,
                 keywords,
                 body,
-            } => {
-                let _ = type_params;
-                self.compile_class_def(name, bases, metaclass.as_ref(), keywords, body, false)?
-            }
+            } => self.compile_class_def(
+                name,
+                type_params,
+                bases,
+                metaclass.as_ref(),
+                keywords,
+                body,
+                false,
+            )?,
             _ => unreachable!("decorated stmt target is validated above"),
         }
 

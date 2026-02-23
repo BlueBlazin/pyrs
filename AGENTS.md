@@ -87,6 +87,11 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - validator/probe runner: `scripts/check_language_feature_manifest.py`,
     - latest artifact: `perf/language_feature_manifest_latest.json`,
     - policy: fail on missing/unknown manifest ids and required-feature probe mismatches.
+  - Generic runtime type-parameter parity improved:
+    - source-defined generic functions/classes now materialize `__type_params__`
+      with CPython-shaped type-parameter kinds/names (`TypeVar`, `TypeVarTuple`, `ParamSpec`),
+    - language manifest now tracks the remaining generic `type Alias[T] = ...`
+      runtime closure gap explicitly (`runtime_type_alias_type_params`, non-required row).
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`

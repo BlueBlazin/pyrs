@@ -12,6 +12,14 @@ This manifest is the source-language counterpart to ABI/opcode manifests.
 2. Fail CI if the manifest drifts (missing or unknown feature ids).
 3. Fail CI if a `required=true` feature does not match CPython probe behavior.
 
+## Current Policy
+
+- `required=true`: blocks CI on CPython mismatch.
+- `required=false`: tracked gap; probe still runs and is recorded in
+  `perf/language_feature_manifest_latest.json`.
+- New source-language features must be added to both the probe list and the manifest
+  before implementation work is considered complete.
+
 ## Run Locally
 
 ```bash

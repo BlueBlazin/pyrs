@@ -1215,6 +1215,39 @@ fn compile_only_ast_preserves_type_param_kinds_for_star_and_doublestar() {
 }
 
 #[test]
+fn runtime_function_generic_type_params_are_materialized() {
+    let source = "def ident[T, *Ts, **P](x):\n    return x\nparams = ident.__type_params__\nok = (len(params) == 3 and type(params[0]).__name__ == 'TypeVar' and type(params[1]).__name__ == 'TypeVarTuple' and type(params[2]).__name__ == 'ParamSpec' and [p.__name__ for p in params] == ['T', 'Ts', 'P'] and ident(7) == 7)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn runtime_class_generic_type_params_are_materialized() {
+    let source = "class Box[T, *Ts, **P]:\n    pass\nparams = Box.__type_params__\nok = (len(params) == 3 and type(params[0]).__name__ == 'TypeVar' and type(params[1]).__name__ == 'TypeVarTuple' and type(params[2]).__name__ == 'ParamSpec' and [p.__name__ for p in params] == ['T', 'Ts', 'P'])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn decorated_generics_preserve_runtime_type_params() {
+    let source = "def deco(obj):\n    return obj\n@deco\ndef ident[T](x):\n    return x\n@deco\nclass Box[T]:\n    pass\nok = (ident.__type_params__[0].__name__ == 'T' and Box.__type_params__[0].__name__ == 'T' and ident(3) == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

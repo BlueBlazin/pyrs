@@ -2211,3 +2211,42 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_runtime_function_type_params_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+def ident[T, *Ts, **P](x):
+    return x
+params = ident.__type_params__
+result = {
+    "kind_names": [type(tp).__name__ for tp in params],
+    "names": [tp.__name__ for tp in params],
+    "call_result": ident(7),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
+fn differential_runtime_class_type_params_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+class Box[T, *Ts, **P]:
+    pass
+params = Box.__type_params__
+result = {
+    "kind_names": [type(tp).__name__ for tp in params],
+    "names": [tp.__name__ for tp in params],
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
