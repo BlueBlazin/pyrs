@@ -2346,7 +2346,7 @@ fn parses_type_parameter_variants() {
         StmtKind::FunctionDef { type_params, .. } => {
             assert_eq!(
                 type_params,
-                &vec!["Ts".to_string(), "P".to_string(), "T".to_string()]
+                &vec!["*Ts".to_string(), "**P".to_string(), "T".to_string()]
             );
         }
         other => panic!("unexpected stmt: {other:?}"),

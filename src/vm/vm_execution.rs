@@ -83,7 +83,21 @@ impl Vm {
             return;
         }
         self.clear_module_initializing(&frame.module);
-        self.sync_re_module_flag_aliases(&frame.module);
+        let module_name = match &*frame.module.kind() {
+            Object::Module(module_data) => module_data.name.clone(),
+            _ => String::new(),
+        };
+        let canonical = if module_name.is_empty() {
+            frame.module.clone()
+        } else {
+            let canonical =
+                self.canonical_imported_module_for_name(&module_name, frame.module.clone());
+            if canonical.id() != frame.module.id() {
+                self.link_module_chain(&module_name, canonical.clone());
+            }
+            canonical
+        };
+        self.sync_re_module_flag_aliases(&canonical);
     }
 
     #[inline]
@@ -5818,6 +5832,20 @@ impl Vm {
                     })?;
                 match module {
                     Value::Module(module_obj) => {
+                        let module_name = match &*module_obj.kind() {
+                            Object::Module(module_data) => module_data.name.clone(),
+                            _ => String::new(),
+                        };
+                        let module_obj = if module_name.is_empty() {
+                            module_obj
+                        } else {
+                            self.canonical_imported_module_for_name(&module_name, module_obj)
+                        };
+                        if let Some(frame) = self.frames.get_mut(caller_idx)
+                            && let Some(slot) = frame.stack.last_mut()
+                        {
+                            *slot = Value::Module(module_obj.clone());
+                        }
                         if attr_name == "*" {
                             self.import_star_into_caller_scope(
                                 caller_idx,

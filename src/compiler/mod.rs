@@ -2195,7 +2195,7 @@ fn collect_uses_expr(
             child_free.extend(scope.freevars);
         }
         ExprKind::SetComp { elt, clauses } => {
-            let body = build_list_comp_body(elt, clauses);
+            let body = build_set_comp_body(elt, clauses);
             let scope = analyze_scope(
                 ScopeType::Function,
                 &[],
@@ -2434,6 +2434,151 @@ fn body_has_yield(body: &[Stmt]) -> bool {
     false
 }
 
+fn comp_clauses_are_async(clauses: &[ComprehensionClause]) -> bool {
+    clauses.iter().any(|clause| clause.is_async)
+}
+
+fn body_contains_await_exprs(body: &[Stmt]) -> bool {
+    for stmt in body {
+        if stmt_contains_await_exprs(stmt) {
+            return true;
+        }
+    }
+    false
+}
+
+fn stmt_contains_await_exprs(stmt: &Stmt) -> bool {
+    match &stmt.node {
+        StmtKind::Expr(expr) => expr_has_await(expr),
+        StmtKind::Assign { targets, value } => {
+            targets.iter().any(assign_target_has_await) || expr_has_await(value)
+        }
+        StmtKind::AnnAssign {
+            target,
+            annotation,
+            value,
+        } => {
+            assign_target_has_await(target)
+                || expr_has_await(annotation)
+                || value
+                    .as_ref()
+                    .map(|expr| expr_has_await(expr))
+                    .unwrap_or(false)
+        }
+        StmtKind::AugAssign { target, value, .. } => {
+            assign_target_has_await(target) || expr_has_await(value)
+        }
+        StmtKind::If { test, body, orelse } => {
+            expr_has_await(test)
+                || body_contains_await_exprs(body)
+                || body_contains_await_exprs(orelse)
+        }
+        StmtKind::While { test, body, orelse } => {
+            expr_has_await(test)
+                || body_contains_await_exprs(body)
+                || body_contains_await_exprs(orelse)
+        }
+        StmtKind::For {
+            target,
+            iter,
+            body,
+            orelse,
+            ..
+        } => {
+            assign_target_has_await(target)
+                || expr_has_await(iter)
+                || body_contains_await_exprs(body)
+                || body_contains_await_exprs(orelse)
+        }
+        StmtKind::With {
+            context,
+            target,
+            body,
+            ..
+        } => {
+            expr_has_await(context)
+                || target.as_ref().map(assign_target_has_await).unwrap_or(false)
+                || body_contains_await_exprs(body)
+        }
+        StmtKind::Try {
+            body,
+            handlers,
+            orelse,
+            finalbody,
+        } => {
+            body_contains_await_exprs(body)
+                || body_contains_await_exprs(orelse)
+                || body_contains_await_exprs(finalbody)
+                || handlers.iter().any(|handler| {
+                    handler
+                        .type_expr
+                        .as_ref()
+                        .map(|expr| expr_has_await(expr))
+                        .unwrap_or(false)
+                        || body_contains_await_exprs(&handler.body)
+                })
+        }
+        StmtKind::Return { value } => value
+            .as_ref()
+            .map(|expr| expr_has_await(expr))
+            .unwrap_or(false),
+        StmtKind::Raise { value, cause } => {
+            value
+                .as_ref()
+                .map(|expr| expr_has_await(expr))
+                .unwrap_or(false)
+                || cause
+                    .as_ref()
+                    .map(|expr| expr_has_await(expr))
+                    .unwrap_or(false)
+        }
+        StmtKind::Assert { test, message } => {
+            expr_has_await(test)
+                || message
+                    .as_ref()
+                    .map(|expr| expr_has_await(expr))
+                    .unwrap_or(false)
+        }
+        StmtKind::Decorated { decorators, stmt } => {
+            decorators.iter().any(expr_has_await) || stmt_contains_await_exprs(stmt)
+        }
+        StmtKind::Match { subject, cases } => {
+            expr_has_await(subject)
+                || cases.iter().any(|case| {
+                    case.guard
+                        .as_ref()
+                        .map(|expr| expr_has_await(expr))
+                        .unwrap_or(false)
+                        || body_contains_await_exprs(&case.body)
+                })
+        }
+        StmtKind::FunctionDef { .. }
+        | StmtKind::ClassDef { .. }
+        | StmtKind::Import { .. }
+        | StmtKind::ImportFrom { .. }
+        | StmtKind::Global { .. }
+        | StmtKind::Nonlocal { .. }
+        | StmtKind::Delete { .. }
+        | StmtKind::Pass
+        | StmtKind::Break
+            | StmtKind::Continue => false,
+    }
+}
+
+fn assign_target_has_await(target: &AssignTarget) -> bool {
+    match target {
+        AssignTarget::Name(_) => false,
+        AssignTarget::Tuple(items) | AssignTarget::List(items) => {
+            items.iter().any(assign_target_has_await)
+        }
+        AssignTarget::Starred(inner) => assign_target_has_await(inner),
+        AssignTarget::Subscript { value, index } => {
+            expr_has_await(value) || expr_has_await(index)
+        }
+        AssignTarget::Attribute { value, .. } => expr_has_await(value),
+    }
+}
+
 fn expr_has_yield(expr: &Expr) -> bool {
     match &expr.node {
         ExprKind::Yield { .. } | ExprKind::YieldFrom { .. } => true,
@@ -2504,6 +2649,90 @@ fn expr_has_yield(expr: &Expr) -> bool {
                 || step
                     .as_ref()
                     .map(|expr| expr_has_yield(expr))
+                    .unwrap_or(false)
+        }
+    }
+}
+
+fn expr_has_await(expr: &Expr) -> bool {
+    match &expr.node {
+        ExprKind::Await { .. } => true,
+        ExprKind::Binary { left, right, .. } | ExprKind::BoolOp { left, right, .. } => {
+            expr_has_await(left) || expr_has_await(right)
+        }
+        ExprKind::Unary { operand, .. } => expr_has_await(operand),
+        ExprKind::Call { func, args } => {
+            if expr_has_await(func) {
+                return true;
+            }
+            for arg in args {
+                let has = match arg {
+                    CallArg::Positional(expr)
+                    | CallArg::Keyword { value: expr, .. }
+                    | CallArg::Star(expr)
+                    | CallArg::DoubleStar(expr) => expr_has_await(expr),
+                };
+                if has {
+                    return true;
+                }
+            }
+            false
+        }
+        ExprKind::List(values) | ExprKind::Tuple(values) => values.iter().any(expr_has_await),
+        ExprKind::Dict(entries) => entries.iter().any(|entry| match entry {
+            DictEntry::Pair(key, value) => expr_has_await(key) || expr_has_await(value),
+            DictEntry::Unpack(value) => expr_has_await(value),
+        }),
+        ExprKind::Subscript { value, index } => expr_has_await(value) || expr_has_await(index),
+        ExprKind::Attribute { value, .. } => expr_has_await(value),
+        ExprKind::IfExpr { test, body, orelse } => {
+            expr_has_await(test) || expr_has_await(body) || expr_has_await(orelse)
+        }
+        ExprKind::NamedExpr { value, .. } => expr_has_await(value),
+        ExprKind::ListComp { elt, clauses }
+        | ExprKind::SetComp { elt, clauses }
+        | ExprKind::GeneratorExp { elt, clauses } => {
+            if expr_has_await(elt) {
+                return true;
+            }
+            clauses.iter().any(|clause| {
+                clause.is_async
+                    || expr_has_await(&clause.iter)
+                    || clause.ifs.iter().any(expr_has_await)
+            })
+        }
+        ExprKind::DictComp {
+            key,
+            value,
+            clauses,
+        } => {
+            if expr_has_await(key) || expr_has_await(value) {
+                return true;
+            }
+            clauses.iter().any(|clause| {
+                clause.is_async
+                    || expr_has_await(&clause.iter)
+                    || clause.ifs.iter().any(expr_has_await)
+            })
+        }
+        ExprKind::Yield { value } => value
+            .as_ref()
+            .map(|expr| expr_has_await(expr))
+            .unwrap_or(false),
+        ExprKind::YieldFrom { value } => expr_has_await(value),
+        ExprKind::Lambda { .. } | ExprKind::Name(_) | ExprKind::Constant(_) => false,
+        ExprKind::Slice { lower, upper, step } => {
+            lower
+                .as_ref()
+                .map(|expr| expr_has_await(expr))
+                .unwrap_or(false)
+                || upper
+                    .as_ref()
+                    .map(|expr| expr_has_await(expr))
+                    .unwrap_or(false)
+                || step
+                    .as_ref()
+                    .map(|expr| expr_has_await(expr))
                     .unwrap_or(false)
         }
     }
@@ -3011,26 +3240,7 @@ impl Compiler {
                 Ok(())
             }
             ExprKind::ListComp { elt, clauses } => compiler.compile_list_comp(elt, clauses),
-            ExprKind::SetComp { elt, clauses } => {
-                let generator_expr = Expr {
-                    node: ExprKind::GeneratorExp {
-                        elt: elt.clone(),
-                        clauses: clauses.clone(),
-                    },
-                    span,
-                };
-                let call_expr = Expr {
-                    node: ExprKind::Call {
-                        func: Box::new(Expr {
-                            node: ExprKind::Name("set".to_string()),
-                            span,
-                        }),
-                        args: vec![CallArg::Positional(generator_expr)],
-                    },
-                    span,
-                };
-                compiler.compile_expr(&call_expr)
-            }
+            ExprKind::SetComp { elt, clauses } => compiler.compile_set_comp(elt, clauses),
             ExprKind::DictComp {
                 key,
                 value,
@@ -4459,6 +4669,15 @@ impl Compiler {
         self.emit_comp_function("<listcomp>", clauses, body)
     }
 
+    fn compile_set_comp(
+        &mut self,
+        elt: &Expr,
+        clauses: &[ComprehensionClause],
+    ) -> Result<(), CompileError> {
+        let body = build_set_comp_body(elt, clauses);
+        self.emit_comp_function("<setcomp>", clauses, body)
+    }
+
     fn compile_dict_comp(
         &mut self,
         key: &Expr,
@@ -4497,12 +4716,23 @@ impl Compiler {
             rewrite_first_comp_iter_to_param(&mut body);
             outer_iter = Some(first_clause.iter.clone());
         }
+        let is_async_comp = comp_clauses_are_async(clauses)
+            || body_contains_await_exprs(&body)
+            || outer_iter.as_ref().is_some_and(expr_has_await);
+        let comp_is_generator = body_has_yield(&body);
+        if is_async_comp
+            && !comp_is_generator
+            && !self.code.is_coroutine
+            && !self.code.is_async_generator
+        {
+            return Err(self.syntax_error_here("'await' outside function"));
+        }
         let empty_params: Vec<Parameter> = Vec::new();
         let vararg: Option<Parameter> = None;
         let kwarg: Option<Parameter> = None;
         let func_code = self.compile_function(
             name,
-            false,
+            is_async_comp,
             &empty_params,
             &params,
             &empty_params,
@@ -4523,6 +4753,10 @@ impl Compiler {
             self.compile_expr(&iter)?;
         }
         self.emit(Opcode::CallFunction, Some(params.len() as u32));
+        if is_async_comp && !comp_is_generator {
+            self.emit(Opcode::GetAwaitable, None);
+            self.emit(Opcode::YieldFrom, None);
+        }
         Ok(())
     }
 
@@ -5672,6 +5906,56 @@ fn build_list_comp_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt
         },
     }];
     body.extend(build_comp_stmt_chain(clauses, vec![append_stmt], elt.span));
+    body.push(Stmt {
+        span: elt.span,
+        node: StmtKind::Return {
+            value: Some(Expr {
+                span: elt.span,
+                node: ExprKind::Name(result_name),
+            }),
+        },
+    });
+    body
+}
+
+fn build_set_comp_body(elt: &Expr, clauses: &[ComprehensionClause]) -> Vec<Stmt> {
+    let result_name = "__pyrs_comp_result".to_string();
+    let add_stmt = Stmt {
+        span: elt.span,
+        node: StmtKind::Expr(Expr {
+            span: elt.span,
+            node: ExprKind::Call {
+                func: Box::new(Expr {
+                    span: elt.span,
+                    node: ExprKind::Attribute {
+                        value: Box::new(Expr {
+                            span: elt.span,
+                            node: ExprKind::Name(result_name.clone()),
+                        }),
+                        name: "add".to_string(),
+                    },
+                }),
+                args: vec![CallArg::Positional(elt.clone())],
+            },
+        }),
+    };
+    let mut body = vec![Stmt {
+        span: elt.span,
+        node: StmtKind::Assign {
+            targets: vec![AssignTarget::Name(result_name.clone())],
+            value: Expr {
+                span: elt.span,
+                node: ExprKind::Call {
+                    func: Box::new(Expr {
+                        span: elt.span,
+                        node: ExprKind::Name("set".to_string()),
+                    }),
+                    args: Vec::new(),
+                },
+            },
+        },
+    }];
+    body.extend(build_comp_stmt_chain(clauses, vec![add_stmt], elt.span));
     body.push(Stmt {
         span: elt.span,
         node: StmtKind::Return {

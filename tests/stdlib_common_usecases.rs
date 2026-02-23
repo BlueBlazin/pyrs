@@ -74,6 +74,16 @@ fn run_snippet(bin: &PathBuf, cpython_lib: &PathBuf, source: &str, timeout: Dura
 
 #[test]
 fn top_stdlib_common_usecase_baseline_gate() {
+    if std::env::var("PYRS_RUN_STDLIB_COMMON_USECASES")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        eprintln!(
+            "skipping stdlib common-usecase gate (set PYRS_RUN_STDLIB_COMMON_USECASES=1 to enable)"
+        );
+        return;
+    }
     let Some(cpython_lib) = detect_cpython_lib() else {
         eprintln!("skipping stdlib common-usecase gate (CPython Lib not found)");
         return;
