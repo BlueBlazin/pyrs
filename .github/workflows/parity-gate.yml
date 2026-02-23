@@ -57,12 +57,31 @@ jobs:
             --manifest docs/LANGUAGE_FEATURE_MANIFEST.json \
             --out perf/language_feature_manifest_latest.json
 
+      - name: Validate source-language feature inventory coverage
+        run: |
+          python3 scripts/check_language_feature_coverage.py \
+            --inventory docs/LANGUAGE_FEATURE_INVENTORY.json \
+            --probe-results perf/language_feature_manifest_latest.json \
+            --probe-map docs/LANGUAGE_FEATURE_PROBE_MAP.json \
+            --out perf/language_feature_coverage_latest.json \
+            --enforce \
+            --min-coverage-percent 100 \
+            --max-probe-fanout 90
+
       - name: Upload language feature manifest artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: language-feature-manifest
           path: perf/language_feature_manifest_latest.json
+          if-no-files-found: ignore
+
+      - name: Upload language feature coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: language-feature-coverage
+          path: perf/language_feature_coverage_latest.json
           if-no-files-found: ignore
 
       - name: Upload C-API no-op inventory artifact

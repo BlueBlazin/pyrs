@@ -36,6 +36,10 @@ This document is the authoritative, source-derived inventory baseline for CPytho
   - `coverage`: `100.0%` (`578/578`)
   - current probe run baseline: `29/29` probes passing
   - grammar accounting now uses section-level probes (not only single public/invalid umbrellas)
+  - probe fanout baseline:
+    - `max`: `82` rows/probe
+    - `mean`: `24.66` rows/probe
+    - CI limit: `<= 90` rows/probe
 
 ## Important Interpretation
 - This inventory is complete as a **source-derived accounting baseline**.
@@ -59,5 +63,8 @@ python3 scripts/check_language_feature_coverage.py \
   --inventory docs/LANGUAGE_FEATURE_INVENTORY.json \
   --probe-results perf/language_feature_manifest_latest.json \
   --probe-map docs/LANGUAGE_FEATURE_PROBE_MAP.json \
-  --out perf/language_feature_coverage_latest.json
+  --out perf/language_feature_coverage_latest.json \
+  --enforce \
+  --min-coverage-percent 100 \
+  --max-probe-fanout 90
 ```

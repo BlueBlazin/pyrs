@@ -5,6 +5,8 @@ This manifest is the source-language counterpart to ABI/opcode manifests.
 - Machine-readable feature inventory: `docs/LANGUAGE_FEATURE_MANIFEST.json`
 - Probe runner + validator: `scripts/check_language_feature_manifest.py`
 - Latest probe artifact: `perf/language_feature_manifest_latest.json`
+- Inventory-coverage validator: `scripts/check_language_feature_coverage.py`
+- Latest coverage artifact: `perf/language_feature_coverage_latest.json`
 
 ## Purpose
 
@@ -38,3 +40,4 @@ When adding a new CPython 3.14 language feature:
 2. Add a matching entry in `docs/LANGUAGE_FEATURE_MANIFEST.json`.
 3. Add parser/compiler/runtime tests (`tests/parser.rs`, `tests/vm.rs`, and `tests/differential_cpython.rs` where applicable).
 4. Ensure the manifest gate stays green.
+5. Ensure inventory coverage gate stays green (`fail=0`, `unprobed=0`, and fanout within configured bound).

@@ -83,6 +83,26 @@ def main() -> int:
     parser.add_argument("--probe-results", required=True, type=Path)
     parser.add_argument("--probe-map", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument(
+        "--enforce",
+        action="store_true",
+        help="Fail with non-zero exit on coverage regressions (fail/unprobed/mapping drift).",
+    )
+    parser.add_argument(
+        "--min-coverage-percent",
+        type=float,
+        default=100.0,
+        help="Minimum required inventory-row coverage percent when --enforce is set.",
+    )
+    parser.add_argument(
+        "--max-probe-fanout",
+        type=int,
+        default=0,
+        help=(
+            "Maximum allowed inventory rows mapped by any single probe when --enforce is set "
+            "(0 disables fanout limit)."
+        ),
+    )
     args = parser.parse_args()
 
     inventory_doc = load_json(args.inventory)
@@ -139,6 +159,20 @@ def main() -> int:
     coverage_rows = counts["pass"] + counts["fail"]
     total_rows = len(inventory_rows)
     coverage_pct = round((coverage_rows / total_rows * 100.0) if total_rows else 0.0, 2)
+    fanout_values = list(matched_counts.values())
+    fanout_max = max(fanout_values, default=0)
+    fanout_mean = round((sum(fanout_values) / len(fanout_values)) if fanout_values else 0.0, 2)
+    top_fanout = [
+        {"probe_id": probe_id, "rows": count}
+        for probe_id, count in sorted(matched_counts.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    ]
+    fanout_violations: list[dict[str, Any]] = []
+    if args.max_probe_fanout > 0:
+        fanout_violations = [
+            {"probe_id": probe_id, "rows": count}
+            for probe_id, count in sorted(matched_counts.items(), key=lambda kv: kv[1], reverse=True)
+            if count > args.max_probe_fanout
+        ]
 
     report = {
         "schema_version": 1,
@@ -156,8 +190,13 @@ def main() -> int:
             "mapped_probe_total": len(mapped_probe_ids),
             "unknown_probe_ids": unknown_probe_ids,
             "unmapped_probe_ids": unmapped_probe_ids,
+            "fanout_max": fanout_max,
+            "fanout_mean": fanout_mean,
+            "fanout_limit": args.max_probe_fanout,
         },
         "probe_match_counts": dict(sorted(matched_counts.items())),
+        "top_fanout_probes": top_fanout,
+        "fanout_violations": fanout_violations,
         "by_kind_status": dict(sorted(by_kind.items())),
         "by_chapter_status": dict(sorted(by_chapter.items())),
         "rows": rows,
@@ -176,7 +215,41 @@ def main() -> int:
         print(f"warning: unknown probe ids in map: {unknown_probe_ids}")
     if unmapped_probe_ids:
         print(f"warning: probes without mapping rows: {unmapped_probe_ids}")
+    if fanout_violations:
+        print(
+            "warning: probe fanout limit exceeded by "
+            f"{len(fanout_violations)} probes (limit={args.max_probe_fanout})"
+        )
     print(f"wrote {args.out}")
+
+    if not args.enforce:
+        return 0
+
+    failed_reasons: list[str] = []
+    if summary["fail"] > 0:
+        failed_reasons.append(f"inventory rows with failing probes: {summary['fail']}")
+    if summary["unprobed"] > 0:
+        failed_reasons.append(f"unprobed inventory rows: {summary['unprobed']}")
+    if unknown_probe_ids:
+        failed_reasons.append(f"unknown probe ids in map: {unknown_probe_ids}")
+    if unmapped_probe_ids:
+        failed_reasons.append(f"manifest probes missing map rows: {unmapped_probe_ids}")
+    if coverage_pct < args.min_coverage_percent:
+        failed_reasons.append(
+            f"coverage {coverage_pct}% below required minimum {args.min_coverage_percent}%"
+        )
+    if fanout_violations:
+        failed_reasons.append(
+            "fanout limit exceeded by probes: "
+            f"{[(row['probe_id'], row['rows']) for row in fanout_violations[:5]]}"
+        )
+
+    if failed_reasons:
+        print("language feature coverage check failed")
+        for reason in failed_reasons:
+            print(f"- {reason}")
+        return 1
+
     return 0
 
 
