@@ -107,7 +107,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       (`runtime_type_param_cross_references`),
     - builtin generic-subscript parity probe
       (`runtime_builtin_generic_alias_without_types_import`),
-    and is green at `15/15` required probes.
+    plus chapter/kind umbrella probes for full inventory mapping; current
+    manifest run is `24/26` probes passing (`2` failing umbrella probes).
   - Full CPython 3.14 source-language inventory baseline landed (source-derived):
     - generator: `scripts/generate_language_feature_inventory.py`,
     - inventory artifact: `docs/LANGUAGE_FEATURE_INVENTORY.json`,
@@ -118,7 +119,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       `invalid_*` grammar rules, `69` tokens, `260` reference headings),
       with current required-manifest probe coverage baseline at `2.6%`.
     - current mapped probe coverage baseline:
-      `pass=68`, `fail=0`, `unprobed=510` (`11.76%` coverage).
+      `pass=329`, `fail=249`, `unprobed=0` (`100.0%` coverage).
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`

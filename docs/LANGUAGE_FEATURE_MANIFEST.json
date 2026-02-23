@@ -106,6 +106,83 @@
       "status": "implemented",
       "owner": "milestone13",
       "closure_criteria": "reject u+t prefix combination"
+    },
+    {
+      "id": "umbrella_tokenization_and_operators_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "tokenization/literal/prefix/operator baseline behaves consistently against CPython probe"
+    },
+    {
+      "id": "umbrella_grammar_public_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "broad public grammar surface executes with CPython parity payload"
+    },
+    {
+      "id": "umbrella_grammar_invalid_syntax_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "representative invalid syntax surface raises SyntaxError with CPython parity payload"
+    },
+    {
+      "id": "umbrella_reference_expressions_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core expressions chapter surface matches CPython probe"
+    },
+    {
+      "id": "umbrella_reference_simple_stmts_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core simple statements chapter surface matches CPython probe"
+    },
+    {
+      "id": "umbrella_reference_compound_stmts_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core compound statements chapter surface matches CPython probe"
+    },
+    {
+      "id": "umbrella_reference_import_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core import chapter surface matches CPython probe"
+    },
+    {
+      "id": "umbrella_reference_executionmodel_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core execution model chapter surface matches CPython probe"
+    },
+    {
+      "id": "umbrella_reference_datamodel_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core data model chapter surface matches CPython probe"
+    },
+    {
+      "id": "umbrella_reference_toplevel_components_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core toplevel components chapter surface matches CPython probe"
+    },
+    {
+      "id": "umbrella_reference_lexical_analysis_surface",
+      "required": false,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "core lexical analysis chapter surface matches CPython probe"
     }
   ]
 }

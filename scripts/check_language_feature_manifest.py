@@ -205,6 +205,247 @@ result = {
         "source": "x = ut'raw'\n",
         "needle": "'u' and 't' prefixes are incompatible",
     },
+    {
+        "id": "umbrella_tokenization_and_operators_surface",
+        "mode": "json_result",
+        "source": """expr = 1 + 2 - 3 * 4 / 5 // 1 % 2 ** 3
+raw = r"a\\nb"
+data = b"xy"
+num = (0b1010, 0o77, 0xFF, 1_234_567, 1.25e2, 3j)
+template = t"v={expr}"
+ftext = f"{1+2}"
+result = {
+    "num0": num[0],
+    "raw": raw,
+    "bytes": list(data),
+    "ftext": ftext,
+    "template_strings": list(template.strings),
+}
+""",
+    },
+    {
+        "id": "umbrella_grammar_public_surface",
+        "mode": "json_result",
+        "source": """class C[T]:
+    x = 1
+    def m(self, y):
+        return y + 1
+
+def f(a, /, b = 2, *, c = 3):
+    for i in [1, 2]:
+        if i == 2:
+            break
+    while False:
+        continue
+    try:
+        raise ExceptionGroup("eg", [ValueError(1), TypeError(2)])
+    except* ValueError as e:
+        left = len(e.exceptions)
+    except* TypeError as e:
+        right = len(e.exceptions)
+    match {"k": 5}:
+        case {"k": q}:
+            matched = q
+    return a + b + c + left + right + matched
+
+type Alias[X] = list[X]
+result = {
+    "f": f(1),
+    "c": C().m(2),
+    "class_generic_name": type(C[int]).__name__,
+    "alias_type": type(Alias).__name__,
+}
+""",
+    },
+    {
+        "id": "umbrella_grammar_invalid_syntax_surface",
+        "mode": "json_result",
+        "source": """ok = False
+try:
+    compile("def broken(:\\n    pass\\n", "<broken>", "exec")
+except SyntaxError:
+    ok = True
+result = {"syntax_error": ok}
+""",
+    },
+    {
+        "id": "umbrella_reference_expressions_surface",
+        "mode": "json_result",
+        "source": """vals = [x * x for x in range(5) if x % 2 == 0]
+gen = sum(x for x in range(4))
+lam = (lambda a, b = 2, *, c = 3: a + b + c)(1, c = 4)
+wal = (y := 5) + y
+sub = ([10, 20, 30][1], {"a": 1}["a"], (1, 2, 3)[0])
+result = {
+    "vals": vals,
+    "gen": gen,
+    "lam": lam,
+    "wal": wal,
+    "sub": sub,
+}
+""",
+    },
+    {
+        "id": "umbrella_reference_lexical_analysis_surface",
+        "mode": "json_result",
+        "source": """raw = r"a\\nb"
+escaped = "a\\nb"
+bytes_data = b"abc"
+ftext = f"{1+2}"
+template = t"v={1+2}"
+nums = [0b11, 0o7, 0x10, 1_000, 1.25e2, 3j]
+result = {
+    "raw": raw,
+    "escaped_len": len(escaped),
+    "bytes": list(bytes_data),
+    "ftext": ftext,
+    "template_strings": list(template.strings),
+    "nums0": nums[0],
+}
+""",
+    },
+    {
+        "id": "umbrella_reference_simple_stmts_surface",
+        "mode": "json_result",
+        "source": """x = 1
+assert x == 1
+
+def g():
+    y = 3
+    del y
+    yield 5
+
+v = next(g())
+
+def h():
+    global _g
+    _g = 7
+    z = 1
+    def inner():
+        nonlocal z
+        z = 9
+    inner()
+    return z
+
+r = h()
+import math as _m
+from math import sqrt as _sqrt
+type T = int
+result = {
+    "v": v,
+    "r": r,
+    "sqrt": _sqrt(16),
+    "g": _g,
+    "type_stmt": type(T).__name__,
+}
+""",
+    },
+    {
+        "id": "umbrella_reference_compound_stmts_surface",
+        "mode": "json_result",
+        "source": """from contextlib import nullcontext
+out = []
+if True:
+    out.append("if")
+for i in range(3):
+    if i == 1:
+        continue
+    out.append(i)
+j = 0
+while j < 2:
+    j += 1
+else:
+    out.append("while_else")
+try:
+    raise ValueError("x")
+except ValueError:
+    out.append("except")
+finally:
+    out.append("finally")
+with nullcontext(5) as n:
+    out.append(n)
+match ("a", 1):
+    case ("a", x):
+        out.append(x)
+async def af():
+    return 3
+class K:
+    pass
+result = out
+""",
+    },
+    {
+        "id": "umbrella_reference_import_surface",
+        "mode": "json_result",
+        "source": """import math
+import importlib
+module = importlib.import_module("json")
+from math import factorial as f
+result = {
+    "pi": round(math.pi, 3),
+    "fact": f(5),
+    "json": hasattr(module, "dumps"),
+}
+""",
+    },
+    {
+        "id": "umbrella_reference_executionmodel_surface",
+        "mode": "json_result",
+        "source": """x = 10
+def outer():
+    y = 20
+    def inner():
+        nonlocal y
+        return x + y
+    return inner()
+
+class C:
+    z = 30
+    def m(self):
+        return self.z
+
+result = {
+    "scope": outer(),
+    "method": C().m(),
+}
+""",
+    },
+    {
+        "id": "umbrella_reference_datamodel_surface",
+        "mode": "json_result",
+        "source": """class D:
+    def __init__(self):
+        self.v = [1, 2, 3]
+    def __len__(self):
+        return len(self.v)
+    def __iter__(self):
+        return iter(self.v)
+    def __getitem__(self, i):
+        return self.v[i]
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+d = D()
+with d as q:
+    total = sum(q)
+result = {
+    "len": len(d),
+    "item": d[1],
+    "total": total,
+}
+""",
+    },
+    {
+        "id": "umbrella_reference_toplevel_components_surface",
+        "mode": "json_result",
+        "source": """code = compile("a=1\\nb=2\\nresult=a+b", "<x>", "exec")
+ns = {}
+exec(code, ns, ns)
+result = {"compiled_exec": ns["result"]}
+""",
+    },
 ]
 
 
