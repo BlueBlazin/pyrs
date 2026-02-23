@@ -90,8 +90,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - Generic runtime type-parameter parity improved:
     - source-defined generic functions/classes now materialize `__type_params__`
       with CPython-shaped type-parameter kinds/names (`TypeVar`, `TypeVarTuple`, `ParamSpec`),
-    - language manifest now tracks the remaining generic `type Alias[T] = ...`
-      runtime closure gap explicitly (`runtime_type_alias_type_params`, non-required row).
+    - generic `type Alias[T] = ...` now materializes `TypeAliasType` with
+      `__type_params__` and CPython-shaped repr (`Pair`) for runtime parity.
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`

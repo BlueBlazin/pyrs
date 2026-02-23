@@ -2049,6 +2049,31 @@ result = {
 }
 
 #[test]
+fn differential_compile_only_ast_type_alias_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+import _ast
+mod = compile("type Pair[T] = tuple[T, T]\n", "<ast>", "exec", _ast.PyCF_ONLY_AST)
+node = mod.body[0]
+result = {
+    "stmt_type": type(node).__name__,
+    "stmt_base": isinstance(node, _ast.stmt),
+    "name_type": type(node.name).__name__,
+    "name_id": node.name.id,
+    "name_ctx": type(node.name.ctx).__name__,
+    "type_params": [type(tp).__name__ for tp in node.type_params],
+    "type_param_names": [tp.name for tp in node.type_params],
+    "value_type": type(node.value).__name__,
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_compile_only_ast_augassign_and_annassign_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;
@@ -2244,6 +2269,24 @@ params = Box.__type_params__
 result = {
     "kind_names": [type(tp).__name__ for tp in params],
     "names": [tp.__name__ for tp in params],
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
+fn differential_runtime_type_alias_type_params_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+type Pair[T] = tuple[T, T]
+result = {
+    "type_name": type(Pair).__name__,
+    "names": [tp.__name__ for tp in Pair.__type_params__],
+    "repr": repr(Pair),
 }
 "#;
     let py = run_cpython_json(source).expect("CPython JSON should run");

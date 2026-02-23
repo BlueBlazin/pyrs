@@ -117,6 +117,11 @@ impl Vm {
             &LOC_ATTRS,
         );
         self.configure_bootstrap_ast_class(
+            "TypeAlias",
+            &["name", "type_params", "value"],
+            &LOC_ATTRS,
+        );
+        self.configure_bootstrap_ast_class(
             "Assign",
             &["targets", "value", "type_comment"],
             &LOC_ATTRS,
@@ -622,6 +627,7 @@ impl Vm {
             "FunctionDef",
             "AsyncFunctionDef",
             "ClassDef",
+            "TypeAlias",
             "Assign",
             "AugAssign",
             "AnnAssign",
@@ -4043,6 +4049,11 @@ impl Vm {
                     "ClassDef",
                     self.heap
                         .alloc_class(ClassObject::new("ClassDef".to_string(), Vec::new())),
+                ),
+                (
+                    "TypeAlias",
+                    self.heap
+                        .alloc_class(ClassObject::new("TypeAlias".to_string(), Vec::new())),
                 ),
                 (
                     "mod",

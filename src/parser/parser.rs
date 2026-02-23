@@ -2595,15 +2595,16 @@ impl Parser {
         }
         let alias_name = name_token.lexeme.clone();
         pos += 1;
-        let (_type_params, next) = self.parse_type_params(pos)?;
+        let (type_params, next) = self.parse_type_params(pos)?;
         pos = next;
         pos = self.expect_kind(pos, TokenKind::Equal)?;
         let (value, next) = self.parse_expr_with_tuple_tail(pos)?;
         Ok((
             self.make_stmt(
                 start,
-                StmtKind::Assign {
-                    targets: vec![AssignTarget::Name(alias_name)],
+                StmtKind::TypeAlias {
+                    name: alias_name,
+                    type_params,
                     value,
                 },
             ),

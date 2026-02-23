@@ -81,6 +81,15 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
                 .collect(),
             body: body.iter().map(strip_stmt).collect(),
         },
+        StmtKind::TypeAlias {
+            name,
+            type_params,
+            value,
+        } => StmtKind::TypeAlias {
+            name: name.clone(),
+            type_params: type_params.clone(),
+            value: strip_expr(value),
+        },
         StmtKind::Decorated { decorators, stmt } => StmtKind::Decorated {
             decorators: decorators.iter().map(strip_expr).collect(),
             stmt: Box::new(strip_stmt(stmt)),
@@ -2426,9 +2435,11 @@ fn parses_type_alias_statement() {
     let source = "type Alias[T] = tuple[T]\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     match &strip_module(&module)[0].node {
-        StmtKind::Assign { targets, .. } => {
-            assert_eq!(targets.len(), 1);
-            assert!(matches!(targets[0], AssignTarget::Name(ref name) if name == "Alias"));
+        StmtKind::TypeAlias {
+            name, type_params, ..
+        } => {
+            assert_eq!(name, "Alias");
+            assert_eq!(type_params, &vec!["T".to_string()]);
         }
         other => panic!("unexpected stmt: {other:?}"),
     }

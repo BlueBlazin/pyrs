@@ -462,6 +462,18 @@ fn record_scope_activity_stmt(
                 );
             }
         }
+        StmtKind::TypeAlias { name, value, .. } => {
+            record_scope_activity_expr(
+                value,
+                seen_use,
+                seen_assign,
+                declared_globals,
+                declared_nonlocals,
+            );
+            if !declared_globals.contains(name) && !declared_nonlocals.contains(name) {
+                seen_assign.entry(name.clone()).or_insert(stmt.span);
+            }
+        }
         StmtKind::AugAssign { target, value, .. } => {
             record_scope_activity_expr(
                 value,
@@ -1654,6 +1666,9 @@ fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
                 collect_locals_namedexpr_expr(value, locals);
             }
         }
+        StmtKind::TypeAlias { value, .. } => {
+            collect_locals_namedexpr_expr(value, locals);
+        }
         StmtKind::Decorated { decorators, .. } => {
             for decorator in decorators {
                 collect_locals_namedexpr_expr(decorator, locals);
@@ -1846,6 +1861,16 @@ fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
     }
 }
 
+fn strip_type_param_prefix(raw: &str) -> String {
+    if let Some(name) = raw.strip_prefix("**") {
+        name.to_string()
+    } else if let Some(name) = raw.strip_prefix('*') {
+        name.to_string()
+    } else {
+        raw.to_string()
+    }
+}
+
 fn collect_uses_stmt(
     stmt: &Stmt,
     uses: &mut HashSet<String>,
@@ -2031,6 +2056,35 @@ fn collect_uses_stmt(
             }
             let scope =
                 analyze_scope(ScopeType::Class, &[], &[], &[], None, None, body, enclosing)?;
+            child_free.extend(scope.freevars);
+        }
+        StmtKind::TypeAlias {
+            type_params, value, ..
+        } => {
+            let helper_params: Vec<Parameter> = type_params
+                .iter()
+                .map(|name| Parameter {
+                    name: strip_type_param_prefix(name),
+                    default: None,
+                    annotation: None,
+                })
+                .collect();
+            let helper_body = vec![Stmt {
+                node: StmtKind::Return {
+                    value: Some(value.clone()),
+                },
+                span: value.span,
+            }];
+            let scope = analyze_scope(
+                ScopeType::Function,
+                &[],
+                &helper_params,
+                &[],
+                None,
+                None,
+                &helper_body,
+                enclosing,
+            )?;
             child_free.extend(scope.freevars);
         }
         StmtKind::Decorated { decorators, stmt } => {
@@ -2330,7 +2384,9 @@ fn body_has_ann_assign(body: &[Stmt]) -> bool {
                     }
                 }
             }
-            StmtKind::FunctionDef { .. } | StmtKind::ClassDef { .. } => {}
+            StmtKind::FunctionDef { .. }
+            | StmtKind::ClassDef { .. }
+            | StmtKind::TypeAlias { .. } => {}
             _ => {}
         }
     }
@@ -2425,6 +2481,11 @@ fn body_has_yield(body: &[Stmt]) -> bool {
             }
             StmtKind::Decorated { stmt, .. } => {
                 if body_has_yield(std::slice::from_ref(stmt)) {
+                    return true;
+                }
+            }
+            StmtKind::TypeAlias { value, .. } => {
+                if expr_has_yield(value) {
                     return true;
                 }
             }
@@ -2566,6 +2627,7 @@ fn stmt_contains_await_exprs(stmt: &Stmt) -> bool {
         StmtKind::Decorated { decorators, stmt } => {
             decorators.iter().any(expr_has_await) || stmt_contains_await_exprs(stmt)
         }
+        StmtKind::TypeAlias { value, .. } => expr_has_await(value),
         StmtKind::Match { subject, cases } => {
             expr_has_await(subject)
                 || cases.iter().any(|case| {
@@ -3003,6 +3065,11 @@ impl Compiler {
                 body,
                 true,
             ),
+            StmtKind::TypeAlias {
+                name,
+                type_params,
+                value,
+            } => compiler.compile_type_alias_stmt(name, type_params, value),
             StmtKind::Delete { targets } => compiler.compile_delete(targets),
             StmtKind::Decorated { decorators, stmt } => {
                 compiler.compile_decorated_stmt(decorators, stmt)
@@ -4078,6 +4145,88 @@ impl Compiler {
             self.emit_delete_name(&class_temp);
         } else if store_target {
             self.emit_store_name_scoped(name)?;
+        }
+        Ok(())
+    }
+
+    fn compile_type_alias_stmt(
+        &mut self,
+        name: &str,
+        type_params: &[String],
+        value: &Expr,
+    ) -> Result<(), CompileError> {
+        let mut temp_type_params: Vec<(String, String)> = Vec::with_capacity(type_params.len());
+        for raw in type_params {
+            let (intrinsic, clean_name) = Self::classify_type_param_for_intrinsic(raw);
+            let temp = self.fresh_temp("type_param");
+            self.emit_const(Value::Str(clean_name.clone()));
+            self.emit(Opcode::CallIntrinsic1, Some(intrinsic));
+            self.emit_store_name(&temp);
+            temp_type_params.push((temp, clean_name));
+        }
+
+        let type_params_tuple_temp = self.fresh_temp("type_params_tuple");
+        for (temp, _) in &temp_type_params {
+            self.emit_load_name(temp)?;
+        }
+        self.emit(Opcode::BuildTuple, Some(temp_type_params.len() as u32));
+        self.emit_store_name(&type_params_tuple_temp);
+
+        let alias_value_temp = self.fresh_temp("type_alias_value");
+        if temp_type_params.is_empty() {
+            self.compile_expr(value)?;
+        } else {
+            let helper_params: Vec<Parameter> = temp_type_params
+                .iter()
+                .map(|(_, clean_name)| Parameter {
+                    name: clean_name.clone(),
+                    default: None,
+                    annotation: None,
+                })
+                .collect();
+            let helper_body = vec![Stmt {
+                node: StmtKind::Return {
+                    value: Some(value.clone()),
+                },
+                span: value.span,
+            }];
+            let helper_code = self.compile_function(
+                "<type_alias_value>",
+                false,
+                &[],
+                &helper_params,
+                &[],
+                &None,
+                &None,
+                &helper_body,
+            )?;
+            self.emit_function_with_defaults(
+                &[],
+                &helper_params,
+                &[],
+                &None,
+                &None,
+                None,
+                helper_code,
+            )?;
+            for (temp, _) in &temp_type_params {
+                self.emit_load_name(temp)?;
+            }
+            self.emit(Opcode::CallFunction, Some(temp_type_params.len() as u32));
+        }
+        self.emit_store_name(&alias_value_temp);
+
+        self.emit_const(Value::Str(name.to_string()));
+        self.emit_load_name(&type_params_tuple_temp)?;
+        self.emit_load_name(&alias_value_temp)?;
+        self.emit(Opcode::BuildTuple, Some(3));
+        self.emit(Opcode::CallIntrinsic1, Some(11));
+        self.emit_store_name_scoped(name)?;
+
+        self.emit_delete_name(&alias_value_temp);
+        self.emit_delete_name(&type_params_tuple_temp);
+        for (temp, _) in temp_type_params {
+            self.emit_delete_name(&temp);
         }
         Ok(())
     }

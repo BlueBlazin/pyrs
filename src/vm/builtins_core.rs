@@ -4740,6 +4740,26 @@ impl Vm {
                     ],
                 )
             }
+            StmtKind::TypeAlias {
+                name,
+                type_params,
+                value,
+            } => {
+                let type_params_nodes =
+                    self.convert_type_params_to_ast_nodes(type_params, location)?;
+                let name_node =
+                    self.convert_assign_target_to_ast_expr(&AssignTarget::Name(name.clone()))?;
+                let value_node = self.convert_expr_to_ast_node(value)?;
+                self.build_ast_node(
+                    "TypeAlias",
+                    location,
+                    vec![
+                        ("name", name_node),
+                        ("type_params", self.heap.alloc_list(type_params_nodes)),
+                        ("value", value_node),
+                    ],
+                )
+            }
             StmtKind::Decorated { decorators, stmt } => {
                 let base_node = self.convert_stmt_to_ast_node(stmt)?;
                 self.apply_decorators_to_ast_node(base_node, decorators)

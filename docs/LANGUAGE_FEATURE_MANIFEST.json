@@ -39,8 +39,8 @@
     },
     {
       "id": "runtime_type_alias_type_params",
-      "required": false,
-      "status": "planned",
+      "required": true,
+      "status": "implemented",
       "owner": "milestone13",
       "closure_criteria": "generic `type Alias[T] = ...` runtime object parity (`TypeAliasType`, `__type_params__`, repr) matches CPython"
     },

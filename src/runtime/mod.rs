@@ -7904,6 +7904,12 @@ pub fn format_repr(value: &Value) -> String {
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
                 if let Object::Class(class_data) = &*instance_data.class.kind()
+                    && class_data.name == "TypeAliasType"
+                    && let Some(Value::Str(name)) = instance_data.attrs.get("__name__")
+                {
+                    return name.clone();
+                }
+                if let Object::Class(class_data) = &*instance_data.class.kind()
                     && class_data.name == "StackObject"
                     && let Some(Value::Str(name)) = instance_data.attrs.get("name")
                 {

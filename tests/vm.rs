@@ -1160,6 +1160,17 @@ fn compile_only_ast_covers_function_class_and_type_param_nodes() {
 }
 
 #[test]
+fn compile_only_ast_covers_type_alias_node() {
+    let source = "import _ast\nmod = compile('type Pair[T] = tuple[T, T]\\n', '<ast>', 'exec', _ast.PyCF_ONLY_AST)\nnode = mod.body[0]\nok = isinstance(node, _ast.TypeAlias) and isinstance(node, _ast.stmt) and isinstance(node.name, _ast.Name) and node.name.id == 'Pair' and isinstance(node.name.ctx, _ast.Store) and isinstance(node.type_params[0], _ast.TypeVar) and node.type_params[0].name == 'T' and isinstance(node.value, _ast.Subscript)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn compile_only_ast_covers_augassign_and_annassign_nodes() {
     let source = "import _ast\naug = compile('x += 1', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nann = compile('x: int = 1', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nsub_ann = compile('obj.x: int', '<ast>', 'exec', _ast.PyCF_ONLY_AST).body[0]\nok = isinstance(aug, _ast.AugAssign) and isinstance(aug.op, _ast.Add) and isinstance(ann, _ast.AnnAssign) and ann.simple == 1 and isinstance(sub_ann, _ast.AnnAssign) and sub_ann.simple == 0 and isinstance(ann.target.ctx, _ast.Store)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -1239,6 +1250,17 @@ fn runtime_class_generic_type_params_are_materialized() {
 #[test]
 fn decorated_generics_preserve_runtime_type_params() {
     let source = "def deco(obj):\n    return obj\n@deco\ndef ident[T](x):\n    return x\n@deco\nclass Box[T]:\n    pass\nok = (ident.__type_params__[0].__name__ == 'T' and Box.__type_params__[0].__name__ == 'T' and ident(3) == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn runtime_type_alias_materializes_type_params_and_repr() {
+    let source = "type Pair[T] = tuple[T, T]\nparams = Pair.__type_params__\nok = (type(Pair).__name__ == 'TypeAliasType' and [tp.__name__ for tp in params] == ['T'] and repr(Pair) == 'Pair')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

@@ -84,6 +84,11 @@ pub enum StmtKind {
         keywords: Vec<(String, Expr)>,
         body: Vec<Stmt>,
     },
+    TypeAlias {
+        name: String,
+        type_params: Vec<String>,
+        value: Expr,
+    },
     Decorated {
         decorators: Vec<Expr>,
         stmt: Box<Stmt>,
