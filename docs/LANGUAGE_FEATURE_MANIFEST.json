@@ -45,6 +45,13 @@
       "closure_criteria": "bound/constraints/default runtime attributes on type parameters match CPython probe shape"
     },
     {
+      "id": "runtime_type_param_cross_references",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "type-parameter bounds/defaults can reference prior type parameters with CPython parity"
+    },
+    {
       "id": "runtime_type_alias_type_params",
       "required": true,
       "status": "implemented",

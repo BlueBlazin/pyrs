@@ -15,6 +15,8 @@ Status:
 - `[x]` Template string literals (`t"..."`) with runtime `string.templatelib.Template` construction (`BUILD_INTERPOLATION`/`BUILD_TEMPLATE` parity path for source execution)
 - `[x]` Runtime generic function/class type-parameter materialization (`__type_params__` for `def f[T]...` / `class C[T]...`)
 - `[x]` Runtime generic type-parameter bound/constraints/default materialization (`T: Bound`, `T: (A, B)`, `T = Default`, `*Ts = ...`, `**P = ...`)
+- `[x]` Runtime type-parameter cross-reference parity (`U: T`, `U = list[T]`) with prior-param identity semantics
+- `[x]` Builtin generic subscript baseline (`list[int]`, `dict[str, int]`, etc.) returns runtime `GenericAlias` without requiring an explicit `import types`
 - `[x]` `\N{...}` Unicode-name escape support (canonical + alias accepted, named sequence rejected)
 - `[x]` Source-language manifest gate (`docs/LANGUAGE_FEATURE_MANIFEST.json` + `scripts/check_language_feature_manifest.py`) for explicit feature accounting and CPython differential probes
 - `[x]` Runtime generic `type Alias[T] = ...` parity (`TypeAliasType` + `__type_params__` + repr shape)

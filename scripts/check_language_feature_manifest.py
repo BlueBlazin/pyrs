@@ -101,6 +101,28 @@ result = {
 """,
     },
     {
+        "id": "runtime_type_param_cross_references",
+        "mode": "json_result",
+        "source": """def f[T, U: T](x):
+    return x
+def g[T = int, U = list[T]](x):
+    return x
+ft, fu = f.__type_params__
+gt, gu = g.__type_params__
+default = gu.__default__
+result = {
+    "bound_is_prior_param": fu.__bound__ is ft,
+    "default_type": type(default).__name__,
+    "default_origin_is_list": getattr(default, "__origin__", None) is list,
+    "default_arg0_is_prior_param": (
+        hasattr(default, "__args__")
+        and len(default.__args__) == 1
+        and default.__args__[0] is gt
+    ),
+}
+""",
+    },
+    {
         "id": "runtime_type_alias_type_params",
         "mode": "json_result",
         "source": """type Pair[T] = tuple[T, T]

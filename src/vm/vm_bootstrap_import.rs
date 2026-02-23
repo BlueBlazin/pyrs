@@ -3674,6 +3674,7 @@ impl Vm {
         let code_type_class = self
             .heap
             .alloc_class(ClassObject::new("code".to_string(), Vec::new()));
+        let generic_alias_class = self.ensure_generic_alias_class();
         if let Value::Class(class_obj) = &simple_namespace_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
@@ -3727,11 +3728,7 @@ impl Vm {
                     )),
                 ),
                 ("SimpleNamespace", simple_namespace_class),
-                (
-                    "GenericAlias",
-                    self.heap
-                        .alloc_class(ClassObject::new("GenericAlias".to_string(), Vec::new())),
-                ),
+                ("GenericAlias", Value::Class(generic_alias_class.clone())),
                 (
                     "UnionType",
                     self.heap

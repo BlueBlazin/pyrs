@@ -720,19 +720,11 @@ impl Vm {
                             | BuiltinFunction::Complex
                     ) =>
                 {
-                    if self.generic_alias_class().is_some() {
-                        Ok(self.alloc_generic_alias_instance(Value::Builtin(builtin), index))
-                    } else {
-                        Ok(Value::Builtin(builtin))
-                    }
+                    Ok(self.alloc_generic_alias_instance(Value::Builtin(builtin), index))
                 }
                 Value::Class(class) => {
-                    if self.generic_alias_class().is_some() {
-                        let origin = Value::Class(class.clone());
-                        Ok(self.alloc_generic_alias_instance(origin, index))
-                    } else {
-                        Ok(Value::Class(class))
-                    }
+                    let origin = Value::Class(class.clone());
+                    Ok(self.alloc_generic_alias_instance(origin, index))
                 }
                 other => {
                     if typing_alias_marker_value(&other) && typing_alias_index_shape(&index) {
@@ -783,10 +775,37 @@ impl Vm {
         }
     }
 
+    pub(super) fn ensure_generic_alias_class(&mut self) -> ObjRef {
+        const CACHE_KEY: &str = "__types_generic_alias__";
+        if let Some(existing) = self.generic_alias_class() {
+            self.synthetic_builtin_classes
+                .insert(CACHE_KEY.to_string(), existing.clone());
+            return existing;
+        }
+        if let Some(existing) = self.synthetic_builtin_classes.get(CACHE_KEY).cloned() {
+            return existing;
+        }
+        let class = self.synthetic_builtin_class("GenericAlias");
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("types".to_string()));
+            class_data.attrs.insert(
+                "__name__".to_string(),
+                Value::Str("GenericAlias".to_string()),
+            );
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str("GenericAlias".to_string()),
+            );
+        }
+        self.synthetic_builtin_classes
+            .insert(CACHE_KEY.to_string(), class.clone());
+        class
+    }
+
     pub(super) fn alloc_generic_alias_instance(&mut self, origin: Value, index: Value) -> Value {
-        let Some(alias_class) = self.generic_alias_class() else {
-            return origin;
-        };
+        let alias_class = self.ensure_generic_alias_class();
         let alias = self.heap.alloc_instance(InstanceObject::new(alias_class));
         if let Value::Instance(instance) = &alias
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()

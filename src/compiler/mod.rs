@@ -4020,12 +4020,65 @@ impl Compiler {
         }
     }
 
-    fn emit_type_param_object(&mut self, param: &TypeParam) -> Result<(), CompileError> {
+    fn emit_type_param_expr_with_bindings(
+        &mut self,
+        expr: &Expr,
+        bindings: &[(String, String)],
+    ) -> Result<(), CompileError> {
+        if bindings.is_empty() {
+            self.compile_expr(expr)?;
+            return Ok(());
+        }
+        let helper_params: Vec<Parameter> = bindings
+            .iter()
+            .map(|(name, _)| Parameter {
+                name: name.clone(),
+                default: None,
+                annotation: None,
+            })
+            .collect();
+        let helper_body = vec![Stmt {
+            node: StmtKind::Return {
+                value: Some(expr.clone()),
+            },
+            span: expr.span,
+        }];
+        let helper_code = self.compile_function(
+            "<type_param_expr>",
+            false,
+            &[],
+            &helper_params,
+            &[],
+            &None,
+            &None,
+            &helper_body,
+        )?;
+        self.emit_function_with_defaults(
+            &[],
+            &helper_params,
+            &[],
+            &None,
+            &None,
+            None,
+            helper_code,
+        )?;
+        for (_, temp) in bindings {
+            self.emit_load_name(temp)?;
+        }
+        self.emit(Opcode::CallFunction, Some(bindings.len() as u32));
+        Ok(())
+    }
+
+    fn emit_type_param_object(
+        &mut self,
+        param: &TypeParam,
+        bindings: &[(String, String)],
+    ) -> Result<(), CompileError> {
         self.emit_const(Value::Str(param.name.clone()));
         if param.kind == TypeParamKind::TypeVar
             && let Some(bound) = &param.bound
         {
-            self.compile_expr(bound)?;
+            self.emit_type_param_expr_with_bindings(bound, bindings)?;
             let intrinsic = if matches!(bound.node, ExprKind::Tuple(_)) {
                 3
             } else {
@@ -4039,17 +4092,47 @@ impl Compiler {
             );
         }
         if let Some(default) = &param.default {
-            self.compile_expr(default)?;
+            self.emit_type_param_expr_with_bindings(default, bindings)?;
             self.emit(Opcode::CallIntrinsic2, Some(5));
         }
         Ok(())
     }
 
-    fn emit_type_params_tuple(&mut self, type_params: &[TypeParam]) -> Result<(), CompileError> {
+    fn emit_type_param_temps(
+        &mut self,
+        type_params: &[TypeParam],
+    ) -> Result<Vec<(String, String)>, CompileError> {
+        let mut bindings: Vec<(String, String)> = Vec::with_capacity(type_params.len());
         for param in type_params {
-            self.emit_type_param_object(param)?;
+            let temp = self.fresh_temp("type_param");
+            self.emit_type_param_object(param, &bindings)?;
+            self.emit_store_name(&temp);
+            bindings.push((param.name.clone(), temp));
         }
-        self.emit(Opcode::BuildTuple, Some(type_params.len() as u32));
+        Ok(bindings)
+    }
+
+    fn emit_type_params_tuple_from_temps(
+        &mut self,
+        bindings: &[(String, String)],
+    ) -> Result<(), CompileError> {
+        for (_, temp) in bindings {
+            self.emit_load_name(temp)?;
+        }
+        self.emit(Opcode::BuildTuple, Some(bindings.len() as u32));
+        Ok(())
+    }
+
+    fn emit_delete_type_param_temps(&mut self, bindings: &[(String, String)]) {
+        for (_, temp) in bindings {
+            self.emit_delete_name(temp);
+        }
+    }
+
+    fn emit_type_params_tuple(&mut self, type_params: &[TypeParam]) -> Result<(), CompileError> {
+        let bindings = self.emit_type_param_temps(type_params)?;
+        self.emit_type_params_tuple_from_temps(&bindings)?;
+        self.emit_delete_type_param_temps(&bindings);
         Ok(())
     }
 
@@ -4171,19 +4254,10 @@ impl Compiler {
         type_params: &[TypeParam],
         value: &Expr,
     ) -> Result<(), CompileError> {
-        let mut temp_type_params: Vec<(String, String)> = Vec::with_capacity(type_params.len());
-        for param in type_params {
-            let temp = self.fresh_temp("type_param");
-            self.emit_type_param_object(param)?;
-            self.emit_store_name(&temp);
-            temp_type_params.push((temp, param.name.clone()));
-        }
+        let temp_type_params = self.emit_type_param_temps(type_params)?;
 
         let type_params_tuple_temp = self.fresh_temp("type_params_tuple");
-        for (temp, _) in &temp_type_params {
-            self.emit_load_name(temp)?;
-        }
-        self.emit(Opcode::BuildTuple, Some(temp_type_params.len() as u32));
+        self.emit_type_params_tuple_from_temps(&temp_type_params)?;
         self.emit_store_name(&type_params_tuple_temp);
 
         let alias_value_temp = self.fresh_temp("type_alias_value");
@@ -4192,7 +4266,7 @@ impl Compiler {
         } else {
             let helper_params: Vec<Parameter> = temp_type_params
                 .iter()
-                .map(|(_, clean_name)| Parameter {
+                .map(|(clean_name, _)| Parameter {
                     name: clean_name.clone(),
                     default: None,
                     annotation: None,
@@ -4223,7 +4297,7 @@ impl Compiler {
                 None,
                 helper_code,
             )?;
-            for (temp, _) in &temp_type_params {
+            for (_, temp) in &temp_type_params {
                 self.emit_load_name(temp)?;
             }
             self.emit(Opcode::CallFunction, Some(temp_type_params.len() as u32));
@@ -4239,9 +4313,7 @@ impl Compiler {
 
         self.emit_delete_name(&alias_value_temp);
         self.emit_delete_name(&type_params_tuple_temp);
-        for (temp, _) in temp_type_params {
-            self.emit_delete_name(&temp);
-        }
+        self.emit_delete_type_param_temps(&temp_type_params);
         Ok(())
     }
 

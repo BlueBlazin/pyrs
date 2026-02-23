@@ -1281,6 +1281,17 @@ fn runtime_type_params_support_bounds_constraints_and_defaults() {
 }
 
 #[test]
+fn runtime_type_params_support_cross_references() {
+    let source = "def f[T, U: T](x):\n    return x\ndef g[T = int, U = list[T]](x):\n    return x\nft, fu = f.__type_params__\ngt, gu = g.__type_params__\ndefault = gu.__default__\nok = (fu.__bound__ is ft and type(default).__name__ == 'GenericAlias' and getattr(default, '__origin__', None) is list and len(default.__args__) == 1 and default.__args__[0] is gt)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

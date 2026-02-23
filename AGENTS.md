@@ -96,9 +96,14 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       (`T: Bound`, `T: (A, B)`, `T = Default`, `*Ts = ...`, `**P = ...`) and
       runtime type-param objects now expose bound/constraints/default attributes
       through intrinsic wiring.
-  - Language feature gate now includes runtime type-param bound/constraints/default
-    parity probe (`runtime_type_param_bound_constraints_defaults`) and is green
-    at `13/13` required probes.
+    - type-param compilation now preserves cross-reference semantics for prior params
+      (e.g. `U: T`, `U = list[T]`) via explicit temporary binding/evaluation contexts.
+  - Builtin generic-subscript parity improved:
+    - builtin/container class subscripting (`list[int]`, `dict[str, int]`, etc.) now
+      materializes `GenericAlias` even before `types` import;
+      `types.GenericAlias` import later reuses the same canonical class identity.
+  - Language feature gate now includes runtime type-param cross-reference parity probe
+    (`runtime_type_param_cross_references`) and is green at `14/14` required probes.
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`
