@@ -1270,6 +1270,17 @@ fn runtime_type_alias_materializes_type_params_and_repr() {
 }
 
 #[test]
+fn runtime_type_params_support_bounds_constraints_and_defaults() {
+    let source = "def f[T: int = str](x):\n    return x\ndef g[T: (int, str)](x):\n    return x\ndef h[*Ts = [int]](x):\n    return x\ndef p[**P = [int, str]](x):\n    return x\nft = f.__type_params__[0]\ngt = g.__type_params__[0]\nht = h.__type_params__[0]\npt = p.__type_params__[0]\nok = (getattr(ft, '__bound__', None) is int and getattr(ft, '__default__', None) is str and [c.__name__ for c in getattr(gt, '__constraints__', ())] == ['int', 'str'] and repr(getattr(ht, '__default__', None)) == '[<class \\'int\\'>]' and repr(getattr(pt, '__default__', None)) == '[<class \\'int\\'>, <class \\'str\\'>]')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_sys_standard_streams() {
     let source = "import sys\nok = hasattr(sys, 'stdout') and hasattr(sys, 'stderr') and hasattr(sys, 'stdin') and hasattr(sys.stderr, 'flush')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

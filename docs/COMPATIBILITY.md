@@ -14,6 +14,7 @@ Status:
 - `[x]` Major modern syntax baseline (`match`/`case`, comprehensions, assignment expressions, async syntax, decorators, annotations baseline)
 - `[x]` Template string literals (`t"..."`) with runtime `string.templatelib.Template` construction (`BUILD_INTERPOLATION`/`BUILD_TEMPLATE` parity path for source execution)
 - `[x]` Runtime generic function/class type-parameter materialization (`__type_params__` for `def f[T]...` / `class C[T]...`)
+- `[x]` Runtime generic type-parameter bound/constraints/default materialization (`T: Bound`, `T: (A, B)`, `T = Default`, `*Ts = ...`, `**P = ...`)
 - `[x]` `\N{...}` Unicode-name escape support (canonical + alias accepted, named sequence rejected)
 - `[x]` Source-language manifest gate (`docs/LANGUAGE_FEATURE_MANIFEST.json` + `scripts/check_language_feature_manifest.py`) for explicit feature accounting and CPython differential probes
 - `[x]` Runtime generic `type Alias[T] = ...` parity (`TypeAliasType` + `__type_params__` + repr shape)

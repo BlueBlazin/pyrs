@@ -35,6 +35,21 @@ impl<T> Spanned<T> {
 pub type Expr = Spanned<ExprKind>;
 pub type Stmt = Spanned<StmtKind>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeParamKind {
+    TypeVar,
+    TypeVarTuple,
+    ParamSpec,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParam {
+    pub kind: TypeParamKind,
+    pub name: String,
+    pub bound: Option<Box<Expr>>,
+    pub default: Option<Box<Expr>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     pub body: Vec<Stmt>,
@@ -66,7 +81,7 @@ pub enum StmtKind {
     },
     FunctionDef {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         is_async: bool,
         posonly_params: Vec<Parameter>,
         params: Vec<Parameter>,
@@ -78,7 +93,7 @@ pub enum StmtKind {
     },
     ClassDef {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         bases: Vec<Expr>,
         metaclass: Option<Expr>,
         keywords: Vec<(String, Expr)>,
@@ -86,7 +101,7 @@ pub enum StmtKind {
     },
     TypeAlias {
         name: String,
-        type_params: Vec<String>,
+        type_params: Vec<TypeParam>,
         value: Expr,
     },
     Decorated {

@@ -92,6 +92,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
       with CPython-shaped type-parameter kinds/names (`TypeVar`, `TypeVarTuple`, `ParamSpec`),
     - generic `type Alias[T] = ...` now materializes `TypeAliasType` with
       `__type_params__` and CPython-shaped repr (`Pair`) for runtime parity.
+    - parser/compiler now preserve bound/default syntax on source type params
+      (`T: Bound`, `T: (A, B)`, `T = Default`, `*Ts = ...`, `**P = ...`) and
+      runtime type-param objects now expose bound/constraints/default attributes
+      through intrinsic wiring.
+  - Language feature gate now includes runtime type-param bound/constraints/default
+    parity probe (`runtime_type_param_bound_constraints_defaults`) and is green
+    at `13/13` required probes.
 - Error-reporting parity checkpoint (2026-02-23, latest):
   - Added local PEP references used for implementation:
     - `docs/references/pep-0626.rst`

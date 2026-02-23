@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::ast::{
     AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, DictEntry,
     ExceptHandler, Expr, ExprKind, MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
-    UnaryOp,
+    TypeParam, TypeParamKind, UnaryOp,
 };
 use crate::bytecode::{CodeObject, Instruction, Opcode};
 use crate::runtime::Value;
@@ -1861,14 +1861,8 @@ fn collect_locals_namedexpr_expr(expr: &Expr, locals: &mut HashSet<String>) {
     }
 }
 
-fn strip_type_param_prefix(raw: &str) -> String {
-    if let Some(name) = raw.strip_prefix("**") {
-        name.to_string()
-    } else if let Some(name) = raw.strip_prefix('*') {
-        name.to_string()
-    } else {
-        raw.to_string()
-    }
+fn type_param_name(param: &TypeParam) -> String {
+    param.name.clone()
 }
 
 fn collect_uses_stmt(
@@ -2063,8 +2057,8 @@ fn collect_uses_stmt(
         } => {
             let helper_params: Vec<Parameter> = type_params
                 .iter()
-                .map(|name| Parameter {
-                    name: strip_type_param_prefix(name),
+                .map(|param| Parameter {
+                    name: type_param_name(param),
                     default: None,
                     annotation: None,
                 })
@@ -4018,30 +4012,52 @@ impl Compiler {
         Ok(())
     }
 
-    fn classify_type_param_for_intrinsic(raw: &str) -> (u32, String) {
-        if let Some(name) = raw.strip_prefix("**") {
-            (8, name.to_string())
-        } else if let Some(name) = raw.strip_prefix('*') {
-            (9, name.to_string())
-        } else {
-            (7, raw.to_string())
+    fn type_param_intrinsic(kind: TypeParamKind) -> u32 {
+        match kind {
+            TypeParamKind::TypeVar => 7,
+            TypeParamKind::ParamSpec => 8,
+            TypeParamKind::TypeVarTuple => 9,
         }
     }
 
-    fn emit_type_params_tuple(&mut self, type_params: &[String]) {
-        for raw in type_params {
-            let (intrinsic, name) = Self::classify_type_param_for_intrinsic(raw);
-            self.emit_const(Value::Str(name));
-            self.emit(Opcode::CallIntrinsic1, Some(intrinsic));
+    fn emit_type_param_object(&mut self, param: &TypeParam) -> Result<(), CompileError> {
+        self.emit_const(Value::Str(param.name.clone()));
+        if param.kind == TypeParamKind::TypeVar
+            && let Some(bound) = &param.bound
+        {
+            self.compile_expr(bound)?;
+            let intrinsic = if matches!(bound.node, ExprKind::Tuple(_)) {
+                3
+            } else {
+                2
+            };
+            self.emit(Opcode::CallIntrinsic2, Some(intrinsic));
+        } else {
+            self.emit(
+                Opcode::CallIntrinsic1,
+                Some(Self::type_param_intrinsic(param.kind)),
+            );
+        }
+        if let Some(default) = &param.default {
+            self.compile_expr(default)?;
+            self.emit(Opcode::CallIntrinsic2, Some(5));
+        }
+        Ok(())
+    }
+
+    fn emit_type_params_tuple(&mut self, type_params: &[TypeParam]) -> Result<(), CompileError> {
+        for param in type_params {
+            self.emit_type_param_object(param)?;
         }
         self.emit(Opcode::BuildTuple, Some(type_params.len() as u32));
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     fn compile_function_def_stmt(
         &mut self,
         name: &str,
-        type_params: &[String],
+        type_params: &[TypeParam],
         is_async: bool,
         posonly_params: &[Parameter],
         params: &[Parameter],
@@ -4093,7 +4109,7 @@ impl Compiler {
             func_code,
         )?;
         if !type_params.is_empty() {
-            self.emit_type_params_tuple(type_params);
+            self.emit_type_params_tuple(type_params)?;
             self.emit(Opcode::CallIntrinsic2, Some(4));
         }
         if store_target {
@@ -4105,7 +4121,7 @@ impl Compiler {
     fn compile_class_def(
         &mut self,
         name: &str,
-        type_params: &[String],
+        type_params: &[TypeParam],
         bases: &[Expr],
         metaclass: Option<&Expr>,
         keywords: &[(String, Expr)],
@@ -4135,7 +4151,7 @@ impl Compiler {
             let class_temp = self.fresh_temp("class_tp");
             self.emit_store_name(&class_temp);
             self.emit_load_name(&class_temp)?;
-            self.emit_type_params_tuple(type_params);
+            self.emit_type_params_tuple(type_params)?;
             let type_params_idx = self.code.add_name("__type_params__".to_string());
             self.emit(Opcode::StoreAttr, Some(type_params_idx));
             self.emit_load_name(&class_temp)?;
@@ -4152,17 +4168,15 @@ impl Compiler {
     fn compile_type_alias_stmt(
         &mut self,
         name: &str,
-        type_params: &[String],
+        type_params: &[TypeParam],
         value: &Expr,
     ) -> Result<(), CompileError> {
         let mut temp_type_params: Vec<(String, String)> = Vec::with_capacity(type_params.len());
-        for raw in type_params {
-            let (intrinsic, clean_name) = Self::classify_type_param_for_intrinsic(raw);
+        for param in type_params {
             let temp = self.fresh_temp("type_param");
-            self.emit_const(Value::Str(clean_name.clone()));
-            self.emit(Opcode::CallIntrinsic1, Some(intrinsic));
+            self.emit_type_param_object(param)?;
             self.emit_store_name(&temp);
-            temp_type_params.push((temp, clean_name));
+            temp_type_params.push((temp, param.name.clone()));
         }
 
         let type_params_tuple_temp = self.fresh_temp("type_params_tuple");

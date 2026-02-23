@@ -38,6 +38,13 @@
       "closure_criteria": "__type_params__ is populated for generic classes with correct kinds/names"
     },
     {
+      "id": "runtime_type_param_bound_constraints_defaults",
+      "required": true,
+      "status": "implemented",
+      "owner": "milestone13",
+      "closure_criteria": "bound/constraints/default runtime attributes on type parameters match CPython probe shape"
+    },
+    {
       "id": "runtime_type_alias_type_params",
       "required": true,
       "status": "implemented",

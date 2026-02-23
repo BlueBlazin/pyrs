@@ -28,7 +28,8 @@ use crate::ast::{
     ComprehensionClause as AstComprehensionClause, Constant as AstConstant, DictEntry,
     ExceptHandler as AstExceptHandler, Expr, ExprKind, ImportAlias as AstImportAlias,
     MatchCase as AstMatchCase, Module as AstModule, Parameter as AstParameter,
-    Pattern as AstPattern, Stmt, StmtKind, UnaryOp as AstUnaryOp,
+    Pattern as AstPattern, Stmt, StmtKind, TypeParam as AstTypeParam,
+    TypeParamKind as AstTypeParamKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
 
@@ -3897,25 +3898,37 @@ impl Vm {
 
     fn convert_type_params_to_ast_nodes(
         &mut self,
-        type_params: &[String],
+        type_params: &[AstTypeParam],
         location: Option<(usize, usize)>,
     ) -> Result<Vec<Value>, RuntimeError> {
         let mut nodes = Vec::with_capacity(type_params.len());
         for param in type_params {
-            let (class_name, name_field, include_bound) =
-                if let Some(name) = param.strip_prefix("**") {
-                    ("ParamSpec", name, false)
-                } else if let Some(name) = param.strip_prefix('*') {
-                    ("TypeVarTuple", name, false)
-                } else {
-                    ("TypeVar", param.as_str(), true)
-                };
+            let (class_name, include_bound) = match param.kind {
+                AstTypeParamKind::ParamSpec => ("ParamSpec", false),
+                AstTypeParamKind::TypeVarTuple => ("TypeVarTuple", false),
+                AstTypeParamKind::TypeVar => ("TypeVar", true),
+            };
             let mut fields = vec![
-                ("name", Value::Str(name_field.to_string())),
-                ("default_value", Value::None),
+                ("name", Value::Str(param.name.clone())),
+                (
+                    "default_value",
+                    match &param.default {
+                        Some(default) => self.convert_expr_to_ast_node(default)?,
+                        None => Value::None,
+                    },
+                ),
             ];
             if include_bound {
-                fields.insert(1, ("bound", Value::None));
+                fields.insert(
+                    1,
+                    (
+                        "bound",
+                        match &param.bound {
+                            Some(bound) => self.convert_expr_to_ast_node(bound)?,
+                            None => Value::None,
+                        },
+                    ),
+                );
             }
             nodes.push(self.build_ast_node(class_name, location, fields)?);
         }

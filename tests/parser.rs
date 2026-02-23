@@ -1,6 +1,6 @@
 use pyrs::ast::{
     AssignTarget, ComprehensionClause, Constant, DictEntry, Expr, ExprKind, FloatLiteral,
-    MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind,
+    MatchCase, Module, Parameter, Pattern, Span, Stmt, StmtKind, TypeParamKind,
 };
 use pyrs::parser;
 
@@ -183,6 +183,14 @@ fn strip_stmt(stmt: &Stmt) -> Stmt {
         StmtKind::Continue => StmtKind::Continue,
     };
     spanned_stmt(node)
+}
+
+fn type_param_names(params: &[pyrs::ast::TypeParam]) -> Vec<String> {
+    params.iter().map(|p| p.name.clone()).collect()
+}
+
+fn type_param_kinds(params: &[pyrs::ast::TypeParam]) -> Vec<TypeParamKind> {
+    params.iter().map(|p| p.kind).collect()
 }
 
 fn strip_expr(expr: &Expr) -> Expr {
@@ -2403,13 +2411,13 @@ fn parses_type_parameters_on_defs_and_classes() {
     let stripped = strip_module(&module);
     match &stripped[0].node {
         StmtKind::FunctionDef { type_params, .. } => {
-            assert_eq!(type_params, &vec!["T".to_string()]);
+            assert_eq!(type_param_names(type_params), vec!["T".to_string()]);
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
     match &stripped[1].node {
         StmtKind::ClassDef { type_params, .. } => {
-            assert_eq!(type_params, &vec!["T".to_string()]);
+            assert_eq!(type_param_names(type_params), vec!["T".to_string()]);
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
@@ -2422,9 +2430,46 @@ fn parses_type_parameter_variants() {
     match &strip_module(&module)[0].node {
         StmtKind::FunctionDef { type_params, .. } => {
             assert_eq!(
-                type_params,
-                &vec!["*Ts".to_string(), "**P".to_string(), "T".to_string()]
+                type_param_names(type_params),
+                vec!["Ts".to_string(), "P".to_string(), "T".to_string()]
             );
+            assert_eq!(
+                type_param_kinds(type_params),
+                vec![
+                    TypeParamKind::TypeVarTuple,
+                    TypeParamKind::ParamSpec,
+                    TypeParamKind::TypeVar,
+                ]
+            );
+        }
+        other => panic!("unexpected stmt: {other:?}"),
+    }
+}
+
+#[test]
+fn parses_type_parameter_bounds_and_defaults() {
+    let source = "def f[T: int = str, *Ts = [int], **P = [int, str]](x):\n    return x\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    match &strip_module(&module)[0].node {
+        StmtKind::FunctionDef { type_params, .. } => {
+            assert_eq!(
+                type_param_kinds(type_params),
+                vec![
+                    TypeParamKind::TypeVar,
+                    TypeParamKind::TypeVarTuple,
+                    TypeParamKind::ParamSpec,
+                ]
+            );
+            assert_eq!(
+                type_param_names(type_params),
+                vec!["T".to_string(), "Ts".to_string(), "P".to_string()]
+            );
+            assert!(type_params[0].bound.is_some());
+            assert!(type_params[0].default.is_some());
+            assert!(type_params[1].bound.is_none());
+            assert!(type_params[1].default.is_some());
+            assert!(type_params[2].bound.is_none());
+            assert!(type_params[2].default.is_some());
         }
         other => panic!("unexpected stmt: {other:?}"),
     }
@@ -2439,7 +2484,8 @@ fn parses_type_alias_statement() {
             name, type_params, ..
         } => {
             assert_eq!(name, "Alias");
-            assert_eq!(type_params, &vec!["T".to_string()]);
+            assert_eq!(type_param_names(type_params), vec!["T".to_string()]);
+            assert_eq!(type_param_kinds(type_params), vec![TypeParamKind::TypeVar]);
         }
         other => panic!("unexpected stmt: {other:?}"),
     }

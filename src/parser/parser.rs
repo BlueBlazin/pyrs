@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::ast::{
     AssignTarget, BinaryOp, BoolOp, CallArg, ComprehensionClause, Constant, DictEntry,
     ExceptHandler, Expr, ExprKind, FloatLiteral, ImportAlias, MatchCase, Module, Parameter,
-    Pattern, Span, Stmt, StmtKind, TemplateInterpolation, UnaryOp,
+    Pattern, Span, Stmt, StmtKind, TemplateInterpolation, TypeParam, TypeParamKind, UnaryOp,
 };
 use crate::parser::lexer::{LexError, Lexer};
 use crate::parser::token::{Keyword, Token, TokenKind};
@@ -2612,7 +2612,7 @@ impl Parser {
         ))
     }
 
-    fn parse_type_params(&mut self, pos: usize) -> Result<(Vec<String>, usize), ParseError> {
+    fn parse_type_params(&mut self, pos: usize) -> Result<(Vec<TypeParam>, usize), ParseError> {
         if !matches!(self.token_at(pos).kind, TokenKind::LBracket) {
             return Ok((Vec::new(), pos));
         }
@@ -2622,28 +2622,38 @@ impl Parser {
             return Err(self.error_at(pos, "type parameter list cannot be empty"));
         }
         loop {
-            let mut prefix = "";
+            let mut kind = TypeParamKind::TypeVar;
             if matches!(self.token_at(pos).kind, TokenKind::Star) {
-                prefix = "*";
+                kind = TypeParamKind::TypeVarTuple;
                 pos += 1;
             } else if matches!(self.token_at(pos).kind, TokenKind::DoubleStar) {
-                prefix = "**";
+                kind = TypeParamKind::ParamSpec;
                 pos += 1;
             }
             let token = self.token_at(pos);
             if token.kind != TokenKind::Name {
                 return Err(self.error_at(pos, "expected type parameter name"));
             }
-            params.push(format!("{prefix}{}", token.lexeme));
+            let name = token.lexeme.clone();
             pos += 1;
+            let mut bound = None;
             if matches!(self.token_at(pos).kind, TokenKind::Colon) {
-                let (_, next) = self.parse_expr_at(pos + 1)?;
+                let (expr, next) = self.parse_expr_at(pos + 1)?;
+                bound = Some(Box::new(expr));
                 pos = next;
             }
+            let mut default = None;
             if matches!(self.token_at(pos).kind, TokenKind::Equal) {
-                let (_, next) = self.parse_expr_at(pos + 1)?;
+                let (expr, next) = self.parse_expr_at(pos + 1)?;
+                default = Some(Box::new(expr));
                 pos = next;
             }
+            params.push(TypeParam {
+                kind,
+                name,
+                bound,
+                default,
+            });
             if matches!(self.token_at(pos).kind, TokenKind::Comma) {
                 pos += 1;
                 if matches!(self.token_at(pos).kind, TokenKind::RBracket) {

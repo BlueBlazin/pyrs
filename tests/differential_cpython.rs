@@ -2293,3 +2293,34 @@ result = {
     let ours = run_pyrs_json(source).expect("pyrs JSON should run");
     assert_eq!(py, ours, "{}", source);
 }
+
+#[test]
+fn differential_runtime_type_param_bound_constraints_default_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+def f[T: int = str](x):
+    return x
+def g[T: (int, str)](x):
+    return x
+def h[*Ts = [int]](x):
+    return x
+def p[**P = [int, str]](x):
+    return x
+ft = f.__type_params__[0]
+gt = g.__type_params__[0]
+ht = h.__type_params__[0]
+pt = p.__type_params__[0]
+result = {
+    "fb": getattr(ft, "__bound__", None) is int,
+    "fd": getattr(ft, "__default__", None) is str,
+    "gc": [c.__name__ for c in getattr(gt, "__constraints__", ())],
+    "hd": repr(getattr(ht, "__default__", None)),
+    "pd": repr(getattr(pt, "__default__", None)),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}

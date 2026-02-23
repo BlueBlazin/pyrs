@@ -73,6 +73,30 @@ params = Box.__type_params__
 result = {
     "kind_names": [type(tp).__name__ for tp in params],
     "names": [tp.__name__ for tp in params],
+        }
+""",
+    },
+    {
+        "id": "runtime_type_param_bound_constraints_defaults",
+        "mode": "json_result",
+        "source": """def f[T: int = str](x):
+    return x
+def g[T: (int, str)](x):
+    return x
+def h[*Ts = [int]](x):
+    return x
+def p[**P = [int, str]](x):
+    return x
+ft = f.__type_params__[0]
+gt = g.__type_params__[0]
+ht = h.__type_params__[0]
+pt = p.__type_params__[0]
+result = {
+    "fb": getattr(ft, "__bound__", None) is int,
+    "fd": getattr(ft, "__default__", None) is str,
+    "gc": [c.__name__ for c in getattr(gt, "__constraints__", ())],
+    "hd": repr(getattr(ht, "__default__", None)),
+    "pd": repr(getattr(pt, "__default__", None)),
 }
 """,
     },
