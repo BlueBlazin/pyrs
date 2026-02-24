@@ -2226,8 +2226,46 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Str(text)))
             }
             NativeMethodKind::BytesHex => {
-                if !args.is_empty() || !kwargs.is_empty() {
-                    return Err(RuntimeError::new("TypeError: hex() takes no arguments"));
+                let mut kw_sep = None;
+                let mut kw_bytes_per_sep = None;
+                for (name, value) in kwargs {
+                    match name.as_str() {
+                        "sep" => {
+                            if kw_sep.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "hex() got multiple values for argument 'sep'",
+                                ));
+                            }
+                        }
+                        "bytes_per_sep" => {
+                            if kw_bytes_per_sep.replace(value).is_some() {
+                                return Err(RuntimeError::new(
+                                    "hex() got multiple values for argument 'bytes_per_sep'",
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "hex() got an unexpected keyword argument '{}'",
+                                name
+                            )));
+                        }
+                    }
+                }
+                if args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "TypeError: hex() takes at most 2 arguments",
+                    ));
+                }
+                if !args.is_empty() && kw_sep.is_some() {
+                    return Err(RuntimeError::new(
+                        "hex() got multiple values for argument 'sep'",
+                    ));
+                }
+                if args.len() > 1 && kw_bytes_per_sep.is_some() {
+                    return Err(RuntimeError::new(
+                        "hex() got multiple values for argument 'bytes_per_sep'",
+                    ));
                 }
                 let bytes = match &*receiver.kind() {
                     Object::Module(module_data) => match module_data.globals.get("value") {
@@ -2236,9 +2274,74 @@ impl Vm {
                     },
                     _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
                 };
+                let sep_value = args.first().cloned().or(kw_sep);
+                let has_separator_arg = sep_value.is_some();
+                let bytes_per_sep_value = args.get(1).cloned().or(kw_bytes_per_sep);
+                let separator = if let Some(value) = sep_value {
+                    match value {
+                        Value::Str(sep) => {
+                            let mut chars = sep.chars();
+                            let Some(ch) = chars.next() else {
+                                return Err(RuntimeError::value_error(
+                                    "sep must be length 1 and ASCII",
+                                ));
+                            };
+                            if chars.next().is_some() || (ch as u32) > 0x7f {
+                                return Err(RuntimeError::value_error(
+                                    "sep must be length 1 and ASCII",
+                                ));
+                            }
+                            ch
+                        }
+                        Value::Bytes(obj) => {
+                            let Object::Bytes(values) = &*obj.kind() else {
+                                return Err(RuntimeError::type_error("sep must be str or bytes"));
+                            };
+                            if values.len() != 1 || values[0] > 0x7f {
+                                return Err(RuntimeError::value_error(
+                                    "sep must be length 1 and ASCII",
+                                ));
+                            }
+                            values[0] as char
+                        }
+                        Value::ByteArray(obj) => {
+                            let Object::ByteArray(values) = &*obj.kind() else {
+                                return Err(RuntimeError::type_error("sep must be str or bytes"));
+                            };
+                            if values.len() != 1 || values[0] > 0x7f {
+                                return Err(RuntimeError::value_error(
+                                    "sep must be length 1 and ASCII",
+                                ));
+                            }
+                            values[0] as char
+                        }
+                        _ => return Err(RuntimeError::type_error("sep must be str or bytes")),
+                    }
+                } else if bytes_per_sep_value.is_some() {
+                    return Err(RuntimeError::type_error("sep must be str or bytes"));
+                } else {
+                    '\0'
+                };
+                let bytes_per_sep = if let Some(value) = bytes_per_sep_value {
+                    value_to_int(value)?
+                } else {
+                    1
+                };
                 const HEX: &[u8; 16] = b"0123456789abcdef";
-                let mut out = String::with_capacity(bytes.len() * 2);
-                for byte in bytes {
+                let mut out = String::with_capacity(bytes.len() * 3);
+                let group = bytes_per_sep.unsigned_abs() as usize;
+                let use_separator = has_separator_arg && bytes_per_sep != 0 && group > 0;
+                for (idx, byte) in bytes.iter().copied().enumerate() {
+                    if use_separator && idx > 0 {
+                        let insert = if bytes_per_sep > 0 {
+                            (bytes.len() - idx) % group == 0
+                        } else {
+                            idx % group == 0
+                        };
+                        if insert {
+                            out.push(separator);
+                        }
+                    }
                     out.push(HEX[(byte >> 4) as usize] as char);
                     out.push(HEX[(byte & 0x0f) as usize] as char);
                 }

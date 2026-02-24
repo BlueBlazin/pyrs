@@ -2018,6 +2018,24 @@ impl Vm {
                 ("_GIL_MINSIZE", Value::Int(2048)),
             ],
         );
+        self.builtin_attr_overrides.insert(
+            BuiltinFunction::HashlibBlake2b,
+            HashMap::from([
+                ("SALT_SIZE".to_string(), Value::Int(16)),
+                ("PERSON_SIZE".to_string(), Value::Int(16)),
+                ("MAX_DIGEST_SIZE".to_string(), Value::Int(64)),
+                ("MAX_KEY_SIZE".to_string(), Value::Int(64)),
+            ]),
+        );
+        self.builtin_attr_overrides.insert(
+            BuiltinFunction::HashlibBlake2s,
+            HashMap::from([
+                ("SALT_SIZE".to_string(), Value::Int(8)),
+                ("PERSON_SIZE".to_string(), Value::Int(8)),
+                ("MAX_DIGEST_SIZE".to_string(), Value::Int(32)),
+                ("MAX_KEY_SIZE".to_string(), Value::Int(32)),
+            ]),
+        );
         self.install_builtin_module(
             "_sha3",
             &[

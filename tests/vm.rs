@@ -14057,6 +14057,23 @@ ok = (a == 3.0 and b.startswith('0x1.8') and b.endswith('p+1') and c > 1e300)\n"
 }
 
 #[test]
+fn bytes_hex_and_fromhex_helpers_cover_separator_forms() {
+    let source = "base = b'\\xb9\\x01\\xef'\n\
+h0 = base.hex()\n\
+h1 = base.hex(':')\n\
+h2 = base.hex(':', 2)\n\
+h3 = base.hex(':', -2)\n\
+h4 = bytes.fromhex('00 ff').hex()\n\
+barr = bytearray.fromhex('00 ff').hex(':')\n\
+ok = (h0 == 'b901ef' and h1 == 'b9:01:ef' and h2 == 'b9:01ef' and h3 == 'b901:ef' and h4 == '00ff' and barr == '00:ff')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn str_maketrans_helper_supports_core_forms() {
     let source = "d1 = str.maketrans({'a': 'x', 98: 'y'})\n\
 d2 = str.maketrans('ab', 'xy', 'c')\n\

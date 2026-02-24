@@ -61,6 +61,14 @@ sha3_256_abc = _sha3.sha3_256(b"abc").hexdigest()
 shake128_8 = _sha3.shake_128(b"abc").hexdigest(8)
 blake2b_abc = _blake2.blake2b(b"abc").hexdigest()
 blake2s_abc = _blake2.blake2s(b"abc").hexdigest()
+blake2b_salt_size = _blake2.blake2b.SALT_SIZE
+blake2b_person_size = _blake2.blake2b.PERSON_SIZE
+blake2b_max_digest_size = _blake2.blake2b.MAX_DIGEST_SIZE
+blake2b_max_key_size = _blake2.blake2b.MAX_KEY_SIZE
+blake2s_salt_size = _blake2.blake2s.SALT_SIZE
+blake2s_person_size = _blake2.blake2s.PERSON_SIZE
+blake2s_max_digest_size = _blake2.blake2s.MAX_DIGEST_SIZE
+blake2s_max_key_size = _blake2.blake2s.MAX_KEY_SIZE
 "#,
     );
 
@@ -142,6 +150,20 @@ ce80e2a9ac94fa54ca49f"
             "508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982".to_string()
         ))
     );
+    assert_eq!(vm.get_global("blake2b_salt_size"), Some(Value::Int(16)));
+    assert_eq!(vm.get_global("blake2b_person_size"), Some(Value::Int(16)));
+    assert_eq!(
+        vm.get_global("blake2b_max_digest_size"),
+        Some(Value::Int(64))
+    );
+    assert_eq!(vm.get_global("blake2b_max_key_size"), Some(Value::Int(64)));
+    assert_eq!(vm.get_global("blake2s_salt_size"), Some(Value::Int(8)));
+    assert_eq!(vm.get_global("blake2s_person_size"), Some(Value::Int(8)));
+    assert_eq!(
+        vm.get_global("blake2s_max_digest_size"),
+        Some(Value::Int(32))
+    );
+    assert_eq!(vm.get_global("blake2s_max_key_size"), Some(Value::Int(32)));
 }
 
 #[test]
