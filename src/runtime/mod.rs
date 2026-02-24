@@ -2707,6 +2707,7 @@ pub enum BuiltinFunction {
     OsFsEncode,
     OsFsDecode,
     OsRemove,
+    OsPopen,
     OsWaitStatusToExitCode,
     OsPathExists,
     OsPathJoin,
@@ -2740,6 +2741,7 @@ pub enum BuiltinFunction {
     SubprocessPopenPoll,
     SubprocessPopenEnter,
     SubprocessPopenExit,
+    SubprocessPipeRead,
     SubprocessPipeReadline,
     SubprocessPipeWrite,
     SubprocessPipeFlush,
@@ -3292,6 +3294,8 @@ pub enum BuiltinFunction {
     SignalSignal,
     SignalGetSignal,
     SignalRaiseSignal,
+    LocaleSetLocale,
+    LocaleLocaleConv,
     SocketGetHostName,
     SocketGetHostByName,
     SocketGetAddrInfo,
@@ -5939,6 +5943,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsFsEncode
             | BuiltinFunction::OsFsDecode
             | BuiltinFunction::OsRemove
+            | BuiltinFunction::OsPopen
             | BuiltinFunction::OsWaitStatusToExitCode
             | BuiltinFunction::OsPathExists
             | BuiltinFunction::OsPathJoin
@@ -5972,6 +5977,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SubprocessPopenPoll
             | BuiltinFunction::SubprocessPopenEnter
             | BuiltinFunction::SubprocessPopenExit
+            | BuiltinFunction::SubprocessPipeRead
             | BuiltinFunction::SubprocessPipeReadline
             | BuiltinFunction::SubprocessPipeWrite
             | BuiltinFunction::SubprocessPipeFlush
@@ -6229,6 +6235,8 @@ impl BuiltinFunction {
             | BuiltinFunction::SignalSignal
             | BuiltinFunction::SignalGetSignal
             | BuiltinFunction::SignalRaiseSignal
+            | BuiltinFunction::LocaleSetLocale
+            | BuiltinFunction::LocaleLocaleConv
             | BuiltinFunction::SocketGetHostName
             | BuiltinFunction::SocketGetHostByName
             | BuiltinFunction::SocketGetAddrInfo

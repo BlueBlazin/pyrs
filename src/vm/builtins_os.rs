@@ -206,6 +206,108 @@ impl Vm {
         Ok(Value::Int(std::process::id() as i64))
     }
 
+    pub(super) fn builtin_os_popen(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3 {
+            return Err(RuntimeError::type_error(
+                "popen() takes from 1 to 3 positional arguments but more were given",
+            ));
+        }
+        let command_value = if let Some(value) = kwargs.remove("cmd") {
+            if !args.is_empty() {
+                return Err(RuntimeError::type_error(
+                    "popen() got multiple values for argument 'cmd'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::type_error(
+                "popen() missing required argument 'cmd' (pos 1)",
+            ));
+        };
+        let mode_value = if let Some(value) = kwargs.remove("mode") {
+            if !args.is_empty() {
+                return Err(RuntimeError::type_error(
+                    "popen() got multiple values for argument 'mode'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            Value::Str("r".to_string())
+        };
+        let _buffering = if let Some(value) = kwargs.remove("buffering") {
+            if !args.is_empty() {
+                return Err(RuntimeError::type_error(
+                    "popen() got multiple values for argument 'buffering'",
+                ));
+            }
+            value_to_int(value)?
+        } else if !args.is_empty() {
+            value_to_int(args.remove(0))?
+        } else {
+            -1
+        };
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "popen() got an unexpected keyword argument",
+            ));
+        }
+
+        let command = match command_value {
+            Value::Str(text) => text,
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "popen() arg 1 must be str command",
+                ))
+            }
+        };
+        let mode = match mode_value {
+            Value::Str(text) => text,
+            _ => return Err(RuntimeError::type_error("invalid mode")),
+        };
+        if mode != "r" && mode != "w" {
+            return Err(RuntimeError::value_error("invalid mode"));
+        }
+
+        #[allow(unused_mut)]
+        let mut process = if cfg!(windows) {
+            let mut cmd = Command::new("cmd");
+            cmd.arg("/C").arg(&command);
+            cmd
+        } else {
+            let mut cmd = Command::new("/bin/sh");
+            cmd.arg("-c").arg(&command);
+            cmd
+        };
+
+        if mode == "r" {
+            process.stdout(Stdio::piped());
+            process.stdin(Stdio::null());
+        } else {
+            process.stdin(Stdio::piped());
+            process.stdout(Stdio::null());
+        }
+        process.stderr(Stdio::inherit());
+
+        let child = process
+            .spawn()
+            .map_err(|err| RuntimeError::new(format!("popen() failed: {err}")))?;
+        let pid = child.id() as i64;
+        self.child_processes.insert(pid, child);
+        if mode == "r" {
+            self.subprocess_pipe_instance(pid, "stdout", true, Some("utf-8"))
+        } else {
+            self.subprocess_pipe_instance(pid, "stdin", true, Some("utf-8"))
+        }
+    }
+
     pub(super) fn builtin_os_getenv(
         &mut self,
         mut args: Vec<Value>,
@@ -2309,6 +2411,95 @@ impl Vm {
             stderr_bytes
         };
         Ok(self.heap.alloc_tuple(vec![stdout, stderr]))
+    }
+
+    pub(super) fn builtin_subprocess_pipe_read(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("pipe.read() expects no keyword arguments"));
+        }
+        let instance = self.take_bound_instance_arg(&mut args, "pipe.read")?;
+        let size = if args.is_empty() {
+            -1
+        } else if args.len() == 1 {
+            value_to_int(args.remove(0))?
+        } else {
+            return Err(RuntimeError::new("pipe.read() expects at most one argument"));
+        };
+        let (pid, kind, text_mode, encoding) =
+            self.subprocess_pipe_metadata(&Value::Instance(instance), "pipe.read")?;
+        if kind != "stdout" && kind != "stderr" {
+            return Err(RuntimeError::new("pipe.read() only supports stdout/stderr"));
+        }
+        if size == 0 {
+            return Ok(if text_mode {
+                Value::Str(String::new())
+            } else {
+                self.heap.alloc_bytes(Vec::new())
+            });
+        }
+        let Some(child) = self.child_processes.get_mut(&pid) else {
+            return Ok(if text_mode {
+                Value::Str(String::new())
+            } else {
+                self.heap.alloc_bytes(Vec::new())
+            });
+        };
+        let mut bytes = Vec::new();
+        if kind == "stdout" {
+            let Some(stream) = child.stdout.as_mut() else {
+                return Ok(if text_mode {
+                    Value::Str(String::new())
+                } else {
+                    self.heap.alloc_bytes(Vec::new())
+                });
+            };
+            if size < 0 {
+                stream
+                    .read_to_end(&mut bytes)
+                    .map_err(|err| RuntimeError::new(format!("pipe read failed: {err}")))?;
+            } else {
+                let mut limited = stream.take(size as u64);
+                limited
+                    .read_to_end(&mut bytes)
+                    .map_err(|err| RuntimeError::new(format!("pipe read failed: {err}")))?;
+            }
+        } else {
+            let Some(stream) = child.stderr.as_mut() else {
+                return Ok(if text_mode {
+                    Value::Str(String::new())
+                } else {
+                    self.heap.alloc_bytes(Vec::new())
+                });
+            };
+            if size < 0 {
+                stream
+                    .read_to_end(&mut bytes)
+                    .map_err(|err| RuntimeError::new(format!("pipe read failed: {err}")))?;
+            } else {
+                let mut limited = stream.take(size as u64);
+                limited
+                    .read_to_end(&mut bytes)
+                    .map_err(|err| RuntimeError::new(format!("pipe read failed: {err}")))?;
+            }
+        }
+        if text_mode {
+            let codec = encoding
+                .as_deref()
+                .unwrap_or("utf-8")
+                .to_ascii_lowercase();
+            if codec != "utf-8" && codec != "utf8" {
+                return Err(RuntimeError::new(
+                    "only utf-8 subprocess text encoding is supported",
+                ));
+            }
+            Ok(Value::Str(String::from_utf8_lossy(&bytes).to_string()))
+        } else {
+            Ok(self.heap.alloc_bytes(bytes))
+        }
     }
 
     pub(super) fn builtin_subprocess_pipe_readline(

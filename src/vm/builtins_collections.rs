@@ -2960,6 +2960,62 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let normalize_parameters = |vm: &mut Vm, value: Value| -> Value {
+            match value {
+                Value::Dict(_) => value,
+                Value::List(obj) => {
+                    let list_values = if let Object::List(values) = &*obj.kind() {
+                        values.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut entries = Vec::with_capacity(list_values.len());
+                    for (index, item) in list_values.into_iter().enumerate() {
+                        let key = match &item {
+                            Value::Instance(parameter_obj) => {
+                                if let Object::Instance(parameter_data) = &*parameter_obj.kind() {
+                                    match parameter_data.attrs.get("name") {
+                                        Some(Value::Str(name)) => Value::Str(name.clone()),
+                                        _ => Value::Str(format!("arg{index}")),
+                                    }
+                                } else {
+                                    Value::Str(format!("arg{index}"))
+                                }
+                            }
+                            _ => Value::Str(format!("arg{index}")),
+                        };
+                        entries.push((key, item));
+                    }
+                    vm.heap.alloc_dict(entries)
+                }
+                Value::Tuple(obj) => {
+                    let tuple_values = if let Object::Tuple(values) = &*obj.kind() {
+                        values.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut entries = Vec::with_capacity(tuple_values.len());
+                    for (index, item) in tuple_values.into_iter().enumerate() {
+                        let key = match &item {
+                            Value::Instance(parameter_obj) => {
+                                if let Object::Instance(parameter_data) = &*parameter_obj.kind() {
+                                    match parameter_data.attrs.get("name") {
+                                        Some(Value::Str(name)) => Value::Str(name.clone()),
+                                        _ => Value::Str(format!("arg{index}")),
+                                    }
+                                } else {
+                                    Value::Str(format!("arg{index}"))
+                                }
+                            }
+                            _ => Value::Str(format!("arg{index}")),
+                        };
+                        entries.push((key, item));
+                    }
+                    vm.heap.alloc_dict(entries)
+                }
+                other => other,
+            }
+        };
         let instance = self.take_bound_instance_arg(&mut args, "Signature.__init__")?;
         if args.len() > 2 {
             return Err(RuntimeError::new(
@@ -2972,6 +3028,7 @@ impl Vm {
             .remove("parameters")
             .or(positional_parameters)
             .unwrap_or_else(|| self.heap.alloc_dict(Vec::new()));
+        let parameters = normalize_parameters(self, parameters);
         let return_annotation = kwargs
             .remove("return_annotation")
             .or(positional_return)
@@ -3131,6 +3188,62 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let normalize_parameters = |vm: &mut Vm, value: Value| -> Value {
+            match value {
+                Value::Dict(_) => value,
+                Value::List(obj) => {
+                    let list_values = if let Object::List(values) = &*obj.kind() {
+                        values.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut entries = Vec::with_capacity(list_values.len());
+                    for (index, item) in list_values.into_iter().enumerate() {
+                        let key = match &item {
+                            Value::Instance(parameter_obj) => {
+                                if let Object::Instance(parameter_data) = &*parameter_obj.kind() {
+                                    match parameter_data.attrs.get("name") {
+                                        Some(Value::Str(name)) => Value::Str(name.clone()),
+                                        _ => Value::Str(format!("arg{index}")),
+                                    }
+                                } else {
+                                    Value::Str(format!("arg{index}"))
+                                }
+                            }
+                            _ => Value::Str(format!("arg{index}")),
+                        };
+                        entries.push((key, item));
+                    }
+                    vm.heap.alloc_dict(entries)
+                }
+                Value::Tuple(obj) => {
+                    let tuple_values = if let Object::Tuple(values) = &*obj.kind() {
+                        values.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    let mut entries = Vec::with_capacity(tuple_values.len());
+                    for (index, item) in tuple_values.into_iter().enumerate() {
+                        let key = match &item {
+                            Value::Instance(parameter_obj) => {
+                                if let Object::Instance(parameter_data) = &*parameter_obj.kind() {
+                                    match parameter_data.attrs.get("name") {
+                                        Some(Value::Str(name)) => Value::Str(name.clone()),
+                                        _ => Value::Str(format!("arg{index}")),
+                                    }
+                                } else {
+                                    Value::Str(format!("arg{index}"))
+                                }
+                            }
+                            _ => Value::Str(format!("arg{index}")),
+                        };
+                        entries.push((key, item));
+                    }
+                    vm.heap.alloc_dict(entries)
+                }
+                other => other,
+            }
+        };
         let instance = self.take_bound_instance_arg(&mut args, "Signature.replace")?;
         if !args.is_empty() {
             return Err(RuntimeError::new("replace() takes no positional arguments"));
@@ -3161,9 +3274,13 @@ impl Vm {
             if let Some(text) = copied_text {
                 replacement_data.attrs.insert("__text__".to_string(), text);
             }
+            let normalized_parameters = parameters_override
+                .map(|value| normalize_parameters(self, value))
+                .or_else(|| copied_parameters.map(|value| normalize_parameters(self, value)))
+                .unwrap_or(Value::None);
             replacement_data.attrs.insert(
                 "parameters".to_string(),
-                parameters_override.unwrap_or_else(|| copied_parameters.unwrap_or(Value::None)),
+                normalized_parameters,
             );
             replacement_data.attrs.insert(
                 "return_annotation".to_string(),

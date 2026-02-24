@@ -2962,6 +2962,158 @@ impl Vm {
         }
     }
 
+    fn locale_module_ref(&self) -> Result<ObjRef, RuntimeError> {
+        let Some(module) = self.modules.get("_locale").cloned() else {
+            return Err(RuntimeError::module_not_found_error(
+                "module '_locale' not found",
+            ));
+        };
+        Ok(module)
+    }
+
+    pub(super) fn builtin_locale_setlocale(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 2 {
+            return Err(RuntimeError::type_error(
+                "setlocale() takes from 1 to 2 positional arguments but more were given",
+            ));
+        }
+        let category = if let Some(value) = kwargs.remove("category") {
+            if !args.is_empty() {
+                return Err(RuntimeError::type_error(
+                    "setlocale() got multiple values for argument 'category'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::type_error(
+                "setlocale() missing required argument 'category' (pos 1)",
+            ));
+        };
+        let locale_value = if let Some(value) = kwargs.remove("locale") {
+            if !args.is_empty() {
+                return Err(RuntimeError::type_error(
+                    "setlocale() got multiple values for argument 'locale'",
+                ));
+            }
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            Value::None
+        };
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error(
+                "setlocale() got unexpected keyword argument",
+            ));
+        }
+
+        let category = value_to_int(category)?;
+        if !(0..=6).contains(&category) {
+            return Err(RuntimeError::with_exception(
+                "Error",
+                Some("unsupported locale setting".to_string()),
+            ));
+        }
+
+        let module = self.locale_module_ref()?;
+        let Object::Module(module_data) = &mut *module.kind_mut() else {
+            return Err(RuntimeError::new("module '_locale' is invalid"));
+        };
+
+        let current = module_data
+            .globals
+            .get("_pyrs_current_locale")
+            .cloned()
+            .unwrap_or_else(|| Value::Str("C".to_string()));
+
+        match locale_value {
+            Value::None => Ok(current),
+            Value::Str(text) => {
+                let normalized = if text.is_empty() {
+                    std::env::var("LC_ALL")
+                        .ok()
+                        .or_else(|| std::env::var("LC_CTYPE").ok())
+                        .or_else(|| std::env::var("LANG").ok())
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "C".to_string())
+                } else {
+                    text
+                };
+                module_data.globals.insert(
+                    "_pyrs_current_locale".to_string(),
+                    Value::Str(normalized.clone()),
+                );
+                Ok(Value::Str(normalized))
+            }
+            _ => Err(RuntimeError::type_error(
+                "setlocale() argument 2 must be str or None",
+            )),
+        }
+    }
+
+    pub(super) fn builtin_locale_localeconv(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error("localeconv() takes no arguments"));
+        }
+        Ok(self.heap.alloc_dict(vec![
+            (Value::Str("decimal_point".to_string()), Value::Str(".".to_string())),
+            (
+                Value::Str("thousands_sep".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("grouping".to_string()),
+                self.heap.alloc_list(Vec::new()),
+            ),
+            (
+                Value::Str("int_curr_symbol".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("currency_symbol".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("mon_decimal_point".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("mon_thousands_sep".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("mon_grouping".to_string()),
+                self.heap.alloc_list(Vec::new()),
+            ),
+            (
+                Value::Str("positive_sign".to_string()),
+                Value::Str(String::new()),
+            ),
+            (
+                Value::Str("negative_sign".to_string()),
+                Value::Str(String::new()),
+            ),
+            (Value::Str("int_frac_digits".to_string()), Value::Int(127)),
+            (Value::Str("frac_digits".to_string()), Value::Int(127)),
+            (Value::Str("p_cs_precedes".to_string()), Value::Int(127)),
+            (Value::Str("p_sep_by_space".to_string()), Value::Int(127)),
+            (Value::Str("n_cs_precedes".to_string()), Value::Int(127)),
+            (Value::Str("n_sep_by_space".to_string()), Value::Int(127)),
+            (Value::Str("p_sign_posn".to_string()), Value::Int(127)),
+            (Value::Str("n_sign_posn".to_string()), Value::Int(127)),
+        ]))
+    }
+
     pub(super) fn builtin_sysconfig_get_data_name(
         &mut self,
         args: Vec<Value>,

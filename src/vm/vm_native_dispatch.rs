@@ -7590,6 +7590,7 @@ impl Vm {
             BuiltinFunction::OsFsEncode => self.builtin_os_fsencode(args, kwargs),
             BuiltinFunction::OsFsDecode => self.builtin_os_fsdecode(args, kwargs),
             BuiltinFunction::OsRemove => self.builtin_os_remove(args, kwargs),
+            BuiltinFunction::OsPopen => self.builtin_os_popen(args, kwargs),
             BuiltinFunction::OsWaitStatusToExitCode => {
                 self.builtin_os_waitstatus_to_exitcode(args, kwargs)
             }
@@ -7643,6 +7644,7 @@ impl Vm {
             BuiltinFunction::SubprocessPopenExit => {
                 self.builtin_subprocess_popen_exit(args, kwargs)
             }
+            BuiltinFunction::SubprocessPipeRead => self.builtin_subprocess_pipe_read(args, kwargs),
             BuiltinFunction::SubprocessPipeReadline => {
                 self.builtin_subprocess_pipe_readline(args, kwargs)
             }
@@ -8550,6 +8552,8 @@ impl Vm {
             BuiltinFunction::SignalSignal => self.builtin_signal_signal(args, kwargs),
             BuiltinFunction::SignalGetSignal => self.builtin_signal_getsignal(args, kwargs),
             BuiltinFunction::SignalRaiseSignal => self.builtin_signal_raise_signal(args, kwargs),
+            BuiltinFunction::LocaleSetLocale => self.builtin_locale_setlocale(args, kwargs),
+            BuiltinFunction::LocaleLocaleConv => self.builtin_locale_localeconv(args, kwargs),
             BuiltinFunction::SocketGetHostName => self.builtin_socket_gethostname(args, kwargs),
             BuiltinFunction::SocketGetHostByName => self.builtin_socket_gethostbyname(args, kwargs),
             BuiltinFunction::SocketGetAddrInfo => self.builtin_socket_getaddrinfo(args, kwargs),

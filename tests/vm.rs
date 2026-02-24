@@ -1424,6 +1424,28 @@ fn exposes_osx_support_customize_config_vars() {
 }
 
 #[test]
+fn imports_strptime_with_locale_setlocale_contract() {
+    let source = "import _locale\nvalue = _locale.setlocale(_locale.LC_TIME)\nconv = _locale.localeconv()\nok = isinstance(value, str) and isinstance(conv, dict) and value.lower() == value.lower()\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_popen_supports_basic_read_mode() {
+    let source = "import os\npipe = os.popen('printf hello', 'r')\ntext = pipe.read()\npipe.close()\nok = (text == 'hello')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_object_dunder_ne_and_float_getformat() {
     let source = "a = object.__ne__(1, 2)\nb = float.__getformat__('double')\nok = (a is True) and isinstance(b, str)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
