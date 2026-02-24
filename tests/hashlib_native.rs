@@ -215,6 +215,54 @@ err_update = capture(lambda: obj.update("abc"))
 }
 
 #[test]
+fn native_blake2_supports_full_constructor_parameter_block() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _blake2
+b2b = _blake2.blake2b(
+    b"foo",
+    digest_size=16,
+    key=b"bar",
+    salt=b"baz",
+    person=b"bing",
+    fanout=2,
+    depth=3,
+    leaf_size=4,
+    node_offset=5,
+    node_depth=6,
+    inner_size=7,
+    last_node=True,
+).hexdigest()
+b2s = _blake2.blake2s(
+    b"foo",
+    digest_size=16,
+    key=b"bar",
+    salt=b"baz",
+    person=b"bing",
+    fanout=2,
+    depth=3,
+    leaf_size=4,
+    node_offset=5,
+    node_depth=6,
+    inner_size=7,
+    last_node=True,
+).hexdigest()
+"#,
+    );
+
+    assert_eq!(
+        vm.get_global("b2b"),
+        Some(Value::Str("920568b0c5873b2f0ab67bedb6cf1b2b".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("b2s"),
+        Some(Value::Str("bf2a8f7fe3c555012a6f8046e646bc75".to_string()))
+    );
+}
+
+#[test]
 fn native_hashlib_update_rejects_non_buffer_inputs_and_exposes_gil_threshold_constants() {
     let mut vm = Vm::new();
     run_script(

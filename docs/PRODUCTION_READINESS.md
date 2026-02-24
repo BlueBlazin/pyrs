@@ -52,7 +52,7 @@ Status:
 ## Stdlib Readiness
 - `[~]` Native-core-first closure for `_io`, `_csv`, `_sre`, `_pickle`
 - `[~]` Pure-stdlib default-path closure with strict tests
-- `[x]` `hashlib` md5/sha2 baseline path (`_md5`, `_sha2`) with parity tests
+- `[x]` `hashlib` md5/sha2 baseline path (`_md5`, `_sha2`) with parity tests, including `_blake2` full constructor parameter-block vectors
 
 ## Test and Quality Gates
 - `[x]` Curated CPython harness lanes green

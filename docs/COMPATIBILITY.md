@@ -45,7 +45,7 @@ Status:
 ## Stdlib
 - `[x]` Top-stdlib common-usecase baseline (`26/26` import + smoke; opt-in gate in `tests/stdlib_common_usecases.rs` via `PYRS_RUN_STDLIB_COMMON_USECASES=1`)
 - `[x]` Builtin surface parity gate (`145/145`, no allowlist entries)
-- `[x]` `hashlib` md5/sha2 baseline path (`_md5`, `_sha2`)
+- `[x]` `hashlib` md5/sha2 baseline path (`_md5`, `_sha2`) plus `_blake2` full constructor parameter-block vectors
 - `[x]` Native compression baseline modules (`zlib`, `_bz2`, `_lzma`) for common import + one-shot workflows
 - `[~]` Native SSL baseline (`_ssl` + bootstrap `ssl`) is in place; full CPython `Lib/ssl.py` path remains blocked by namedtuple/super object-model parity
 - `[~]` Extended stdlib matrix: `50/50` import, `50/50` smoke (`docs/STDLIB_EXTENDED_COMMON_USECASE_CHECKLIST.md`)
