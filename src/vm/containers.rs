@@ -47,8 +47,9 @@ pub(crate) fn dict_remove_value(dict: &ObjRef, key: &Value) -> Option<Value> {
 }
 
 pub(crate) fn dict_contains_key_checked(dict: &ObjRef, key: &Value) -> Result<bool, RuntimeError> {
-    let hash = value_lookup_hash(key)
-        .ok_or_else(|| RuntimeError::new(format!("unhashable type: '{}'", value_type_name(key))))?;
+    let hash = value_lookup_hash(key).ok_or_else(|| {
+        RuntimeError::type_error(format!("unhashable type: '{}'", value_type_name(key)))
+    })?;
     let dict_kind = dict.kind();
     let entries = match &*dict_kind {
         Object::Dict(entries) => entries,
@@ -71,7 +72,7 @@ pub(crate) fn ensure_hashable(value: &Value) -> Result<(), RuntimeError> {
     if is_hashable(value) {
         Ok(())
     } else {
-        Err(RuntimeError::new(format!(
+        Err(RuntimeError::type_error(format!(
             "unhashable type: '{}'",
             value_type_name(value)
         )))

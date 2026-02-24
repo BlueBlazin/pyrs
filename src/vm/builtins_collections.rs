@@ -4,8 +4,9 @@ use super::{
     NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, binary_operator,
     class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_get_value,
     dict_remove_value, dict_set_value_checked, div_values, ensure_hashable, floor_div_values,
-    format_repr, format_value, is_missing_attribute_error, is_truthy, mod_values, mul_values,
-    sub_values, unary_predicate, value_to_int,
+    format_repr, format_value, is_missing_attribute_error, is_truthy, lshift_values, mod_values,
+    mul_values, or_values, pow_values, rshift_values, sub_values, unary_predicate, value_to_int,
+    xor_values, and_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -48,6 +49,103 @@ impl Vm {
         binary_operator(args, kwargs, |left, right| {
             mod_values(left, right, &self.heap)
         })
+    }
+
+    pub(super) fn builtin_operator_pow(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, pow_values)
+    }
+
+    pub(super) fn builtin_operator_and(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, |left, right| {
+            and_values(left, right, &self.heap)
+        })
+    }
+
+    pub(super) fn builtin_operator_or(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, |left, right| {
+            or_values(left, right, &self.heap)
+        })
+    }
+
+    pub(super) fn builtin_operator_xor(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, |left, right| {
+            xor_values(left, right, &self.heap)
+        })
+    }
+
+    pub(super) fn builtin_operator_lshift(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, lshift_values)
+    }
+
+    pub(super) fn builtin_operator_rshift(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, rshift_values)
+    }
+
+    pub(super) fn builtin_operator_matmul(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        binary_operator(args, kwargs, |left, right| {
+            self.binary_matmul_runtime(left, right)
+        })
+    }
+
+    pub(super) fn builtin_operator_neg(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("operator.neg expects one argument"));
+        }
+        self.unary_neg_runtime(args[0].clone())
+    }
+
+    pub(super) fn builtin_operator_pos(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("operator.pos expects one argument"));
+        }
+        self.unary_pos_runtime(args[0].clone())
+    }
+
+    pub(super) fn builtin_operator_invert(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("operator.invert expects one argument"));
+        }
+        self.unary_invert_runtime(args[0].clone())
     }
 
     pub(super) fn builtin_operator_truediv(
@@ -925,9 +1023,13 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(RuntimeError::new("cycle() expects one iterable argument"));
         }
-        let values = self.collect_iterable_values(args[0].clone())?;
+        let source = self.to_iterator_value(args[0].clone())?;
         Ok(self.heap.alloc_iterator(IteratorObject {
-            kind: IteratorKind::Cycle { values },
+            kind: IteratorKind::Cycle {
+                source,
+                values: Vec::new(),
+                source_exhausted: false,
+            },
             index: 0,
         }))
     }
@@ -2933,6 +3035,63 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_inspect_parameter_replace(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "Parameter.replace")?;
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "Parameter.replace() takes no positional arguments",
+            ));
+        }
+        let name_override = kwargs.remove("name");
+        let kind_override = kwargs.remove("kind");
+        let default_override = kwargs.remove("default");
+        let annotation_override = kwargs.remove("annotation");
+        if let Some(key) = kwargs.into_keys().next() {
+            return Err(RuntimeError::new(format!(
+                "Parameter.replace() got an unexpected keyword argument '{key}'"
+            )));
+        }
+        let class = match &*instance.kind() {
+            Object::Instance(instance_data) => instance_data.class.clone(),
+            _ => {
+                return Err(RuntimeError::new(
+                    "Parameter.replace() receiver must be Parameter instance",
+                ));
+            }
+        };
+        let replacement = match self.heap.alloc_instance(InstanceObject::new(class)) {
+            Value::Instance(obj) => obj,
+            _ => unreachable!(),
+        };
+        let current_name = Self::instance_attr_get(&instance, "name");
+        let current_kind = Self::instance_attr_get(&instance, "kind");
+        let current_default = Self::instance_attr_get(&instance, "default");
+        let current_annotation = Self::instance_attr_get(&instance, "annotation");
+        if let Object::Instance(instance_data) = &mut *replacement.kind_mut() {
+            instance_data.attrs.insert(
+                "name".to_string(),
+                name_override.unwrap_or_else(|| current_name.unwrap_or(Value::Str(String::new()))),
+            );
+            instance_data.attrs.insert(
+                "kind".to_string(),
+                kind_override.unwrap_or_else(|| current_kind.unwrap_or(Value::Int(1))),
+            );
+            instance_data.attrs.insert(
+                "default".to_string(),
+                default_override.unwrap_or_else(|| current_default.unwrap_or(Value::None)),
+            );
+            instance_data.attrs.insert(
+                "annotation".to_string(),
+                annotation_override.unwrap_or_else(|| current_annotation.unwrap_or(Value::None)),
+            );
+        }
+        Ok(Value::Instance(replacement))
+    }
+
     pub(super) fn builtin_inspect_signature_str(
         &mut self,
         args: Vec<Value>,
@@ -3265,17 +3424,120 @@ impl Vm {
 
     pub(super) fn builtin_types_moduletype(
         &mut self,
-        args: Vec<Value>,
-        kwargs: HashMap<String, Value>,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("ModuleType() expects one argument"));
+        let kw_name = kwargs.remove("name");
+        let kw_doc = kwargs.remove("doc");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "ModuleType() got an unexpected keyword argument",
+            ));
         }
-        let name = match &args[0] {
-            Value::Str(name) => name.clone(),
+
+        if args.is_empty() && kw_name.is_none() {
+            return Err(RuntimeError::new(
+                "ModuleType() expects at least one argument",
+            ));
+        }
+
+        let mut init_target: Option<Value> = None;
+        if let Some(first) = args.first() {
+            match first {
+                Value::Module(_) | Value::Instance(_) => {
+                    init_target = Some(args.remove(0));
+                }
+                _ => {}
+            }
+        }
+
+        let name_value = if let Some(value) = kw_name {
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            return Err(RuntimeError::new("module name must be string"));
+        };
+        let name = match name_value {
+            Value::Str(name) => name,
             _ => return Err(RuntimeError::new("module name must be string")),
         };
-        Ok(self.alloc_module(name))
+
+        let doc_value = if let Some(value) = kw_doc {
+            value
+        } else if !args.is_empty() {
+            args.remove(0)
+        } else {
+            Value::None
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new("ModuleType() takes at most 3 arguments"));
+        }
+
+        if let Some(target) = init_target {
+            match target {
+                Value::Module(module_obj) => {
+                    if let Object::Module(module_data) = &mut *module_obj.kind_mut() {
+                        module_data
+                            .globals
+                            .insert("__name__".to_string(), Value::Str(name));
+                        module_data
+                            .globals
+                            .insert("__doc__".to_string(), doc_value.clone());
+                        module_data
+                            .globals
+                            .insert("__package__".to_string(), Value::None);
+                        module_data
+                            .globals
+                            .insert("__loader__".to_string(), Value::None);
+                        module_data
+                            .globals
+                            .insert("__spec__".to_string(), Value::None);
+                    }
+                    Ok(Value::None)
+                }
+                Value::Instance(instance_obj) => {
+                    if let Object::Instance(instance_data) = &mut *instance_obj.kind_mut() {
+                        instance_data
+                            .attrs
+                            .insert("__name__".to_string(), Value::Str(name));
+                        instance_data.attrs.insert("__doc__".to_string(), doc_value);
+                        instance_data
+                            .attrs
+                            .insert("__package__".to_string(), Value::None);
+                        instance_data
+                            .attrs
+                            .insert("__loader__".to_string(), Value::None);
+                        instance_data
+                            .attrs
+                            .insert("__spec__".to_string(), Value::None);
+                    }
+                    Ok(Value::None)
+                }
+                _ => Err(RuntimeError::new("module name must be string")),
+            }
+        } else {
+            let module = self.alloc_module(name);
+            if let Value::Module(module_obj) = &module
+                && let Object::Module(module_data) = &mut *module_obj.kind_mut()
+            {
+                module_data.globals.insert(
+                    "__name__".to_string(),
+                    Value::Str(module_data.name.clone()),
+                );
+                module_data.globals.insert("__doc__".to_string(), doc_value);
+                module_data
+                    .globals
+                    .insert("__package__".to_string(), Value::None);
+                module_data
+                    .globals
+                    .insert("__loader__".to_string(), Value::None);
+                module_data
+                    .globals
+                    .insert("__spec__".to_string(), Value::None);
+            }
+            Ok(module)
+        }
     }
 
     pub(super) fn builtin_types_functiontype(

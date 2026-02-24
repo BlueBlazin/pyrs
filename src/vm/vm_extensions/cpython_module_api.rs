@@ -291,6 +291,44 @@ pub unsafe extern "C" fn PyModule_NewObject(name: *mut c_void) -> *mut c_void {
             return std::ptr::null_mut();
         };
         let Value::Str(module_name) = name_value else {
+            if std::env::var_os("PYRS_TRACE_CPY_MODULE_NAME").is_some() {
+                let value_kind = match &name_value {
+                    Value::None => "None",
+                    Value::Bool(_) => "Bool",
+                    Value::Int(_) => "Int",
+                    Value::BigInt(_) => "BigInt",
+                    Value::Float(_) => "Float",
+                    Value::Complex { .. } => "Complex",
+                    Value::Str(_) => "Str",
+                    Value::List(_) => "List",
+                    Value::Tuple(_) => "Tuple",
+                    Value::Dict(_) => "Dict",
+                    Value::DictKeys(_) => "DictKeys",
+                    Value::Set(_) => "Set",
+                    Value::FrozenSet(_) => "FrozenSet",
+                    Value::Slice(_) => "Slice",
+                    Value::Iterator(_) => "Iterator",
+                    Value::Code(_) => "Code",
+                    Value::Function(_) => "Function",
+                    Value::Builtin(_) => "Builtin",
+                    Value::BoundMethod(_) => "BoundMethod",
+                    Value::Cell(_) => "Cell",
+                    Value::Class(_) => "Class",
+                    Value::Instance(_) => "Instance",
+                    Value::Super(_) => "Super",
+                    Value::Module(_) => "Module",
+                    Value::Exception(_) => "Exception",
+                    Value::ExceptionType(_) => "ExceptionType",
+                    Value::Generator(_) => "Generator",
+                    Value::Bytes(_) => "Bytes",
+                    Value::ByteArray(_) => "ByteArray",
+                    Value::MemoryView(_) => "MemoryView",
+                };
+                eprintln!(
+                    "[cpy-module-newobject] non-str name ptr={:p} value_kind={}",
+                    name, value_kind
+                );
+            }
             cpython_set_typed_error(unsafe { PyExc_TypeError }, "module name must be str");
             return std::ptr::null_mut();
         };

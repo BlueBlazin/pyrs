@@ -451,9 +451,65 @@ fn frozenset_key_equal(left: &ObjRef, right: &ObjRef) -> bool {
     true
 }
 
+const STR_BACKING_STORAGE_ATTR: &str = "__pyrs_str_storage__";
+const INT_BACKING_STORAGE_ATTR: &str = "__pyrs_int_storage__";
+const FLOAT_BACKING_STORAGE_ATTR: &str = "__pyrs_float_storage__";
+const COMPLEX_BACKING_STORAGE_ATTR: &str = "__pyrs_complex_storage__";
+const BYTES_BACKING_STORAGE_ATTR: &str = "__pyrs_bytes_storage__";
+const TUPLE_BACKING_STORAGE_ATTR: &str = "__pyrs_tuple_storage__";
+
+fn instance_hashable_backing_value(instance: &ObjRef) -> Option<Value> {
+    let kind = instance.kind();
+    let Object::Instance(instance_data) = &*kind else {
+        return None;
+    };
+    if let Some(Value::Str(text)) = instance_data.attrs.get(STR_BACKING_STORAGE_ATTR) {
+        return Some(Value::Str(text.clone()));
+    }
+    if let Some(value) = instance_data.attrs.get(INT_BACKING_STORAGE_ATTR) {
+        return match value {
+            Value::Int(number) => Some(Value::Int(*number)),
+            Value::BigInt(number) => Some(Value::BigInt(number.clone())),
+            _ => None,
+        };
+    }
+    if let Some(Value::Float(number)) = instance_data.attrs.get(FLOAT_BACKING_STORAGE_ATTR) {
+        return Some(Value::Float(*number));
+    }
+    if let Some(Value::Complex { real, imag }) = instance_data.attrs.get(COMPLEX_BACKING_STORAGE_ATTR) {
+        return Some(Value::Complex {
+            real: *real,
+            imag: *imag,
+        });
+    }
+    if let Some(value) = instance_data.attrs.get(BYTES_BACKING_STORAGE_ATTR) {
+        return match value {
+            Value::Bytes(bytes) => Some(Value::Bytes(bytes.clone())),
+            _ => None,
+        };
+    }
+    if let Some(value) = instance_data.attrs.get(TUPLE_BACKING_STORAGE_ATTR) {
+        return match value {
+            Value::Tuple(tuple) => Some(Value::Tuple(tuple.clone())),
+            _ => None,
+        };
+    }
+    None
+}
+
 pub(super) fn value_key_equal(left: &Value, right: &Value) -> bool {
     if left == right {
         return true;
+    }
+    if let Value::Instance(instance) = left
+        && let Some(backing) = instance_hashable_backing_value(instance)
+    {
+        return value_key_equal(&backing, right);
+    }
+    if let Value::Instance(instance) = right
+        && let Some(backing) = instance_hashable_backing_value(instance)
+    {
+        return value_key_equal(left, &backing);
     }
     match (left, right) {
         (Value::Float(left), Value::Float(right)) => float_key_equal(*left, *right),
@@ -961,6 +1017,11 @@ fn value_hash_key(value: &Value) -> Option<u64> {
     if let Some(hash) = fast_value_hash_key(value) {
         return Some(hash);
     }
+    if let Value::Instance(instance) = value
+        && let Some(backing) = instance_hashable_backing_value(instance)
+    {
+        return value_hash_key(&backing);
+    }
     let mut hasher = DefaultHasher::new();
     match value {
         Value::BigInt(integer) => {
@@ -1108,7 +1169,9 @@ pub enum IteratorKind {
     ByteArray(ObjRef),
     MemoryView(ObjRef),
     Cycle {
+        source: Value,
         values: Vec<Value>,
+        source_exhausted: bool,
     },
     Count {
         current: i64,
@@ -1750,7 +1813,8 @@ fn trace_object(obj: &ObjRef, stack: &mut Vec<ObjRef>, marked: &mut HashMap<u64,
             | IteratorKind::Bytes(list)
             | IteratorKind::ByteArray(list)
             | IteratorKind::MemoryView(list) => stack.push(list.clone()),
-            IteratorKind::Cycle { values } => {
+            IteratorKind::Cycle { source, values, .. } => {
+                trace_value(source, stack, marked);
                 for value in values {
                     trace_value(value, stack, marked);
                 }
@@ -1892,7 +1956,8 @@ fn clear_object_refs(obj: &ObjRef) {
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
                 }
-                IteratorKind::Cycle { values } => {
+                IteratorKind::Cycle { source, values, .. } => {
+                    *source = Value::None;
                     values.clear();
                     iterator.kind = IteratorKind::Str(String::new());
                     iterator.index = 0;
@@ -2407,6 +2472,7 @@ pub enum BuiltinFunction {
     AIter,
     ANext,
     Type,
+    TypeCall,
     TypeInit,
     TypeMro,
     TypePrepare,
@@ -2461,6 +2527,7 @@ pub enum BuiltinFunction {
     SysGetFilesystemEncoding,
     SysGetFilesystemEncodeErrors,
     SysGetRefCount,
+    SysGetSizeOf,
     SysGetRecursionLimit,
     SysSetRecursionLimit,
     SysAudit,
@@ -2844,6 +2911,7 @@ pub enum BuiltinFunction {
     CodecsIncrementalDecoderGetState,
     CodecsIncrementalDecoderSetState,
     UnicodedataNormalize,
+    UnicodedataEastAsianWidth,
     ReSearch,
     ReMatch,
     ReFullMatch,
@@ -2862,6 +2930,16 @@ pub enum BuiltinFunction {
     OperatorSub,
     OperatorMul,
     OperatorMod,
+    OperatorPow,
+    OperatorAnd,
+    OperatorOr,
+    OperatorXor,
+    OperatorLShift,
+    OperatorRShift,
+    OperatorMatMul,
+    OperatorNeg,
+    OperatorPos,
+    OperatorInvert,
     OperatorFloorDiv,
     OperatorTrueDiv,
     OperatorIndex,
@@ -2994,6 +3072,7 @@ pub enum BuiltinFunction {
     InspectSignatureRepr,
     InspectSignatureReplace,
     InspectParameterInit,
+    InspectParameterReplace,
     InspectGetModule,
     InspectGetFile,
     InspectGetDoc,
@@ -3013,6 +3092,9 @@ pub enum BuiltinFunction {
     TypesMethodType,
     TypesNewClass,
     TypesCoroutine,
+    GeneratorType,
+    CoroutineType,
+    AsyncGeneratorType,
     EnumConvert,
     TypeAnnotationsGet,
     TestInternalCapiGetRecursionDepth,
@@ -3154,8 +3236,12 @@ pub enum BuiltinFunction {
     DateToday,
     DateTimeInit,
     DateTimeFromTimestamp,
+    DateTimeFromIsoCalendar,
     DateTimeAstimezone,
+    DateTimeReplace,
     DateInit,
+    DateReplace,
+    DateFromIsoCalendar,
     DateTimeDeltaInit,
     DateTimeTimezoneInit,
     DateToOrdinal,
@@ -3164,6 +3250,7 @@ pub enum BuiltinFunction {
     DateIsoFormat,
     DateStrFTime,
     TimeInit,
+    TimeReplace,
     AsyncioRun,
     AsyncioSleep,
     AsyncioCreateTask,
@@ -4516,6 +4603,18 @@ impl BuiltinFunction {
                     .or_insert_with(|| Value::Str(name));
                 Ok(heap.alloc_class(class))
             }
+            BuiltinFunction::TypeCall => {
+                Err(RuntimeError::new("type.__call__ requires VM context"))
+            }
+            BuiltinFunction::GeneratorType => {
+                Err(RuntimeError::type_error("cannot create 'generator' instances"))
+            }
+            BuiltinFunction::CoroutineType => {
+                Err(RuntimeError::type_error("cannot create 'coroutine' instances"))
+            }
+            BuiltinFunction::AsyncGeneratorType => {
+                Err(RuntimeError::type_error("cannot create 'async_generator' instances"))
+            }
             BuiltinFunction::TypeInit => {
                 let payload_len = args.len().saturating_sub(1);
                 if payload_len != 1 && payload_len != 3 {
@@ -5684,6 +5783,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetFilesystemEncoding
             | BuiltinFunction::SysGetFilesystemEncodeErrors
             | BuiltinFunction::SysGetRefCount
+            | BuiltinFunction::SysGetSizeOf
             | BuiltinFunction::SysGetRecursionLimit
             | BuiltinFunction::SysSetRecursionLimit
             | BuiltinFunction::SysAudit
@@ -5918,6 +6018,7 @@ impl BuiltinFunction {
             | BuiltinFunction::CodecsIncrementalDecoderGetState
             | BuiltinFunction::CodecsIncrementalDecoderSetState
             | BuiltinFunction::UnicodedataNormalize
+            | BuiltinFunction::UnicodedataEastAsianWidth
             | BuiltinFunction::SelectSelect
             | BuiltinFunction::ReSearch
             | BuiltinFunction::ReMatch
@@ -5928,6 +6029,16 @@ impl BuiltinFunction {
             | BuiltinFunction::OperatorSub
             | BuiltinFunction::OperatorMul
             | BuiltinFunction::OperatorMod
+            | BuiltinFunction::OperatorPow
+            | BuiltinFunction::OperatorAnd
+            | BuiltinFunction::OperatorOr
+            | BuiltinFunction::OperatorXor
+            | BuiltinFunction::OperatorLShift
+            | BuiltinFunction::OperatorRShift
+            | BuiltinFunction::OperatorMatMul
+            | BuiltinFunction::OperatorNeg
+            | BuiltinFunction::OperatorPos
+            | BuiltinFunction::OperatorInvert
             | BuiltinFunction::OperatorTrueDiv
             | BuiltinFunction::OperatorFloorDiv
             | BuiltinFunction::OperatorIndex
@@ -5999,6 +6110,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectSignatureRepr
             | BuiltinFunction::InspectSignatureReplace
             | BuiltinFunction::InspectParameterInit
+            | BuiltinFunction::InspectParameterReplace
             | BuiltinFunction::InspectGetModule
             | BuiltinFunction::InspectGetFile
             | BuiltinFunction::InspectGetDoc
@@ -6057,8 +6169,12 @@ impl BuiltinFunction {
             | BuiltinFunction::DateToday
             | BuiltinFunction::DateTimeInit
             | BuiltinFunction::DateTimeFromTimestamp
+            | BuiltinFunction::DateTimeFromIsoCalendar
             | BuiltinFunction::DateTimeAstimezone
+            | BuiltinFunction::DateTimeReplace
             | BuiltinFunction::DateInit
+            | BuiltinFunction::DateReplace
+            | BuiltinFunction::DateFromIsoCalendar
             | BuiltinFunction::DateTimeDeltaInit
             | BuiltinFunction::DateTimeTimezoneInit
             | BuiltinFunction::DateToOrdinal
@@ -6067,6 +6183,7 @@ impl BuiltinFunction {
             | BuiltinFunction::DateIsoFormat
             | BuiltinFunction::DateStrFTime
             | BuiltinFunction::TimeInit
+            | BuiltinFunction::TimeReplace
             | BuiltinFunction::AsyncioRun
             | BuiltinFunction::AsyncioSleep
             | BuiltinFunction::AsyncioCreateTask
@@ -6783,7 +6900,7 @@ fn ensure_hashable_key(value: &Value) -> Result<(), RuntimeError> {
     if value_hash_key(value).is_some() {
         Ok(())
     } else {
-        Err(RuntimeError::new(format!(
+        Err(RuntimeError::type_error(format!(
             "unhashable type: '{}'",
             value_type_name(value)
         )))
@@ -7194,13 +7311,13 @@ fn builtin_type_of(value: &Value) -> Result<Value, RuntimeError> {
         Value::Iterator(_) => Value::Str("iterator".to_string()),
         Value::Generator(obj) => match &*obj.kind() {
             Object::Generator(generator) if generator.is_async_generator => {
-                Value::Str("async_generator".to_string())
+                Value::Builtin(BuiltinFunction::AsyncGeneratorType)
             }
             Object::Generator(generator) if generator.is_coroutine => {
-                Value::Str("coroutine".to_string())
+                Value::Builtin(BuiltinFunction::CoroutineType)
             }
-            Object::Generator(_) => Value::Str("generator".to_string()),
-            _ => Value::Str("generator".to_string()),
+            Object::Generator(_) => Value::Builtin(BuiltinFunction::GeneratorType),
+            _ => Value::Builtin(BuiltinFunction::GeneratorType),
         },
         Value::Module(obj) => match &*obj.kind() {
             Object::Module(module_data) => match module_data.name.as_str() {
@@ -7953,6 +8070,9 @@ fn builtin_type_object_name(builtin: BuiltinFunction) -> Option<&'static str> {
         BuiltinFunction::TypesFunctionType => Some("function"),
         BuiltinFunction::TypesMethodType => Some("method"),
         BuiltinFunction::TypesCoroutine => Some("coroutine"),
+        BuiltinFunction::GeneratorType => Some("generator"),
+        BuiltinFunction::CoroutineType => Some("coroutine"),
+        BuiltinFunction::AsyncGeneratorType => Some("async_generator"),
         _ => None,
     }
 }
@@ -8022,6 +8142,9 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::TypesFunctionType => "FunctionType".to_string(),
         BuiltinFunction::TypesMethodType => "MethodType".to_string(),
         BuiltinFunction::TypesCoroutine => "coroutine".to_string(),
+        BuiltinFunction::GeneratorType => "generator".to_string(),
+        BuiltinFunction::CoroutineType => "coroutine".to_string(),
+        BuiltinFunction::AsyncGeneratorType => "async_generator".to_string(),
         BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),
         _ => format!("{builtin:?}").to_ascii_lowercase(),
     }

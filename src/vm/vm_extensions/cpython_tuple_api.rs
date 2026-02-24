@@ -3,9 +3,10 @@ use std::ffi::c_void;
 use crate::runtime::{Object, Value};
 
 use super::{
-    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext, PyTuple_Type,
-    PY_TPFLAGS_TUPLE_SUBCLASS, c_name_to_string, cpython_debug_compare_value, cpython_set_error,
-    cpython_tuple_items_ptr, cpython_value_from_ptr, with_active_cpython_context_mut,
+    CpythonObjectHead, CpythonTypeObject, CpythonVarObjectHead, ModuleCapiContext,
+    PY_TPFLAGS_TUPLE_SUBCLASS, PyTuple_Type, c_name_to_string, cpython_debug_compare_value,
+    cpython_set_error, cpython_tuple_items_ptr, cpython_value_from_ptr,
+    with_active_cpython_context_mut,
 };
 
 fn owned_ptr_is_tuple_like(context: &mut ModuleCapiContext, tuple: *mut c_void) -> bool {

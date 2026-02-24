@@ -4,13 +4,21 @@ use super::Cwchar;
 
 pub(super) unsafe fn c_name_to_string(name: *const c_char) -> Result<String, String> {
     const MAX_C_STRING_BYTES: usize = 1 << 20; // 1 MiB safety cap for native C strings.
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    const SCAN_LEN: usize = MAX_C_STRING_BYTES + 1;
     if name.is_null() {
         return Err("received null C string pointer".to_string());
     }
+    let base = name as usize;
+    if base < MIN_VALID_PTR {
+        return Err("received invalid C string pointer".to_string());
+    }
+    if base.checked_add(SCAN_LEN).is_none() {
+        return Err("received invalid C string pointer range".to_string());
+    }
     // SAFETY: caller provides at least a readable C string; cap scan length to avoid
     // runaway reads from malformed pointers/doc strings.
-    let raw_bytes =
-        unsafe { std::slice::from_raw_parts(name.cast::<u8>(), MAX_C_STRING_BYTES + 1) };
+    let raw_bytes = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), SCAN_LEN) };
     let Some(end) = raw_bytes.iter().position(|byte| *byte == 0) else {
         return Err("received unterminated C string (exceeds 1 MiB)".to_string());
     };

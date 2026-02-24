@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use super::{
     AttrMutationOutcome, BigInt, Block, BoundMethod, BuiltinFunction, CodeObject,
     FormatterFieldKey, Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome,
@@ -16,6 +18,10 @@ use super::{
 
 unsafe extern "C" {
     fn PyErr_Clear();
+}
+
+thread_local! {
+    static CALL_BUILTIN_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
@@ -385,32 +391,110 @@ impl Vm {
                 }
             }
             NativeMethodKind::DictKeys => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("dict.keys() expects no arguments"));
-                }
-                let is_dict = matches!(&*receiver.kind(), Object::Dict(_));
-                if !is_dict {
-                    return Err(RuntimeError::new("dict.keys() receiver must be dict"));
-                }
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if !args.is_empty() {
+                            return Err(RuntimeError::new("dict.keys() expects no arguments"));
+                        }
+                        receiver.clone()
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new("dict.keys() expects one argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.keys() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new("dict.keys() receiver must be dict"));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.keys() receiver must be dict"));
+                    }
+                };
                 Ok(NativeCallResult::Value(
-                    self.heap.alloc_dict_keys_view(receiver),
+                    self.heap.alloc_dict_keys_view(dict_receiver),
                 ))
             }
             NativeMethodKind::DictValues => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("dict.values() expects no arguments"));
-                }
-                let Object::Dict(entries) = &*receiver.kind() else {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if !args.is_empty() {
+                            return Err(RuntimeError::new("dict.values() expects no arguments"));
+                        }
+                        receiver.clone()
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new("dict.values() expects one argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.values() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.values() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.values() receiver must be dict"));
+                    }
+                };
+                let Object::Dict(entries) = &*dict_receiver.kind() else {
                     return Err(RuntimeError::new("dict.values() receiver must be dict"));
                 };
                 let values = entries.iter().map(|(_, value)| value.clone()).collect();
                 Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
             }
             NativeMethodKind::DictItems => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("dict.items() expects no arguments"));
-                }
-                let Object::Dict(entries) = &*receiver.kind() else {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if !args.is_empty() {
+                            return Err(RuntimeError::new("dict.items() expects no arguments"));
+                        }
+                        receiver.clone()
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new("dict.items() expects one argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.items() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.items() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.items() receiver must be dict"));
+                    }
+                };
+                let Object::Dict(entries) = &*dict_receiver.kind() else {
                     return Err(RuntimeError::new("dict.items() receiver must be dict"));
                 };
                 let values = entries
@@ -420,10 +504,41 @@ impl Vm {
                 Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
             }
             NativeMethodKind::DictCopy => {
-                if !args.is_empty() || !kwargs.is_empty() {
+                if !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.copy() expects no arguments"));
                 }
-                let Object::Dict(entries) = &*receiver.kind() else {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if !args.is_empty() {
+                            return Err(RuntimeError::new("dict.copy() expects no arguments"));
+                        }
+                        receiver.clone()
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new("dict.copy() expects one argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.copy() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.copy() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.copy() receiver must be dict"));
+                    }
+                };
+                let Object::Dict(entries) = &*dict_receiver.kind() else {
                     return Err(RuntimeError::new("dict.copy() receiver must be dict"));
                 };
                 Ok(NativeCallResult::Value(
@@ -459,36 +574,94 @@ impl Vm {
                 }
             }
             NativeMethodKind::DictClear => {
-                if !args.is_empty() || !kwargs.is_empty() {
+                if !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.clear() expects no arguments"));
                 }
-                let Object::Dict(entries) = &mut *receiver.kind_mut() else {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if !args.is_empty() {
+                            return Err(RuntimeError::new("dict.clear() expects no arguments"));
+                        }
+                        receiver.clone()
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new("dict.clear() expects one argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.clear() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.clear() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.clear() receiver must be dict"));
+                    }
+                };
+                let Object::Dict(entries) = &mut *dict_receiver.kind_mut() else {
                     return Err(RuntimeError::new("dict.clear() receiver must be dict"));
                 };
                 entries.clear();
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictUpdateMethod => {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.is_empty() {
+                            return Err(RuntimeError::new("dict.update() expects an argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.update() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.update() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.update() receiver must be dict"));
+                    }
+                };
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
                         "dict.update() expects at most one argument",
                     ));
-                }
-                if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("dict.update() receiver must be dict"));
                 }
                 if let Some(source) = args.first() {
                     if let Value::Dict(other) = source {
                         let Object::Dict(entries) = &*other.kind() else {
                             return Err(RuntimeError::new("dict.update() expects dict"));
                         };
-                        if other.id() == receiver.id() {
+                        if other.id() == dict_receiver.id() {
                             for (key, value) in entries.to_vec() {
-                                dict_set_value_checked(&receiver, key, value)?;
+                                dict_set_value_checked(&dict_receiver, key, value)?;
                             }
                         } else {
                             for (key, value) in entries.iter() {
-                                dict_set_value_checked(&receiver, key.clone(), value.clone())?;
+                                dict_set_value_checked(
+                                    &dict_receiver,
+                                    key.clone(),
+                                    value.clone(),
+                                )?;
                             }
                         }
                     } else {
@@ -548,42 +721,90 @@ impl Vm {
                             }
                         }
                         for (key, value) in incoming {
-                            dict_set_value_checked(&receiver, key, value)?;
+                            dict_set_value_checked(&dict_receiver, key, value)?;
                         }
                     }
                 }
                 for (name, value) in kwargs.drain() {
-                    dict_set_value_checked(&receiver, Value::Str(name), value)?;
+                    dict_set_value_checked(&dict_receiver, Value::Str(name), value)?;
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictSetDefault => {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.is_empty() {
+                            return Err(RuntimeError::new(
+                                "dict.setdefault() expects an argument",
+                            ));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.setdefault() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.setdefault() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.setdefault() receiver must be dict"));
+                    }
+                };
                 if args.is_empty() || args.len() > 2 {
                     return Err(RuntimeError::new("dict.setdefault() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
-                if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("dict.setdefault() receiver must be dict"));
-                }
-                if let Some(value) = dict_get_value(&receiver, &key) {
+                if let Some(value) = dict_get_value(&dict_receiver, &key) {
                     return Ok(NativeCallResult::Value(value));
                 }
-                dict_set_value(&receiver, key, default.clone());
+                dict_set_value(&dict_receiver, key, default.clone());
                 Ok(NativeCallResult::Value(default))
             }
             NativeMethodKind::DictGet => {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.is_empty() {
+                            return Err(RuntimeError::new("dict.get() expects an argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.get() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.get() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.get() receiver must be dict"));
+                    }
+                };
                 if args.is_empty() || args.len() > 2 || !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.get() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
-                if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("dict.get() receiver must be dict"));
-                }
-                if let Some(value) = dict_get_value(&receiver, &key) {
+                if let Some(value) = dict_get_value(&dict_receiver, &key) {
                     return Ok(NativeCallResult::Value(value));
                 }
                 Ok(NativeCallResult::Value(default))
@@ -711,14 +932,28 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictGetItem => {
-                if args.len() != 1 || !kwargs.is_empty() {
+                if !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.__getitem__() expects one argument"));
                 }
-                let key = args.first().cloned().expect("checked len");
-                ensure_hashable(&key)?;
-                let (dict_receiver, missing_owner) = match &*receiver.kind() {
-                    Object::Dict(_) => (receiver.clone(), None),
+                let (dict_receiver, key, missing_owner) = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(
+                                "dict.__getitem__() expects one argument",
+                            ));
+                        }
+                        (
+                            receiver.clone(),
+                            args.first().cloned().expect("checked len"),
+                            None,
+                        )
+                    }
                     Object::Module(module_data) if module_data.name == "__dict_method__" => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(
+                                "dict.__getitem__() expects one argument",
+                            ));
+                        }
                         let dict_receiver = match module_data.globals.get("dict") {
                             Some(Value::Dict(dict_obj)) => dict_obj.clone(),
                             _ => {
@@ -728,7 +963,39 @@ impl Vm {
                             }
                         };
                         let missing_owner = module_data.globals.get("owner").cloned();
-                        (dict_receiver, missing_owner)
+                        (
+                            dict_receiver,
+                            args.first().cloned().expect("checked len"),
+                            missing_owner,
+                        )
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 2 {
+                            return Err(RuntimeError::new(
+                                "dict.__getitem__() expects two arguments",
+                            ));
+                        }
+                        let dict_receiver = match args.first().cloned().expect("checked len") {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.__getitem__() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.__getitem__() receiver must be dict",
+                                ));
+                            }
+                        };
+                        let missing_owner = module_data.globals.get("owner").cloned();
+                        (
+                            dict_receiver,
+                            args.get(1).cloned().expect("checked len"),
+                            missing_owner,
+                        )
                     }
                     _ => {
                         return Err(RuntimeError::new(
@@ -736,6 +1003,7 @@ impl Vm {
                         ));
                     }
                 };
+                ensure_hashable(&key)?;
                 if let Some(value) = dict_get_value(&dict_receiver, &key) {
                     return Ok(NativeCallResult::Value(value));
                 }
@@ -753,25 +1021,70 @@ impl Vm {
                 Err(RuntimeError::key_error("key not found"))
             }
             NativeMethodKind::DictSetItem => {
-                if args.len() != 2 || !kwargs.is_empty() {
+                if !kwargs.is_empty() {
                     return Err(RuntimeError::new(
                         "dict.__setitem__() expects two arguments",
                     ));
                 }
-                let key = args.first().cloned().expect("checked len");
-                let value = args.get(1).cloned().expect("checked len");
-                ensure_hashable(&key)?;
-                let dict_receiver = match &*receiver.kind() {
-                    Object::Dict(_) => receiver.clone(),
+                let (dict_receiver, key, value) = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if args.len() != 2 {
+                            return Err(RuntimeError::new(
+                                "dict.__setitem__() expects two arguments",
+                            ));
+                        }
+                        (
+                            receiver.clone(),
+                            args.first().cloned().expect("checked len"),
+                            args.get(1).cloned().expect("checked len"),
+                        )
+                    }
                     Object::Module(module_data) if module_data.name == "__dict_method__" => {
-                        match module_data.globals.get("dict") {
+                        if args.len() != 2 {
+                            return Err(RuntimeError::new(
+                                "dict.__setitem__() expects two arguments",
+                            ));
+                        }
+                        let dict_receiver = match module_data.globals.get("dict") {
                             Some(Value::Dict(dict_obj)) => dict_obj.clone(),
                             _ => {
                                 return Err(RuntimeError::new(
                                     "dict.__setitem__() receiver must be dict",
                                 ));
                             }
+                        };
+                        (
+                            dict_receiver,
+                            args.first().cloned().expect("checked len"),
+                            args.get(1).cloned().expect("checked len"),
+                        )
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 3 {
+                            return Err(RuntimeError::new(
+                                "dict.__setitem__() expects three arguments",
+                            ));
                         }
+                        let dict_receiver = match args.first().cloned().expect("checked len") {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.__setitem__() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.__setitem__() receiver must be dict",
+                                ));
+                            }
+                        };
+                        (
+                            dict_receiver,
+                            args.get(1).cloned().expect("checked len"),
+                            args.get(2).cloned().expect("checked len"),
+                        )
                     }
                     _ => {
                         return Err(RuntimeError::new(
@@ -779,26 +1092,64 @@ impl Vm {
                         ));
                     }
                 };
+                ensure_hashable(&key)?;
                 dict_set_value_checked(&dict_receiver, key, value)?;
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictDelItem => {
-                if args.len() != 1 || !kwargs.is_empty() {
+                if !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.__delitem__() expects one argument"));
                 }
-                let key = args.first().cloned().expect("checked len");
-                ensure_hashable(&key)?;
-                let dict_receiver = match &*receiver.kind() {
-                    Object::Dict(_) => receiver.clone(),
+                let (dict_receiver, key) = match &*receiver.kind() {
+                    Object::Dict(_) => {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(
+                                "dict.__delitem__() expects one argument",
+                            ));
+                        }
+                        (
+                            receiver.clone(),
+                            args.first().cloned().expect("checked len"),
+                        )
+                    }
                     Object::Module(module_data) if module_data.name == "__dict_method__" => {
-                        match module_data.globals.get("dict") {
+                        if args.len() != 1 {
+                            return Err(RuntimeError::new(
+                                "dict.__delitem__() expects one argument",
+                            ));
+                        }
+                        let dict_receiver = match module_data.globals.get("dict") {
                             Some(Value::Dict(dict_obj)) => dict_obj.clone(),
                             _ => {
                                 return Err(RuntimeError::new(
                                     "dict.__delitem__() receiver must be dict",
                                 ));
                             }
+                        };
+                        (dict_receiver, args.first().cloned().expect("checked len"))
+                    }
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.len() != 2 {
+                            return Err(RuntimeError::new(
+                                "dict.__delitem__() expects two arguments",
+                            ));
                         }
+                        let dict_receiver = match args.first().cloned().expect("checked len") {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.__delitem__() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.__delitem__() receiver must be dict",
+                                ));
+                            }
+                        };
+                        (dict_receiver, args.get(1).cloned().expect("checked len"))
                     }
                     _ => {
                         return Err(RuntimeError::new(
@@ -806,22 +1157,46 @@ impl Vm {
                         ));
                     }
                 };
+                ensure_hashable(&key)?;
                 if dict_remove_value(&dict_receiver, &key).is_none() {
                     return Err(RuntimeError::key_error("key not found"));
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictPop => {
+                let dict_receiver = match &*receiver.kind() {
+                    Object::Dict(_) => receiver.clone(),
+                    Object::Module(module_data)
+                        if module_data.name == "__dict_unbound_method__" =>
+                    {
+                        if args.is_empty() {
+                            return Err(RuntimeError::new("dict.pop() expects an argument"));
+                        }
+                        match args.remove(0) {
+                            Value::Dict(dict_obj) => dict_obj,
+                            Value::Instance(instance) => {
+                                self.instance_backing_dict(&instance).ok_or_else(|| {
+                                    RuntimeError::new("dict.pop() receiver must be dict")
+                                })?
+                            }
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "dict.pop() receiver must be dict",
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(RuntimeError::new("dict.pop() receiver must be dict"));
+                    }
+                };
                 if args.is_empty() || args.len() > 2 || !kwargs.is_empty() {
                     return Err(RuntimeError::new("dict.pop() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
                 ensure_hashable(&key)?;
                 let default = args.get(1).cloned();
-                if !matches!(&*receiver.kind(), Object::Dict(_)) {
-                    return Err(RuntimeError::new("dict.pop() receiver must be dict"));
-                }
-                if let Some(value) = dict_remove_value(&receiver, &key) {
+                if let Some(value) = dict_remove_value(&dict_receiver, &key) {
                     return Ok(NativeCallResult::Value(value));
                 }
                 if let Some(default) = default {
@@ -1610,29 +1985,11 @@ impl Vm {
                 Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::StrUpper => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("upper() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "upper")?;
                 Ok(NativeCallResult::Value(Value::Str(text.to_uppercase())))
             }
             NativeMethodKind::StrLower => {
-                if !args.is_empty() {
-                    return Err(RuntimeError::new("lower() expects no arguments"));
-                }
-                let text = match &*receiver.kind() {
-                    Object::Module(module_data) => match module_data.globals.get("value") {
-                        Some(Value::Str(value)) => value.clone(),
-                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
-                    },
-                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
-                };
+                let text = self.str_predicate_receiver_text(&receiver, &mut args, "lower")?;
                 Ok(NativeCallResult::Value(Value::Str(text.to_lowercase())))
             }
             NativeMethodKind::StrCapitalize => {
@@ -4311,47 +4668,199 @@ impl Vm {
                 let count = if let Some(value) = args.get(2) {
                     value_to_int(value.clone())?
                 } else {
-                    -1
+                    0
+                };
+                let max_replacements = if count <= 0 {
+                    None
+                } else {
+                    Some(count as usize)
                 };
                 match pattern {
                     RePatternValue::Str(pattern_text) => {
-                        let replacement = match &args[0] {
-                            Value::Str(value) => value.clone(),
-                            _ => return Err(RuntimeError::new("replacement must be string")),
+                        let replacement = args[0].clone();
+                        let replacement_is_callable = self.is_callable_value(&replacement);
+                        let replacement_template = if replacement_is_callable {
+                            None
+                        } else {
+                            match &replacement {
+                                Value::Str(value) => Some(value.clone()),
+                                _ => return Err(RuntimeError::new("replacement must be string")),
+                            }
                         };
                         let text = match &args[1] {
                             Value::Str(value) => value.clone(),
                             _ => return Err(RuntimeError::new("string must be string")),
                         };
-                        if pattern_text.is_empty() || count == 0 {
+                        if pattern_text.is_empty() {
                             return Ok(NativeCallResult::Value(Value::Str(text)));
                         }
-                        let mut remaining = text.as_str();
+                        let mut cursor = 0usize;
                         let mut out = String::new();
-                        let mut replaced = 0i64;
-                        while let Some(idx) = remaining.find(&pattern_text) {
-                            if count >= 0 && replaced >= count {
+                        let mut replaced = 0usize;
+                        loop {
+                            if max_replacements.is_some_and(|limit| replaced >= limit) {
                                 break;
                             }
-                            out.push_str(&remaining[..idx]);
-                            out.push_str(&replacement);
-                            remaining = &remaining[idx + pattern_text.len()..];
+                            let match_value = self.builtin_re_match_mode(
+                                vec![
+                                    Value::Module(receiver.clone()),
+                                    Value::Str(text.clone()),
+                                    Value::Int(cursor as i64),
+                                ],
+                                HashMap::new(),
+                                ReMode::Search,
+                            )?;
+                            let Value::Module(match_module) = match_value else {
+                                break;
+                            };
+                            let (match_start, match_end, groups) = {
+                                let Object::Module(module_data) = &*match_module.kind() else {
+                                    return Err(RuntimeError::new("re match receiver is invalid"));
+                                };
+                                let match_start = match module_data.globals.get("_start") {
+                                    Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "re match receiver is invalid",
+                                        ));
+                                    }
+                                };
+                                let match_end = match module_data.globals.get("_end") {
+                                    Some(Value::Int(value)) if *value >= 0 => *value as usize,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "re match receiver is invalid",
+                                        ));
+                                    }
+                                };
+                                let groups = match module_data.globals.get("_groups") {
+                                    Some(Value::Tuple(obj)) => match &*obj.kind() {
+                                        Object::Tuple(values) => values.clone(),
+                                        _ => Vec::new(),
+                                    },
+                                    Some(Value::List(obj)) => match &*obj.kind() {
+                                        Object::List(values) => values.clone(),
+                                        _ => Vec::new(),
+                                    },
+                                    _ => Vec::new(),
+                                };
+                                (match_start, match_end, groups)
+                            };
+                            if match_start < cursor
+                                || match_start > text.len()
+                                || match_end > text.len()
+                                || match_end < match_start
+                            {
+                                return Err(RuntimeError::new("invalid regex match bounds"));
+                            }
+                            out.push_str(&text[cursor..match_start]);
+                            let replacement_text = if replacement_is_callable {
+                                let replacement_value = match self.call_internal(
+                                    replacement.clone(),
+                                    vec![Value::Module(match_module.clone())],
+                                    HashMap::new(),
+                                )? {
+                                    InternalCallOutcome::Value(value) => value,
+                                    InternalCallOutcome::CallerExceptionHandled => {
+                                        return Err(self.runtime_error_from_active_exception(
+                                            "replacement callable failed",
+                                        ));
+                                    }
+                                };
+                                match replacement_value {
+                                    Value::Str(value) => value,
+                                    _ => {
+                                        return Err(RuntimeError::new(
+                                            "repl function must return a string",
+                                        ));
+                                    }
+                                }
+                            } else {
+                                let template = replacement_template
+                                    .as_ref()
+                                    .expect("replacement template must exist");
+                                let whole_match = &text[match_start..match_end];
+                                let mut expanded = String::new();
+                                let chars = template.chars().collect::<Vec<_>>();
+                                let mut idx = 0usize;
+                                while idx < chars.len() {
+                                    let ch = chars[idx];
+                                    if ch != '\\' {
+                                        expanded.push(ch);
+                                        idx += 1;
+                                        continue;
+                                    }
+                                    idx += 1;
+                                    if idx >= chars.len() {
+                                        expanded.push('\\');
+                                        break;
+                                    }
+                                    let escape = chars[idx];
+                                    if escape.is_ascii_digit() && escape != '0' {
+                                        let mut number = 0usize;
+                                        while idx < chars.len() && chars[idx].is_ascii_digit() {
+                                            number = number
+                                                .saturating_mul(10)
+                                                .saturating_add((chars[idx] as u8 - b'0') as usize);
+                                            idx += 1;
+                                        }
+                                        if let Some(group) = groups.get(number.saturating_sub(1)) {
+                                            match group {
+                                                Value::Str(text) => expanded.push_str(text),
+                                                Value::None => {}
+                                                _ => {}
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    idx += 1;
+                                    match escape {
+                                        '\\' => expanded.push('\\'),
+                                        'g' => {
+                                            expanded.push('\\');
+                                            expanded.push('g');
+                                        }
+                                        _ => {
+                                            expanded.push(escape);
+                                        }
+                                    }
+                                }
+                                if expanded.is_empty() && template == "\\0" {
+                                    whole_match.to_string()
+                                } else {
+                                    expanded
+                                }
+                            };
+                            out.push_str(&replacement_text);
                             replaced += 1;
+                            if match_end == cursor {
+                                if cursor >= text.len() {
+                                    break;
+                                }
+                                let step = text[cursor..]
+                                    .chars()
+                                    .next()
+                                    .map(|ch| ch.len_utf8())
+                                    .unwrap_or(1);
+                                cursor = (cursor + step).min(text.len());
+                            } else {
+                                cursor = match_end;
+                            }
                         }
-                        out.push_str(remaining);
+                        out.push_str(&text[cursor..]);
                         Ok(NativeCallResult::Value(Value::Str(out)))
                     }
                     RePatternValue::Bytes(pattern_bytes) => {
                         let replacement = bytes_like_from_value(args[0].clone())?;
                         let text = bytes_like_from_value(args[1].clone())?;
-                        if pattern_bytes.is_empty() || count == 0 {
+                        if pattern_bytes.is_empty() {
                             return Ok(NativeCallResult::Value(self.heap.alloc_bytes(text)));
                         }
                         let mut remaining: &[u8] = &text;
                         let mut out: Vec<u8> = Vec::new();
-                        let mut replaced = 0i64;
+                        let mut replaced = 0usize;
                         while let Some(idx) = find_bytes_subslice(remaining, &pattern_bytes) {
-                            if count >= 0 && replaced >= count {
+                            if max_replacements.is_some_and(|limit| replaced >= limit) {
                                 break;
                             }
                             out.extend_from_slice(&remaining[..idx]);
@@ -5995,6 +6504,9 @@ impl Vm {
                 callable: Value,
                 sentinel: Value,
             },
+            CycleAdvance {
+                source: Value,
+            },
         }
 
         let pending_step;
@@ -6148,14 +6660,24 @@ impl Vm {
                         _ => Ok(None),
                     };
                 }
-                IteratorKind::Cycle { values } => {
-                    if values.is_empty() {
-                        return Ok(None);
+                IteratorKind::Cycle {
+                    source,
+                    values,
+                    source_exhausted,
+                } => {
+                    if !*source_exhausted {
+                        pending_step = PendingIteratorStep::CycleAdvance {
+                            source: source.clone(),
+                        };
+                    } else {
+                        if values.is_empty() {
+                            return Ok(None);
+                        }
+                        let index = state.index % values.len();
+                        let value = values[index].clone();
+                        state.index = state.index.wrapping_add(1);
+                        return Ok(Some(value));
                     }
-                    let index = state.index % values.len();
-                    let value = values[index].clone();
-                    state.index = state.index.wrapping_add(1);
-                    return Ok(Some(value));
                 }
                 IteratorKind::Count { current, step } => {
                     let value = *current;
@@ -6490,6 +7012,42 @@ impl Vm {
                     Ok(Some(produced))
                 }
             }
+            PendingIteratorStep::CycleAdvance { source } => {
+                match self.next_from_iterator_value(&source)? {
+                    GeneratorResumeOutcome::Yield(value) => {
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::Cycle { values, .. } = &mut state.kind
+                        {
+                            values.push(value.clone());
+                            return Ok(Some(value));
+                        }
+                        Ok(None)
+                    }
+                    GeneratorResumeOutcome::Complete(_) => {
+                        let mut iter = iterator_ref.kind_mut();
+                        if let Object::Iterator(state) = &mut *iter
+                            && let IteratorKind::Cycle {
+                                values,
+                                source_exhausted,
+                                ..
+                            } = &mut state.kind
+                        {
+                            *source_exhausted = true;
+                            if values.is_empty() {
+                                return Ok(None);
+                            }
+                            let value = values[0].clone();
+                            state.index = 1;
+                            return Ok(Some(value));
+                        }
+                        Ok(None)
+                    }
+                    GeneratorResumeOutcome::PropagatedException => {
+                        Err(self.iteration_error_from_state("cycle() iteration failed")?)
+                    }
+                }
+            }
         }
     }
 
@@ -6696,6 +7254,23 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let depth = CALL_BUILTIN_DEPTH.with(|depth| {
+            let next = depth.get().saturating_add(1);
+            depth.set(next);
+            next
+        });
+        struct CallBuiltinDepthGuard;
+        impl Drop for CallBuiltinDepthGuard {
+            fn drop(&mut self) {
+                CALL_BUILTIN_DEPTH.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1));
+                });
+            }
+        }
+        let _guard = CallBuiltinDepthGuard;
+        if std::env::var_os("PYRS_DEBUG_CALL_BUILTIN_DEPTH").is_some() && depth > 256 {
+            panic!("call_builtin recursion depth exceeded at depth={depth} builtin={builtin:?}");
+        }
         match builtin {
             BuiltinFunction::Print => self.builtin_print(args, kwargs),
             BuiltinFunction::Input => self.builtin_input(args, kwargs),
@@ -6730,6 +7305,7 @@ impl Vm {
                 self.builtin_sys_getfilesystemencodeerrors(args, kwargs)
             }
             BuiltinFunction::SysGetRefCount => self.builtin_sys_getrefcount(args, kwargs),
+            BuiltinFunction::SysGetSizeOf => self.builtin_sys_getsizeof(args, kwargs),
             BuiltinFunction::SysGetRecursionLimit => {
                 self.builtin_sys_getrecursionlimit(args, kwargs)
             }
@@ -6811,6 +7387,7 @@ impl Vm {
             BuiltinFunction::HasAttr => self.builtin_hasattr(args, kwargs),
             BuiltinFunction::Callable => self.builtin_callable(args, kwargs),
             BuiltinFunction::Type => self.builtin_type(args, kwargs),
+            BuiltinFunction::TypeCall => self.builtin_type_call(args, kwargs),
             BuiltinFunction::TypeInit => self.builtin_type_init(args, kwargs),
             BuiltinFunction::TypeMro => self.builtin_type_mro(args, kwargs),
             BuiltinFunction::TypePrepare => self.builtin_type_prepare(args, kwargs),
@@ -7451,6 +8028,9 @@ impl Vm {
             BuiltinFunction::UnicodedataNormalize => {
                 self.builtin_unicodedata_normalize(args, kwargs)
             }
+            BuiltinFunction::UnicodedataEastAsianWidth => {
+                self.builtin_unicodedata_east_asian_width(args, kwargs)
+            }
             BuiltinFunction::SelectSelect => self.builtin_select_select(args, kwargs),
             BuiltinFunction::ReSearch => self.builtin_re_search(args, kwargs),
             BuiltinFunction::ReMatch => self.builtin_re_match(args, kwargs),
@@ -7470,6 +8050,16 @@ impl Vm {
             BuiltinFunction::OperatorSub => self.builtin_operator_sub(args, kwargs),
             BuiltinFunction::OperatorMul => self.builtin_operator_mul(args, kwargs),
             BuiltinFunction::OperatorMod => self.builtin_operator_mod(args, kwargs),
+            BuiltinFunction::OperatorPow => self.builtin_operator_pow(args, kwargs),
+            BuiltinFunction::OperatorAnd => self.builtin_operator_and(args, kwargs),
+            BuiltinFunction::OperatorOr => self.builtin_operator_or(args, kwargs),
+            BuiltinFunction::OperatorXor => self.builtin_operator_xor(args, kwargs),
+            BuiltinFunction::OperatorLShift => self.builtin_operator_lshift(args, kwargs),
+            BuiltinFunction::OperatorRShift => self.builtin_operator_rshift(args, kwargs),
+            BuiltinFunction::OperatorMatMul => self.builtin_operator_matmul(args, kwargs),
+            BuiltinFunction::OperatorNeg => self.builtin_operator_neg(args, kwargs),
+            BuiltinFunction::OperatorPos => self.builtin_operator_pos(args, kwargs),
+            BuiltinFunction::OperatorInvert => self.builtin_operator_invert(args, kwargs),
             BuiltinFunction::OperatorTrueDiv => self.builtin_operator_truediv(args, kwargs),
             BuiltinFunction::OperatorFloorDiv => self.builtin_operator_floordiv(args, kwargs),
             BuiltinFunction::OperatorIndex => self.builtin_operator_index(args, kwargs),
@@ -7616,6 +8206,9 @@ impl Vm {
             }
             BuiltinFunction::InspectParameterInit => {
                 self.builtin_inspect_parameter_init(args, kwargs)
+            }
+            BuiltinFunction::InspectParameterReplace => {
+                self.builtin_inspect_parameter_replace(args, kwargs)
             }
             BuiltinFunction::InspectGetModule => self.builtin_inspect_getmodule(args, kwargs),
             BuiltinFunction::InspectGetFile => self.builtin_inspect_getfile(args, kwargs),
@@ -7871,8 +8464,14 @@ impl Vm {
             BuiltinFunction::DateTimeFromTimestamp => {
                 self.builtin_datetime_fromtimestamp(args, kwargs)
             }
+            BuiltinFunction::DateTimeFromIsoCalendar => {
+                self.builtin_datetime_fromisocalendar(args, kwargs)
+            }
             BuiltinFunction::DateTimeAstimezone => self.builtin_datetime_astimezone(args, kwargs),
+            BuiltinFunction::DateTimeReplace => self.builtin_datetime_replace(args, kwargs),
             BuiltinFunction::DateInit => self.builtin_date_init(args, kwargs),
+            BuiltinFunction::DateReplace => self.builtin_date_replace(args, kwargs),
+            BuiltinFunction::DateFromIsoCalendar => self.builtin_date_fromisocalendar(args, kwargs),
             BuiltinFunction::DateTimeDeltaInit => self.builtin_datetime_delta_init(args, kwargs),
             BuiltinFunction::DateTimeTimezoneInit => {
                 self.builtin_datetime_timezone_init(args, kwargs)
@@ -7883,6 +8482,7 @@ impl Vm {
             BuiltinFunction::DateIsoFormat => self.builtin_date_isoformat(args, kwargs),
             BuiltinFunction::DateStrFTime => self.builtin_date_strftime(args, kwargs),
             BuiltinFunction::TimeInit => self.builtin_time_init(args, kwargs),
+            BuiltinFunction::TimeReplace => self.builtin_time_replace(args, kwargs),
             BuiltinFunction::AsyncioRun => self.builtin_asyncio_run(args, kwargs),
             BuiltinFunction::AsyncioSleep => self.builtin_asyncio_sleep(args, kwargs),
             BuiltinFunction::AsyncioCreateTask => self.builtin_asyncio_create_task(args, kwargs),

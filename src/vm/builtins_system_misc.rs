@@ -8,6 +8,24 @@ use super::{
     uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
 };
 
+const DATETIME_MIN_YEAR: i64 = 1;
+const DATETIME_MAX_YEAR: i64 = 9999;
+const UNIX_EPOCH_ORDINAL: i64 = 719_163;
+
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year, m as u32, d as u32)
+}
+
 impl Vm {
     pub(super) fn builtin_threading_excepthook(
         &mut self,
@@ -514,6 +532,43 @@ impl Vm {
         Ok(Value::Instance(instance))
     }
 
+    fn time_instance_from_parts(
+        &mut self,
+        class: ObjRef,
+        hour: i64,
+        minute: i64,
+        second: i64,
+        microsecond: i64,
+        tzinfo: Option<Value>,
+        fold: i64,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.alloc_instance_for_class(&class);
+        {
+            let Object::Instance(instance_data) = &mut *instance.kind_mut() else {
+                return Err(RuntimeError::new("time construction failed"));
+            };
+            instance_data
+                .attrs
+                .insert("hour".to_string(), Value::Int(hour));
+            instance_data
+                .attrs
+                .insert("minute".to_string(), Value::Int(minute));
+            instance_data
+                .attrs
+                .insert("second".to_string(), Value::Int(second));
+            instance_data
+                .attrs
+                .insert("microsecond".to_string(), Value::Int(microsecond));
+            if let Some(tzinfo) = tzinfo {
+                instance_data.attrs.insert("tzinfo".to_string(), tzinfo);
+            }
+            instance_data
+                .attrs
+                .insert("fold".to_string(), Value::Int(fold));
+        }
+        Ok(Value::Instance(instance))
+    }
+
     pub(super) fn builtin_datetime_fromtimestamp(
         &mut self,
         mut args: Vec<Value>,
@@ -843,6 +898,148 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_datetime_replace(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "datetime.replace")?;
+        if args.len() > 8 {
+            return Err(RuntimeError::new(
+                "replace() takes at most 8 positional arguments",
+            ));
+        }
+
+        let (
+            class,
+            mut year,
+            mut month,
+            mut day,
+            mut hour,
+            mut minute,
+            mut second,
+            mut microsecond,
+            mut tzinfo,
+            mut fold,
+        ) = {
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return Err(RuntimeError::new(
+                    "datetime.replace() expects instance receiver",
+                ));
+            };
+            let read_field = |name: &str| -> Result<i64, RuntimeError> {
+                instance_data
+                    .attrs
+                    .get(name)
+                    .cloned()
+                    .map(value_to_int)
+                    .transpose()?
+                    .ok_or_else(|| RuntimeError::new(format!("datetime.replace() missing {name}")))
+            };
+            (
+                instance_data.class.clone(),
+                read_field("year")?,
+                read_field("month")?,
+                read_field("day")?,
+                read_field("hour").unwrap_or(0),
+                read_field("minute").unwrap_or(0),
+                read_field("second").unwrap_or(0),
+                read_field("microsecond").unwrap_or(0),
+                instance_data.attrs.get("tzinfo").cloned(),
+                instance_data
+                    .attrs
+                    .get("fold")
+                    .cloned()
+                    .map(value_to_int)
+                    .transpose()?
+                    .unwrap_or(0),
+            )
+        };
+
+        let positional_count = args.len();
+        let mut set_int_field =
+            |name: &str, index: usize, target: &mut i64| -> Result<(), RuntimeError> {
+                if let Some(value) = args.get(index).cloned() {
+                    if !matches!(value, Value::None) {
+                        *target = value_to_int(value)?;
+                    }
+                }
+                if let Some(value) = kwargs.remove(name) {
+                    if positional_count > index {
+                        return Err(RuntimeError::new(format!(
+                            "replace() got multiple values for argument '{name}'"
+                        )));
+                    }
+                    if !matches!(value, Value::None) {
+                        *target = value_to_int(value)?;
+                    }
+                }
+                Ok(())
+            };
+
+        set_int_field("year", 0, &mut year)?;
+        set_int_field("month", 1, &mut month)?;
+        set_int_field("day", 2, &mut day)?;
+        set_int_field("hour", 3, &mut hour)?;
+        set_int_field("minute", 4, &mut minute)?;
+        set_int_field("second", 5, &mut second)?;
+        set_int_field("microsecond", 6, &mut microsecond)?;
+
+        if let Some(value) = args.get(7).cloned() {
+            tzinfo = if value == Value::Bool(true) {
+                tzinfo
+            } else if value == Value::None {
+                None
+            } else {
+                Some(value)
+            };
+        }
+        if let Some(value) = kwargs.remove("tzinfo") {
+            if positional_count > 7 {
+                return Err(RuntimeError::new(
+                    "replace() got multiple values for argument 'tzinfo'",
+                ));
+            }
+            tzinfo = if value == Value::Bool(true) {
+                tzinfo
+            } else if value == Value::None {
+                None
+            } else {
+                Some(value)
+            };
+        }
+        if let Some(value) = kwargs.remove("fold")
+            && !matches!(value, Value::None)
+        {
+            fold = value_to_int(value)?;
+        }
+
+        if !kwargs.is_empty() {
+            let mut keys: Vec<_> = kwargs.keys().cloned().collect();
+            keys.sort();
+            return Err(RuntimeError::new(format!(
+                "replace() got an unexpected keyword argument '{}'",
+                keys[0]
+            )));
+        }
+
+        let replaced = self.datetime_instance_from_parts(
+            class,
+            year,
+            month as u32,
+            day as u32,
+            hour as u32,
+            minute as u32,
+            second as u32,
+            microsecond,
+            tzinfo,
+        )?;
+        if let Value::Instance(obj) = &replaced {
+            Self::instance_attr_set(obj, "fold", Value::Int(fold))?;
+        }
+        Ok(replaced)
+    }
+
     pub(super) fn builtin_date_init(
         &mut self,
         mut args: Vec<Value>,
@@ -910,6 +1107,77 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_date_replace(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "date.replace")?;
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "replace() takes at most 3 positional arguments",
+            ));
+        }
+
+        let (class, mut year, mut month, mut day) = {
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return Err(RuntimeError::new(
+                    "date.replace() expects instance receiver",
+                ));
+            };
+            let read_field = |name: &str| -> Result<i64, RuntimeError> {
+                instance_data
+                    .attrs
+                    .get(name)
+                    .cloned()
+                    .map(value_to_int)
+                    .transpose()?
+                    .ok_or_else(|| RuntimeError::new(format!("date.replace() missing {name}")))
+            };
+            (
+                instance_data.class.clone(),
+                read_field("year")?,
+                read_field("month")?,
+                read_field("day")?,
+            )
+        };
+
+        let positional_count = args.len();
+        let mut set_int_field =
+            |name: &str, index: usize, target: &mut i64| -> Result<(), RuntimeError> {
+                if let Some(value) = args.get(index).cloned() {
+                    if !matches!(value, Value::None) {
+                        *target = value_to_int(value)?;
+                    }
+                }
+                if let Some(value) = kwargs.remove(name) {
+                    if positional_count > index {
+                        return Err(RuntimeError::new(format!(
+                            "replace() got multiple values for argument '{name}'"
+                        )));
+                    }
+                    if !matches!(value, Value::None) {
+                        *target = value_to_int(value)?;
+                    }
+                }
+                Ok(())
+            };
+        set_int_field("year", 0, &mut year)?;
+        set_int_field("month", 1, &mut month)?;
+        set_int_field("day", 2, &mut day)?;
+
+        if !kwargs.is_empty() {
+            let mut keys: Vec<_> = kwargs.keys().cloned().collect();
+            keys.sort();
+            return Err(RuntimeError::new(format!(
+                "replace() got an unexpected keyword argument '{}'",
+                keys[0]
+            )));
+        }
+
+        self.date_instance_from_parts(class, year, month as u32, day as u32)
+    }
+
     pub(super) fn builtin_date_toordinal(
         &mut self,
         mut args: Vec<Value>,
@@ -936,9 +1204,142 @@ impl Vm {
             Some(value) => value_to_int(value.clone())?,
             None => return Err(RuntimeError::new("date.toordinal() missing day")),
         };
-        const UNIX_EPOCH_ORDINAL: i64 = 719_163;
         let days = days_from_civil(year, month as u32, day as u32);
         Ok(Value::Int(days + UNIX_EPOCH_ORDINAL))
+    }
+
+    fn parse_fromisocalendar_args(
+        &self,
+        args: &mut Vec<Value>,
+        kwargs: &mut HashMap<String, Value>,
+    ) -> Result<(i64, i64, i64), RuntimeError> {
+        let mut year = args.first().cloned();
+        let mut week = args.get(1).cloned();
+        let mut day = args.get(2).cloned();
+        if args.len() > 3 {
+            return Err(RuntimeError::new(
+                "fromisocalendar() takes exactly 3 positional arguments",
+            ));
+        }
+        args.clear();
+
+        if let Some(value) = kwargs.remove("year") {
+            if year.is_some() {
+                return Err(RuntimeError::new(
+                    "fromisocalendar() got multiple values for argument 'year'",
+                ));
+            }
+            year = Some(value);
+        }
+        if let Some(value) = kwargs.remove("week") {
+            if week.is_some() {
+                return Err(RuntimeError::new(
+                    "fromisocalendar() got multiple values for argument 'week'",
+                ));
+            }
+            week = Some(value);
+        }
+        if let Some(value) = kwargs.remove("day") {
+            if day.is_some() {
+                return Err(RuntimeError::new(
+                    "fromisocalendar() got multiple values for argument 'day'",
+                ));
+            }
+            day = Some(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "fromisocalendar() got an unexpected keyword argument",
+            ));
+        }
+
+        let year = year.ok_or_else(|| RuntimeError::new("fromisocalendar() missing year"))?;
+        let week = week.ok_or_else(|| RuntimeError::new("fromisocalendar() missing week"))?;
+        let day = day.ok_or_else(|| RuntimeError::new("fromisocalendar() missing day"))?;
+        Ok((value_to_int(year)?, value_to_int(week)?, value_to_int(day)?))
+    }
+
+    fn iso_week1_monday_ordinal(&self, year: i64) -> i64 {
+        let first_day = days_from_civil(year, 1, 1) + UNIX_EPOCH_ORDINAL;
+        let first_weekday = (first_day + 6).rem_euclid(7);
+        let mut week1_monday = first_day - first_weekday;
+        if first_weekday > 3 {
+            week1_monday += 7;
+        }
+        week1_monday
+    }
+
+    fn iso_to_ymd(
+        &self,
+        iso_year: i64,
+        iso_week: i64,
+        iso_day: i64,
+    ) -> Result<(i64, u32, u32), RuntimeError> {
+        if !(DATETIME_MIN_YEAR..=DATETIME_MAX_YEAR).contains(&iso_year) {
+            return Err(RuntimeError::new(format!(
+                "year must be in {}..{}, not {}",
+                DATETIME_MIN_YEAR, DATETIME_MAX_YEAR, iso_year
+            )));
+        }
+
+        if iso_week <= 0 || iso_week >= 53 {
+            let mut out_of_range = true;
+            if iso_week == 53 {
+                let first_weekday = (days_from_civil(iso_year, 1, 1) + 3).rem_euclid(7);
+                if first_weekday == 3
+                    || (first_weekday == 2 && day_of_year(iso_year as i32, 12, 31) == 366)
+                {
+                    out_of_range = false;
+                }
+            }
+            if out_of_range {
+                return Err(RuntimeError::new(format!("Invalid week: {}", iso_week)));
+            }
+        }
+
+        if iso_day <= 0 || iso_day >= 8 {
+            return Err(RuntimeError::new(format!(
+                "Invalid weekday: {} (range is [1, 7])",
+                iso_day
+            )));
+        }
+
+        let day_1 = self.iso_week1_monday_ordinal(iso_year);
+        let day_offset = (iso_week - 1) * 7 + iso_day - 1;
+        let (year, month, day) = civil_from_days(day_1 + day_offset - UNIX_EPOCH_ORDINAL);
+        Ok((year, month, day))
+    }
+
+    pub(super) fn builtin_date_fromisocalendar(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let class = if let Some(Value::Class(_)) = args.first() {
+            self.receiver_from_value(&args.remove(0))?
+        } else {
+            self.date_default_class()?
+        };
+        let (iso_year, iso_week, iso_day) =
+            self.parse_fromisocalendar_args(&mut args, &mut kwargs)?;
+        let (year, month, day) = self.iso_to_ymd(iso_year, iso_week, iso_day)?;
+        self.date_instance_from_parts(class, year, month, day)
+    }
+
+    pub(super) fn builtin_datetime_fromisocalendar(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let class = if let Some(Value::Class(_)) = args.first() {
+            self.receiver_from_value(&args.remove(0))?
+        } else {
+            self.datetime_default_class()?
+        };
+        let (iso_year, iso_week, iso_day) =
+            self.parse_fromisocalendar_args(&mut args, &mut kwargs)?;
+        let (year, month, day) = self.iso_to_ymd(iso_year, iso_week, iso_day)?;
+        self.datetime_instance_from_parts(class, year, month, day, 0, 0, 0, 0, None)
     }
 
     pub(super) fn builtin_date_weekday(
@@ -1396,6 +1797,116 @@ impl Vm {
             instance_data.attrs.insert("tzinfo".to_string(), tzinfo);
         }
         Ok(Value::None)
+    }
+
+    pub(super) fn builtin_time_replace(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let instance = self.take_bound_instance_arg(&mut args, "time.replace")?;
+        if args.len() > 5 {
+            return Err(RuntimeError::new(
+                "replace() takes at most 5 positional arguments",
+            ));
+        }
+
+        let (class, mut hour, mut minute, mut second, mut microsecond, mut tzinfo, mut fold) = {
+            let Object::Instance(instance_data) = &*instance.kind() else {
+                return Err(RuntimeError::new(
+                    "time.replace() expects instance receiver",
+                ));
+            };
+            let read_field = |name: &str| -> Result<i64, RuntimeError> {
+                instance_data
+                    .attrs
+                    .get(name)
+                    .cloned()
+                    .map(value_to_int)
+                    .transpose()?
+                    .ok_or_else(|| RuntimeError::new(format!("time.replace() missing {name}")))
+            };
+            (
+                instance_data.class.clone(),
+                read_field("hour").unwrap_or(0),
+                read_field("minute").unwrap_or(0),
+                read_field("second").unwrap_or(0),
+                read_field("microsecond").unwrap_or(0),
+                instance_data.attrs.get("tzinfo").cloned(),
+                instance_data
+                    .attrs
+                    .get("fold")
+                    .cloned()
+                    .map(value_to_int)
+                    .transpose()?
+                    .unwrap_or(0),
+            )
+        };
+
+        let positional_count = args.len();
+        let mut set_int_field =
+            |name: &str, index: usize, target: &mut i64| -> Result<(), RuntimeError> {
+                if let Some(value) = args.get(index).cloned() {
+                    if !matches!(value, Value::None) {
+                        *target = value_to_int(value)?;
+                    }
+                }
+                if let Some(value) = kwargs.remove(name) {
+                    if positional_count > index {
+                        return Err(RuntimeError::new(format!(
+                            "replace() got multiple values for argument '{name}'"
+                        )));
+                    }
+                    if !matches!(value, Value::None) {
+                        *target = value_to_int(value)?;
+                    }
+                }
+                Ok(())
+            };
+        set_int_field("hour", 0, &mut hour)?;
+        set_int_field("minute", 1, &mut minute)?;
+        set_int_field("second", 2, &mut second)?;
+        set_int_field("microsecond", 3, &mut microsecond)?;
+
+        if let Some(value) = args.get(4).cloned() {
+            tzinfo = if value == Value::Bool(true) {
+                tzinfo
+            } else if value == Value::None {
+                None
+            } else {
+                Some(value)
+            };
+        }
+        if let Some(value) = kwargs.remove("tzinfo") {
+            if positional_count > 4 {
+                return Err(RuntimeError::new(
+                    "replace() got multiple values for argument 'tzinfo'",
+                ));
+            }
+            tzinfo = if value == Value::Bool(true) {
+                tzinfo
+            } else if value == Value::None {
+                None
+            } else {
+                Some(value)
+            };
+        }
+        if let Some(value) = kwargs.remove("fold")
+            && !matches!(value, Value::None)
+        {
+            fold = value_to_int(value)?;
+        }
+
+        if !kwargs.is_empty() {
+            let mut keys: Vec<_> = kwargs.keys().cloned().collect();
+            keys.sort();
+            return Err(RuntimeError::new(format!(
+                "replace() got an unexpected keyword argument '{}'",
+                keys[0]
+            )));
+        }
+
+        self.time_instance_from_parts(class, hour, minute, second, microsecond, tzinfo, fold)
     }
 
     pub(super) fn builtin_asyncio_run(

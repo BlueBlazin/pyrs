@@ -105,6 +105,16 @@ impl Vm {
         }
     }
 
+    fn runtime_format_type_name(&self, value: &Value) -> String {
+        let Some(class_obj) = self.class_of_value(value) else {
+            return self.value_type_name_for_error(value);
+        };
+        match &*class_obj.kind() {
+            Object::Class(class_data) => class_data.name.clone(),
+            _ => self.value_type_name_for_error(value),
+        }
+    }
+
     fn truthy_from_len_result(&self, result: Value) -> Result<bool, RuntimeError> {
         match result {
             Value::Bool(flag) => Ok(flag),
@@ -798,8 +808,8 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "TypeError: hash() got an unexpected keyword argument",
+            return Err(RuntimeError::type_error(
+                "hash() got an unexpected keyword argument",
             ));
         }
         if args.len() != 1 {
@@ -810,8 +820,8 @@ impl Vm {
             Value::Instance(_) | Value::Class(_) | Value::Super(_) => {
                 let Some(hash_method) = self.lookup_bound_special_method(&target, "__hash__")?
                 else {
-                    return Err(RuntimeError::new(format!(
-                        "TypeError: unhashable type: '{}'",
+                    return Err(RuntimeError::type_error(format!(
+                        "unhashable type: '{}'",
                         self.value_type_name_for_error(&target)
                     )));
                 };
@@ -823,8 +833,8 @@ impl Vm {
             }
             _ => {
                 let Some(hash_bits) = value_lookup_hash(&target) else {
-                    return Err(RuntimeError::new(format!(
-                        "TypeError: unhashable type: '{}'",
+                    return Err(RuntimeError::type_error(format!(
+                        "unhashable type: '{}'",
                         self.value_type_name_for_error(&target)
                     )));
                 };
@@ -2657,6 +2667,113 @@ impl Vm {
             _ => 1,
         };
         Ok(Value::Int(count))
+    }
+
+    fn sizeof_hint_for_value(&self, value: &Value) -> i64 {
+        const PTR: i64 = std::mem::size_of::<usize>() as i64;
+        const BASE: i64 = 8 * PTR;
+        match value {
+            Value::None => BASE,
+            Value::Bool(_) => BASE,
+            Value::Int(_) | Value::Float(_) => BASE + 2 * PTR,
+            Value::BigInt(value) => BASE + (value.bit_length() as i64 + 7) / 8,
+            Value::Complex { .. } => BASE + 2 * (std::mem::size_of::<f64>() as i64),
+            Value::Str(text) => BASE + text.len() as i64,
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => BASE + values.len() as i64 * PTR,
+                _ => BASE,
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => BASE + values.len() as i64 * PTR,
+                _ => BASE,
+            },
+            Value::Dict(obj) => match &*obj.kind() {
+                Object::Dict(values) => BASE + values.len() as i64 * (2 * PTR),
+                _ => BASE,
+            },
+            Value::DictKeys(obj) => match &*obj.kind() {
+                Object::DictKeysView(view) => match &*view.dict.kind() {
+                    Object::Dict(values) => BASE + values.len() as i64 * PTR,
+                    _ => BASE,
+                },
+                _ => BASE,
+            },
+            Value::Set(obj) => match &*obj.kind() {
+                Object::Set(values) => BASE + values.len() as i64 * PTR,
+                _ => BASE,
+            },
+            Value::FrozenSet(obj) => match &*obj.kind() {
+                Object::FrozenSet(values) => BASE + values.len() as i64 * PTR,
+                _ => BASE,
+            },
+            Value::Bytes(obj) => match &*obj.kind() {
+                Object::Bytes(values) => BASE + values.len() as i64,
+                _ => BASE,
+            },
+            Value::ByteArray(obj) => match &*obj.kind() {
+                Object::ByteArray(values) => BASE + values.len() as i64,
+                _ => BASE,
+            },
+            Value::MemoryView(obj) => match &*obj.kind() {
+                Object::MemoryView(view) => {
+                    let source_len = with_bytes_like_source(&view.source, |bytes| bytes.len())
+                        .unwrap_or_default() as i64;
+                    BASE + source_len
+                }
+                _ => BASE,
+            },
+            Value::Iterator(_) => BASE + 4 * PTR,
+            Value::Generator(_) => BASE + 8 * PTR,
+            Value::Module(obj) => match &*obj.kind() {
+                Object::Module(module_data) => BASE + module_data.globals.len() as i64 * (2 * PTR),
+                _ => BASE,
+            },
+            Value::Class(obj) => match &*obj.kind() {
+                Object::Class(class_data) => BASE + class_data.attrs.len() as i64 * (2 * PTR),
+                _ => BASE,
+            },
+            Value::Instance(obj) => match &*obj.kind() {
+                Object::Instance(instance_data) => {
+                    BASE + instance_data.attrs.len() as i64 * (2 * PTR)
+                }
+                _ => BASE,
+            },
+            Value::Super(_) | Value::BoundMethod(_) | Value::Function(_) | Value::Cell(_) => {
+                BASE + 2 * PTR
+            }
+            Value::Exception(exception) => BASE + exception.attrs.borrow().len() as i64 * (2 * PTR),
+            Value::ExceptionType(_) => BASE,
+            Value::Slice(_) => BASE + 3 * PTR,
+            Value::Code(code) => {
+                BASE + (code.instructions.len() as i64
+                    * std::mem::size_of::<crate::bytecode::Instruction>() as i64)
+            }
+            Value::Builtin(_) => BASE,
+        }
+    }
+
+    pub(super) fn builtin_sys_getsizeof(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.is_empty() || args.len() > 2 {
+            return Err(RuntimeError::new(
+                "sys.getsizeof() expects object and optional default",
+            ));
+        }
+        let target = args.remove(0);
+        let size = self.sizeof_hint_for_value(&target);
+        if size >= 0 {
+            return Ok(Value::Int(size));
+        }
+        if let Some(default) = args.pop() {
+            Ok(default)
+        } else {
+            Err(RuntimeError::type_error(
+                "sys.getsizeof() returned negative size",
+            ))
+        }
     }
 
     pub(super) fn builtin_sys_getrecursionlimit(
@@ -5416,6 +5533,9 @@ impl Vm {
                 | BuiltinFunction::Super
                 | BuiltinFunction::Map
                 | BuiltinFunction::Filter
+                | BuiltinFunction::GeneratorType
+                | BuiltinFunction::CoroutineType
+                | BuiltinFunction::AsyncGeneratorType
         )
     }
 
@@ -5471,6 +5591,18 @@ impl Vm {
                     Some(Value::Builtin(BuiltinFunction::CollectionsDefaultDict))
                 }
                 Value::Code(_) => self.types_module_class("CodeType").map(Value::Class),
+                Value::Generator(generator) => {
+                    let builtin = match &*generator.kind() {
+                        Object::Generator(state) if state.is_async_generator => {
+                            BuiltinFunction::AsyncGeneratorType
+                        }
+                        Object::Generator(state) if state.is_coroutine => {
+                            BuiltinFunction::CoroutineType
+                        }
+                        _ => BuiltinFunction::GeneratorType,
+                    };
+                    Some(Value::Builtin(builtin))
+                }
                 Value::None => Some(Value::Class(
                     self.types_module_class("NoneType")
                         .unwrap_or_else(|| self.fallback_none_type_class()),
@@ -5581,6 +5713,33 @@ impl Vm {
             };
         }
         BuiltinFunction::Type.call(&self.heap, args)
+    }
+
+    pub(super) fn builtin_type_call(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let Some((receiver, call_args)) = args.split_first() else {
+            return Err(RuntimeError::type_error(
+                "type.__call__() requires a type object",
+            ));
+        };
+        let Value::Class(class) = receiver else {
+            return Err(RuntimeError::type_error(
+                "type.__call__() requires a type object",
+            ));
+        };
+        self.suppress_metaclass_dispatch_depth += 1;
+        let outcome = self.call_internal(Value::Class(class.clone()), call_args.to_vec(), kwargs);
+        self.suppress_metaclass_dispatch_depth =
+            self.suppress_metaclass_dispatch_depth.saturating_sub(1);
+        match outcome? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("type.__call__ failed"))
+            }
+        }
     }
 
     pub(super) fn builtin_type_init(
@@ -6072,7 +6231,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("issubclass() expects two arguments"));
+            return Err(RuntimeError::type_error(
+                "issubclass() expects two arguments",
+            ));
         }
         let candidate = args.remove(0);
         let classinfo = args.remove(0);
@@ -6697,9 +6858,10 @@ impl Vm {
             }
         };
         if !format_spec.is_empty() {
-            return Err(RuntimeError::new(format!(
-                "TypeError: unsupported format string passed to {}.__format__",
-                self.value_type_name_for_error(&target)
+            let type_name = self.runtime_format_type_name(&target);
+            return Err(RuntimeError::type_error(format!(
+                "unsupported format string passed to {}.__format__",
+                type_name
             )));
         }
         self.builtin_str(vec![target], HashMap::new())
@@ -7599,6 +7761,15 @@ impl Vm {
                     )));
                 }
             }
+            Value::Builtin(builtin) if self.builtin_is_type_object(*builtin) => {
+                if spec.is_empty() {
+                    format_value(&value)
+                } else {
+                    return Err(RuntimeError::type_error(format!(
+                        "unsupported format string passed to type.__format__: '{spec}'"
+                    )));
+                }
+            }
             Value::Instance(_)
             | Value::Class(_)
             | Value::Module(_)
@@ -7607,7 +7778,13 @@ impl Vm {
             | Value::Generator(_)
             | Value::Iterator(_) => {
                 let Some(method) = self.lookup_bound_special_method(&value, "__format__")? else {
-                    return Err(RuntimeError::new("type doesn't define __format__ method"));
+                    if spec.is_empty() {
+                        return Ok(Value::Str(format_value(&value)));
+                    }
+                    let type_name = self.runtime_format_type_name(&value);
+                    return Err(RuntimeError::type_error(format!(
+                        "unsupported format string passed to {type_name}.__format__"
+                    )));
                 };
                 let formatted =
                     match self.call_internal(method, vec![Value::Str(spec)], HashMap::new())? {
@@ -8488,6 +8665,19 @@ impl Vm {
             }
             Err(err) => Err(err),
         }
+    }
+
+    pub(super) fn binary_inplace_add_runtime(
+        &mut self,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, RuntimeError> {
+        if let Some(value) = self.call_binary_special_method(&left, "__iadd__", right.clone())?
+            && !self.is_not_implemented_singleton(&value)
+        {
+            return Ok(value);
+        }
+        self.binary_add_runtime(left, right)
     }
 
     pub(super) fn binary_mul_runtime(
@@ -9371,6 +9561,37 @@ impl Vm {
         value: &Value,
         classinfo: &Value,
     ) -> Result<bool, RuntimeError> {
+        thread_local! {
+            static ISINSTANCE_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        struct IsInstanceDepthGuard;
+        impl IsInstanceDepthGuard {
+            fn enter() -> Result<Self, RuntimeError> {
+                let overflow = ISINSTANCE_RECURSION_DEPTH.with(|depth| {
+                    let next = depth.get().saturating_add(1);
+                    depth.set(next);
+                    next > 2048
+                });
+                if overflow {
+                    ISINSTANCE_RECURSION_DEPTH.with(|depth| {
+                        depth.set(depth.get().saturating_sub(1))
+                    });
+                    return Err(RuntimeError::runtime_error(
+                        "maximum recursion depth exceeded in isinstance()",
+                    ));
+                }
+                Ok(Self)
+            }
+        }
+        impl Drop for IsInstanceDepthGuard {
+            fn drop(&mut self) {
+                ISINSTANCE_RECURSION_DEPTH.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1))
+                });
+            }
+        }
+        let _depth_guard = IsInstanceDepthGuard::enter()?;
+
         match classinfo {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(items) => {
@@ -9381,7 +9602,7 @@ impl Vm {
                     }
                     Ok(false)
                 }
-                _ => Err(RuntimeError::new(
+                _ => Err(RuntimeError::type_error(
                     "isinstance() arg 2 must be a type or tuple of types",
                 )),
             },
@@ -9394,7 +9615,7 @@ impl Vm {
                     }
                     Ok(false)
                 }
-                _ => Err(RuntimeError::new(
+                _ => Err(RuntimeError::type_error(
                     "isinstance() arg 2 must be a type or tuple of types",
                 )),
             },
@@ -9438,17 +9659,12 @@ impl Vm {
                         "Rational" | "Integral" => {
                             matches!(value, Value::Bool(_) | Value::Int(_) | Value::BigInt(_))
                         }
-                        "Sequence" => match value {
-                            Value::Instance(instance) => match &*instance.kind() {
-                                Object::Instance(instance_data) => {
-                                    class_attr_lookup(&instance_data.class, "__len__").is_some()
-                                        && class_attr_lookup(&instance_data.class, "__getitem__")
-                                            .is_some()
-                                }
-                                _ => false,
-                            },
-                            _ => false,
-                        },
+                        "Iterable" => self.value_has_iter_protocol(value),
+                        "Sized" => self.value_has_len_protocol(value),
+                        "Sequence" => {
+                            self.value_has_len_protocol(value)
+                                && self.value_has_getitem_protocol(value)
+                        }
                         _ => false,
                     };
                     if marker_match {
@@ -9518,11 +9734,106 @@ impl Vm {
         }
     }
 
+    pub(super) fn value_has_iter_protocol(&self, value: &Value) -> bool {
+        match value {
+            Value::List(_)
+            | Value::Tuple(_)
+            | Value::Dict(_)
+            | Value::DictKeys(_)
+            | Value::Set(_)
+            | Value::FrozenSet(_)
+            | Value::Bytes(_)
+            | Value::ByteArray(_)
+            | Value::MemoryView(_)
+            | Value::Iterator(_)
+            | Value::Generator(_)
+            | Value::Str(_) => true,
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    class_attr_lookup(&instance_data.class, "__iter__").is_some()
+                }
+                _ => false,
+            },
+            _ => Self::cpython_proxy_has_iternext(value).unwrap_or(false),
+        }
+    }
+
+    pub(super) fn value_has_len_protocol(&self, value: &Value) -> bool {
+        match value {
+            Value::List(_)
+            | Value::Tuple(_)
+            | Value::Dict(_)
+            | Value::DictKeys(_)
+            | Value::Set(_)
+            | Value::FrozenSet(_)
+            | Value::Bytes(_)
+            | Value::ByteArray(_)
+            | Value::MemoryView(_)
+            | Value::Str(_) => true,
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    class_attr_lookup(&instance_data.class, "__len__").is_some()
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub(super) fn value_has_getitem_protocol(&self, value: &Value) -> bool {
+        match value {
+            Value::List(_)
+            | Value::Tuple(_)
+            | Value::Bytes(_)
+            | Value::ByteArray(_)
+            | Value::MemoryView(_)
+            | Value::Str(_) => true,
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    class_attr_lookup(&instance_data.class, "__getitem__").is_some()
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     pub(super) fn class_value_is_subclass_of(
         &self,
         candidate: &Value,
         classinfo: &Value,
     ) -> Result<bool, RuntimeError> {
+        thread_local! {
+            static ISSUBCLASS_RECURSION_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        struct IsSubclassDepthGuard;
+        impl IsSubclassDepthGuard {
+            fn enter() -> Result<Self, RuntimeError> {
+                let overflow = ISSUBCLASS_RECURSION_DEPTH.with(|depth| {
+                    let next = depth.get().saturating_add(1);
+                    depth.set(next);
+                    next > 2048
+                });
+                if overflow {
+                    ISSUBCLASS_RECURSION_DEPTH.with(|depth| {
+                        depth.set(depth.get().saturating_sub(1))
+                    });
+                    return Err(RuntimeError::runtime_error(
+                        "maximum recursion depth exceeded in issubclass()",
+                    ));
+                }
+                Ok(Self)
+            }
+        }
+        impl Drop for IsSubclassDepthGuard {
+            fn drop(&mut self) {
+                ISSUBCLASS_RECURSION_DEPTH.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1))
+                });
+            }
+        }
+        let _depth_guard = IsSubclassDepthGuard::enter()?;
+
         match classinfo {
             Value::Tuple(obj) => match &*obj.kind() {
                 Object::Tuple(items) => {
@@ -9533,7 +9844,7 @@ impl Vm {
                     }
                     Ok(false)
                 }
-                _ => Err(RuntimeError::new(
+                _ => Err(RuntimeError::type_error(
                     "issubclass() arg 2 must be a type or tuple of types",
                 )),
             },
@@ -9546,7 +9857,7 @@ impl Vm {
                     }
                     Ok(false)
                 }
-                _ => Err(RuntimeError::new(
+                _ => Err(RuntimeError::type_error(
                     "issubclass() arg 2 must be a type or tuple of types",
                 )),
             },
@@ -9555,6 +9866,11 @@ impl Vm {
                     if let Object::Class(expected_data) = &*expected.kind() {
                         if expected_data.name == "PathLike"
                             && class_attr_lookup(class, "__fspath__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Sized"
+                            && class_attr_lookup(class, "__len__").is_some()
                         {
                             return Ok(true);
                         }
@@ -9594,10 +9910,48 @@ impl Vm {
                             candidate,
                             Value::Builtin(BuiltinFunction::Int | BuiltinFunction::Bool)
                         ),
+                        "Iterable" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::List
+                                    | BuiltinFunction::Tuple
+                                    | BuiltinFunction::Dict
+                                    | BuiltinFunction::Set
+                                    | BuiltinFunction::FrozenSet
+                                    | BuiltinFunction::Str
+                                    | BuiltinFunction::Bytes
+                                    | BuiltinFunction::ByteArray
+                            )
+                        ),
+                        "Sized" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::List
+                                    | BuiltinFunction::Tuple
+                                    | BuiltinFunction::Dict
+                                    | BuiltinFunction::Set
+                                    | BuiltinFunction::FrozenSet
+                                    | BuiltinFunction::Str
+                                    | BuiltinFunction::Bytes
+                                    | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::MemoryView
+                            )
+                        ),
+                        "Sequence" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::List
+                                    | BuiltinFunction::Tuple
+                                    | BuiltinFunction::Str
+                                    | BuiltinFunction::Bytes
+                                    | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::MemoryView
+                            )
+                        ),
                         _ => false,
                     })
                 }
-                _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
+                _ => Err(RuntimeError::type_error("issubclass() arg 1 must be a class")),
             },
             Value::Builtin(expected_builtin) => match candidate {
                 Value::Builtin(candidate_builtin) => Ok(
@@ -9613,7 +9967,7 @@ impl Vm {
                     {
                         Ok(false)
                     } else {
-                        Err(RuntimeError::new("issubclass() arg 1 must be a class"))
+                        Err(RuntimeError::type_error("issubclass() arg 1 must be a class"))
                     }
                 }
                 Value::Class(class) => Ok(match expected_builtin {
@@ -9637,7 +9991,7 @@ impl Vm {
                     _ => false,
                 }),
                 Value::ExceptionType(_) => Ok(false),
-                _ => Err(RuntimeError::new("issubclass() arg 1 must be a class")),
+                _ => Err(RuntimeError::type_error("issubclass() arg 1 must be a class")),
             },
             Value::ExceptionType(expected_name) => match candidate {
                 Value::ExceptionType(candidate_name) => {
@@ -9828,6 +10182,36 @@ impl Vm {
             BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
             BuiltinFunction::TypesMethodType => {
                 matches!(value, Value::BoundMethod(method) if self.bound_method_is_python_method(method))
+            }
+            BuiltinFunction::GeneratorType => {
+                matches!(
+                    value,
+                    Value::Generator(generator)
+                        if matches!(
+                            &*generator.kind(),
+                            Object::Generator(state) if !state.is_coroutine && !state.is_async_generator
+                        )
+                )
+            }
+            BuiltinFunction::CoroutineType => {
+                matches!(
+                    value,
+                    Value::Generator(generator)
+                        if matches!(
+                            &*generator.kind(),
+                            Object::Generator(state) if state.is_coroutine
+                        )
+                )
+            }
+            BuiltinFunction::AsyncGeneratorType => {
+                matches!(
+                    value,
+                    Value::Generator(generator)
+                        if matches!(
+                            &*generator.kind(),
+                            Object::Generator(state) if state.is_async_generator
+                        )
+                )
             }
             BuiltinFunction::Range => matches!(
                 value,
@@ -10430,6 +10814,17 @@ impl Vm {
             },
             Value::List(list) => self.load_attr_list_method(list, &name),
             Value::Tuple(tuple) => self.load_attr_tuple_method(tuple, &name),
+            Value::Int(value) => self.load_attr_int_method(Value::Int(value), &name),
+            Value::BigInt(value) => self.load_attr_int_method(Value::BigInt(value), &name),
+            Value::Bool(value) => self.load_attr_int_method(Value::Bool(value), &name),
+            Value::Float(value) => match name.as_str() {
+                "real" => Ok(Value::Float(value)),
+                "imag" => Ok(Value::Float(0.0)),
+                _ => Err(RuntimeError::attribute_error(format!(
+                    "'float' object has no attribute '{}'",
+                    name
+                ))),
+            },
             Value::Str(text) => self.load_attr_str_method(text, &name),
             Value::Bytes(bytes) => {
                 let is_bytes = matches!(&*bytes.kind(), Object::Bytes(_));
@@ -10800,6 +11195,7 @@ impl Vm {
                 .frames
                 .last()
                 .ok_or_else(|| RuntimeError::new("super(): no active frame"))?;
+            let frame_name = frame.code.name.clone();
 
             let object_value = frame
                 .code
@@ -10829,6 +11225,9 @@ impl Vm {
                     _ => None,
                 });
             let class_from_owner = frame.owner_class.clone();
+            let no_explicit_class = class_from_locals.is_none()
+                && class_from_cells.is_none()
+                && class_from_owner.is_none();
             let inferred = match &object_value {
                 Value::Class(class) => match &*class.kind() {
                     Object::Class(class_data) => {
@@ -10838,6 +11237,58 @@ impl Vm {
                 },
                 _ => self.class_of_value(&object_value),
             };
+            let inferred = if no_explicit_class {
+                let is_generic_proxy = inferred.as_ref().is_some_and(|class| {
+                    matches!(
+                        &*class.kind(),
+                        Object::Class(class_data)
+                            if class_data.name == "__pyrs_cpython_proxy__"
+                    )
+                });
+                if is_generic_proxy {
+                    self.load_cpython_proxy_attr_for_value(&object_value, "__class__")
+                        .and_then(|value| match value {
+                            Value::Class(class) => Some(class),
+                            _ => None,
+                        })
+                        .or(inferred)
+                } else {
+                    inferred
+                }
+            } else {
+                inferred
+            };
+            if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() {
+                let class_name = |class: &ObjRef| match &*class.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "<non-class>".to_string(),
+                };
+                let loc = class_from_locals
+                    .as_ref()
+                    .map(class_name)
+                    .unwrap_or_else(|| "<none>".to_string());
+                let cell = class_from_cells
+                    .as_ref()
+                    .map(class_name)
+                    .unwrap_or_else(|| "<none>".to_string());
+                let owner = class_from_owner
+                    .as_ref()
+                    .map(class_name)
+                    .unwrap_or_else(|| "<none>".to_string());
+                let inf = inferred
+                    .as_ref()
+                    .map(class_name)
+                    .unwrap_or_else(|| "<none>".to_string());
+                eprintln!(
+                    "[super-build] func={} locals={} cells={} owner={} inferred={} object_type={}",
+                    frame_name,
+                    loc,
+                    cell,
+                    owner,
+                    inf,
+                    self.value_type_name_for_error(&object_value)
+                );
+            }
             let start_class = class_from_locals
                 .or(class_from_cells)
                 .or(class_from_owner)
@@ -10875,9 +11326,26 @@ impl Vm {
                     class.clone()
                 }
             }
-            _ => self.class_of_value(&object_value).ok_or_else(|| {
-                RuntimeError::new("super() second argument must be an instance or subclass")
-            })?,
+            _ => self
+                .class_of_value(&object_value)
+                .ok_or_else(|| {
+                    RuntimeError::new("super() second argument must be an instance or subclass")
+                })
+                .and_then(|class| {
+                    let is_generic_proxy = matches!(
+                        &*class.kind(),
+                        Object::Class(class_data) if class_data.name == "__pyrs_cpython_proxy__"
+                    );
+                    if !is_generic_proxy {
+                        return Ok(class);
+                    }
+                    if let Some(Value::Class(proxy_class)) =
+                        self.load_cpython_proxy_attr_for_value(&object_value, "__class__")
+                    {
+                        return Ok(proxy_class);
+                    }
+                    Ok(class)
+                })?,
         };
 
         let mro = self.class_mro_entries(&object_type);

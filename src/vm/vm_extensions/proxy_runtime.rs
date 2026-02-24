@@ -1,3 +1,4 @@
+use crate::runtime::format_repr;
 use std::collections::HashMap;
 use std::ffi::{CString, c_void};
 
@@ -11,7 +12,8 @@ use super::{
     PyObject_GetAttrString, PyObject_GetItem, PyObject_IsTrue, PyObject_RichCompare,
     PyObject_RichCompareBool, PyObject_SetItem, PyObject_Size, RuntimeError, Value, Vm,
     c_name_to_string, cpython_is_type_object_ptr, cpython_resolve_vectorcall,
-    cpython_valid_type_ptr, cpython_value_debug_tag, is_cpython_proxy_class,
+    cpython_type_tp_getattro, cpython_valid_type_ptr, cpython_value_debug_tag,
+    is_cpython_proxy_class,
 };
 
 impl Vm {
@@ -252,9 +254,44 @@ impl Vm {
                 .unwrap_or_else(|| "proxy object is not callable".to_string());
             return Err(RuntimeError::new(detail));
         }
-        call_ctx
-            .cpython_value_from_owned_ptr(result_ptr)
-            .ok_or_else(|| RuntimeError::new("proxy call returned unknown object pointer"))
+        let converted = call_ctx.cpython_value_from_owned_ptr(result_ptr);
+        if converted.is_none() && std::env::var_os("PYRS_TRACE_CPY_UNKNOWN_PTR").is_some() {
+            let mut type_ptr: *mut CpythonTypeObject = std::ptr::null_mut();
+            let mut type_name = "<invalid-ptr>".to_string();
+            const MIN_VALID_PTR: usize = 0x1_0000_0000;
+            let result_addr = result_ptr as usize;
+            if result_addr >= MIN_VALID_PTR
+                && result_addr % std::mem::align_of::<CpythonObjectHead>() == 0
+            {
+                // SAFETY: pointer shape checked above; this remains best-effort diagnostics only.
+                unsafe {
+                    if let Some(head) = result_ptr.cast::<CpythonObjectHead>().as_ref() {
+                        type_ptr = head.ob_type.cast::<CpythonTypeObject>();
+                        let type_addr = type_ptr as usize;
+                        if !type_ptr.is_null()
+                            && type_addr >= MIN_VALID_PTR
+                            && type_addr % std::mem::align_of::<CpythonTypeObject>() == 0
+                            && !(*type_ptr).tp_name.is_null()
+                        {
+                            type_name = c_name_to_string((*type_ptr).tp_name)
+                                .unwrap_or_else(|_| "<invalid-type-name>".to_string());
+                        } else if !type_ptr.is_null() {
+                            type_name = "<invalid-type-ptr>".to_string();
+                        } else {
+                            type_name = "<null-type>".to_string();
+                        }
+                    }
+                }
+            }
+            eprintln!(
+                "[cpy-proxy-unknown-result] proxy={} result_ptr={:p} type_ptr={:p} type_name={}",
+                cpython_value_debug_tag(proxy_value),
+                result_ptr,
+                type_ptr,
+                type_name
+            );
+        }
+        converted.ok_or_else(|| RuntimeError::new("proxy call returned unknown object pointer"))
     }
 
     pub(in crate::vm) fn cpython_proxy_get_iter(
@@ -962,6 +999,7 @@ impl Vm {
         target: &Value,
         key: Value,
     ) -> Option<Result<Value, RuntimeError>> {
+        let key_for_trace = key.clone();
         let raw_ptr = Self::cpython_proxy_raw_ptr_from_value(target)?;
         let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
         if call_ctx.owns_cpython_allocation_ptr(raw_ptr) {
@@ -987,6 +1025,15 @@ impl Vm {
                 .last_error
                 .clone()
                 .unwrap_or_else(|| "proxy getitem failed".to_string());
+            if std::env::var_os("PYRS_TRACE_PROXY_GETITEM").is_some() {
+                eprintln!(
+                    "[proxy-getitem] target={} key={} raw_ptr={:p} error={}",
+                    format_repr(target),
+                    format_repr(&key_for_trace),
+                    raw_ptr,
+                    detail
+                );
+            }
             let is_index_error = call_ctx.current_error.as_ref().is_some_and(|state| {
                 if state.ptype.is_null() {
                     return false;
@@ -1142,6 +1189,8 @@ impl Vm {
                 attr_name,
                 "base" | "identity" | "newbyteorder" | "__ge__" | "char"
             );
+        let trace_proxy_max =
+            attr_name == "max" && std::env::var_os("PYRS_TRACE_PROXY_MAX").is_some();
         let trace_type_attr =
             attr_name == "type" && std::env::var_os("PYRS_TRACE_PROXY_TYPE_ATTR").is_some();
         if trace_type_attr {
@@ -1161,6 +1210,14 @@ impl Vm {
             eprintln!(
                 "[cpy-proxy-attr] lookup ptr={:p} type={:p} type_name={} attr={}",
                 raw_ptr, raw_type, raw_type_name, attr_name
+            );
+        }
+        if trace_proxy_max {
+            eprintln!(
+                "[proxy-max] start target={} raw_ptr={:p} is_type_object={}",
+                cpython_value_debug_tag(proxy_value),
+                raw_ptr,
+                is_proxy_type_object
             );
         }
         if trace_proxy_attr {
@@ -1226,6 +1283,9 @@ impl Vm {
                 | "__len__"
                 | "__iter__"
                 | "__setitem__"
+                | "__get__"
+                | "__set__"
+                | "__delete__"
                 | "__init__"
         );
         if !is_proxy_type_object
@@ -1281,7 +1341,31 @@ impl Vm {
                     type_refcnt
                 );
             }
+            if trace_proxy_max {
+                let mapped_tag = mapped
+                    .as_ref()
+                    .map(cpython_value_debug_tag)
+                    .unwrap_or_else(|| "<none>".to_string());
+                eprintln!(
+                    "[proxy-max] tp_dict fastpath attr=max raw_ptr={:p} mapped={}",
+                    raw_ptr, mapped_tag
+                );
+            }
             return mapped;
+        }
+        if is_proxy_type_object {
+            let name_ptr = call_ctx.alloc_cpython_ptr_for_value(Value::Str(attr_name.to_string()));
+            if name_ptr.is_null() {
+                return None;
+            }
+            let _active_context_guard =
+                ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
+            let attr_ptr = unsafe { cpython_type_tp_getattro(raw_ptr, name_ptr) };
+            if attr_ptr.is_null() {
+                call_ctx.clear_error();
+                return None;
+            }
+            return call_ctx.cpython_value_from_owned_ptr(attr_ptr);
         }
         // Guard fallback `PyObject_GetAttrString` dispatch against same-target/same-attr
         // re-entry loops. This keeps native fallback enabled while preventing unbounded
@@ -1302,6 +1386,12 @@ impl Vm {
             // `load_cpython_proxy_attr_for_value` treats missing attributes as a soft miss.
             // Clear transient C-API error state in this temporary context before returning.
             call_ctx.clear_error();
+            if trace_proxy_max {
+                eprintln!(
+                    "[proxy-max] getattr miss raw_ptr={:p} err={}",
+                    raw_ptr, detail
+                );
+            }
             if trace_proxy_attr {
                 eprintln!(
                     "[proxy-attr] PyObject_GetAttrString miss attr={} err={}",
@@ -1334,6 +1424,12 @@ impl Vm {
                 );
             }
             return None;
+        }
+        if trace_proxy_max {
+            eprintln!(
+                "[proxy-max] getattr hit raw_ptr={:p} attr_ptr={:p}",
+                raw_ptr, attr_ptr
+            );
         }
         if trace_type_attr {
             eprintln!(
@@ -1382,6 +1478,16 @@ impl Vm {
             }
             return call_ctx.cpython_value_from_borrowed_ptr(fallback_ptr);
         }
+        if trace_proxy_max {
+            let mapped_tag = mapped
+                .as_ref()
+                .map(cpython_value_debug_tag)
+                .unwrap_or_else(|| "<none>".to_string());
+            eprintln!(
+                "[proxy-max] mapped attr=max raw_ptr={:p} value={}",
+                raw_ptr, mapped_tag
+            );
+        }
         if std::env::var_os("PYRS_TRACE_PROXY_ATTR_CALL").is_some() {
             let proxy_tag = cpython_value_debug_tag(proxy_value);
             let mapped_tag = mapped
@@ -1394,6 +1500,58 @@ impl Vm {
             );
         }
         mapped
+    }
+
+    pub(in crate::vm) fn bind_cpython_descriptor_for_super(
+        &mut self,
+        descriptor_value: &Value,
+        receiver_value: &Value,
+        owner_value: &Value,
+    ) -> Option<Result<Value, RuntimeError>> {
+        let descriptor_ptr = Self::cpython_proxy_raw_ptr_from_value(descriptor_value)?;
+        let mut call_ctx = ModuleCapiContext::new(self as *mut Vm, self.main_module.clone());
+        let _active_context_guard =
+            ActiveCpythonContextGuard::push(std::ptr::addr_of_mut!(call_ctx));
+        let receiver_ptr = call_ctx.alloc_cpython_ptr_for_value(receiver_value.clone());
+        if receiver_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy descriptor binding failed to materialize receiver",
+            )));
+        }
+        let owner_ptr = call_ctx.alloc_cpython_ptr_for_value(owner_value.clone());
+        if owner_ptr.is_null() {
+            return Some(Err(RuntimeError::new(
+                "proxy descriptor binding failed to materialize owner",
+            )));
+        }
+        let bound_ptr = call_ctx
+            .resolve_descriptor_attr_ptr(
+                descriptor_ptr,
+                receiver_ptr,
+                owner_ptr.cast::<CpythonTypeObject>(),
+                false,
+            )
+            .or_else(|| {
+                call_ctx.bind_generic_descriptor_attr_ptr(
+                    descriptor_ptr,
+                    receiver_ptr,
+                    owner_ptr,
+                    false,
+                )
+            })?;
+        if bound_ptr.is_null() {
+            let detail = call_ctx
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "proxy descriptor binding failed".to_string());
+            call_ctx.clear_error();
+            return Some(Err(RuntimeError::new(detail)));
+        }
+        let value = call_ctx
+            .cpython_value_from_owned_ptr(bound_ptr)
+            .or_else(|| call_ctx.cpython_value_from_borrowed_ptr(bound_ptr))
+            .ok_or_else(|| RuntimeError::new("proxy descriptor binding produced unknown value"));
+        Some(value)
     }
 
     pub(in crate::vm) fn load_cpython_proxy_attr(

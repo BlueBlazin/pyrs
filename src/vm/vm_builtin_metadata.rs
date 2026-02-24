@@ -17,6 +17,7 @@ use super::{
 
 thread_local! {
     static CALL_INTERNAL_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static LOAD_ATTR_SUPER_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 struct CallInternalDepthGuard;
@@ -35,6 +36,42 @@ impl CallInternalDepthGuard {
 impl Drop for CallInternalDepthGuard {
     fn drop(&mut self) {
         CALL_INTERNAL_DEPTH.with(|counter| {
+            let next = counter.get().saturating_sub(1);
+            counter.set(next);
+        });
+    }
+}
+
+struct LoadAttrSuperDepthGuard;
+
+impl LoadAttrSuperDepthGuard {
+    fn enter() -> Option<(Self, usize)> {
+        let trace_enabled = std::env::var_os("PYRS_TRACE_LOAD_ATTR_SUPER").is_some();
+        let limit = std::env::var("PYRS_DEBUG_LOAD_ATTR_SUPER_DEPTH_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|limit| *limit > 0)?;
+        let depth = LOAD_ATTR_SUPER_DEPTH.with(|counter| {
+            let depth = counter.get().saturating_add(1);
+            counter.set(depth);
+            depth
+        });
+        if trace_enabled {
+            eprintln!("[load-attr-super-depth] depth={} limit={}", depth, limit);
+        }
+        if depth > limit {
+            panic!(
+                "load_attr_super recursion depth exceeded: depth={} limit={}",
+                depth, limit
+            );
+        }
+        Some((Self, depth))
+    }
+}
+
+impl Drop for LoadAttrSuperDepthGuard {
+    fn drop(&mut self) {
+        LOAD_ATTR_SUPER_DEPTH.with(|counter| {
             let next = counter.get().saturating_sub(1);
             counter.set(next);
         });
@@ -115,15 +152,7 @@ fn memoryview_contiguity(
 }
 
 fn function_docstring_from_code(code: &CodeObject) -> Option<Value> {
-    let first = code.instructions.first()?;
-    let second = code.instructions.get(1)?;
-    if first.opcode != crate::bytecode::Opcode::LoadConst
-        || second.opcode != crate::bytecode::Opcode::PopTop
-    {
-        return None;
-    }
-    let const_idx = first.arg? as usize;
-    match code.constants.get(const_idx) {
+    match code.constants.first() {
         Some(Value::Str(doc)) => Some(Value::Str(doc.clone())),
         _ => None,
     }
@@ -163,6 +192,9 @@ impl Vm {
             BuiltinFunction::MemoryView => "memoryview",
             BuiltinFunction::Complex => "complex",
             BuiltinFunction::Slice => "slice",
+            BuiltinFunction::GeneratorType => "generator",
+            BuiltinFunction::CoroutineType => "coroutine",
+            BuiltinFunction::AsyncGeneratorType => "async_generator",
             BuiltinFunction::ClassMethod => "classmethod",
             BuiltinFunction::StaticMethod => "staticmethod",
             BuiltinFunction::Property => "property",
@@ -546,6 +578,22 @@ impl Vm {
         builtin: BuiltinFunction,
     ) -> Vec<(Value, Value)> {
         let mut entries = Vec::new();
+        if matches!(
+            builtin,
+            BuiltinFunction::List
+                | BuiltinFunction::Tuple
+                | BuiltinFunction::Dict
+                | BuiltinFunction::Set
+                | BuiltinFunction::FrozenSet
+                | BuiltinFunction::Str
+                | BuiltinFunction::Bytes
+                | BuiltinFunction::ByteArray
+        ) {
+            entries.push((
+                Value::Str("__iter__".to_string()),
+                Value::Builtin(BuiltinFunction::Iter),
+            ));
+        }
         if builtin == BuiltinFunction::Dict {
             entries.push((
                 Value::Str("fromkeys".to_string()),
@@ -911,6 +959,16 @@ impl Vm {
             "append" if builtin == BuiltinFunction::List => {
                 Ok(Value::Builtin(BuiltinFunction::ListAppendDescriptor))
             }
+            "__getitem__"
+                if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::OperatorGetItem))
+            }
+            "__contains__"
+                if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::OperatorContains))
+            }
             "__len__"
                 if matches!(
                     builtin,
@@ -925,6 +983,21 @@ impl Vm {
                 ) =>
             {
                 Ok(Value::Builtin(BuiltinFunction::Len))
+            }
+            "__iter__"
+                if matches!(
+                    builtin,
+                    BuiltinFunction::List
+                        | BuiltinFunction::Tuple
+                        | BuiltinFunction::Dict
+                        | BuiltinFunction::Set
+                        | BuiltinFunction::FrozenSet
+                        | BuiltinFunction::Str
+                        | BuiltinFunction::Bytes
+                        | BuiltinFunction::ByteArray
+                ) =>
+            {
+                Ok(Value::Builtin(BuiltinFunction::Iter))
             }
             "maketrans" if builtin == BuiltinFunction::Bytes => Ok(self
                 .alloc_builtin_unbound_method(
@@ -958,6 +1031,177 @@ impl Vm {
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::DictKeys, receiver))
+            }
+            "update" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::DictUpdateMethod,
+                    receiver,
+                ))
+            }
+            "setdefault" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(
+                    NativeMethodKind::DictSetDefault,
+                    receiver,
+                ))
+            }
+            "get" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictGet, receiver))
+            }
+            "pop" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictPop, receiver))
+            }
+            "copy" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictCopy, receiver))
+            }
+            "items" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictItems, receiver))
+            }
+            "values" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictValues, receiver))
+            }
+            "clear" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictClear, receiver))
+            }
+            "__getitem__" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictGetItem, receiver))
+            }
+            "__setitem__" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictSetItem, receiver))
+            }
+            "__delitem__" if builtin == BuiltinFunction::Dict => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__dict_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictDelItem, receiver))
             }
             "__contains__"
                 if matches!(builtin, BuiltinFunction::Set | BuiltinFunction::FrozenSet) =>
@@ -1071,6 +1315,36 @@ impl Vm {
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrTitle, receiver))
+            }
+            "lower" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrLower, receiver))
+            }
+            "upper" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrUpper, receiver))
             }
             attr_name
                 if builtin == BuiltinFunction::Str
@@ -1289,6 +1563,21 @@ impl Vm {
         if attr_name == "__len__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, list));
         }
+        if attr_name == "__getitem__" {
+            return Ok(self.alloc_builtin_bound_method(
+                BuiltinFunction::OperatorGetItem,
+                list,
+            ));
+        }
+        if attr_name == "__contains__" {
+            return Ok(self.alloc_builtin_bound_method(
+                BuiltinFunction::OperatorContains,
+                list,
+            ));
+        }
+        if attr_name == "__iter__" {
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, list));
+        }
         let kind = match attr_name {
             "__init__" => NativeMethodKind::ListInit,
             "__eq__" => NativeMethodKind::ListEq,
@@ -1321,6 +1610,21 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if attr_name == "__len__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, tuple));
+        }
+        if attr_name == "__getitem__" {
+            return Ok(self.alloc_builtin_bound_method(
+                BuiltinFunction::OperatorGetItem,
+                tuple,
+            ));
+        }
+        if attr_name == "__contains__" {
+            return Ok(self.alloc_builtin_bound_method(
+                BuiltinFunction::OperatorContains,
+                tuple,
+            ));
+        }
+        if attr_name == "__iter__" {
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, tuple));
         }
         let kind = match attr_name {
             "__eq__" => NativeMethodKind::TupleEq,
@@ -1413,6 +1717,24 @@ impl Vm {
         if attr_name == "__doc__" {
             return Ok(Value::None);
         }
+        if attr_name == "__iter__" {
+            let receiver = match self
+                .heap
+                .alloc_module(ModuleObject::new("__str_iter_method__".to_string()))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                module_data
+                    .globals
+                    .insert("value".to_string(), Value::Str(text));
+            }
+            return Ok(self.alloc_native_bound_method(
+                NativeMethodKind::Builtin(BuiltinFunction::Iter),
+                receiver,
+            ));
+        }
         let kind = match attr_name {
             "startswith" => NativeMethodKind::StrStartsWith,
             "endswith" => NativeMethodKind::StrEndsWith,
@@ -1479,6 +1801,14 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         if attr_name == "__doc__" {
             return Ok(Value::None);
+        }
+        if attr_name == "__iter__" {
+            match receiver_value {
+                Value::Bytes(bytes) | Value::ByteArray(bytes) => {
+                    return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, bytes));
+                }
+                _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+            }
         }
         let type_name = if matches!(receiver_value, Value::ByteArray(_)) {
             "bytearray"
@@ -1788,6 +2118,7 @@ impl Vm {
             "__reduce__" => {
                 Ok(self.alloc_builtin_bound_method(BuiltinFunction::SetReduce, set.clone()))
             }
+            "__iter__" => Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, set)),
             "__reduce_ex__" => match &*set.kind() {
                 Object::Set(_) => Ok(self.alloc_reduce_ex_bound_method(Value::Set(set.clone()))),
                 Object::FrozenSet(_) => {
@@ -1854,6 +2185,9 @@ impl Vm {
         }
         if attr_name == "__contains__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorContains, dict));
+        }
+        if attr_name == "__iter__" {
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, dict));
         }
         if attr_name == "__reduce_ex__" || attr_name == "__reduce__" {
             return Ok(self.alloc_reduce_ex_bound_method(Value::Dict(dict)));
@@ -3021,7 +3355,9 @@ impl Vm {
             return Ok(Some(self.heap.alloc_bound_method(bound)));
         }
         if let Value::Builtin(builtin) = attr.clone() {
-            return Ok(Some(self.alloc_builtin_bound_method(builtin, class.clone())));
+            return Ok(Some(
+                self.alloc_builtin_bound_method(builtin, class.clone()),
+            ));
         }
         let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
         if let Some(getter) = getter {
@@ -3133,7 +3469,11 @@ impl Vm {
                 "internal call requires an active execution frame",
             ));
         }
-        let hard_limit = self.recursion_limit.max(1) as usize * 4;
+        let hard_limit = std::env::var("PYRS_DEBUG_CALL_DEPTH_HARD_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|limit| *limit > 0)
+            .unwrap_or_else(|| self.recursion_limit.max(1) as usize * 4);
         if call_depth > hard_limit {
             return Err(RuntimeError::new("maximum recursion depth exceeded"));
         }
@@ -3540,8 +3880,52 @@ impl Vm {
                             let mut init_args = Vec::with_capacity(args.len() + 1);
                             init_args.push(Value::Instance(instance.clone()));
                             init_args.extend(args);
-                            let bindings =
-                                bind_arguments(&func_data, &self.heap, init_args, kwargs)?;
+                            let bindings = match bind_arguments(
+                                &func_data,
+                                &self.heap,
+                                init_args,
+                                kwargs,
+                            ) {
+                                Ok(bindings) => bindings,
+                                Err(err) => {
+                                    if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
+                                        && err.message.contains("argument count mismatch")
+                                    {
+                                        let stack = self
+                                            .frames
+                                            .iter()
+                                            .rev()
+                                            .take(12)
+                                            .map(|frame| {
+                                                format!(
+                                                    "{}@{}:{}",
+                                                    frame.code.name,
+                                                    frame.code.filename,
+                                                    frame
+                                                        .code
+                                                        .locations
+                                                        .get(frame.last_ip)
+                                                        .map(|loc| loc.line)
+                                                        .unwrap_or(0)
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join(" <- ");
+                                        eprintln!(
+                                            "[bind-args-stack] failing_fn={} file={} stack={}",
+                                            func_data.code.name, func_data.code.filename, stack
+                                        );
+                                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some() {
+                                            eprintln!(
+                                                "[bind-args-bt] failing_fn={} bt={}",
+                                                func_data.code.name,
+                                                std::backtrace::Backtrace::force_capture()
+                                            );
+                                        }
+                                    }
+                                    return Err(err);
+                                }
+                            };
                             let cells =
                                 self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(
@@ -4663,7 +5047,9 @@ impl Vm {
                     return Err(RuntimeError::new("__init__() should return None"));
                 }
                 InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(self.runtime_error_from_active_exception("metaclass __init__ failed"));
+                    return Err(
+                        self.runtime_error_from_active_exception("metaclass __init__ failed")
+                    );
                 }
             }
         }
@@ -5339,6 +5725,8 @@ impl Vm {
         super_ref: &ObjRef,
         attr_name: &str,
     ) -> Result<AttrAccessOutcome, RuntimeError> {
+        let _super_depth_guard = LoadAttrSuperDepthGuard::enter();
+        let super_depth = LOAD_ATTR_SUPER_DEPTH.with(|counter| counter.get());
         let (start_class, receiver, object_type) = match &*super_ref.kind() {
             Object::Super(data) => (
                 data.start_class.clone(),
@@ -5351,15 +5739,59 @@ impl Vm {
                 ));
             }
         };
+        if std::env::var_os("PYRS_TRACE_LOAD_ATTR_SUPER").is_some() && super_depth > 1 {
+            let start_name = match &*start_class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
+            let object_type_name = match &*object_type.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
+            if super_depth <= 2 {
+                let mro = self.class_mro_entries(&object_type);
+                let mro_summary = mro
+                    .iter()
+                    .map(|entry| match &*entry.kind() {
+                        Object::Class(class_data) => format!("{}#{}", class_data.name, entry.id()),
+                        _ => format!("<non-class>#{}", entry.id()),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                eprintln!("[load-attr-super] mro={}", mro_summary);
+            }
+            eprintln!(
+                "[load-attr-super] depth={} attr={} start={}#{} object_type={}#{}",
+                super_depth,
+                attr_name,
+                start_name,
+                start_class.id(),
+                object_type_name,
+                object_type.id()
+            );
+        }
 
         let receiver_value = self.receiver_value(&receiver)?;
         let owner_value = Value::Class(object_type.clone());
         let mro = self.class_mro_entries(&object_type);
-        let start_idx = mro
+        let class_name = |class: &ObjRef| match &*class.kind() {
+            Object::Class(class_data) => Some(class_data.name.clone()),
+            _ => None,
+        };
+        let start_name = class_name(&start_class);
+        let mut start_idx = mro
             .iter()
             .position(|entry| entry.id() == start_class.id())
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
+            .map(|idx| idx + 1);
+        if start_idx.is_none()
+            && let Some(start_name) = start_name
+        {
+            start_idx = mro
+                .iter()
+                .position(|entry| class_name(entry).as_deref() == Some(start_name.as_str()))
+                .map(|idx| idx + 1);
+        }
+        let start_idx = start_idx.unwrap_or_else(|| usize::from(!mro.is_empty()));
         if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
             let start_name = match &*start_class.kind() {
                 Object::Class(class_data) => class_data.name.clone(),
@@ -5392,6 +5824,19 @@ impl Vm {
             let class_attr = class_attr_lookup_direct(&class, attr_name)
                 .or_else(|| self.load_cpython_proxy_attr(&class, attr_name));
             if let Some(attr) = class_attr {
+                if std::env::var_os("PYRS_TRACE_LOAD_ATTR_SUPER").is_some() && super_depth > 1 {
+                    let owner_name = match &*class.kind() {
+                        Object::Class(class_data) => class_data.name.clone(),
+                        _ => "<non-class>".to_string(),
+                    };
+                    eprintln!(
+                        "[load-attr-super] resolved owner={}#{} attr={} value_type={}",
+                        owner_name,
+                        class.id(),
+                        attr_name,
+                        self.value_type_name_for_error(&attr)
+                    );
+                }
                 if std::env::var_os("PYRS_TRACE_SUPER_DTYPE").is_some() && attr_name == "dtype" {
                     let class_name = match &*class.kind() {
                         Object::Class(class_data) => class_data.name.clone(),

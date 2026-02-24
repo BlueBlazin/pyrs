@@ -4,7 +4,6 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::runtime::{BuiltinFunction, Object, Value};
 
-use super::cpython_error_numeric_api::cpython_make_exception_instance_from_type_and_value;
 use super::{
     ACTIVE_CPYTHON_INIT_CONTEXT, InternalCallOutcome, ModuleCapiContext, PyExc_RuntimeError,
     cpython_call_internal_in_context, cpython_exception_class_name_from_ptr,
@@ -228,6 +227,16 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
             caller.line()
         );
     }
+    if std::env::var_os("PYRS_TRACE_TZINFO_ERROR_BT").is_some() && message.contains("tzinfo") {
+        let caller = std::panic::Location::caller();
+        eprintln!(
+            "[cpy-typed-err-bt] {} (at {}:{}) bt={}",
+            message,
+            caller.file(),
+            caller.line(),
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
     let _ = with_active_cpython_context_mut(|context| {
         let ty = if ptype.is_null() {
             // SAFETY: exception singleton pointer is process-global.
@@ -235,14 +244,9 @@ pub(in crate::vm::vm_extensions) fn cpython_set_typed_error(
         } else {
             ptype
         };
-        let fallback_value = Value::Str(message.clone());
-        // Mirror CPython's normalized error state when possible so consumers
-        // that read `tstate->current_exception` get an exception instance.
-        let pvalue =
-            cpython_make_exception_instance_from_type_and_value(context, ty, Some(fallback_value))
-                .unwrap_or_else(|| {
-                    context.alloc_cpython_ptr_for_value(Value::Str(message.clone()))
-                });
+        // CPython stores unnormalized (type, value, traceback) in error state; avoid
+        // eager exception-instance construction here to keep this path non-reentrant.
+        let pvalue = context.alloc_cpython_ptr_for_value(Value::Str(message.clone()));
         context.set_error_state(ty, pvalue, std::ptr::null_mut(), message);
     });
 }

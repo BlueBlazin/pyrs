@@ -1720,28 +1720,9 @@ pub unsafe extern "C" fn PyObject_VectorcallMethod(
     }
     // SAFETY: caller guarantees at least one arg pointer.
     let self_obj = unsafe { *args };
-    let looked_up_method = with_active_cpython_context_mut(|context| {
-        let method_name =
-            context
-                .cpython_value_from_borrowed_ptr(name)
-                .and_then(|value| match value {
-                    Value::Str(text) => Some(text),
-                    _ => None,
-                });
-        let Some(method_name) = method_name else {
-            return std::ptr::null_mut();
-        };
-        context
-            .lookup_type_attr_via_tp_dict(self_obj, &method_name)
-            .unwrap_or(std::ptr::null_mut())
-    })
-    .unwrap_or(std::ptr::null_mut());
-    let method = if looked_up_method.is_null() {
-        unsafe { PyObject_GetAttr(self_obj, name) }
-    } else {
-        unsafe { Py_XIncRef(looked_up_method) };
-        looked_up_method
-    };
+    // Use full attribute lookup so descriptor protocol is honored (especially
+    // for Python-level function/classmethod attributes on class receivers).
+    let method = unsafe { PyObject_GetAttr(self_obj, name) };
     if method.is_null() {
         return std::ptr::null_mut();
     }

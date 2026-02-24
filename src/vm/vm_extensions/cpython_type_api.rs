@@ -48,10 +48,12 @@ use super::{
     PyMemoryView_Type, PyModule_GetState, PyObject_Free, PyObject_RichCompareBool, PyProperty_Type,
     PyRange_Type, PySet_Type, PySlice_Type, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem,
     PyTuple_Size, PyTuple_Type, PyType_Type, PyUnicode_Type, c_name_to_string,
-    cpython_builtin_type_ptr_for_class_name, cpython_heap_type_registry,
+    cpython_builtin_type_name_for_ptr, cpython_builtin_type_ptr_for_class_name,
+    cpython_call_internal_in_context, cpython_heap_type_registry,
     cpython_keyword_args_from_dict_object, cpython_new_ptr_for_value,
     cpython_positional_args_from_tuple_object, cpython_set_error, cpython_set_typed_error,
-    cpython_value_debug_tag, cpython_value_from_ptr, free, with_active_cpython_context_mut,
+    cpython_value_debug_tag, cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, free,
+    with_active_cpython_context_mut,
 };
 
 unsafe extern "C" {
@@ -558,6 +560,19 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
     };
     let type_ptr = object.cast::<CpythonTypeObject>();
     let trace_type_getattr = std::env::var_os("PYRS_TRACE_TYPE_GETATTR").is_some();
+    let trace_prepare = std::env::var_os("PYRS_TRACE_TYPE_PREPARE").is_some()
+        && attr_name == "__prepare__";
+    if trace_prepare {
+        let object_tag = cpython_value_from_ptr(object)
+            .map(|value| cpython_value_debug_tag(&value))
+            .unwrap_or_else(|_| "<unresolved>".to_string());
+        eprintln!(
+            "[type-prepare] enter object={:p} type_object={} object_tag={}",
+            object,
+            super::cpython_is_type_object_ptr(object),
+            object_tag
+        );
+    }
     if !type_ptr.is_null() {
         let type_name = cpython_type_name_from_tp_name(type_ptr);
         if trace_type_getattr
@@ -607,6 +622,99 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
             .or_else(|| context.lookup_type_attr_via_runtime_mro(object, &attr_name))
     }) && !attr_ptr.is_null()
     {
+        if trace_prepare {
+            let tag = cpython_value_from_ptr(attr_ptr)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|_| "<unresolved>".to_string());
+            eprintln!(
+                "[type-prepare] lookup-hit object={:p} attr_ptr={:p} value={}",
+                object, attr_ptr, tag
+            );
+        }
+        if attr_name == "__prepare__"
+            && let Ok(Some(bound_ptr)) = with_active_cpython_context_mut(|context| {
+                if context.vm.is_null() {
+                    return None;
+                }
+                let Value::Class(class_obj) = context.cpython_value_from_ptr_or_proxy(object)?
+                else {
+                    return None;
+                };
+                // SAFETY: VM pointer is valid for active context lifetime.
+                let vm = unsafe { &mut *context.vm };
+                let resolved = match vm.load_attr_class(&class_obj, &attr_name) {
+                    Ok(crate::vm::AttrAccessOutcome::Value(value)) => value,
+                    Ok(crate::vm::AttrAccessOutcome::ExceptionHandled) => return None,
+                    Err(_) => return None,
+                };
+                let ptr = context.alloc_cpython_ptr_for_value(resolved);
+                (!ptr.is_null()).then_some(ptr)
+            })
+            && !bound_ptr.is_null()
+        {
+            if trace_prepare {
+                let tag = cpython_value_from_ptr(bound_ptr)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|_| "<unresolved>".to_string());
+                eprintln!(
+                    "[type-prepare] explicit-bound-hit object={:p} ptr={:p} value={}",
+                    object, bound_ptr, tag
+                );
+            }
+            return bound_ptr;
+        }
+        // Runtime classmodel stores `classmethod`/`staticmethod` descriptors as
+        // wrapper values. When they surface through raw tp_dict lookup we must
+        // resolve the bound class attribute view (CPython descriptor parity)
+        // instead of returning the wrapper object directly.
+        if let Ok(Some(bound_ptr)) = with_active_cpython_context_mut(|context| {
+            if context.vm.is_null() {
+                return None;
+            }
+            let attr_value = context.cpython_value_from_ptr_or_proxy(attr_ptr)?;
+            let needs_runtime_descriptor_binding = match attr_value {
+                Value::Module(module_obj) => {
+                    let Object::Module(module_data) = &*module_obj.kind() else {
+                        return None;
+                    };
+                    module_data.name == "__classmethod__" || module_data.name == "__staticmethod__"
+                }
+                _ => false,
+            };
+            if !needs_runtime_descriptor_binding {
+                return None;
+            }
+            let Value::Class(class_obj) = context.cpython_value_from_ptr_or_proxy(object)? else {
+                return None;
+            };
+            // SAFETY: VM pointer is valid for active context lifetime.
+            let vm = unsafe { &mut *context.vm };
+            let resolved = match vm.load_attr_class(&class_obj, &attr_name) {
+                Ok(crate::vm::AttrAccessOutcome::Value(value)) => value,
+                Ok(crate::vm::AttrAccessOutcome::ExceptionHandled) => return None,
+                Err(_) => return None,
+            };
+            let ptr = context.alloc_cpython_ptr_for_value(resolved);
+            (!ptr.is_null()).then_some(ptr)
+        }) && !bound_ptr.is_null()
+        {
+            if trace_type_getattr {
+                eprintln!(
+                    "[cpy-type-getattr] lookup-bound-hit object={:p} attr={} ptr={:p}",
+                    object, attr_name, bound_ptr
+                );
+            }
+            if trace_prepare {
+                let tag = cpython_value_from_ptr(bound_ptr)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|_| "<unresolved>".to_string());
+                eprintln!(
+                    "[type-prepare] lookup-bound-hit object={:p} ptr={:p} value={}",
+                    object, bound_ptr, tag
+                );
+            }
+            return bound_ptr;
+        }
         if trace_type_getattr {
             eprintln!(
                 "[cpy-type-getattr] lookup-hit object={:p} attr={} ptr={:p}",
@@ -633,6 +741,15 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
             .or_else(|| context.lookup_type_attr_via_runtime_mro(metatype, &attr_name))
     }) && !attr_ptr.is_null()
     {
+        if trace_prepare {
+            let tag = cpython_value_from_ptr(attr_ptr)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|_| "<unresolved>".to_string());
+            eprintln!(
+                "[type-prepare] metatype-hit object={:p} attr_ptr={:p} value={}",
+                object, attr_ptr, tag
+            );
+        }
         if trace_type_getattr {
             eprintln!(
                 "[cpy-type-getattr] metatype-hit object={:p} attr={} ptr={:p}",
@@ -662,6 +779,15 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
                 eprintln!(
                     "[cpy-type-getattr] metatype-bound-hit object={:p} attr={} ptr={:p}",
                     object, attr_name, bound_ptr
+                );
+            }
+            if trace_prepare {
+                let tag = cpython_value_from_ptr(bound_ptr)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|_| "<unresolved>".to_string());
+                eprintln!(
+                    "[type-prepare] metatype-bound-hit object={:p} ptr={:p} value={}",
+                    object, bound_ptr, tag
                 );
             }
             return bound_ptr;
@@ -700,6 +826,15 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
     if let Ok(Some(attr_ptr)) = runtime_metaclass_lookup
         && !attr_ptr.is_null()
     {
+        if trace_prepare {
+            let tag = cpython_value_from_ptr(attr_ptr)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|_| "<unresolved>".to_string());
+            eprintln!(
+                "[type-prepare] runtime-metaclass-hit object={:p} attr_ptr={:p} value={}",
+                object, attr_ptr, tag
+            );
+        }
         if trace_type_getattr {
             eprintln!(
                 "[cpy-type-getattr] runtime-metaclass-hit object={:p} attr={} ptr={:p}",
@@ -729,7 +864,71 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
                     object, attr_name, bound_ptr
                 );
             }
+            if trace_prepare {
+                let tag = cpython_value_from_ptr(bound_ptr)
+                    .map(|value| cpython_value_debug_tag(&value))
+                    .unwrap_or_else(|_| "<unresolved>".to_string());
+                eprintln!(
+                    "[type-prepare] runtime-metaclass-bound-hit object={:p} ptr={:p} value={}",
+                    object, bound_ptr, tag
+                );
+            }
             return bound_ptr;
+        }
+        return attr_ptr;
+    }
+    // CPython `type_getattro` resolves metatype attributes such as
+    // `type.__prepare__` from the metatype method surface. In pyrs, builtin
+    // type objects are represented as builtin values in VM metadata; bridge
+    // those attributes here so C-extension metaclass flows (for example Cython
+    // class builders in pandas) observe CPython-equivalent behavior.
+    if let Ok(Some(attr_ptr)) = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return None;
+        }
+        // For type objects created via C-API, attribute resolution can require
+        // either the object itself or its metatype (`ob_type`) builtin surface.
+        let object_type_ptr = unsafe {
+            object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<c_void>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        // SAFETY: VM pointer is valid for active context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        for candidate_ptr in [object, object_type_ptr] {
+            let Some(builtin_type_name) = cpython_builtin_type_name_for_ptr(candidate_ptr) else {
+                continue;
+            };
+            let builtin = match vm.builtins.get(builtin_type_name).cloned() {
+                Some(Value::Builtin(builtin)) => builtin,
+                _ => continue,
+            };
+            if let Ok(resolved) = vm.load_attr_builtin(builtin, &attr_name) {
+                let ptr = context.alloc_cpython_ptr_for_value(resolved);
+                if !ptr.is_null() {
+                    return Some(ptr);
+                }
+            }
+        }
+        None
+    }) && !attr_ptr.is_null()
+    {
+        if trace_prepare {
+            let tag = cpython_value_from_ptr(attr_ptr)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|_| "<unresolved>".to_string());
+            eprintln!(
+                "[type-prepare] builtin-fallback-hit object={:p} attr_ptr={:p} value={}",
+                object, attr_ptr, tag
+            );
+        }
+        if trace_type_getattr {
+            eprintln!(
+                "[cpy-type-getattr] builtin-type-fallback-hit object={:p} attr={} ptr={:p}",
+                object, attr_name, attr_ptr
+            );
         }
         return attr_ptr;
     }
@@ -913,6 +1112,10 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
     args: *mut c_void,
     kwargs: *mut c_void,
 ) -> *mut c_void {
+    thread_local! {
+        static ACTIVE_RUNTIME_TYPE_CALL_FALLBACK: std::cell::RefCell<Vec<usize>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
     let trace_calls = std::env::var_os("PYRS_TRACE_CPY_CALLS").is_some();
     let trace_seed_calls = std::env::var_os("PYRS_TRACE_SEED_CALLS").is_some();
     if callable.is_null() {
@@ -953,6 +1156,89 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
     let ty = callable.cast::<CpythonTypeObject>();
     let callable_name =
         unsafe { c_name_to_string((*ty).tp_name) }.unwrap_or_else(|_| "<unnamed>".to_string());
+    // Runtime-backed heap classes currently materialize with generic/new slots.
+    // Route these through VM class-call semantics so Python-level __init__/descriptor
+    // initialization runs (CPython parity for pure-Python classes exposed via C-API calls).
+    if let Ok(callable_value) = cpython_value_from_ptr_or_proxy(callable)
+        && let Value::Class(class_obj) = &callable_value
+    {
+        let is_proxy_backed_class = matches!(
+            &*class_obj.kind(),
+            Object::Class(class_data) if super::is_cpython_proxy_class(class_data)
+        );
+        let use_runtime_class_call =
+            unsafe { (*ty).tp_new == PyType_GenericNew as *mut c_void && (*ty).tp_init.is_null() };
+        if use_runtime_class_call && !is_proxy_backed_class {
+            let callable_key = callable as usize;
+            let already_active = ACTIVE_RUNTIME_TYPE_CALL_FALLBACK
+                .with(|active| active.borrow().contains(&callable_key));
+            if already_active {
+                if std::env::var_os("PYRS_TRACE_TYPE_RUNTIME_CALL_FALLBACK").is_some() {
+                    eprintln!(
+                        "[cpy-type-call] runtime-fallback-skip(reentry) callable={:p} name={}",
+                        callable, callable_name
+                    );
+                }
+            } else {
+                struct RuntimeTypeFallbackGuard {
+                    callable_key: usize,
+                }
+                impl Drop for RuntimeTypeFallbackGuard {
+                    fn drop(&mut self) {
+                        ACTIVE_RUNTIME_TYPE_CALL_FALLBACK.with(|active| {
+                            let mut stack = active.borrow_mut();
+                            if let Some(index) =
+                                stack.iter().rposition(|entry| *entry == self.callable_key)
+                            {
+                                stack.remove(index);
+                            }
+                        });
+                    }
+                }
+                ACTIVE_RUNTIME_TYPE_CALL_FALLBACK.with(|active| {
+                    active.borrow_mut().push(callable_key);
+                });
+                let _guard = RuntimeTypeFallbackGuard { callable_key };
+                if std::env::var_os("PYRS_TRACE_TYPE_RUNTIME_CALL_FALLBACK").is_some() {
+                    eprintln!(
+                        "[cpy-type-call] runtime-fallback callable={:p} name={}",
+                        callable, callable_name
+                    );
+                }
+                let positional = match cpython_positional_args_from_tuple_object(args) {
+                    Ok(values) => values,
+                    Err(err) => {
+                        cpython_set_error(err);
+                        return std::ptr::null_mut();
+                    }
+                };
+                let keyword_pairs = match cpython_keyword_args_from_dict_object(kwargs) {
+                    Ok(values) => values,
+                    Err(err) => {
+                        cpython_set_error(err);
+                        return std::ptr::null_mut();
+                    }
+                };
+                let runtime_result = with_active_cpython_context_mut(|context| {
+                    cpython_call_internal_in_context(
+                        context,
+                        callable_value,
+                        positional,
+                        keyword_pairs
+                            .into_iter()
+                            .collect::<HashMap<String, Value>>(),
+                    )
+                });
+                match runtime_result {
+                    Ok(Ok(value)) => return cpython_new_ptr_for_value(value),
+                    Ok(Err(err)) | Err(err) => {
+                        cpython_set_error(err);
+                        return std::ptr::null_mut();
+                    }
+                }
+            }
+        }
+    }
     if std::env::var_os("PYRS_TRACE_NUMPY_DTYPE_ARGS").is_some()
         && callable_name.to_ascii_lowercase().contains("dtype")
     {
@@ -1034,9 +1320,10 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
     if trace_calls {
         // SAFETY: callable points to a PyTypeObject-compatible struct.
         let init_slot = unsafe { (*ty).tp_init };
+        let trace_name = callable_name.as_str();
         eprintln!(
-            "[cpy-type-call] callable={:p} tp_new={:p} tp_init={:p} args_ptr={:p} kwargs_ptr={:p}",
-            callable, new_slot, init_slot, args, kwargs
+            "[cpy-type-call] callable={:p} name={} tp_new={:p} tp_init={:p} args_ptr={:p} kwargs_ptr={:p}",
+            callable, trace_name, new_slot, init_slot, args, kwargs
         );
     }
     if trace_seed_calls {
@@ -1112,9 +1399,18 @@ pub(super) unsafe extern "C" fn cpython_type_tp_call(
             // SAFETY: object returned by tp_new is expected to be PyObject-compatible.
             unsafe { (*object.cast::<CpythonObjectHead>()).ob_type }
         };
+        let object_type_name = if object_type.is_null() {
+            "<null>".to_string()
+        } else {
+            // SAFETY: type pointer came from a freshly created object.
+            unsafe {
+                c_name_to_string((*object_type.cast::<CpythonTypeObject>()).tp_name)
+                    .unwrap_or_else(|_| "<unnamed>".to_string())
+            }
+        };
         eprintln!(
-            "[cpy-type-call] tp_new_result object={:p} object_type={:p}",
-            object, object_type
+            "[cpy-type-call] tp_new_result name={} object={:p} object_type={:p} object_type_name={}",
+            callable_name, object, object_type, object_type_name
         );
     }
     if object.is_null() {
@@ -1266,6 +1562,9 @@ pub(super) fn cpython_is_type_object_ptr(ptr: *mut c_void) -> bool {
         return false;
     }
     if (ptr as usize) % std::mem::align_of::<CpythonObjectHead>() != 0 {
+        return false;
+    }
+    if !ModuleCapiContext::is_probable_type_object_without_metatype(ptr) {
         return false;
     }
     let type_type = std::ptr::addr_of_mut!(PyType_Type).cast::<c_void>();
@@ -3111,6 +3410,7 @@ pub unsafe extern "C" fn PyType_GetFlags(ty: *mut c_void) -> usize {
 pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void) -> i32 {
     let trace = std::env::var_os("PYRS_TRACE_TYPE_SUBTYPE").is_some();
     let trace_iseed = std::env::var_os("PYRS_TRACE_ISEED_SUBTYPE").is_some();
+    let trace_tzinfo = std::env::var_os("PYRS_TRACE_TZINFO_SUBTYPE").is_some();
     let type_name_for = |ptr: *mut c_void| -> String {
         if ptr.is_null() {
             return "<null>".to_string();
@@ -3132,6 +3432,20 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
         {
             eprintln!(
                 "[iseed-subtype] call subtype={:p}({}) target={:p}({})",
+                subtype, subtype_name, ty, target_name
+            );
+        }
+    }
+    if trace_tzinfo {
+        let subtype_name = type_name_for(subtype);
+        let target_name = type_name_for(ty);
+        if subtype_name.contains("tz")
+            || target_name.contains("tz")
+            || subtype_name.contains("datetime.")
+            || target_name.contains("datetime.")
+        {
+            eprintln!(
+                "[tz-subtype] call subtype={:p}({}) target={:p}({})",
                 subtype, subtype_name, ty, target_name
             );
         }
@@ -3205,6 +3519,16 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
                     guard
                 );
             }
+            if trace_tzinfo {
+                eprintln!(
+                    "[tz-subtype] match current={:p}({}) target={:p}({}) guard={}",
+                    current.cast::<c_void>(),
+                    type_name_for(current.cast()),
+                    ty,
+                    type_name_for(ty),
+                    guard
+                );
+            }
             return 1;
         }
         // SAFETY: current is checked non-null.
@@ -3242,6 +3566,16 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
                     guard
                 );
             }
+            if trace_tzinfo {
+                eprintln!(
+                    "[tz-subtype] match-next next={:p}({}) target={:p}({}) guard={}",
+                    next.cast::<c_void>(),
+                    type_name_for(next.cast()),
+                    ty,
+                    type_name_for(ty),
+                    guard
+                );
+            }
             return 1;
         }
         current = next;
@@ -3255,6 +3589,20 @@ pub unsafe extern "C" fn PyType_IsSubtype(subtype: *mut c_void, ty: *mut c_void)
             ty,
             type_name_for(ty)
         );
+    }
+    if trace_tzinfo {
+        let subtype_name = type_name_for(subtype);
+        let target_name = type_name_for(ty);
+        if subtype_name.contains("tz")
+            || target_name.contains("tz")
+            || subtype_name.contains("datetime.")
+            || target_name.contains("datetime.")
+        {
+            eprintln!(
+                "[tz-subtype] no-match subtype={:p}({}) target={:p}({})",
+                subtype, subtype_name, ty, target_name
+            );
+        }
     }
     0
 }
@@ -3424,8 +3772,22 @@ pub unsafe extern "C" fn PyType_GenericAlloc(subtype: *mut c_void, nitems: isize
         return std::ptr::null_mut();
     }
     let ty = subtype.cast::<CpythonTypeObject>();
+    let trace_type_alloc = std::env::var_os("PYRS_TRACE_TYPE_ALLOC").is_some();
+    let (tp_name, tp_basicsize, tp_itemsize) = unsafe {
+        (
+            c_name_to_string((*ty).tp_name).unwrap_or_else(|_| "<unnamed>".to_string()),
+            (*ty).tp_basicsize,
+            (*ty).tp_itemsize,
+        )
+    };
+    if trace_type_alloc {
+        eprintln!(
+            "[type-alloc] subtype={:p} name={} basicsize={} itemsize={} nitems={}",
+            subtype, tp_name, tp_basicsize, tp_itemsize, nitems
+        );
+    }
     // SAFETY: subtype is checked non-null.
-    let itemsize = unsafe { (*ty).tp_itemsize };
+    let itemsize = tp_itemsize;
     if itemsize > 0 || nitems > 0 {
         unsafe { _PyObject_NewVar(ty, nitems.max(0)) }
     } else {

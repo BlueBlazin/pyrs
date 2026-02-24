@@ -4998,6 +4998,74 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_unicodedata_east_asian_width(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new("east_asian_width() expects one argument"));
+        }
+        if let Some(value) = kwargs.remove("unistr") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(
+                    "east_asian_width() got multiple values for argument 'unistr'",
+                ));
+            }
+            args.push(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "east_asian_width() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "east_asian_width() missing required argument 'unistr'",
+            ));
+        }
+        let text = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => return Err(RuntimeError::type_error("east_asian_width() argument must be str")),
+        };
+        let mut chars = text.chars();
+        let Some(ch) = chars.next() else {
+            return Err(RuntimeError::type_error(
+                "east_asian_width() argument must be a single character",
+            ));
+        };
+        if chars.next().is_some() {
+            return Err(RuntimeError::type_error(
+                "east_asian_width() argument must be a single character",
+            ));
+        }
+        let code = ch as u32;
+        let width_class = if matches!(
+            code,
+            0x1100..=0x115F
+                | 0x2329..=0x232A
+                | 0x2E80..=0xA4CF
+                | 0xAC00..=0xD7A3
+                | 0xF900..=0xFAFF
+                | 0xFE10..=0xFE19
+                | 0xFE30..=0xFE6F
+                | 0xFF00..=0xFF60
+                | 0xFFE0..=0xFFE6
+                | 0x1F300..=0x1FAFF
+                | 0x20000..=0x2FFFD
+                | 0x30000..=0x3FFFD
+        ) {
+            "W"
+        } else if (0xFF61..=0xFFBE).contains(&code) || (0xFFC2..=0xFFC7).contains(&code) {
+            "H"
+        } else if ch.is_ascii() {
+            "Na"
+        } else {
+            "N"
+        };
+        Ok(Value::Str(width_class.to_string()))
+    }
+
     pub(super) fn builtin_binascii_crc32(
         &self,
         mut args: Vec<Value>,

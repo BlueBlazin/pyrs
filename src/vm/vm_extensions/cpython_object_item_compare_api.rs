@@ -103,7 +103,10 @@ pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void)
             if !result_ptr.is_null() {
                 return result_ptr;
             }
-            if context.current_error.is_some() || context.last_error.is_some() {
+            if context.current_error.is_some()
+                || context.last_error.is_some()
+                || !unsafe { PyErr_Occurred() }.is_null()
+            {
                 return std::ptr::null_mut();
             }
         }
@@ -131,7 +134,14 @@ pub unsafe extern "C" fn PyObject_GetItem(object: *mut c_void, key: *mut c_void)
     });
     if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
         let _ = with_active_cpython_context_mut(|context| {
-            context.set_error("PyObject_GetItem returned NULL without setting an exception");
+            let existing = context
+                .last_error
+                .clone()
+                .or_else(|| context.first_error.clone())
+                .unwrap_or_default();
+            if existing.is_empty() {
+                context.set_error("PyObject_GetItem returned NULL without setting an exception");
+            }
         });
     }
     if trace_getitem {

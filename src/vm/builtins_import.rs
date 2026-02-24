@@ -195,6 +195,21 @@ impl Vm {
         &mut self,
         caller_depth: usize,
     ) -> Result<(), RuntimeError> {
+        self.run_pending_import_frames_impl(caller_depth, false)
+    }
+
+    pub(super) fn run_pending_import_frames_force(
+        &mut self,
+        caller_depth: usize,
+    ) -> Result<(), RuntimeError> {
+        self.run_pending_import_frames_impl(caller_depth, true)
+    }
+
+    fn run_pending_import_frames_impl(
+        &mut self,
+        caller_depth: usize,
+        force_nested_sync: bool,
+    ) -> Result<(), RuntimeError> {
         if self.frames.len() <= caller_depth {
             return Ok(());
         }
@@ -216,18 +231,25 @@ impl Vm {
                 if std::env::var_os("PYRS_TRACE_IMPORT_PENDING").is_some() {
                     let reason = if cpython_context_active {
                         "cpython-context"
+                    } else if force_nested_sync {
+                        "forced-sync"
                     } else {
                         "sync-semantic"
                     };
                     eprintln!(
-                        "[import-pending-force] caller_depth={} active_stop_depth={} frames={} reason={}",
+                        "[import-pending-force] caller_depth={} active_stop_depth={} frames={} drain_depth={} reason={} force_nested_sync={}",
                         caller_depth,
                         active_stop_depth,
                         self.frames.len(),
-                        reason
+                        self.pending_import_drain_depth,
+                        reason,
+                        force_nested_sync
                     );
                 }
-                if self.pending_import_drain_depth > 0 && !cpython_context_active {
+                if self.pending_import_drain_depth > 0
+                    && !cpython_context_active
+                    && !force_nested_sync
+                {
                     return Ok(());
                 }
             } else {

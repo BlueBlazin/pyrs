@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_long, c_void};
 
-use crate::runtime::{BuiltinFunction, Object, Value};
+use crate::runtime::{BuiltinFunction, Object, RuntimeError, Value};
 
 use super::cpython_import_runtime::{
     CpythonInittabInitFunc, cpython_import_add_module_by_name, cpython_import_exec_code_in_module,
@@ -12,9 +12,28 @@ use super::cpython_module_name_runtime::{
 };
 use super::{
     InternalCallOutcome, PyErr_WarnEx, PyExc_DeprecationWarning, c_name_to_string,
-    cpython_debug_compare_value, cpython_set_error, cpython_value_from_ptr, dict_get_value,
+    cpython_debug_compare_value, cpython_exception_ptr_for_name, cpython_set_error,
+    cpython_value_from_ptr, dict_get_value,
     with_active_cpython_context_mut,
 };
+
+fn set_context_error_from_runtime_error(
+    context: &mut super::ModuleCapiContext,
+    err: RuntimeError,
+) {
+    let RuntimeError { message, exception } = err;
+    if let Some(exception_obj) = exception {
+        let exception_name = exception_obj.name.clone();
+        let ptype = cpython_exception_ptr_for_name(&exception_name)
+            .unwrap_or(unsafe { super::PyExc_RuntimeError });
+        let pvalue = context.alloc_cpython_ptr_for_value(Value::Exception(exception_obj));
+        if !pvalue.is_null() {
+            context.set_error_state(ptype, pvalue, std::ptr::null_mut(), message);
+            return;
+        }
+    }
+    context.set_error(message);
+}
 
 const PYC_MAGIC_NUMBER_TOKEN: c_long = 0x0A0D0E2B;
 
@@ -32,6 +51,11 @@ pub unsafe extern "C" fn PyImport_GetMagicTag() -> *const c_char {
 pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_void {
     match unsafe { c_name_to_string(name) } {
         Ok(module_name) => {
+            let trace_pyarrow_import = std::env::var_os("PYRS_TRACE_PYARROW_IMPORT").is_some()
+                && module_name.contains("pyarrow");
+            if trace_pyarrow_import {
+                eprintln!("[pyarrow-import] PyImport_ImportModule name={module_name}");
+            }
             let trace_ctypes = std::env::var_os("PYRS_TRACE_CPY_CTYPES_IMPORT").is_some()
                 && module_name.contains("ctypes");
             if trace_ctypes {
@@ -66,6 +90,13 @@ pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_vo
                 }
                 match context.module_import(&module_name) {
                     Ok(handle) => {
+                        context.clear_error();
+                        if trace_pyarrow_import {
+                            eprintln!(
+                                "[pyarrow-import] PyImport_ImportModule success name={} handle={}",
+                                module_name, handle
+                            );
+                        }
                         if trace_ctypes {
                             eprintln!(
                                 "[cpy-ctypes-import] module_import ok name={} handle={}",
@@ -75,13 +106,19 @@ pub unsafe extern "C" fn PyImport_ImportModule(name: *const c_char) -> *mut c_vo
                         context.alloc_cpython_ptr_for_handle(handle)
                     }
                     Err(err) => {
+                        if trace_pyarrow_import {
+                            eprintln!(
+                                "[pyarrow-import] PyImport_ImportModule error name={} err={}",
+                                module_name, err
+                            );
+                        }
                         if trace_ctypes {
                             eprintln!(
                                 "[cpy-ctypes-import] module_import err name={} err={}",
                                 module_name, err
                             );
                         }
-                        context.set_error(err);
+                        set_context_error_from_runtime_error(context, RuntimeError::new(err));
                         std::ptr::null_mut()
                     }
                 }
@@ -624,21 +661,71 @@ pub unsafe extern "C" fn PyImport_ImportModuleLevelObject(
             fromlist_value,
             Value::Int(level as i64),
         ];
+        let trace_pyarrow_import = std::env::var_os("PYRS_TRACE_PYARROW_IMPORT").is_some()
+            && matches!(args.first(), Some(Value::Str(name)) if name.contains("pyarrow"));
+        if trace_pyarrow_import {
+            let fromlist_desc = match args.get(3) {
+                Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                    Object::Tuple(items) => items
+                        .iter()
+                        .map(|item| match item {
+                            Value::Str(text) => text.clone(),
+                            other => cpython_debug_compare_value(other),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    _ => "<tuple-storage-invalid>".to_string(),
+                },
+                Some(value) => cpython_debug_compare_value(value),
+                None => "<none>".to_string(),
+            };
+            eprintln!(
+                "[pyarrow-import] PyImport_ImportModuleLevelObject name={} level={} fromlist=[{}]",
+                match args.first() {
+                    Some(Value::Str(name)) => name.as_str(),
+                    _ => "<non-str>",
+                },
+                level,
+                fromlist_desc
+            );
+        }
         match vm.call_internal(
             Value::Builtin(BuiltinFunction::Import),
             args,
             HashMap::new(),
         ) {
-            Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(InternalCallOutcome::Value(value)) => {
+                context.clear_error();
+                if trace_pyarrow_import {
+                    eprintln!("[pyarrow-import] PyImport_ImportModuleLevelObject success");
+                }
+                context.alloc_cpython_ptr_for_value(value)
+            }
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                context.set_error(
-                    vm.runtime_error_from_active_exception("import module level call failed")
-                        .message,
-                );
+                let runtime_err =
+                    vm.runtime_error_from_active_exception("import module level call failed");
+                if trace_pyarrow_import {
+                    eprintln!(
+                        "[pyarrow-import] PyImport_ImportModuleLevelObject handled-exception"
+                    );
+                }
+                set_context_error_from_runtime_error(context, runtime_err);
                 std::ptr::null_mut()
             }
             Err(err) => {
-                context.set_error(err.message);
+                let detail_err = vm.runtime_error_from_active_exception(&err.message);
+                if trace_pyarrow_import {
+                    eprintln!(
+                        "[pyarrow-import] PyImport_ImportModuleLevelObject error err={} detail={}",
+                        err.message, detail_err.message
+                    );
+                }
+                let detail_message = detail_err.message.clone();
+                if detail_message.is_empty() {
+                    set_context_error_from_runtime_error(context, err);
+                } else {
+                    set_context_error_from_runtime_error(context, detail_err);
+                }
                 std::ptr::null_mut()
             }
         }

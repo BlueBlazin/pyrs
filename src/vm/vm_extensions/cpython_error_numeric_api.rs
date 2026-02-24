@@ -6,38 +6,173 @@ use crate::runtime::{BuiltinFunction, ExceptionObject, Object, Value};
 
 use super::{
     _Py_NoneStruct, ACTIVE_CPYTHON_INIT_CONTEXT, CPY_EXCEPTION_TYPE_PTR_ATTR, CpythonComplexValue,
-    CpythonErrorState, CpythonObjectHead, CpythonStructSeqTypeInfo, CpythonStructSequenceDesc,
-    CpythonTypeObject, CpythonVarObjectHead, InternalCallOutcome, ModuleCapiContext,
-    PY_TPFLAGS_BASETYPE, PY_TPFLAGS_READY, Py_DecRef, Py_IncRef, Py_XDecRef, Py_XIncRef,
-    PyDict_Contains, PyDict_New, PyDict_SetItem, PyDict_SetItemString, PyErr_BadInternalCall,
-    PyExc_Exception, PyExc_ImportError, PyExc_MemoryError, PyExc_OSError, PyExc_OverflowError,
-    PyExc_ResourceWarning, PyExc_RuntimeError, PyExc_RuntimeWarning, PyExc_SystemError,
-    PyExc_TypeError, PyExc_ValueError, PyObject_CallObject, PyObject_GetAttrString,
-    PyObject_IsSubclass, PyObject_SetAttrString, PyTuple_GetItem, PyTuple_New, PyTuple_SetItem,
-    PyTuple_Type, PyType_IsSubtype, PyType_Ready, PyType_Type, PyUnicode_FromString,
-    PyUnicode_FromStringAndSize, c_name_to_string, cpython_bigint_low_u64, cpython_bigint_to_u64,
-    cpython_call_builtin, cpython_exception_name_parts, cpython_exception_value_from_ptr,
-    cpython_foreign_long_to_i64, cpython_foreign_long_to_u64, cpython_is_exception_instance,
-    cpython_is_type_object_ptr, cpython_mark_pending_interrupt, cpython_new_ptr_for_value,
-    cpython_set_error, cpython_set_typed_error, cpython_structseq_count_fields,
-    cpython_structseq_registry, cpython_tuple_items_ptr, cpython_type_name_for_object_ptr,
-    cpython_value_debug_tag, cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, value_to_int,
-    with_active_cpython_context_mut,
+    CpythonErrorState, CpythonNumberMethods, CpythonObjectHead, CpythonStructSeqTypeInfo,
+    CpythonStructSequenceDesc, CpythonTypeObject, CpythonVarObjectHead, InternalCallOutcome,
+    ModuleCapiContext, PY_TPFLAGS_BASETYPE, PY_TPFLAGS_READY, Py_DecRef, Py_IncRef, Py_XDecRef,
+    Py_XIncRef, PyDict_Contains, PyDict_New, PyDict_SetItem, PyDict_SetItemString,
+    PyErr_BadInternalCall, PyExc_Exception, PyExc_ImportError, PyExc_MemoryError, PyExc_OSError,
+    PyExc_OverflowError, PyExc_ResourceWarning, PyExc_RuntimeError, PyExc_RuntimeWarning,
+    PyExc_SystemError, PyExc_TypeError, PyExc_ValueError, PyObject_CallObject,
+    PyObject_GetAttrString, PyObject_IsSubclass, PyObject_SetAttrString, PyTuple_GetItem,
+    PyTuple_New, PyTuple_SetItem, PyTuple_Type, PyType_IsSubtype, PyType_Ready, PyType_Type,
+    PyUnicode_FromString, PyUnicode_FromStringAndSize, c_name_to_string, cpython_bigint_low_u64,
+    cpython_bigint_to_u64, cpython_call_builtin, cpython_exception_name_parts,
+    cpython_exception_value_from_ptr, cpython_foreign_long_to_i64, cpython_foreign_long_to_u64,
+    cpython_is_exception_instance, cpython_is_type_object_ptr, cpython_mark_pending_interrupt,
+    cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
+    cpython_structseq_count_fields, cpython_structseq_registry, cpython_tuple_items_ptr,
+    cpython_type_name_for_object_ptr, cpython_value_debug_tag, cpython_value_from_ptr,
+    cpython_value_from_ptr_or_proxy, value_to_int, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyFloat_AsDouble(object: *mut c_void) -> f64 {
-    match cpython_value_from_ptr_or_proxy(object) {
-        Ok(Value::Float(value)) => value,
-        Ok(Value::Int(value)) => value as f64,
-        Ok(Value::Bool(value)) => {
-            if value {
-                1.0
-            } else {
-                0.0
-            }
+    const MIN_VALID_PTR: usize = 0x1_0000_0000;
+    if object.is_null() {
+        unsafe { PyErr_BadInternalCall() };
+        return -1.0;
+    }
+    let mapped = cpython_value_from_ptr_or_proxy(object);
+    match mapped.as_ref() {
+        Ok(Value::Float(value)) => return *value,
+        Ok(Value::Int(value)) => return *value as f64,
+        Ok(Value::Bool(value)) => return if *value { 1.0 } else { 0.0 },
+        Ok(Value::BigInt(value)) => return value.to_f64(),
+        _ => {}
+    }
+    // Follow CPython floatobject.c behavior first: resolve nb_float / nb_index on the
+    // target object's concrete type rather than routing through high-level builtin float().
+    let slot_object = mapped
+        .as_ref()
+        .ok()
+        .and_then(ModuleCapiContext::cpython_proxy_raw_ptr_from_value)
+        .filter(|ptr| !ptr.is_null())
+        .unwrap_or(object);
+    let trace_pyfloat = std::env::var_os("PYRS_TRACE_PYFLOAT_AS_DOUBLE").is_some();
+    if trace_pyfloat {
+        let object_type = cpython_type_name_for_object_ptr(object);
+        let slot_type = cpython_type_name_for_object_ptr(slot_object);
+        let mapped_tag = mapped
+            .as_ref()
+            .map(cpython_value_debug_tag)
+            .unwrap_or_else(|_| "<unmapped>".to_string());
+        eprintln!(
+            "[cpy-float-asdouble] object={:p} type={} slot_object={:p} slot_type={} mapped={}",
+            object, object_type, slot_object, slot_type, mapped_tag
+        );
+        if std::env::var_os("PYRS_TRACE_PYFLOAT_AS_DOUBLE_BT").is_some() {
+            eprintln!("[cpy-float-asdouble] bt={}", Backtrace::force_capture());
         }
-        Ok(Value::BigInt(value)) => value.to_f64(),
+    }
+    if (slot_object as usize) >= MIN_VALID_PTR
+        && (slot_object as usize) % std::mem::align_of::<usize>() == 0
+    {
+        // SAFETY: slot-object pointer shape is validated above.
+        let type_ptr = unsafe {
+            slot_object
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                .unwrap_or(std::ptr::null_mut())
+        };
+        if !type_ptr.is_null()
+            && (type_ptr as usize) >= MIN_VALID_PTR
+            && (type_ptr as usize) % std::mem::align_of::<CpythonTypeObject>() == 0
+        {
+            // SAFETY: `type_ptr` was validated above.
+            let number_methods = unsafe {
+                (*type_ptr)
+                    .tp_as_number
+                    .cast::<CpythonNumberMethods>()
+                    .as_ref()
+            };
+            let nb_float = number_methods
+                .and_then(|methods| (!methods.nb_float.is_null()).then_some(methods.nb_float));
+            if let Some(nb_float) = nb_float {
+                if trace_pyfloat {
+                    eprintln!(
+                        "[cpy-float-asdouble] using nb_float object={:p} slot_object={:p}",
+                        object, slot_object
+                    );
+                }
+                let converter: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+                    // SAFETY: `nb_float` comes from a validated number-method table.
+                    unsafe { std::mem::transmute(nb_float) };
+                // SAFETY: slot ABI matches CPython nb_float contract.
+                let result_ptr = unsafe { converter(slot_object) };
+                if result_ptr.is_null() {
+                    if trace_pyfloat {
+                        eprintln!(
+                            "[cpy-float-asdouble] nb_float returned NULL object={:p}",
+                            object
+                        );
+                    }
+                    return -1.0;
+                }
+                let resolved = cpython_value_from_ptr_or_proxy(result_ptr)
+                    .or_else(|_| cpython_value_from_ptr(result_ptr));
+                let value = match resolved {
+                    Ok(Value::Float(value)) => value,
+                    Ok(Value::Int(value)) => value as f64,
+                    Ok(Value::Bool(value)) => {
+                        if value {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    Ok(Value::BigInt(value)) => value.to_f64(),
+                    Ok(_) => {
+                        if trace_pyfloat {
+                            eprintln!(
+                                "[cpy-float-asdouble] nb_float non-float owner={} returned={}",
+                                cpython_type_name_for_object_ptr(slot_object),
+                                cpython_type_name_for_object_ptr(result_ptr)
+                            );
+                        }
+                        let owner = cpython_type_name_for_object_ptr(slot_object);
+                        let returned = cpython_type_name_for_object_ptr(result_ptr);
+                        cpython_set_typed_error(
+                            unsafe { PyExc_TypeError },
+                            &format!("{owner}.__float__ returned non-float (type {returned})"),
+                        );
+                        unsafe { Py_DecRef(result_ptr) };
+                        return -1.0;
+                    }
+                    Err(err) => {
+                        cpython_set_error(err);
+                        unsafe { Py_DecRef(result_ptr) };
+                        return -1.0;
+                    }
+                };
+                unsafe { Py_DecRef(result_ptr) };
+                return value;
+            }
+            if let Some(nb_index) = number_methods.and_then(|methods| methods.nb_index) {
+                if trace_pyfloat {
+                    eprintln!(
+                        "[cpy-float-asdouble] using nb_index object={:p} slot_object={:p}",
+                        object, slot_object
+                    );
+                }
+                // SAFETY: slot ABI matches CPython nb_index contract.
+                let indexed = unsafe { nb_index(slot_object) };
+                if indexed.is_null() {
+                    return -1.0;
+                }
+                let value = unsafe { PyLong_AsDouble(indexed) };
+                unsafe { Py_DecRef(indexed) };
+                return value;
+            }
+            let type_name = cpython_type_name_for_object_ptr(slot_object);
+            cpython_set_typed_error(
+                unsafe { PyExc_TypeError },
+                &format!("must be real number, not {type_name}"),
+            );
+            return -1.0;
+        }
+    }
+    match mapped {
         Ok(value) => match cpython_call_builtin(BuiltinFunction::Float, vec![value]) {
             Ok(Value::Float(value)) => value,
             Ok(Value::Int(value)) => value as f64,
@@ -1098,6 +1233,17 @@ pub unsafe extern "C" fn PyErr_Occurred() -> *mut c_void {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyErr_Clear() {
     let _ = with_active_cpython_context_mut(|context| {
+        if std::env::var_os("PYRS_TRACE_PYARROW_IMPORT").is_some()
+            && context
+                .last_error
+                .as_ref()
+                .is_some_and(|msg| msg.contains("pyarrow"))
+        {
+            eprintln!(
+                "[pyarrow-import] PyErr_Clear clearing last_error={}",
+                context.last_error.as_deref().unwrap_or("")
+            );
+        }
         if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some() && context.last_error.is_some() {
             if let Some(previous) = context.last_error.as_ref() {
                 eprintln!("[cpy-err-clear] clearing: {previous}");
@@ -1242,7 +1388,9 @@ fn cpython_type_inherits_exception_name(type_ptr: *mut c_void, expected_name: &s
     while !current.is_null() && depth < 128 {
         if let Some(Value::ExceptionType(name)) = cpython_exception_value_from_ptr(current as usize)
         {
-            return name == expected_name;
+            if name == expected_name {
+                return true;
+            }
         }
         if !cpython_ptr_is_type_object(current.cast()) {
             return false;
@@ -1329,6 +1477,23 @@ pub unsafe extern "C" fn PyErr_GivenExceptionMatches(
     }
     let given_type = cpython_exception_type_ptr(given);
     let expected_type = cpython_exception_type_ptr(expected);
+    let trace_import_match = std::env::var_os("PYRS_TRACE_IMPORT_EXCEPTION_MATCH").is_some();
+    if trace_import_match {
+        let given_name = cpython_exception_expected_name_from_ptr(given)
+            .unwrap_or_else(|| cpython_type_name_for_object_ptr(given));
+        let expected_name = cpython_exception_expected_name_from_ptr(expected)
+            .unwrap_or_else(|| cpython_type_name_for_object_ptr(expected));
+        if expected_name.contains("ImportError")
+            || expected_name.contains("ModuleNotFoundError")
+            || given_name.contains("ImportError")
+            || given_name.contains("ModuleNotFoundError")
+        {
+            eprintln!(
+                "[import-exc-match] given={:p} ({}) expected={:p} ({}) given_type={:p} expected_type={:p}",
+                given, given_name, expected, expected_name, given_type, expected_type
+            );
+        }
+    }
     if given_type.is_null() || expected_type.is_null() {
         return 0;
     }
@@ -1342,6 +1507,12 @@ pub unsafe extern "C" fn PyErr_GivenExceptionMatches(
     if let Some(expected_name) = cpython_exception_expected_name_from_ptr(expected)
         && cpython_type_inherits_exception_name(given_type, &expected_name)
     {
+        if trace_import_match && (expected_name.contains("ImportError") || expected_name.contains("ModuleNotFoundError")) {
+            eprintln!(
+                "[import-exc-match] inherits-name-hit given_type={:p} expected_name={}",
+                given_type, expected_name
+            );
+        }
         return 1;
     }
     0
@@ -1934,6 +2105,16 @@ pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
     {
         eprintln!(
             "[numpy-pickle-fail] from-PyErr_Format message={} bt={:?}",
+            message,
+            Backtrace::force_capture()
+        );
+    }
+    if std::env::var_os("PYRS_TRACE_TYPED_CACHE_SUBSCRIPT").is_some()
+        && message.contains("_TypedCacheSpecialForm")
+    {
+        eprintln!(
+            "[typed-cache-subscript] PyErr_Format exception={:p} msg={} bt={:?}",
+            exception,
             message,
             Backtrace::force_capture()
         );

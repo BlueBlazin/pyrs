@@ -1250,6 +1250,10 @@ impl Vm {
                 .attrs
                 .insert("__new__".to_string(), Value::Builtin(BuiltinFunction::Type));
             type_data.attrs.insert(
+                "__call__".to_string(),
+                Value::Builtin(BuiltinFunction::TypeCall),
+            );
+            type_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::TypeInit),
             );
@@ -1800,6 +1804,20 @@ impl Vm {
                     ));
                 }
             };
+            if std::env::var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
+                let callable_type = self.value_type_name_for_error(&prepare_callable);
+                let callable_repr = format_repr(&prepare_callable);
+                eprintln!(
+                    "[prepare-call] class={} meta={} callable_type={} callable={}",
+                    name,
+                    match &*meta_class.kind() {
+                        Object::Class(data) => data.name.clone(),
+                        _ => "<non-class>".to_string(),
+                    },
+                    callable_type,
+                    callable_repr
+                );
+            }
             let bases_tuple = self.heap.alloc_tuple(
                 base_classes
                     .iter()
@@ -2119,6 +2137,18 @@ impl Vm {
                 Ok(self.synthetic_builtin_class("memoryview"))
             }
             Value::Builtin(BuiltinFunction::Complex) => Ok(self.synthetic_builtin_class("complex")),
+            Value::Builtin(BuiltinFunction::TypesModuleType) => {
+                let module_class = self.synthetic_builtin_class("module");
+                if let Object::Class(class_data) = &mut *module_class.kind_mut()
+                    && !class_data.attrs.contains_key("__init__")
+                {
+                    class_data.attrs.insert(
+                        "__init__".to_string(),
+                        Value::Builtin(BuiltinFunction::TypesModuleType),
+                    );
+                }
+                Ok(module_class)
+            }
             Value::Builtin(BuiltinFunction::ClassMethod) => {
                 Ok(self.synthetic_builtin_class("classmethod"))
             }

@@ -7,11 +7,12 @@ use crate::vm::{InternalCallOutcome, STR_BACKING_STORAGE_ATTR};
 use super::{
     _Py_NotImplementedStruct, CpythonMappingMethods, CpythonNumberMethods, CpythonObjectHead,
     CpythonSequenceMethods, CpythonStructSequenceField, CpythonTypeObject, ModuleCapiContext,
-    Py_DecRef, PyErr_Occurred, PyExc_RuntimeError, PyType_IsSubtype, c_name_to_string,
-    cpython_call_internal_in_context, cpython_clear_active_exception,
+    Py_DecRef, PyErr_Occurred, PyExc_RuntimeError, PyExc_TypeError, PyType_IsSubtype,
+    c_name_to_string, cpython_call_internal_in_context,
     cpython_exception_name_from_runtime_message, cpython_exception_ptr_for_name,
     cpython_exception_traceback_ptr_for_value, cpython_exception_type_ptr,
-    cpython_exception_type_ptr_for_value, cpython_getattr_in_context, cpython_set_error,
+    cpython_exception_type_ptr_for_value, cpython_getattr_in_context,
+    cpython_safe_object_type_name, cpython_set_error, cpython_set_typed_error,
     cpython_value_debug_tag, with_active_cpython_context_mut,
 };
 
@@ -91,6 +92,56 @@ pub(super) unsafe fn cpython_mapping_subscript_slot(
     // SAFETY: mapping subscript slot follows `binaryfunc` object/key ABI.
     Some(unsafe { std::mem::transmute(raw) })
 }
+
+pub(super) unsafe extern "C" fn cpython_runtime_mp_subscript_slot(
+    object: *mut c_void,
+    key: *mut c_void,
+) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            context.set_error("runtime mp_subscript missing VM context");
+            return std::ptr::null_mut();
+        }
+        let Some(object_value) = context.cpython_value_from_ptr_or_proxy(object) else {
+            context.set_error("runtime mp_subscript received unknown object pointer");
+            return std::ptr::null_mut();
+        };
+        let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
+            context.set_error("runtime mp_subscript received unknown key pointer");
+            return std::ptr::null_mut();
+        };
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        match vm.getitem_value(object_value, key_value) {
+            Ok(value) => context.alloc_cpython_ptr_for_value(value),
+            Err(err) => {
+                if err.exception_name() == Some("TypeError")
+                    && err.message.contains("subscript unsupported type")
+                {
+                    let type_name = cpython_safe_object_type_name(object)
+                        .unwrap_or_else(|| "object".to_string());
+                    cpython_set_typed_error(
+                        unsafe { PyExc_TypeError },
+                        format!("'{type_name}' object is not subscriptable"),
+                    );
+                } else {
+                    cpython_set_error(err.message);
+                }
+                std::ptr::null_mut()
+            }
+        }
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+pub(super) static mut PY_RUNTIME_MAPPING_METHODS: CpythonMappingMethods = CpythonMappingMethods {
+    mp_length: std::ptr::null_mut(),
+    mp_subscript: cpython_runtime_mp_subscript_slot as *mut c_void,
+    mp_ass_subscript: std::ptr::null_mut(),
+};
 
 pub(super) unsafe fn cpython_sequence_item_slot(
     type_ptr: *mut CpythonTypeObject,
@@ -485,10 +536,6 @@ pub(super) fn cpython_call_object(
         match vm.call_internal(callable, args, kwargs) {
             Ok(InternalCallOutcome::Value(value)) => context.alloc_cpython_ptr_for_value(value),
             Ok(InternalCallOutcome::CallerExceptionHandled) => {
-                if context.current_error.is_some() {
-                    cpython_clear_active_exception(vm);
-                    return std::ptr::null_mut();
-                }
                 let active_exception = vm
                     .frames
                     .last()
@@ -563,10 +610,14 @@ pub(super) fn cpython_call_object(
                     }
                     context.set_error_state(ptype, pvalue, ptraceback, message);
                 } else {
-                    context.set_error(
-                        vm.runtime_error_from_active_exception("object call failed")
-                            .message,
-                    );
+                    if context.current_error.is_none() {
+                        context.set_error(
+                            vm.runtime_error_from_active_exception("object call failed").message,
+                        );
+                    }
+                }
+                if context.current_error.is_none() {
+                    context.set_error("RuntimeError: object call failed without active exception");
                 }
                 std::ptr::null_mut()
             }
@@ -575,6 +626,28 @@ pub(super) fn cpython_call_object(
                     return std::ptr::null_mut();
                 }
                 let message = err.message;
+                if std::env::var_os("PYRS_TRACE_BIND_CALLABLE").is_some()
+                    && message.contains("argument count mismatch")
+                {
+                    let callable_type_name = unsafe {
+                        callable_ptr
+                            .cast::<CpythonObjectHead>()
+                            .as_ref()
+                            .map(|head| head.ob_type.cast::<CpythonTypeObject>())
+                            .filter(|ty| !ty.is_null())
+                            .and_then(|ty| c_name_to_string((*ty).tp_name).ok())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    };
+                    eprintln!(
+                        "[bind-callable] callable_ptr={:p} callable={} callable_type={} args={} kwargs={} msg={}",
+                        callable_ptr,
+                        callable_desc_for_error,
+                        callable_type_name,
+                        arg_count,
+                        kwarg_count,
+                        message
+                    );
+                }
                 if std::env::var_os("PYRS_TRACE_PROXY_NOT_CALLABLE").is_some()
                     && message.contains("proxy object is not callable")
                 {

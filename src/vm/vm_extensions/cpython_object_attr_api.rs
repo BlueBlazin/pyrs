@@ -10,9 +10,9 @@ use super::{
     PyObject_DelItem, PyObject_IsInstance, c_name_to_string, cpython_call_builtin,
     cpython_error_message_indicates_missing_attribute, cpython_is_reduce_probe_name,
     cpython_new_ptr_for_value, cpython_set_error, cpython_set_typed_error,
-    cpython_type_name_for_object_ptr,
-    cpython_trace_flag_enabled, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
-    cpython_value_from_ptr, cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
+    cpython_trace_flag_enabled, cpython_trace_numpy_reduce_enabled,
+    cpython_type_name_for_object_ptr, cpython_value_debug_tag, cpython_value_from_ptr,
+    cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
 
 #[unsafe(no_mangle)]
@@ -196,10 +196,11 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                 // (e.g. module attrs like numpy.dot) stay authoritative.
                 let is_generic_getattro = tp_getattro == PyObject_GetAttr as *mut c_void
                     || tp_getattro == PyObject_GenericGetAttr as *mut c_void;
-                if is_owned && is_generic_getattro {
-                    // Keep owned-compat non-type objects on the internal fallback path to avoid
-                    // recursive/self-referential generic getattr behavior.
-                } else {
+                // For mapped runtime values, route through pyrs generic getattr so descriptor
+                // protocol semantics on runtime objects stay authoritative.
+                if is_generic_getattro && context.cpython_value_from_ptr(object).is_some() {
+                    return None;
+                }
                 if trace_getattr_slots {
                     eprintln!(
                         "[cpy-getattr-slot] branch=tp_getattro object={:p} attr={} type={:p} slot={:p} owned={} known={} generic={}",
@@ -232,7 +233,6 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     // SAFETY: tp_getattro follows the CPython `PyObject* (*)(PyObject*,PyObject*)` ABI.
                     unsafe { std::mem::transmute(tp_getattro) };
                 return Some(unsafe { getattro(object, name_ptr) });
-                }
             }
             // SAFETY: `type_ptr` is non-null and points to a CpythonTypeObject-compatible header.
             let tp_getattr = unsafe { (*type_ptr).tp_getattr };
@@ -272,27 +272,6 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
                     // SAFETY: tp_getattr follows the CPython `char*` getattr ABI.
                     unsafe { std::mem::transmute(tp_getattr) };
                 return Some(unsafe { getattr(object, name_cstr) });
-            }
-            if let Some(result) = context.lookup_type_attr_via_tp_dict(object, &name) {
-                if trace_dot_getattr {
-                    eprintln!(
-                        "[proxy-getattr-dot] branch=tp_dict object={:p} is_owned={} is_known_compat={} result={:p}",
-                        object, is_owned, is_known_compat, result
-                    );
-                }
-                if trace_proxy_getattr {
-                    eprintln!(
-                        "[proxy-getattr] branch=tp_dict object={:p} attr={} result={:p}",
-                        object, name, result
-                    );
-                }
-                if is_proxy_trace {
-                    eprintln!(
-                        "[cpy-proxy] native getattr tp_dict hit object_ptr={:p} result_ptr={:p}",
-                        object, result
-                    );
-                }
-                return Some(result);
             }
             if is_proxy_trace {
                 eprintln!("[cpy-proxy] native getattr no native path hit; falling back");
@@ -548,6 +527,39 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             ptr
         }
         Err(err) => {
+            if name == "__pyx_capi__" && std::env::var_os("PYRS_TRACE_PYX_CAPI_GETATTR_FAIL").is_some()
+            {
+                match &object_value_for_debug {
+                    Value::Module(module_obj) => {
+                        if let Object::Module(module_data) = &*module_obj.kind() {
+                            let mut keys: Vec<String> = module_data.globals.keys().cloned().collect();
+                            keys.sort();
+                            eprintln!(
+                                "[pyx-capi] getattr-fail object={:p} module={} has_key={} keys={} sample={:?} err={}",
+                                object,
+                                module_data.name,
+                                module_data.globals.contains_key("__pyx_capi__"),
+                                module_data.globals.len(),
+                                keys,
+                                err
+                            );
+                        } else {
+                            eprintln!(
+                                "[pyx-capi] getattr-fail object={:p} module=<invalid> err={}",
+                                object, err
+                            );
+                        }
+                    }
+                    other => {
+                        eprintln!(
+                            "[pyx-capi] getattr-fail object={:p} object_tag={} err={}",
+                            object,
+                            cpython_value_debug_tag(other),
+                            err
+                        );
+                    }
+                }
+            }
             if trace_exit_lookup {
                 eprintln!("[cpy-attr-exit-lookup] error={}", err);
             }
@@ -767,6 +779,11 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 || tp_getattro == PyObject_GetAttr as *mut c_void
                 || tp_getattro == PyObject_GenericGetAttr as *mut c_void
             {
+                // Preserve descriptor/binding semantics for mapped runtime values.
+                if context.cpython_value_from_ptr(object).is_some() {
+                    return None;
+                }
+                // For unmapped foreign objects, best-effort raw tp_dict fallback.
                 if let Some(attr_name) = attr_name.as_ref()
                     && let Some(result) = context.lookup_type_attr_via_tp_dict(object, attr_name)
                 {
@@ -958,6 +975,14 @@ pub unsafe extern "C" fn PyObject_GetAttr(object: *mut c_void, name: *mut c_void
                 eprintln!(
                     "[numpy-reduce] PyObject_GetAttr builtin-error object={:p} attr={} err={}",
                     object, attr_name, err
+                );
+            }
+            if std::env::var_os("PYRS_TRACE_CPY_ERRORS").is_some()
+                && err.contains("attribute access unsupported type")
+            {
+                eprintln!(
+                    "[cpy-attr-debug] getattr unsupported object_ptr={:p} object_value={} name_value={}",
+                    object, object_debug_for_err, name_debug_for_err
                 );
             }
             if err.contains("__exit__") && std::env::var_os("PYRS_TRACE_ATTR_MISS").is_some() {

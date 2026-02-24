@@ -1801,6 +1801,7 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_tp_call(
     kwargs: *mut c_void,
 ) -> *mut c_void {
     with_active_cpython_context_mut(|context| {
+        let trace_method_calls = std::env::var_os("PYRS_TRACE_CPY_METHOD_CALLS").is_some();
         if callable.is_null() {
             unsafe { PyErr_BadInternalCall() };
             return std::ptr::null_mut();
@@ -1835,6 +1836,15 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_tp_call(
         }
         let none_ptr = std::ptr::addr_of_mut!(_Py_NoneStruct).cast::<c_void>();
         if method.im_func == none_ptr {
+            if trace_method_calls {
+                eprintln!(
+                    "[cpy-method-call] callable={:p} im_func=None im_self={:p} positional={} kwargs={}",
+                    callable,
+                    method.im_self,
+                    positional.len(),
+                    keyword_args.len()
+                );
+            }
             if let Some(Value::BoundMethod(bound_obj)) = context.cpython_value_from_ptr(callable) {
                 let call_result = match cpython_call_internal_in_context(
                     context,
@@ -1853,13 +1863,42 @@ pub(in crate::vm::vm_extensions) unsafe extern "C" fn cpython_method_tp_call(
             context.set_error("method call missing function");
             return std::ptr::null_mut();
         }
+        if trace_method_calls {
+            let callable_tag = context
+                .cpython_value_from_ptr(callable)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unresolved>".to_string());
+            let im_func_tag = context
+                .cpython_value_from_ptr_or_proxy(method.im_func)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unresolved>".to_string());
+            let im_self_tag = context
+                .cpython_value_from_ptr_or_proxy(method.im_self)
+                .map(|value| cpython_value_debug_tag(&value))
+                .unwrap_or_else(|| "<unresolved>".to_string());
+            eprintln!(
+                "[cpy-method-call] callable={:p} callable_tag={} im_func={:p}({}) im_self={:p}({}) positional={} kwargs={}",
+                callable,
+                callable_tag,
+                method.im_func,
+                im_func_tag,
+                method.im_self,
+                im_self_tag,
+                positional.len(),
+                keyword_args.len()
+            );
+        }
         let mut positional = positional;
         let Some(self_value) = context.cpython_value_from_ptr_or_proxy(method.im_self) else {
             context.set_error("method call failed to decode bound self");
             return std::ptr::null_mut();
         };
         positional.insert(0, self_value);
-        cpython_call_object(method.im_func, positional, keyword_args)
+        let result = cpython_call_object(method.im_func, positional, keyword_args);
+        if result.is_null() && unsafe { PyErr_Occurred() }.is_null() {
+            context.set_error("SystemError: NULL result without error in method tp_call");
+        }
+        result
     })
     .unwrap_or_else(|err| {
         cpython_set_error(err);

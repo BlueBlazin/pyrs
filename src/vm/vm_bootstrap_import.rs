@@ -18,6 +18,24 @@ use crate::extensions::{
 const PYRS_MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
 
 impl Vm {
+    fn alloc_tuple_backed_builtin_class(&mut self, name: &str) -> Value {
+        let mut bases = Vec::new();
+        if let Some(Value::Class(tuple_class)) = self.builtins.get("tuple") {
+            bases.push(tuple_class.clone());
+        }
+        let class = self
+            .heap
+            .alloc_class(ClassObject::new(name.to_string(), bases));
+        if let Value::Class(class_obj) = &class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__pyrs_tuple_backed_type__".to_string(), Value::Bool(true));
+        }
+        class
+    }
+
     fn configure_bootstrap_ast_class(
         &mut self,
         class_name: &str,
@@ -832,6 +850,7 @@ impl Vm {
                 ("_DIV_LIMIT_MAX", Value::Int(1)),
             ],
         );
+        let time_struct_time_class = self.alloc_tuple_backed_builtin_class("struct_time");
         self.install_builtin_module(
             "time",
             &[
@@ -845,11 +864,19 @@ impl Vm {
                 ("perf_counter_ns", BuiltinFunction::TimeTimeNs),
                 ("sleep", BuiltinFunction::TimeSleep),
             ],
-            vec![(
-                "struct_time",
-                self.heap
-                    .alloc_class(ClassObject::new("struct_time".to_string(), Vec::new())),
-            )],
+            vec![
+                ("struct_time", time_struct_time_class),
+                ("timezone", Value::Int(0)),
+                ("altzone", Value::Int(0)),
+                ("daylight", Value::Int(0)),
+                (
+                    "tzname",
+                    self.heap.alloc_tuple(vec![
+                        Value::Str("UTC".to_string()),
+                        Value::Str("UTC".to_string()),
+                    ]),
+                ),
+            ],
         );
         self.install_builtin_module(
             "platform",
@@ -872,6 +899,7 @@ impl Vm {
             ],
             Vec::new(),
         );
+        let os_stat_result_class = self.alloc_tuple_backed_builtin_class("stat_result");
         self.install_builtin_module(
             "os",
             &[
@@ -976,11 +1004,7 @@ impl Vm {
                             .collect::<Vec<_>>(),
                     ),
                 ),
-                (
-                    "stat_result",
-                    self.heap
-                        .alloc_class(ClassObject::new("stat_result".to_string(), Vec::new())),
-                ),
+                ("stat_result", os_stat_result_class),
                 ("O_RDONLY", Value::Int(0)),
                 ("O_WRONLY", Value::Int(1)),
                 ("O_RDWR", Value::Int(2)),
@@ -1019,6 +1043,7 @@ impl Vm {
                 ),
             ],
         );
+        let posix_stat_result_class = self.alloc_tuple_backed_builtin_class("stat_result");
         self.install_builtin_module(
             "posix",
             &[
@@ -1077,11 +1102,7 @@ impl Vm {
                     "WEXITSTATUS",
                     Value::Builtin(BuiltinFunction::OsWExitStatus),
                 ),
-                (
-                    "stat_result",
-                    self.heap
-                        .alloc_class(ClassObject::new("stat_result".to_string(), Vec::new())),
-                ),
+                ("stat_result", posix_stat_result_class),
             ],
         );
         let prefix = self
@@ -2239,7 +2260,10 @@ impl Vm {
         );
         self.install_builtin_module(
             "unicodedata",
-            &[("normalize", BuiltinFunction::UnicodedataNormalize)],
+            &[
+                ("normalize", BuiltinFunction::UnicodedataNormalize),
+                ("east_asian_width", BuiltinFunction::UnicodedataEastAsianWidth),
+            ],
             Vec::new(),
         );
         self.install_builtin_module(
@@ -2983,6 +3007,17 @@ impl Vm {
                 ("sub", BuiltinFunction::OperatorSub),
                 ("mul", BuiltinFunction::OperatorMul),
                 ("mod", BuiltinFunction::OperatorMod),
+                ("pow", BuiltinFunction::Pow),
+                ("and_", BuiltinFunction::OperatorAnd),
+                ("or_", BuiltinFunction::OperatorOr),
+                ("xor", BuiltinFunction::OperatorXor),
+                ("lshift", BuiltinFunction::OperatorLShift),
+                ("rshift", BuiltinFunction::OperatorRShift),
+                ("matmul", BuiltinFunction::OperatorMatMul),
+                ("neg", BuiltinFunction::OperatorNeg),
+                ("pos", BuiltinFunction::OperatorPos),
+                ("inv", BuiltinFunction::OperatorInvert),
+                ("invert", BuiltinFunction::OperatorInvert),
                 ("truediv", BuiltinFunction::OperatorTrueDiv),
                 ("floordiv", BuiltinFunction::OperatorFloorDiv),
                 ("index", BuiltinFunction::OperatorIndex),
@@ -3005,6 +3040,21 @@ impl Vm {
             "_operator",
             &[("_compare_digest", BuiltinFunction::OperatorCompareDigest)],
             Vec::new(),
+        );
+        let mmap_type = self
+            .heap
+            .alloc_class(ClassObject::new("mmap".to_string(), Vec::new()));
+        self.install_builtin_module(
+            "mmap",
+            &[],
+            vec![
+                ("mmap", mmap_type),
+                ("ACCESS_READ", Value::Int(1)),
+                ("ACCESS_WRITE", Value::Int(2)),
+                ("ACCESS_COPY", Value::Int(3)),
+                ("PAGESIZE", Value::Int(4096)),
+                ("ALLOCATIONGRANULARITY", Value::Int(4096)),
+            ],
         );
         self.install_builtin_module(
             "_string",
@@ -3751,18 +3801,15 @@ impl Vm {
                 ),
                 (
                     "GeneratorType",
-                    self.heap
-                        .alloc_class(ClassObject::new("generator".to_string(), Vec::new())),
+                    Value::Builtin(BuiltinFunction::GeneratorType),
                 ),
                 (
                     "CoroutineType",
-                    self.heap
-                        .alloc_class(ClassObject::new("coroutine".to_string(), Vec::new())),
+                    Value::Builtin(BuiltinFunction::CoroutineType),
                 ),
                 (
                     "AsyncGeneratorType",
-                    self.heap
-                        .alloc_class(ClassObject::new("async_generator".to_string(), Vec::new())),
+                    Value::Builtin(BuiltinFunction::AsyncGeneratorType),
                 ),
                 (
                     "WrapperDescriptorType",
@@ -4811,6 +4858,10 @@ impl Vm {
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::InspectParameterInit),
+            );
+            class_data.attrs.insert(
+                "replace".to_string(),
+                Value::Builtin(BuiltinFunction::InspectParameterReplace),
             );
             class_data
                 .attrs
@@ -6285,8 +6336,16 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::DateTimeFromTimestamp),
             );
             class_data.attrs.insert(
+                "fromisocalendar".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeFromIsoCalendar),
+            );
+            class_data.attrs.insert(
                 "astimezone".to_string(),
                 Value::Builtin(BuiltinFunction::DateTimeAstimezone),
+            );
+            class_data.attrs.insert(
+                "replace".to_string(),
+                Value::Builtin(BuiltinFunction::DateTimeReplace),
             );
             class_data.attrs.insert(
                 "strftime".to_string(),
@@ -6324,6 +6383,14 @@ impl Vm {
             class_data.attrs.insert(
                 "today".to_string(),
                 Value::Builtin(BuiltinFunction::DateToday),
+            );
+            class_data.attrs.insert(
+                "fromisocalendar".to_string(),
+                Value::Builtin(BuiltinFunction::DateFromIsoCalendar),
+            );
+            class_data.attrs.insert(
+                "replace".to_string(),
+                Value::Builtin(BuiltinFunction::DateReplace),
             );
             class_data.attrs.insert(
                 "strftime".to_string(),
@@ -6370,6 +6437,10 @@ impl Vm {
             class_data.attrs.insert(
                 "__init__".to_string(),
                 Value::Builtin(BuiltinFunction::TimeInit),
+            );
+            class_data.attrs.insert(
+                "replace".to_string(),
+                Value::Builtin(BuiltinFunction::TimeReplace),
             );
         }
         let tzinfo_class = match self
@@ -7331,26 +7402,43 @@ impl Vm {
             eprintln!("[module-load] {name}");
         }
         if let Some(module) = self.modules.get(name).cloned() {
-            return Ok(module);
-        }
-
-        if let Some((parent, _)) = name.rsplit_once('.')
-            && !self.modules.contains_key(parent)
-        {
-            let parent_caller_depth = self.frames.len();
-            let _ = self.load_module(parent)?;
-            self.run_pending_import_frames(parent_caller_depth)?;
-            // Parent package initialization may import this child module as a side effect.
-            // Re-check caches before creating/executing the module a second time.
-            if let Some(module) = self.modules.get(name).cloned() {
+            if !self.module_requires_realization(name, &module) {
                 return Ok(module);
             }
-            if let Some(modules_dict) = self.sys_dict_obj("modules")
-                && let Some(Value::Module(module)) =
-                    dict_get_value(&modules_dict, &Value::Str(name.to_string()))
-            {
-                self.modules.insert(name.to_string(), module.clone());
-                return Ok(module);
+            self.remove_module_entry_and_parent_binding(name);
+        }
+
+        if let Some((parent, _)) = name.rsplit_once('.') {
+            let parent_needs_load = self
+                .modules
+                .get(parent)
+                .cloned()
+                .is_none_or(|parent_module| {
+                    self.module_requires_realization(parent, &parent_module)
+                });
+            if parent_needs_load {
+                let parent_caller_depth = self.frames.len();
+                let _ = self.load_module(parent)?;
+                self.run_pending_import_frames(parent_caller_depth)?;
+                if self
+                    .modules
+                    .get(parent)
+                    .is_some_and(Self::module_is_initializing)
+                {
+                    self.run_pending_import_frames_force(parent_caller_depth)?;
+                }
+                // Parent package initialization may import this child module as a side effect.
+                // Re-check caches before creating/executing the module a second time.
+                if let Some(module) = self.modules.get(name).cloned() {
+                    return Ok(module);
+                }
+                if let Some(modules_dict) = self.sys_dict_obj("modules")
+                    && let Some(Value::Module(module)) =
+                        dict_get_value(&modules_dict, &Value::Str(name.to_string()))
+                {
+                    self.modules.insert(name.to_string(), module.clone());
+                    return Ok(module);
+                }
             }
         }
 
@@ -8329,8 +8417,14 @@ impl Vm {
                         name
                     )));
                 }
-                Some(_) => {
+                Some(value) => {
                     present_in_sys_modules = true;
+                    if let Some(module) =
+                        self.coerce_sys_modules_entry_to_module(name, &value, &modules_dict)
+                    {
+                        self.modules.insert(name.to_string(), module.clone());
+                        return self.return_imported_module(module, caller_depth);
+                    }
                 }
                 None => {}
             }
@@ -8367,6 +8461,9 @@ impl Vm {
                 }
                 return self.return_imported_module(module, caller_depth);
             }
+        }
+        if let Some(module) = self.import_module_via_meta_path(name, caller_depth)? {
+            return Ok(module);
         }
         match self.load_module(name) {
             Ok(module) => match self.return_imported_module(module, caller_depth) {
@@ -8486,8 +8583,258 @@ impl Vm {
             .collect();
         for name in failed_new_modules {
             self.remove_module_entry_and_parent_binding(&name);
+            self.extension_init_failures.remove(&name);
         }
+        self.extension_init_failures.remove(failed_name);
         self.cleanup_partial_modules(existing_modules);
+    }
+
+    fn module_requires_realization(&mut self, name: &str, module: &ObjRef) -> bool {
+        if Self::module_is_initializing(module) {
+            return false;
+        }
+        if Self::module_loader_name(module).is_some() {
+            return false;
+        }
+        self.find_module_source(name).is_some()
+    }
+
+    fn coerce_sys_modules_entry_to_module(
+        &mut self,
+        name: &str,
+        value: &Value,
+        modules_dict: &ObjRef,
+    ) -> Option<ObjRef> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let (class, instance_attrs) = match &*instance.kind() {
+            Object::Instance(instance_data) => {
+                (instance_data.class.clone(), instance_data.attrs.clone())
+            }
+            _ => return None,
+        };
+        if !self.class_has_builtin_module_base(&class) {
+            return None;
+        }
+        let class_attrs = match &*class.kind() {
+            Object::Class(class_data) => class_data.attrs.clone(),
+            _ => HashMap::new(),
+        };
+        let module = self.ensure_module(name);
+        if let Object::Module(module_data) = &mut *module.kind_mut() {
+            for (attr, value) in instance_attrs {
+                module_data.globals.insert(attr, value);
+            }
+            for (attr, value) in class_attrs {
+                if matches!(
+                    attr.as_str(),
+                    "__dict__" | "__weakref__" | "__mro__" | "__bases__" | "__new__" | "__init__"
+                ) {
+                    continue;
+                }
+                module_data.globals.entry(attr).or_insert(value);
+            }
+            module_data
+                .globals
+                .entry("__name__".to_string())
+                .or_insert_with(|| Value::Str(name.to_string()));
+        }
+        dict_set_value(
+            modules_dict,
+            Value::Str(name.to_string()),
+            Value::Module(module.clone()),
+        );
+        Some(module)
+    }
+
+    fn import_module_via_meta_path(
+        &mut self,
+        name: &str,
+        caller_depth: usize,
+    ) -> Result<Option<ObjRef>, RuntimeError> {
+        let trace_meta_path = std::env::var_os("PYRS_TRACE_META_PATH").is_some();
+        let Some(meta_path_obj) = self.sys_list_obj("meta_path") else {
+            return Ok(None);
+        };
+        let finders = match &*meta_path_obj.kind() {
+            Object::List(values) => values.clone(),
+            _ => return Ok(None),
+        };
+        let name_value = Value::Str(name.to_string());
+
+        for finder in finders {
+            if matches_finder_kind(&finder, DEFAULT_META_PATH_FINDER)
+                || matches!(finder, Value::Str(_))
+            {
+                continue;
+            }
+            if trace_meta_path {
+                eprintln!(
+                    "[meta-path] probe name={} finder={}",
+                    name,
+                    self.value_type_name_for_error(&finder)
+                );
+            }
+
+            let find_spec = match self.builtin_getattr(
+                vec![finder.clone(), Value::Str("find_spec".to_string())],
+                HashMap::new(),
+            ) {
+                Ok(callable) => callable,
+                Err(_) => {
+                    if trace_meta_path {
+                        eprintln!("[meta-path] finder has no find_spec");
+                    }
+                    continue;
+                }
+            };
+            let spec = match self.call_internal(
+                find_spec,
+                vec![name_value.clone(), Value::None, Value::None],
+                HashMap::new(),
+            ) {
+                Ok(super::InternalCallOutcome::Value(value)) => value,
+                Ok(super::InternalCallOutcome::CallerExceptionHandled) => {
+                    if trace_meta_path {
+                        eprintln!("[meta-path] find_spec handled exception");
+                    }
+                    continue;
+                }
+                Err(err) => {
+                    if trace_meta_path {
+                        eprintln!("[meta-path] find_spec error: {}", err.message);
+                    }
+                    continue;
+                }
+            };
+            if matches!(spec, Value::None) {
+                if trace_meta_path {
+                    eprintln!("[meta-path] spec=None");
+                }
+                continue;
+            }
+            if trace_meta_path {
+                eprintln!(
+                    "[meta-path] spec found type={}",
+                    self.value_type_name_for_error(&spec)
+                );
+            }
+
+            let loader = self
+                .builtin_getattr(
+                    vec![spec.clone(), Value::Str("loader".to_string())],
+                    HashMap::new(),
+                )
+                .ok()
+                .filter(|value| !matches!(value, Value::None))
+                .unwrap_or_else(|| finder.clone());
+
+            let create_module = self
+                .builtin_getattr(
+                    vec![loader.clone(), Value::Str("create_module".to_string())],
+                    HashMap::new(),
+                )
+                .ok();
+            let load_module = self
+                .builtin_getattr(
+                    vec![loader.clone(), Value::Str("load_module".to_string())],
+                    HashMap::new(),
+                )
+                .ok();
+            let exec_module = self
+                .builtin_getattr(
+                    vec![loader.clone(), Value::Str("exec_module".to_string())],
+                    HashMap::new(),
+                )
+                .ok();
+
+            let mut created_module: Option<Value> = None;
+            if let Some(create_callable) = create_module {
+                match self.call_internal(create_callable, vec![spec.clone()], HashMap::new()) {
+                    Ok(super::InternalCallOutcome::Value(value)) => {
+                        if !matches!(value, Value::None) {
+                            created_module = Some(value);
+                        }
+                    }
+                    Ok(super::InternalCallOutcome::CallerExceptionHandled) => {
+                        if trace_meta_path {
+                            eprintln!("[meta-path] create_module handled exception");
+                        }
+                        continue;
+                    }
+                    Err(err) => {
+                        if trace_meta_path {
+                            eprintln!("[meta-path] create_module error: {}", err.message);
+                        }
+                        continue;
+                    }
+                }
+            }
+            if created_module.is_none()
+                && let Some(load_callable) = load_module
+            {
+                match self.call_internal(load_callable, vec![name_value.clone()], HashMap::new()) {
+                    Ok(super::InternalCallOutcome::Value(value)) => {
+                        if !matches!(value, Value::None) {
+                            created_module = Some(value);
+                        }
+                    }
+                    Ok(super::InternalCallOutcome::CallerExceptionHandled) => {
+                        if trace_meta_path {
+                            eprintln!("[meta-path] load_module handled exception");
+                        }
+                        continue;
+                    }
+                    Err(err) => {
+                        if trace_meta_path {
+                            eprintln!("[meta-path] load_module error: {}", err.message);
+                        }
+                        continue;
+                    }
+                }
+            }
+            if let (Some(exec_callable), Some(module_value)) = (exec_module, created_module.clone())
+            {
+                let _ = self.call_internal(exec_callable, vec![module_value], HashMap::new());
+            }
+
+            self.run_pending_import_frames(caller_depth)?;
+            let Some(modules_dict) = self.sys_dict_obj("modules") else {
+                continue;
+            };
+            let key = Value::Str(name.to_string());
+            if let Some(Value::Module(module)) = dict_get_value(&modules_dict, &key) {
+                if trace_meta_path {
+                    eprintln!("[meta-path] sys.modules module hit name={}", name);
+                }
+                self.modules.insert(name.to_string(), module.clone());
+                return Ok(Some(module));
+            }
+            if let Some(entry) = dict_get_value(&modules_dict, &key)
+                && let Some(module) =
+                    self.coerce_sys_modules_entry_to_module(name, &entry, &modules_dict)
+            {
+                if trace_meta_path {
+                    eprintln!("[meta-path] sys.modules coerced module hit name={}", name);
+                }
+                self.modules.insert(name.to_string(), module.clone());
+                return Ok(Some(module));
+            }
+            if let Some(Value::Module(module)) = created_module {
+                if trace_meta_path {
+                    eprintln!("[meta-path] created-module hit name={}", name);
+                }
+                dict_set_value(
+                    &modules_dict,
+                    Value::Str(name.to_string()),
+                    Value::Module(module.clone()),
+                );
+                self.modules.insert(name.to_string(), module.clone());
+                return Ok(Some(module));
+            }
+        }
+        Ok(None)
     }
 
     pub(super) fn cleanup_partial_modules(&mut self, existing_modules: &HashSet<String>) {

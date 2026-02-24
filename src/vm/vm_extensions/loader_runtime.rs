@@ -18,7 +18,7 @@ use super::{
     ExtensionCallableKind, ExtensionInitScopeGuard, ModuleCapiContext, ObjRef, PYRS_DATETIME_CAPI,
     PYRS_DATETIME_CAPSULE_NAME, PYRS_DATETIME_DATE_TYPE, PYRS_DATETIME_DATETIME_TYPE,
     PYRS_DATETIME_DELTA_TYPE, PYRS_DATETIME_TIME_TYPE, PYRS_DATETIME_TZINFO_TYPE, Vm,
-    c_name_to_string, initialize_datetime_capi_types,
+    c_name_to_string, initialize_datetime_capi_types, with_active_cpython_context_mut,
 };
 
 enum ExtensionExecutionPlan {
@@ -37,18 +37,90 @@ impl Vm {
         {
             return;
         }
+        let mut datetime_date_value: Option<Value> = None;
+        let mut datetime_datetime_value: Option<Value> = None;
+        let mut datetime_time_value: Option<Value> = None;
+        let mut datetime_timedelta_value: Option<Value> = None;
+        let mut datetime_tzinfo_value: Option<Value> = None;
+        let mut datetime_timezone_utc_value: Option<Value> = None;
+        if self.import_module("datetime").is_ok()
+            && let Some(module) = self.modules.get("datetime")
+            && let Object::Module(module_data) = &*module.kind()
+        {
+            datetime_date_value = module_data.globals.get("date").cloned();
+            datetime_datetime_value = module_data.globals.get("datetime").cloned();
+            datetime_time_value = module_data.globals.get("time").cloned();
+            datetime_timedelta_value = module_data.globals.get("timedelta").cloned();
+            datetime_tzinfo_value = module_data.globals.get("tzinfo").cloned();
+            datetime_timezone_utc_value = module_data.globals.get("UTC").cloned().or_else(|| {
+                module_data
+                    .globals
+                    .get("timezone")
+                    .and_then(|timezone| match timezone {
+                        Value::Class(class_obj) => match &*class_obj.kind() {
+                            Object::Class(class_data) => class_data.attrs.get("utc").cloned(),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+            });
+        }
+
+        let materialize_cpython_ptr = |value: Option<Value>| -> Option<*mut c_void> {
+            let value = value?;
+            with_active_cpython_context_mut(|context| {
+                let ptr = context.alloc_cpython_ptr_for_value(value);
+                (!ptr.is_null()).then_some(ptr)
+            })
+            .ok()
+            .flatten()
+        };
+
+        let runtime_date_type_ptr = materialize_cpython_ptr(datetime_date_value);
+        let runtime_datetime_type_ptr = materialize_cpython_ptr(datetime_datetime_value);
+        let runtime_time_type_ptr = materialize_cpython_ptr(datetime_time_value);
+        let runtime_timedelta_type_ptr = materialize_cpython_ptr(datetime_timedelta_value);
+        let runtime_tzinfo_type_ptr = materialize_cpython_ptr(datetime_tzinfo_value);
+        let runtime_timezone_utc_ptr = materialize_cpython_ptr(datetime_timezone_utc_value);
         // SAFETY: static capsule storage and exported type/singleton symbols live for
         // process lifetime; registry stores raw pointers as opaque capsule payloads.
         unsafe {
             initialize_datetime_capi_types();
-            PYRS_DATETIME_CAPI.date_type = std::ptr::addr_of_mut!(PYRS_DATETIME_DATE_TYPE).cast();
-            PYRS_DATETIME_CAPI.datetime_type =
-                std::ptr::addr_of_mut!(PYRS_DATETIME_DATETIME_TYPE).cast();
-            PYRS_DATETIME_CAPI.time_type = std::ptr::addr_of_mut!(PYRS_DATETIME_TIME_TYPE).cast();
-            PYRS_DATETIME_CAPI.delta_type = std::ptr::addr_of_mut!(PYRS_DATETIME_DELTA_TYPE).cast();
-            PYRS_DATETIME_CAPI.tzinfo_type =
-                std::ptr::addr_of_mut!(PYRS_DATETIME_TZINFO_TYPE).cast();
-            PYRS_DATETIME_CAPI.timezone_utc = std::ptr::addr_of_mut!(_Py_NoneStruct).cast();
+            PYRS_DATETIME_CAPI.date_type = runtime_date_type_ptr
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(PYRS_DATETIME_DATE_TYPE).cast());
+            PYRS_DATETIME_CAPI.datetime_type = runtime_datetime_type_ptr
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(PYRS_DATETIME_DATETIME_TYPE).cast());
+            PYRS_DATETIME_CAPI.time_type = runtime_time_type_ptr
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(PYRS_DATETIME_TIME_TYPE).cast());
+            PYRS_DATETIME_CAPI.delta_type = runtime_timedelta_type_ptr
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(PYRS_DATETIME_DELTA_TYPE).cast());
+            PYRS_DATETIME_CAPI.tzinfo_type = runtime_tzinfo_type_ptr
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(PYRS_DATETIME_TZINFO_TYPE).cast());
+            PYRS_DATETIME_CAPI.timezone_utc = runtime_timezone_utc_ptr
+                .unwrap_or_else(|| std::ptr::addr_of_mut!(_Py_NoneStruct).cast());
+            if std::env::var_os("PYRS_TRACE_DATETIME_CAPSULE").is_some() {
+                let capi_date = PYRS_DATETIME_CAPI.date_type;
+                let capi_datetime = PYRS_DATETIME_CAPI.datetime_type;
+                let capi_time = PYRS_DATETIME_CAPI.time_type;
+                let capi_timedelta = PYRS_DATETIME_CAPI.delta_type;
+                let capi_tzinfo = PYRS_DATETIME_CAPI.tzinfo_type;
+                let capi_utc = PYRS_DATETIME_CAPI.timezone_utc;
+                eprintln!(
+                    "[datetime-capsule] date={:p} datetime={:p} time={:p} timedelta={:p} tzinfo={:p} utc={:p} runtime_date={:p} runtime_datetime={:p} runtime_time={:p} runtime_timedelta={:p} runtime_tzinfo={:p} runtime_utc={:p}",
+                    capi_date,
+                    capi_datetime,
+                    capi_time,
+                    capi_timedelta,
+                    capi_tzinfo,
+                    capi_utc,
+                    runtime_date_type_ptr.unwrap_or(std::ptr::null_mut()),
+                    runtime_datetime_type_ptr.unwrap_or(std::ptr::null_mut()),
+                    runtime_time_type_ptr.unwrap_or(std::ptr::null_mut()),
+                    runtime_timedelta_type_ptr.unwrap_or(std::ptr::null_mut()),
+                    runtime_tzinfo_type_ptr.unwrap_or(std::ptr::null_mut()),
+                    runtime_timezone_utc_ptr.unwrap_or(std::ptr::null_mut()),
+                );
+            }
             self.extension_capsule_registry.insert(
                 PYRS_DATETIME_CAPSULE_NAME.to_string(),
                 ExtensionCapsuleRegistryEntry {
@@ -208,6 +280,14 @@ impl Vm {
                 self.extension_init_in_progress.contains(module_name)
             );
         }
+        let module_flag_initialized = if let Object::Module(module_data) = &*module.kind() {
+            matches!(
+                module_data.globals.get("__pyrs_extension_initialized__"),
+                Some(Value::Bool(true))
+            )
+        } else {
+            false
+        };
         if self.extension_init_in_progress.contains(module_name) {
             if trace_slots {
                 eprintln!("[ext-load] module={} skip=init_in_progress", module_name);
@@ -215,28 +295,30 @@ impl Vm {
             return Ok(());
         }
         if self.extension_initialized_names.contains(module_name) {
-            if trace_slots {
-                eprintln!("[ext-load] module={} skip=already_initialized", module_name);
+            if !module_flag_initialized {
+                if trace_slots {
+                    eprintln!(
+                        "[ext-load] module={} stale_initialized_flag=1; reinitializing current module object",
+                        module_name
+                    );
+                }
+                self.extension_initialized_names.remove(module_name);
+            } else {
+                if trace_slots {
+                    eprintln!("[ext-load] module={} skip=already_initialized", module_name);
+                }
+                if let Some(existing) = self.modules.get(module_name).cloned()
+                    && existing.id() != module.id()
+                {
+                    // Keep canonical cache authoritative. The caller will resolve through
+                    // `canonical_imported_module_for_name`, so cloning large globals maps into
+                    // transient duplicate module objects is unnecessary churn.
+                    self.modules.insert(module_name.to_string(), existing);
+                }
+                return Ok(());
             }
-            if let Some(existing) = self.modules.get(module_name).cloned()
-                && existing.id() != module.id()
-            {
-                // Keep canonical cache authoritative. The caller will resolve through
-                // `canonical_imported_module_for_name`, so cloning large globals maps into
-                // transient duplicate module objects is unnecessary churn.
-                self.modules.insert(module_name.to_string(), existing);
-            }
-            return Ok(());
         }
-        if let Some(message) = self.extension_init_failures.get(module_name).cloned() {
-            return Err(RuntimeError::new(message));
-        }
-        if let Object::Module(module_data) = &*module.kind()
-            && matches!(
-                module_data.globals.get("__pyrs_extension_initialized__"),
-                Some(Value::Bool(true))
-            )
-        {
+        if module_flag_initialized {
             if trace_slots {
                 eprintln!(
                     "[ext-load] module={} skip=module_flag_initialized",
@@ -244,6 +326,9 @@ impl Vm {
                 );
             }
             return Ok(());
+        }
+        if let Some(message) = self.extension_init_failures.get(module_name).cloned() {
+            return Err(RuntimeError::new(message));
         }
         if let Object::Module(module_data) = &*module.kind()
             && let Some(Value::Str(message)) =
@@ -584,20 +669,21 @@ impl Vm {
                                             .clone()
                                             .or_else(|| module_ctx.first_error.clone())
                                             .unwrap_or_else(|| "Py_mod_exec failed".to_string());
+                                        let mut propagated_error = None;
                                         let detailed_message = if module_ctx.vm.is_null() {
                                             message.clone()
                                         } else {
                                             // SAFETY: module C-API context owns a valid VM pointer
                                             // for the duration of extension initialization.
                                             let vm = unsafe { &mut *module_ctx.vm };
-                                            let detail = vm
-                                                .runtime_error_from_active_exception(&message)
-                                                .message;
-                                            if detail.is_empty() {
+                                            let err = vm.runtime_error_from_active_exception(&message);
+                                            let detail = if err.message.is_empty() {
                                                 message.clone()
                                             } else {
-                                                detail
-                                            }
+                                                err.message.clone()
+                                            };
+                                            propagated_error = Some(err);
+                                            detail
                                         };
                                         let full_error = format!(
                                             "extension '{}' initializer '{}' Py_mod_exec failed: {}",
@@ -651,7 +737,8 @@ impl Vm {
                                                 module_name, detailed_message
                                             );
                                         }
-                                        return Err(RuntimeError::new(full_error));
+                                        return Err(propagated_error
+                                            .unwrap_or_else(|| RuntimeError::new(full_error)));
                                     }
                                 }
                                 // SAFETY: move to next slot entry.

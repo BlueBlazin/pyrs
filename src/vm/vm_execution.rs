@@ -29,6 +29,51 @@ unsafe extern "C" {
     fn PyErr_Clear();
 }
 
+thread_local! {
+    static DEBUG_HANDLE_RUNTIME_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static DEBUG_RAISE_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static DEBUG_UNWIND_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static DEBUG_EXEC_INSTR_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+struct DebugDepthGuard {
+    key: &'static std::thread::LocalKey<Cell<usize>>,
+}
+
+impl DebugDepthGuard {
+    fn enter(
+        key: &'static std::thread::LocalKey<Cell<usize>>,
+        label: &'static str,
+    ) -> Option<Self> {
+        if std::env::var_os("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH").is_none() {
+            return None;
+        }
+        let limit = std::env::var("PYRS_DEBUG_EXCEPTION_UNWIND_DEPTH_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(256);
+        let depth = key.with(|cell| {
+            let next = cell.get().saturating_add(1);
+            cell.set(next);
+            next
+        });
+        if depth > limit {
+            panic!(
+                "exception unwind recursion depth exceeded in {label}: depth={depth} limit={limit}"
+            );
+        }
+        Some(Self { key })
+    }
+}
+
+impl Drop for DebugDepthGuard {
+    fn drop(&mut self) {
+        self.key.with(|cell| {
+            cell.set(cell.get().saturating_sub(1));
+        });
+    }
+}
+
 impl Vm {
     #[inline]
     fn write_fast_local_slot(slot: &mut Option<Value>, value: Value) {
@@ -805,6 +850,9 @@ impl Vm {
                 self.maybe_gc_collect_automatic();
             }
             if !self.pending_del_instances.is_empty() || !self.weakref_finalizers.is_empty() {
+                if std::env::var_os("PYRS_DISABLE_PENDING_FINALIZERS").is_some() {
+                    continue;
+                }
                 // Keep __del__ suppressed only while an active exception is being processed.
                 // Refcount-style cleanup in CPython can happen while ordinary operands are live,
                 // and several stdlib paths (tempfile/shutil) rely on that eagerness.
@@ -822,6 +870,8 @@ impl Vm {
 
     #[inline]
     fn execute_instruction(&mut self, instr: Instruction) -> Result<Option<Value>, RuntimeError> {
+        let _debug_depth_guard =
+            DebugDepthGuard::enter(&DEBUG_EXEC_INSTR_DEPTH, "execute_instruction");
         match instr.opcode {
             Opcode::Nop => {}
             Opcode::MakeCell => {
@@ -1813,16 +1863,16 @@ impl Vm {
                         Value::Bool(value) => {
                             self.load_attr_int_method(Value::Bool(value), &attr_name)?
                         }
-                        Value::Float(_) => {
-                            if attr_name == "__doc__" {
-                                Value::None
-                            } else {
+                        Value::Float(value) => match attr_name.as_str() {
+                            "real" => Value::Float(value),
+                            "imag" => Value::Float(0.0),
+                            _ => {
                                 return Err(RuntimeError::attribute_error(format!(
-                                    "float has no attribute '{}'",
+                                    "'float' object has no attribute '{}'",
                                     attr_name
                                 )));
                             }
-                        }
+                        },
                         Value::Complex { real, imag } => match attr_name.as_str() {
                             "__reduce_ex__" | "__reduce__" => {
                                 let wrapper = match self.heap.alloc_module(ModuleObject::new(
@@ -2323,6 +2373,7 @@ impl Vm {
                         }
                     }
                     Value::Class(class) => {
+                        self.attach_owner_class_to_value(&value, &class);
                         if let Object::Class(class_data) = &mut *class.kind_mut() {
                             class_data.attrs.insert(attr_name, value);
                         }
@@ -2393,6 +2444,7 @@ impl Vm {
                         }
                     }
                     Value::Class(class) => {
+                        self.attach_owner_class_to_value(&value, &class);
                         if let Object::Class(class_data) = &mut *class.kind_mut() {
                             class_data.attrs.insert(attr_name, value);
                         }
@@ -2571,6 +2623,12 @@ impl Vm {
                     .expect("frame exists")
                     .stack
                     .push(value);
+            }
+            Opcode::InplaceAdd => {
+                let right = self.pop_value()?;
+                let left = self.pop_value()?;
+                let value = self.binary_inplace_add_runtime(left, right)?;
+                self.push_value(value);
             }
             Opcode::BinarySub => {
                 let (left, right) = {
@@ -3255,8 +3313,15 @@ impl Vm {
                 let packed = instr
                     .arg
                     .ok_or_else(|| RuntimeError::new("missing unpack sizes"))?;
-                let before = (packed & 0xFFFF) as usize;
-                let after = (packed >> 16) as usize;
+                let (before, after) = if cpython_unpack {
+                    // CPython oparg packs counts as:
+                    //   low byte = mandatory values before star target
+                    //   high bytes = mandatory values after star target
+                    ((packed & 0xFF) as usize, (packed >> 8) as usize)
+                } else {
+                    // pyrs source compiler uses a wider local packing.
+                    ((packed & 0xFFFF) as usize, (packed >> 16) as usize)
+                };
                 let value = self.pop_value()?;
                 match value {
                     Value::List(obj) => {
@@ -4640,6 +4705,20 @@ impl Vm {
                         AttrAccessOutcome::Value(value) => value,
                         AttrAccessOutcome::ExceptionHandled => return Ok(None),
                     };
+                    if std::env::var_os("PYRS_TRACE_PREPARE_CALL").is_some() {
+                        let callable_type = self.value_type_name_for_error(&prepare_callable);
+                        let callable_repr = format_repr(&prepare_callable);
+                        eprintln!(
+                            "[prepare-call] class={} meta={} callable_type={} callable={}",
+                            class_name,
+                            match &*meta_class.kind() {
+                                Object::Class(data) => data.name.clone(),
+                                _ => "<non-class>".to_string(),
+                            },
+                            callable_type,
+                            callable_repr
+                        );
+                    }
                     let bases_tuple = self.heap.alloc_tuple(
                         base_classes
                             .iter()
@@ -7054,6 +7133,7 @@ impl Vm {
     }
 
     pub(super) fn raise_exception(&mut self, value: Value) -> Result<(), RuntimeError> {
+        let _debug_depth_guard = DebugDepthGuard::enter(&DEBUG_RAISE_DEPTH, "raise_exception");
         self.raise_exception_with_cause(value, None)
     }
 
@@ -7319,6 +7399,7 @@ impl Vm {
         mut exc: Value,
         preserve_existing_traceback: bool,
     ) -> Result<(), RuntimeError> {
+        let _debug_depth_guard = DebugDepthGuard::enter(&DEBUG_UNWIND_DEPTH, "unwind_exception");
         let mut traceback = Self::existing_traceback_frames(&exc);
         let mut skip_current_frame_trace = preserve_existing_traceback && !traceback.is_empty();
         loop {
@@ -7531,6 +7612,8 @@ impl Vm {
     }
 
     pub(super) fn handle_runtime_error(&mut self, err: RuntimeError) -> Result<(), RuntimeError> {
+        let _debug_depth_guard =
+            DebugDepthGuard::enter(&DEBUG_HANDLE_RUNTIME_DEPTH, "handle_runtime_error");
         if self.frames.is_empty() {
             return Err(err);
         }
@@ -7580,12 +7663,33 @@ impl Vm {
                 .last()
                 .map(|frame| frame.blocks.len())
                 .unwrap_or(0);
+            let stack = self
+                .frames
+                .iter()
+                .rev()
+                .take(8)
+                .map(|frame| {
+                    let line = frame
+                        .code
+                        .locations
+                        .get(frame.last_ip)
+                        .map(|loc| loc.line)
+                        .unwrap_or(0);
+                    format!("{}:{}@{}", frame.code.name, line, frame.code.filename)
+                })
+                .collect::<Vec<_>>()
+                .join(" <- ");
             eprintln!("[handle-runtime] msg={}", message);
             eprintln!("[handle-runtime] active={}", active);
             eprintln!(
-                "[handle-runtime] file={} fn={} ip={} opcode={} handler={handler:?} blocks={block_len}",
-                file, function_name, last_ip, opcode_name,
+                "[handle-runtime] file={} fn={} ip={} opcode={} handler={handler:?} blocks={block_len} frames={}",
+                file,
+                function_name,
+                last_ip,
+                opcode_name,
+                self.frames.len(),
             );
+            eprintln!("[handle-runtime] stack={stack}");
         }
         if let Some(exception) = exception {
             let exception = *exception;
@@ -8744,6 +8848,19 @@ impl Vm {
     pub(super) fn attach_owner_class_to_value(&mut self, value: &Value, owner: &ObjRef) {
         match value {
             Value::Function(func) => self.set_function_owner_class(func, owner),
+            Value::Instance(instance) => {
+                if let Some((fget, fset, fdel, _doc, _explicit_name)) =
+                    self.property_descriptor_parts(instance)
+                {
+                    self.attach_owner_class_to_value(&fget, owner);
+                    self.attach_owner_class_to_value(&fset, owner);
+                    self.attach_owner_class_to_value(&fdel, owner);
+                }
+                if let Some((func, _attr_name, _doc)) = self.cached_property_descriptor_parts(instance)
+                {
+                    self.attach_owner_class_to_value(&func, owner);
+                }
+            }
             Value::Module(module) => {
                 let Object::Module(module_data) = &*module.kind() else {
                     return;
@@ -8760,12 +8877,55 @@ impl Vm {
 
     pub(super) fn set_function_owner_class(&mut self, func: &ObjRef, owner: &ObjRef) {
         if let Object::Function(func_data) = &mut *func.kind_mut() {
-            func_data.owner_class = Some(owner.clone());
+            if func_data.owner_class.is_none() {
+                func_data.owner_class = Some(owner.clone());
+            }
         }
     }
 
     pub(super) fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
-        fn collect_mro_entries(vm: &Vm, class: &ObjRef, seen: &mut HashSet<u64>) -> Vec<ObjRef> {
+        fn seen_insert_class(vm: &Vm, class: &ObjRef, seen: &mut HashSet<u64>) -> bool {
+            if !seen.insert(class.id()) {
+                return false;
+            }
+            if let Some(proxy_ptr) =
+                Vm::cpython_proxy_raw_ptr_from_value(&Value::Class(class.clone()))
+            {
+                let proxy_key = proxy_ptr as usize as u64;
+                seen.insert(proxy_key | (1u64 << 63));
+            }
+            true
+        }
+
+        fn seen_contains_class(vm: &Vm, class: &ObjRef, seen: &HashSet<u64>) -> bool {
+            if seen.contains(&class.id()) {
+                return true;
+            }
+            if let Some(proxy_ptr) =
+                Vm::cpython_proxy_raw_ptr_from_value(&Value::Class(class.clone()))
+            {
+                let proxy_key = proxy_ptr as usize as u64;
+                return seen.contains(&(proxy_key | (1u64 << 63)));
+            }
+            false
+        }
+
+        fn collect_mro_entries(
+            vm: &Vm,
+            class: &ObjRef,
+            seen: &mut HashSet<u64>,
+            depth: usize,
+        ) -> Vec<ObjRef> {
+            if std::env::var_os("PYRS_DEBUG_MRO_DEPTH").is_some() && depth > 256 {
+                let class_name = match &*class.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "<non-class>".to_string(),
+                };
+                panic!(
+                    "class_mro_entries recursion depth exceeded: depth={depth} class={class_name} id={}",
+                    class.id()
+                );
+            }
             let class_kind = class.kind();
             let Object::Class(class_data) = &*class_kind else {
                 return Vec::new();
@@ -8773,19 +8933,27 @@ impl Vm {
             if !class_data.mro.is_empty() {
                 let mut entries = Vec::new();
                 for entry in &class_data.mro {
-                    if seen.insert(entry.id()) {
+                    if !seen_contains_class(vm, entry, seen) && seen_insert_class(vm, entry, seen) {
                         entries.push(entry.clone());
                     }
                 }
                 return entries;
             }
-            if !seen.insert(class.id()) {
+            if !seen_insert_class(vm, class, seen) {
                 return Vec::new();
             }
             let mut entries = vec![class.clone()];
             for base in &class_data.bases {
-                for candidate in collect_mro_entries(vm, base, seen) {
-                    if !entries.iter().any(|entry| entry.id() == candidate.id()) {
+                for candidate in collect_mro_entries(vm, base, seen, depth.saturating_add(1)) {
+                    let duplicate = entries.iter().any(|entry| {
+                        entry.id() == candidate.id()
+                            || (Vm::cpython_proxy_raw_ptr_from_value(&Value::Class(entry.clone()))
+                                .zip(Vm::cpython_proxy_raw_ptr_from_value(&Value::Class(
+                                    candidate.clone(),
+                                )))
+                                .is_some_and(|(left, right)| left == right))
+                    });
+                    if !duplicate {
                         entries.push(candidate);
                     }
                 }
@@ -8794,7 +8962,7 @@ impl Vm {
         }
 
         let mut seen: HashSet<u64> = HashSet::new();
-        let mut entries = collect_mro_entries(self, class, &mut seen);
+        let mut entries = collect_mro_entries(self, class, &mut seen, 0);
         if let Some(object_idx) = entries.iter().position(|entry| {
             matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "object")
         })
@@ -11495,7 +11663,47 @@ impl Vm {
                 Object::Function(data) => data,
                 _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
-            bind_arguments(func_data, &self.heap, args, kwargs)?
+            match bind_arguments(func_data, &self.heap, args, kwargs) {
+                Ok(bindings) => bindings,
+                Err(err) => {
+                    if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
+                        && err.message.contains("argument count mismatch")
+                    {
+                        let stack = self
+                            .frames
+                            .iter()
+                            .rev()
+                            .take(12)
+                            .map(|frame| {
+                                format!(
+                                    "{}@{}:{}",
+                                    frame.code.name,
+                                    frame.code.filename,
+                                    frame
+                                        .code
+                                        .locations
+                                        .get(frame.last_ip)
+                                        .map(|loc| loc.line)
+                                        .unwrap_or(0)
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" <- ");
+                        eprintln!(
+                            "[bind-args-stack] failing_fn={} file={} stack={}",
+                            func_data.code.name, func_data.code.filename, stack
+                        );
+                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some() {
+                            eprintln!(
+                                "[bind-args-bt] failing_fn={} bt={}",
+                                func_data.code.name,
+                                std::backtrace::Backtrace::force_capture()
+                            );
+                        }
+                    }
+                    return Err(err);
+                }
+            }
         };
         let cells = if code.cellvars.is_empty() && closure.is_empty() {
             Vec::new()
@@ -11997,6 +12205,7 @@ impl Vm {
                 self.store_attr_function(function, attr_name.to_string(), value)
             }
             Value::Class(class) => {
+                self.attach_owner_class_to_value(&value, class);
                 if let Object::Class(class_data) = &mut *class.kind_mut() {
                     class_data.attrs.insert(attr_name.to_string(), value);
                 }
@@ -12654,3 +12863,4 @@ fn should_suppress_explicit_raise_caret(
     let expr_end = expr_start + raised_expr_head.chars().count();
     start >= expr_start && start < expr_end
 }
+use std::cell::Cell;

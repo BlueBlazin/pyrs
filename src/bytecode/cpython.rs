@@ -848,7 +848,7 @@ impl<'a> Translator<'a> {
 
     fn map_inplace_binary_op(&self, idx: usize, name: &str) -> Result<Instruction, CpythonError> {
         let instr = if name.contains("ADD") {
-            Instruction::new(Opcode::BinaryAdd, None)
+            Instruction::new(Opcode::InplaceAdd, None)
         } else if name.contains("AND") {
             Instruction::new(Opcode::BinaryAnd, None)
         } else if name.contains("SUBTRACT") {
@@ -897,7 +897,7 @@ impl<'a> Translator<'a> {
             10 => Ok(Instruction::new(Opcode::BinarySub, None)),
             11 => Ok(Instruction::new(Opcode::BinaryDiv, None)),
             12 => Ok(Instruction::new(Opcode::BinaryXor, None)),
-            13 => Ok(Instruction::new(Opcode::BinaryAdd, None)),
+            13 => Ok(Instruction::new(Opcode::InplaceAdd, None)),
             14 => Ok(Instruction::new(Opcode::BinaryAnd, None)),
             15 => Ok(Instruction::new(Opcode::BinaryFloorDiv, None)),
             16 => Ok(Instruction::new(Opcode::BinaryLShift, None)),

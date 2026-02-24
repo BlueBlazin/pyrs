@@ -126,6 +126,21 @@ pub unsafe extern "C" fn PyCapsule_New(
     name: *const c_char,
     destructor: Option<unsafe extern "C" fn(*mut c_void)>,
 ) -> *mut c_void {
+    if std::env::var_os("PYRS_TRACE_CPY_CAPSULE_IMPORT").is_some() {
+        let name_text = if name.is_null() {
+            "<null>".to_string()
+        } else {
+            // SAFETY: capsule name pointer is expected to be NUL-terminated.
+            unsafe { CStr::from_ptr(name) }
+                .to_str()
+                .map(|text| text.to_string())
+                .unwrap_or_else(|_| "<invalid>".to_string())
+        };
+        eprintln!(
+            "[capsule-new] name={} pointer={:p} destructor={:?}",
+            name_text, pointer, destructor
+        );
+    }
     if std::env::var_os("PYRS_TRACE_PYBIND11_ATTRS").is_some() && !name.is_null() {
         // SAFETY: capsule name pointer is expected to be NUL-terminated.
         let name_text = unsafe { CStr::from_ptr(name) }

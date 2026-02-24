@@ -6544,7 +6544,7 @@ enum ReAtom {
     Any,
     Class(ReCharClass),
     Group {
-        tokens: Vec<ReToken>,
+        branches: Vec<Vec<ReToken>>,
         capture: Option<usize>,
     },
 }
@@ -6559,7 +6559,7 @@ struct ReToken {
 struct ParsedSimpleRegex {
     start_anchor: bool,
     end_anchor: bool,
-    tokens: Vec<ReToken>,
+    branches: Vec<Vec<ReToken>>,
     capture_count: usize,
 }
 
@@ -6736,10 +6736,16 @@ fn parse_simple_regex_sequence(
     let mut tokens = Vec::new();
     while *idx < chars.len() {
         if chars[*idx] == '|' {
-            // Alternation requires a full regex engine; fall back.
-            return None;
+            break;
         }
         if !stop_on_group_end && chars[*idx] == '$' && *idx + 1 == chars.len() {
+            break;
+        }
+        if !stop_on_group_end
+            && chars[*idx] == '\\'
+            && *idx + 2 == chars.len()
+            && chars[*idx + 1] == 'Z'
+        {
             break;
         }
         if chars[*idx] == ')' {
@@ -6774,13 +6780,13 @@ fn parse_simple_regex_sequence(
                 *capture_count += 1;
                 capture = Some(*capture_count);
             }
-            let inner = parse_simple_regex_sequence(chars, idx, capture_count, true)?;
+            let inner = parse_simple_regex_branches(chars, idx, capture_count, true)?;
             if *idx >= chars.len() || chars[*idx] != ')' {
                 return None;
             }
             *idx += 1;
             ReAtom::Group {
-                tokens: inner,
+                branches: inner,
                 capture,
             }
         } else {
@@ -6812,19 +6818,44 @@ fn parse_simple_regex_sequence(
     Some(tokens)
 }
 
+fn parse_simple_regex_branches(
+    chars: &[char],
+    idx: &mut usize,
+    capture_count: &mut usize,
+    stop_on_group_end: bool,
+) -> Option<Vec<Vec<ReToken>>> {
+    let mut branches = Vec::new();
+    loop {
+        let sequence = parse_simple_regex_sequence(chars, idx, capture_count, stop_on_group_end)?;
+        branches.push(sequence);
+        if *idx < chars.len() && chars[*idx] == '|' {
+            *idx += 1;
+            continue;
+        }
+        break;
+    }
+    Some(branches)
+}
+
 fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut idx = 0usize;
     let mut start_anchor = false;
     let mut end_anchor = false;
-    if idx < chars.len() && chars[idx] == '^' {
+    if idx + 1 < chars.len() && chars[idx] == '\\' && chars[idx + 1] == 'A' {
+        start_anchor = true;
+        idx += 2;
+    } else if idx < chars.len() && chars[idx] == '^' {
         start_anchor = true;
         idx += 1;
     }
 
     let mut capture_count = 0usize;
-    let tokens = parse_simple_regex_sequence(&chars, &mut idx, &mut capture_count, false)?;
-    if idx < chars.len() && chars[idx] == '$' && idx + 1 == chars.len() {
+    let branches = parse_simple_regex_branches(&chars, &mut idx, &mut capture_count, false)?;
+    if idx + 1 < chars.len() && chars[idx] == '\\' && chars[idx + 1] == 'Z' && idx + 2 == chars.len() {
+        end_anchor = true;
+        idx += 2;
+    } else if idx < chars.len() && chars[idx] == '$' && idx + 1 == chars.len() {
         end_anchor = true;
         idx += 1;
     }
@@ -6834,7 +6865,7 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
     Some(ParsedSimpleRegex {
         start_anchor,
         end_anchor,
-        tokens,
+        branches,
         capture_count,
     })
 }
@@ -7079,15 +7110,21 @@ fn match_simple_regex_tokens(
                 }
                 Some((char_idx + 1, state.clone()))
             }
-            ReAtom::Group { tokens, capture } => {
-                let (end, mut next_state) =
-                    match_simple_regex_tokens(tokens, chars, 0, char_idx, false, state.clone())?;
-                if let Some(index) = capture
-                    && let Some(slot) = next_state.captures.get_mut(index - 1)
-                {
-                    *slot = Some((char_idx, end));
+            ReAtom::Group { branches, capture } => {
+                for branch in branches {
+                    let Some((end, mut next_state)) =
+                        match_simple_regex_tokens(branch, chars, 0, char_idx, false, state.clone())
+                    else {
+                        continue;
+                    };
+                    if let Some(index) = capture
+                        && let Some(slot) = next_state.captures.get_mut(index - 1)
+                    {
+                        *slot = Some((char_idx, end));
+                    }
+                    return Some((end, next_state));
                 }
-                Some((end, next_state))
+                None
             }
         }
     }
@@ -7214,26 +7251,28 @@ fn simple_regex_match_details(pattern: &str, text: &str, mode: ReMode) -> Option
         if parsed.start_anchor && start != 0 {
             continue;
         }
-        let state = ReMatchState {
-            captures: vec![None; parsed.capture_count],
-        };
-        if let Some((end, state)) =
-            match_simple_regex_tokens(&parsed.tokens, &chars, 0, start, require_end, state)
-        {
-            let captures = state
-                .captures
-                .into_iter()
-                .map(|capture| {
-                    capture.map(|(capture_start, capture_end)| {
-                        (byte_offsets[capture_start], byte_offsets[capture_end])
+        for branch in &parsed.branches {
+            let state = ReMatchState {
+                captures: vec![None; parsed.capture_count],
+            };
+            if let Some((end, state)) =
+                match_simple_regex_tokens(branch, &chars, 0, start, require_end, state)
+            {
+                let captures = state
+                    .captures
+                    .into_iter()
+                    .map(|capture| {
+                        capture.map(|(capture_start, capture_end)| {
+                            (byte_offsets[capture_start], byte_offsets[capture_end])
+                        })
                     })
-                })
-                .collect();
-            return Some(ReMatchDetail {
-                start: byte_offsets[start],
-                end: byte_offsets[end],
-                captures,
-            });
+                    .collect();
+                return Some(ReMatchDetail {
+                    start: byte_offsets[start],
+                    end: byte_offsets[end],
+                    captures,
+                });
+            }
         }
     }
     None
@@ -9487,7 +9526,50 @@ fn class_attr_lookup_direct(class: &ObjRef, name: &str) -> Option<Value> {
 }
 
 fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
-    fn walk_recursive(class: &ObjRef, out: &mut Vec<ObjRef>, seen: &mut HashSet<u64>) {
+    fn proxy_seen_key(class: &ObjRef) -> Option<u64> {
+        let class_kind = class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return None;
+        };
+        match class_data.attrs.get("__pyrs_cpython_proxy_ptr__") {
+            Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => {
+                Some((*raw_ptr as u64) | (1u64 << 63))
+            }
+            _ => None,
+        }
+    }
+
+    fn seen_contains_class(class: &ObjRef, seen: &HashSet<u64>) -> bool {
+        if seen.contains(&class.id()) {
+            return true;
+        }
+        proxy_seen_key(class).is_some_and(|key| seen.contains(&key))
+    }
+
+    fn seen_insert_class(class: &ObjRef, seen: &mut HashSet<u64>) -> bool {
+        let mut inserted = seen.insert(class.id());
+        if let Some(proxy_key) = proxy_seen_key(class) {
+            inserted = seen.insert(proxy_key) || inserted;
+        }
+        inserted
+    }
+
+    fn walk_recursive(
+        class: &ObjRef,
+        out: &mut Vec<ObjRef>,
+        seen: &mut HashSet<u64>,
+        depth: usize,
+    ) {
+        if std::env::var_os("PYRS_DEBUG_CLASS_ATTR_WALK_DEPTH").is_some() && depth > 256 {
+            let class_name = match &*class.kind() {
+                Object::Class(class_data) => class_data.name.clone(),
+                _ => "<non-class>".to_string(),
+            };
+            panic!(
+                "class_attr_walk recursion depth exceeded: depth={depth} class={class_name} id={}",
+                class.id()
+            );
+        }
         let class_kind = class.kind();
         let class_data = match &*class_kind {
             Object::Class(class_data) => class_data,
@@ -9504,24 +9586,24 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
                 mro.push(object_entry);
             }
             for entry in mro {
-                if seen.insert(entry.id()) {
+                if !seen_contains_class(&entry, seen) && seen_insert_class(&entry, seen) {
                     out.push(entry);
                 }
             }
             return;
         }
-        if !seen.insert(class.id()) {
+        if !seen_insert_class(class, seen) {
             return;
         }
         out.push(class.clone());
         for base in &class_data.bases {
-            walk_recursive(base, out, seen);
+            walk_recursive(base, out, seen, depth.saturating_add(1));
         }
     }
 
     let mut out = Vec::new();
     let mut seen: HashSet<u64> = HashSet::new();
-    walk_recursive(class, &mut out, &mut seen);
+    walk_recursive(class, &mut out, &mut seen, 0);
     out
 }
 

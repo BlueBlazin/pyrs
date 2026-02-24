@@ -817,7 +817,7 @@ fn cpython_compat_varargs_parse_and_call_helpers_work() {
     let source_path = temp_root.join("cpython_varargs_probe.c");
     fs::write(
         &source_path,
-        r#"#include "pyrs_cpython_compat.h"
+        r##"#include "pyrs_cpython_compat.h"
 extern int PyDict_SetItemString(PyObject *dict, const char *key, PyObject *value);
 
 static struct PyModuleDef module_def = {
@@ -900,7 +900,7 @@ PyInit_cpython_varargs_probe(void) {
 
     return module;
 }
-"#,
+"##,
     )
     .expect("source should be written");
 
@@ -1737,6 +1737,89 @@ PyInit_cpython_api_batch4_probe(void) {
         "import cpython_api_batch4_probe as m\nassert m.MODULES_DICT_OK == 1\nassert m.ADD_REF_OK == 1\nassert m.ADD_OBJ_OK == 1\nassert m.ADD_LEGACY_OK == 1\nassert m.GET_MODULE_OK == 1\nassert m.MISSING_RETURNS_NULL == 1\nassert m.MISSING_NO_ERROR == 1\nassert m.IMPORT_NOBLOCK_OK == 1\nassert m.IMPORT_LEVEL_OK == 1\nassert m.IMPORT_LEVEL_OBJECT_OK == 1\nassert m.RELOAD_OK == 1",
     )
     .expect("cpython api batch4 extension import should succeed");
+
+    let _ = fs::remove_file(library_path);
+    let _ = fs::remove_file(source_path);
+    let _ = fs::remove_dir_all(temp_root);
+}
+
+#[test]
+fn cpython_compat_import_missing_module_sets_error_state() {
+    let Some(bin) = pyrs_bin() else {
+        eprintln!(
+            "skipping cpython import missing-module error-state smoke (pyrs binary not found)"
+        );
+        return;
+    };
+    if !has_c_compiler() {
+        eprintln!("skipping cpython import missing-module error-state smoke (cc not available)");
+        return;
+    }
+
+    let temp_root = unique_temp_dir("ext_smoke_cpython_import_missing_error");
+    fs::create_dir_all(&temp_root).expect("temp dir should be created");
+
+    let source_path = temp_root.join("cpython_import_missing_error_probe.c");
+    fs::write(
+        &source_path,
+        r##"#include "pyrs_cpython_compat.h"
+
+static struct PyModuleDef module_def = {
+    PyModuleDef_HEAD_INIT,
+    "cpython_import_missing_error_probe",
+    0,
+    -1,
+    0,
+    0,
+    0,
+    0,
+    0
+};
+
+PyMODINIT_FUNC
+PyInit_cpython_import_missing_error_probe(void) {
+    PyObject *module = PyModule_Create(&module_def);
+    if (!module) {
+        return 0;
+    }
+
+    PyObject *name = PyUnicode_FromString("pyrs_missing_module_for_error_state_probe");
+    if (!name) {
+        return 0;
+    }
+
+    PyObject *imported = PyImport_ImportModuleLevelObject(name, 0, 0, 0, 0);
+    int import_failed = (imported == 0) ? 1 : 0;
+    int error_is_set = (PyErr_Occurred() != 0) ? 1 : 0;
+    int matches_import_error = PyErr_ExceptionMatches(PyExc_ImportError);
+    PyErr_Clear();
+    int clear_works = (PyErr_Occurred() == 0) ? 1 : 0;
+
+    if (PyModule_AddIntConstant(module, "IMPORT_FAILED", import_failed) != 0 ||
+        PyModule_AddIntConstant(module, "ERROR_IS_SET", error_is_set) != 0 ||
+        PyModule_AddIntConstant(module, "MATCHES_IMPORT_ERROR", matches_import_error) != 0 ||
+        PyModule_AddIntConstant(module, "CLEAR_WORKS", clear_works) != 0) {
+        return 0;
+    }
+
+    return module;
+}
+"##,
+    )
+    .expect("source should be written");
+
+    let library_path = temp_root.join(importable_module_library_filename(
+        "cpython_import_missing_error_probe",
+    ));
+    compile_shared_extension_with_cpython_compat(&source_path, &library_path)
+        .expect("import missing error probe extension should build");
+
+    run_import_snippet(
+        &bin,
+        &temp_root,
+        "import cpython_import_missing_error_probe as m\nassert m.IMPORT_FAILED == 1\nassert m.ERROR_IS_SET == 1\nassert m.MATCHES_IMPORT_ERROR == 1\nassert m.CLEAR_WORKS == 1",
+    )
+    .expect("import missing error probe extension import should succeed");
 
     let _ = fs::remove_file(library_path);
     let _ = fs::remove_file(source_path);
@@ -7790,6 +7873,7 @@ run(PyObject *self, PyObject *args) {
 
     PyErr_SetString(PyExc_ModuleNotFoundError, "missing");
     int module_ok = (PyErr_Occurred() == PyExc_ModuleNotFoundError) ? 1 : 0;
+    int module_matches_import_ok = PyErr_ExceptionMatches(PyExc_ImportError) ? 1 : 0;
     PyErr_Clear();
 
     PyErr_SetString(PyExc_BytesWarning, "warn");
@@ -7797,11 +7881,12 @@ run(PyObject *self, PyObject *args) {
     PyErr_Clear();
 
     return Py_BuildValue(
-        "(iiiii)",
+        "(iiiiii)",
         nonnull_ok,
         alias_ok,
         zdiv_ok,
         module_ok,
+        module_matches_import_ok,
         bytes_warn_ok
     );
 }
@@ -7847,7 +7932,7 @@ PyInit_cpython_api_batch51_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch51_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1)",
+        "import cpython_api_batch51_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1)",
     )
     .expect("cpython api batch51 extension import should succeed");
 
@@ -8179,6 +8264,8 @@ run(PyObject *self, PyObject *args) {
     int data_size_ok = 0;
     int freeze_ok = 0;
     int clear_cache_ok = 0;
+    int type_prepare_attr_ok = 0;
+    int type_prepare_call_ok = 0;
 
     PyObject *name = PyType_GetName((PyTypeObject *)type_obj);
     PyObject *qualname = PyType_GetQualName((PyTypeObject *)type_obj);
@@ -8225,10 +8312,38 @@ run(PyObject *self, PyObject *args) {
     PyType_Modified((PyTypeObject *)type_obj);
     clear_cache_ok = (PyType_ClearCache() != 0) ? 1 : 0;
 
+    PyObject *prepare = PyObject_GetAttrString(type_obj, "__prepare__");
+    if (prepare) {
+        type_prepare_attr_ok = 1;
+        PyObject *prepare_args = PyTuple_New(2);
+        if (prepare_args) {
+            PyObject *name_arg = PyUnicode_FromString("ProbeTypeFromPrepare");
+            PyObject *bases_arg = PyTuple_New(0);
+            if (name_arg && bases_arg) {
+                PyTuple_SetItem(prepare_args, 0, name_arg);
+                PyTuple_SetItem(prepare_args, 1, bases_arg);
+                PyObject *namespace_obj = PyObject_CallObject(prepare, prepare_args);
+                if (namespace_obj) {
+                    PyObject *keys_obj = PyObject_GetAttrString(namespace_obj, "keys");
+                    if (keys_obj) {
+                        type_prepare_call_ok = 1;
+                    }
+                    Py_XDECREF(keys_obj);
+                    Py_DECREF(namespace_obj);
+                }
+            } else {
+                Py_XDECREF(name_arg);
+                Py_XDECREF(bases_arg);
+            }
+            Py_DECREF(prepare_args);
+        }
+    }
+    Py_XDECREF(prepare);
+
     Py_DECREF(type_obj);
 
     return Py_BuildValue(
-        "(iiiiiiiiiii)",
+        "(iiiiiiiiiiiii)",
         name_ok,
         qualname_ok,
         module_name_ok,
@@ -8239,7 +8354,9 @@ run(PyObject *self, PyObject *args) {
         token_lookup_ok,
         data_size_ok,
         freeze_ok,
-        clear_cache_ok
+        clear_cache_ok,
+        type_prepare_attr_ok,
+        type_prepare_call_ok
     );
 }
 
@@ -8284,7 +8401,7 @@ PyInit_cpython_api_batch54_probe(void) {
     run_import_snippet(
         &bin,
         &temp_root,
-        "import cpython_api_batch54_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)",
+        "import cpython_api_batch54_probe as m\nres = m.run()\nassert res == (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)",
     )
     .expect("cpython api batch54 extension import should succeed");
 

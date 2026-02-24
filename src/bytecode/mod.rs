@@ -39,6 +39,7 @@ pub enum Opcode {
     DeleteAttr,
     DeleteSubscript,
     BinaryAdd,
+    InplaceAdd,
     BinarySub,
     BinarySubConst,
     BinaryMul,

@@ -1380,6 +1380,17 @@ fn exposes_inspect_signature_and_co_flags() {
 }
 
 #[test]
+fn inspect_parameter_replace_preserves_fields_and_applies_overrides() {
+    let source = "import inspect\np = inspect.Parameter('x', inspect.Parameter.POSITIONAL_OR_KEYWORD, default=1, annotation=int)\nq = p.replace(name='y', default=2)\nok = (q.name == 'y' and q.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD and q.default == 2 and q.annotation is int)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_inspect_private_mro_helpers() {
     let source = "import inspect\nclass A:\n    pass\nclass B(A):\n    pass\nmro = inspect._static_getmro(B)\nd = inspect._get_dunder_dict_of_class(B)\nbuiltins_ns = inspect._get_dunder_dict_of_class(int)\nmappingproxy = type(type.__dict__)\ns = inspect._sentinel\nok = (mro[0] is B) and (mro[1] is A) and ('__module__' in d) and isinstance(d, mappingproxy) and isinstance(builtins_ns, mappingproxy) and (inspect._sentinel is s)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -2800,6 +2811,7 @@ m2_ok = (m2 is not None and m2.start() == 1 and m2.end() == 3)\n\
 m3_ok = (m3 is not None and m3.start() == 0 and m3.end() == 4)\n\
 \n\
 op = operator.add(2, 3)\n\
+op_pow = operator.pow(2, 8)\n\
 contains = operator.contains([1, 2, 3], 2)\n\
 item = operator.getitem([9, 8], 1)\n\
 \n\
@@ -2836,6 +2848,7 @@ m = time.monotonic()\n";
     assert_eq!(vm.get_global("gcd2"), Some(Value::Int(6)));
     assert_eq!(vm.get_global("gcd3"), Some(Value::Int(7)));
     assert_eq!(vm.get_global("op"), Some(Value::Int(5)));
+    assert_eq!(vm.get_global("op_pow"), Some(Value::Int(256)));
     assert_eq!(vm.get_global("contains"), Some(Value::Bool(true)));
     assert_eq!(vm.get_global("item"), Some(Value::Int(8)));
     assert_eq!(
@@ -5392,9 +5405,37 @@ fn builtin_unbound_method_descriptors_cover_core_c_method_cases() {
 ok = ok and (str.index("abcd", "c") == 2)
 ok = ok and ([1, 2, 3].__len__() == 3)
 ok = ok and (list.__len__([1, 2, 3]) == 3)
+ok = ok and hasattr([1, 2, 3], "__getitem__")
+ok = ok and ([1, 2, 3].__getitem__(1) == 2)
+ok = ok and (list.__getitem__([1, 2, 3], 1) == 2)
+ok = ok and ((1, 2, 3).__getitem__(2) == 3)
+ok = ok and (tuple.__getitem__((1, 2, 3), 2) == 3)
+ok = ok and ([1, 2, 3].__contains__(2))
+ok = ok and list.__contains__([1, 2, 3], 2)
 ok = ok and ({1, 2}.__contains__(2))
 ok = ok and set.__contains__({1, 2}, 2)
 ok = ok and (bytearray.maketrans(b"ab", b"xy") == bytes.maketrans(b"ab", b"xy"))
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn collections_abc_sized_and_sequence_cover_builtin_containers() {
+    let source = r#"from collections.abc import Sized, Sequence
+ok = True
+ok = ok and isinstance([1, 2], Sized)
+ok = ok and isinstance((1, 2), Sized)
+ok = ok and issubclass(list, Sized)
+ok = ok and issubclass(tuple, Sized)
+ok = ok and isinstance([1, 2], Sequence)
+ok = ok and isinstance((1, 2), Sequence)
+ok = ok and issubclass(list, Sequence)
+ok = ok and issubclass(tuple, Sequence)
+ok = ok and (isinstance({"k": 1}, Sequence) is False)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
@@ -9985,6 +10026,16 @@ fn re_match_exposes_group_groups_and_end() {
 }
 
 #[test]
+fn re_match_supports_uppercase_begin_end_anchors() {
+    let source = "import re\npat = re.compile(r'\\AC[0-9]+\\Z')\nok = (pat.match('C0') is not None and pat.match('xC0') is None and pat.match('C0x') is None)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn re_decimal_parser_pattern_supports_named_groups() {
     let source = "import re\npat = re.compile(r'(?P<sign>[-+])?((?=\\d|\\.\\d)(?P<int>\\d*)(\\.(?P<frac>\\d*))?(E(?P<exp>[-+]?\\d+))?|Inf(inity)?|(?P<signal>s)?NaN(?P<diag>\\d*))\\z', re.IGNORECASE)\nm1 = pat.match('Inf')\nm2 = pat.match('-12.5e+3')\nm3 = pat.match('sNaN42')\nok = (m1 is not None and m1.group('sign') is None and m1.group('int') is None and m2.group('sign') == '-' and m2.group('int') == '12' and m2.group('frac') == '5' and m2.group('exp') == '+3' and m3.group('signal').lower() == 's' and m3.group('diag') == '42')\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -13005,6 +13056,16 @@ fn object_format_uses_str_for_empty_spec_and_rejects_nonempty_spec() {
 }
 
 #[test]
+fn format_class_uses_type_dunder_format_semantics() {
+    let source = "err = ''\ntry:\n    format(int, 'x')\nexcept TypeError as exc:\n    err = str(exc)\nok = (format(int, '') == \"<class 'int'>\" and f\"{int}\" == \"<class 'int'>\" and 'unsupported format string passed to type.__format__' in err)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn int_format_accepts_sign_flags() {
     let source =
         "ok = (format(3, '-1d') == '3' and format(3, '+d') == '+3' and format(3, ' d') == ' 3')\n";
@@ -13137,6 +13198,26 @@ fn contextvars_get_set_reset_round_trip() {
 #[test]
 fn exposes_types_coroutine_decorator() {
     let source = "import types\ndef f():\n    return 1\ng = types.coroutine(f)\nok = (g is not f) and callable(g) and g.__name__ == f.__name__\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dict_type_exposes_unbound_update_descriptor() {
+    let source = "payload = {}\ndict.update(payload, {'a': 1}, b=2)\ndefault = dict.setdefault(payload, 'c', 3)\nmissing = dict.get(payload, 'z', 7)\nok = payload == {'a': 1, 'b': 2, 'c': 3} and default == 3 and missing == 7\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn types_generator_coroutine_and_async_generator_markers_match_runtime_type() {
+    let source = "import types\n\ndef make_gen():\n    yield 1\n\nasync def make_coro():\n    return 1\n\nasync def make_async_gen():\n    yield 1\n\ngen = make_gen()\ncoro = make_coro()\nasync_gen = make_async_gen()\nctor_error = False\ntry:\n    types.GeneratorType()\nexcept TypeError:\n    ctor_error = True\nok = (\n    type(gen) is types.GeneratorType\n    and type(coro) is types.CoroutineType\n    and type(async_gen) is types.AsyncGeneratorType\n    and isinstance(gen, types.GeneratorType)\n    and isinstance(coro, types.CoroutineType)\n    and isinstance(async_gen, types.AsyncGeneratorType)\n    and repr(types.GeneratorType) == \"<class 'generator'>\"\n    and repr(types.CoroutineType) == \"<class 'coroutine'>\"\n    and repr(types.AsyncGeneratorType) == \"<class 'async_generator'>\"\n    and ctor_error\n)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

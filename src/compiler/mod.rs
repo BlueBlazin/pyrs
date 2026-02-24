@@ -5271,7 +5271,7 @@ impl Compiler {
                 self.emit_load_name(name)?;
                 self.compile_expr(value)?;
                 let opcode = match op {
-                    crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                    crate::ast::AugOp::Add => Opcode::InplaceAdd,
                     crate::ast::AugOp::Sub => Opcode::BinarySub,
                     crate::ast::AugOp::Mul => Opcode::BinaryMul,
                     crate::ast::AugOp::MatMul => Opcode::BinaryMatMul,
@@ -5306,7 +5306,7 @@ impl Compiler {
                 self.emit(Opcode::Subscript, None);
                 self.compile_expr(value)?;
                 let opcode = match op {
-                    crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                    crate::ast::AugOp::Add => Opcode::InplaceAdd,
                     crate::ast::AugOp::Sub => Opcode::BinarySub,
                     crate::ast::AugOp::Mul => Opcode::BinaryMul,
                     crate::ast::AugOp::MatMul => Opcode::BinaryMatMul,
@@ -5342,7 +5342,7 @@ impl Compiler {
                 self.emit(Opcode::LoadAttr, Some(idx << 1));
                 self.compile_expr(value)?;
                 let opcode = match op {
-                    crate::ast::AugOp::Add => Opcode::BinaryAdd,
+                    crate::ast::AugOp::Add => Opcode::InplaceAdd,
                     crate::ast::AugOp::Sub => Opcode::BinarySub,
                     crate::ast::AugOp::Mul => Opcode::BinaryMul,
                     crate::ast::AugOp::MatMul => Opcode::BinaryMatMul,
