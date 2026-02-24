@@ -7862,7 +7862,17 @@ impl Vm {
             BuiltinFunction::HashlibNew => self.builtin_hashlib_new(args, kwargs),
             BuiltinFunction::HashlibPbkdf2Hmac => self.builtin_hashlib_pbkdf2_hmac(args, kwargs),
             BuiltinFunction::HashlibScrypt => self.builtin_hashlib_scrypt(args, kwargs),
+            BuiltinFunction::HashlibHmacNew => self.builtin_hashlib_hmac_new(args, kwargs),
             BuiltinFunction::HashlibHmacDigest => self.builtin_hashlib_hmac_digest(args, kwargs),
+            BuiltinFunction::HashlibHmacUpdate => self.builtin_hashlib_hmac_update(args, kwargs),
+            BuiltinFunction::HashlibHmacObjDigest => {
+                self.builtin_hashlib_hmac_obj_digest(args, kwargs)
+            }
+            BuiltinFunction::HashlibHmacObjHexDigest => {
+                self.builtin_hashlib_hmac_obj_hexdigest(args, kwargs)
+            }
+            BuiltinFunction::HashlibHmacCopy => self.builtin_hashlib_hmac_copy(args, kwargs),
+            BuiltinFunction::HashlibHmacRepr => self.builtin_hashlib_hmac_repr(args, kwargs),
             BuiltinFunction::HashlibHashUpdate => self.builtin_hashlib_hash_update(args, kwargs),
             BuiltinFunction::HashlibHashDigest => self.builtin_hashlib_hash_digest(args, kwargs),
             BuiltinFunction::HashlibHashHexDigest => {

@@ -3729,7 +3729,7 @@ impl Vm {
                     }
                 }
                 if let Some(message) = self.class_disallow_instantiation_message(&class) {
-                    return Err(RuntimeError::new(message));
+                    return Err(RuntimeError::type_error(message));
                 }
                 if self.class_has_builtin_type_base(&class) {
                     let class_value =

@@ -2838,7 +2838,13 @@ pub enum BuiltinFunction {
     HashlibNew,
     HashlibPbkdf2Hmac,
     HashlibScrypt,
+    HashlibHmacNew,
     HashlibHmacDigest,
+    HashlibHmacUpdate,
+    HashlibHmacObjDigest,
+    HashlibHmacObjHexDigest,
+    HashlibHmacCopy,
+    HashlibHmacRepr,
     HashlibHashUpdate,
     HashlibHashDigest,
     HashlibHashHexDigest,
@@ -6024,7 +6030,13 @@ impl BuiltinFunction {
             | BuiltinFunction::HashlibNew
             | BuiltinFunction::HashlibPbkdf2Hmac
             | BuiltinFunction::HashlibScrypt
+            | BuiltinFunction::HashlibHmacNew
             | BuiltinFunction::HashlibHmacDigest
+            | BuiltinFunction::HashlibHmacUpdate
+            | BuiltinFunction::HashlibHmacObjDigest
+            | BuiltinFunction::HashlibHmacObjHexDigest
+            | BuiltinFunction::HashlibHmacCopy
+            | BuiltinFunction::HashlibHmacRepr
             | BuiltinFunction::HashlibHashUpdate
             | BuiltinFunction::HashlibHashDigest
             | BuiltinFunction::HashlibHashHexDigest

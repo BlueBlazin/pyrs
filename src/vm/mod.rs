@@ -53,7 +53,7 @@ use self::ops::{
 };
 use self::stdlib::bz2::{Bz2CompressorState, Bz2DecompressorState};
 use self::stdlib::expat::ExpatParserState;
-use self::stdlib::hashlib::HashState;
+use self::stdlib::hashlib::{HashState, HmacState};
 use self::stdlib::lzma::{LzmaCompressorState, LzmaDecompressorState};
 use self::stdlib::sqlite3::{SqliteBlobState, SqliteConnectionState, SqliteCursorState};
 use self::stdlib::zlib::{ZlibCompressObjectState, ZlibDecompressObjectState};
@@ -1026,6 +1026,7 @@ pub struct Vm {
     csv_dialects: HashMap<String, Value>,
     csv_field_size_limit: i64,
     hash_states: HashMap<u64, HashState>,
+    hmac_states: HashMap<u64, HmacState>,
     zlib_compress_objects: HashMap<u64, ZlibCompressObjectState>,
     zlib_decompress_objects: HashMap<u64, ZlibDecompressObjectState>,
     bz2_compressors: HashMap<u64, Bz2CompressorState>,
@@ -1280,6 +1281,7 @@ impl Vm {
             csv_dialects: HashMap::new(),
             csv_field_size_limit: 131_072,
             hash_states: HashMap::new(),
+            hmac_states: HashMap::new(),
             zlib_compress_objects: HashMap::new(),
             zlib_decompress_objects: HashMap::new(),
             bz2_compressors: HashMap::new(),
@@ -2847,6 +2849,7 @@ impl Vm {
             self.pending_del_instances.remove(&obj_id);
             self.cleared_weakref_objects.remove(&obj_id);
             self.hash_states.remove(&obj_id);
+            self.hmac_states.remove(&obj_id);
             self.zlib_compress_objects.remove(&obj_id);
             self.zlib_decompress_objects.remove(&obj_id);
             self.bz2_compressors.remove(&obj_id);

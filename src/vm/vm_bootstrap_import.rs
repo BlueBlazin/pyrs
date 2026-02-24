@@ -1925,6 +1925,45 @@ impl Vm {
         let sha3_512_type = build_hash_type("_sha3", "sha3_512");
         let shake128_type = build_hash_type("_sha3", "shake_128");
         let shake256_type = build_hash_type("_sha3", "shake_256");
+        let hmac_type = match self
+            .heap
+            .alloc_class(ClassObject::new("HMAC".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *hmac_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("_hashlib".to_string()));
+            class_data
+                .attrs
+                .insert("__flags__".to_string(), Value::Int(0));
+            class_data.attrs.insert(
+                "__pyrs_disallow_instantiation__".to_string(),
+                Value::Bool(true),
+            );
+            class_data.attrs.insert(
+                "update".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHmacUpdate),
+            );
+            class_data.attrs.insert(
+                "digest".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHmacObjDigest),
+            );
+            class_data.attrs.insert(
+                "hexdigest".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHmacObjHexDigest),
+            );
+            class_data.attrs.insert(
+                "copy".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHmacCopy),
+            );
+            class_data.attrs.insert(
+                "__repr__".to_string(),
+                Value::Builtin(BuiltinFunction::HashlibHmacRepr),
+            );
+        }
         self.install_builtin_module(
             "_md5",
             &[("md5", BuiltinFunction::HashlibMd5)],
@@ -1994,6 +2033,7 @@ impl Vm {
                 ("new", BuiltinFunction::HashlibNew),
                 ("pbkdf2_hmac", BuiltinFunction::HashlibPbkdf2Hmac),
                 ("scrypt", BuiltinFunction::HashlibScrypt),
+                ("hmac_new", BuiltinFunction::HashlibHmacNew),
                 ("hmac_digest", BuiltinFunction::HashlibHmacDigest),
                 ("compare_digest", BuiltinFunction::OperatorCompareDigest),
                 ("openssl_md5", BuiltinFunction::HashlibMd5),
@@ -2035,6 +2075,7 @@ impl Vm {
                     "UnsupportedDigestmodError",
                     Value::ExceptionType("UnsupportedDigestmodError".to_string()),
                 ),
+                ("HMAC", Value::Class(hmac_type)),
             ],
         );
         self.exception_parents.insert(

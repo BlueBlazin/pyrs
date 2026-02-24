@@ -14,14 +14,13 @@ use super::{
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, class_of_class, compare_ge,
     compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
     dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
-    encode_text_bytes, exception_type_is_subclass, format_float_hex, format_repr, format_value,
-    frame_cell_value, invert_value, is_import_error_family, is_missing_attribute_error,
-    is_os_error_family, is_runtime_type_name_marker, matmul_values, mul_values, neg_value,
-    normalize_codec_encoding, normalize_codec_errors, or_values, ordering_from_cmp_value,
-    parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
-    runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
-    value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
-    with_bytes_like_source, xor_values,
+    encode_text_bytes, format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
+    is_import_error_family, is_missing_attribute_error, is_os_error_family,
+    is_runtime_type_name_marker, matmul_values, mul_values, neg_value, normalize_codec_encoding,
+    normalize_codec_errors, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser,
+    pos_value, round_float_with_ndigits, runtime_error_matches_exception, sub_values,
+    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
+    weakref_target_id, weakref_target_object, with_bytes_like_source, xor_values,
 };
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
@@ -6350,7 +6349,7 @@ impl Vm {
             }
         }
         if let Some(message) = self.class_disallow_instantiation_message(&class_ref) {
-            return Err(RuntimeError::new(message));
+            return Err(RuntimeError::type_error(message));
         }
         let instance = self.alloc_instance_for_class(&class_ref);
         if self.class_has_builtin_int_base(&class_ref) {
@@ -9696,9 +9695,7 @@ impl Vm {
             }
             Value::Builtin(builtin) => Ok(self.matches_builtin_type_marker(value, *builtin)),
             Value::ExceptionType(name) => match value {
-                Value::Exception(exception) => {
-                    Ok(exception_type_is_subclass(&exception.name, name))
-                }
+                Value::Exception(exception) => Ok(self.exception_inherits(&exception.name, name)),
                 Value::Instance(instance) => match &*instance.kind() {
                     Object::Instance(instance_data) => match &*instance_data.class.kind() {
                         Object::Class(class_data) => {
@@ -9708,7 +9705,7 @@ impl Vm {
                     },
                     _ => Ok(false),
                 },
-                Value::ExceptionType(candidate) => Ok(exception_type_is_subclass(candidate, name)),
+                Value::ExceptionType(candidate) => Ok(self.exception_inherits(candidate, name)),
                 _ => Ok(false),
             },
             _ => Err(RuntimeError::new(
@@ -9989,7 +9986,7 @@ impl Vm {
             },
             Value::ExceptionType(expected_name) => match candidate {
                 Value::ExceptionType(candidate_name) => {
-                    Ok(exception_type_is_subclass(candidate_name, expected_name))
+                    Ok(self.exception_inherits(candidate_name, expected_name))
                 }
                 Value::Class(class) => {
                     let Object::Class(class_data) = &*class.kind() else {
@@ -11064,6 +11061,27 @@ impl Vm {
                 AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
             },
             Value::Class(class) => {
+                let (flags, class_name) = match &*class.kind() {
+                    Object::Class(class_data) => (
+                        class_data
+                            .attrs
+                            .get("__flags__")
+                            .and_then(|value| match value {
+                                Value::Int(flags) => Some(*flags),
+                                _ => None,
+                            }),
+                        class_data.name.clone(),
+                    ),
+                    _ => (None, "type".to_string()),
+                };
+                if let Some(flags) = flags
+                    && (flags & PY_TPFLAGS_HEAPTYPE) == 0
+                {
+                    return Err(RuntimeError::type_error(format!(
+                        "cannot set attribute '{}' of immutable type '{}'",
+                        name, class_name
+                    )));
+                }
                 if let Object::Class(class_data) = &mut *class.kind_mut() {
                     class_data.attrs.insert(name, value);
                 }

@@ -2373,6 +2373,27 @@ impl Vm {
                         }
                     }
                     Value::Class(class) => {
+                        let (flags, class_name) = match &*class.kind() {
+                            Object::Class(class_data) => (
+                                class_data
+                                    .attrs
+                                    .get("__flags__")
+                                    .and_then(|value| match value {
+                                        Value::Int(flags) => Some(*flags),
+                                        _ => None,
+                                    }),
+                                class_data.name.clone(),
+                            ),
+                            _ => (None, "type".to_string()),
+                        };
+                        if let Some(flags) = flags
+                            && (flags & PY_TPFLAGS_HEAPTYPE) == 0
+                        {
+                            return Err(RuntimeError::type_error(format!(
+                                "cannot set attribute '{}' of immutable type '{}'",
+                                attr_name, class_name
+                            )));
+                        }
                         self.attach_owner_class_to_value(&value, &class);
                         if let Object::Class(class_data) = &mut *class.kind_mut() {
                             class_data.attrs.insert(attr_name, value);
@@ -2444,6 +2465,27 @@ impl Vm {
                         }
                     }
                     Value::Class(class) => {
+                        let (flags, class_name) = match &*class.kind() {
+                            Object::Class(class_data) => (
+                                class_data
+                                    .attrs
+                                    .get("__flags__")
+                                    .and_then(|value| match value {
+                                        Value::Int(flags) => Some(*flags),
+                                        _ => None,
+                                    }),
+                                class_data.name.clone(),
+                            ),
+                            _ => (None, "type".to_string()),
+                        };
+                        if let Some(flags) = flags
+                            && (flags & PY_TPFLAGS_HEAPTYPE) == 0
+                        {
+                            return Err(RuntimeError::type_error(format!(
+                                "cannot set attribute '{}' of immutable type '{}'",
+                                attr_name, class_name
+                            )));
+                        }
                         self.attach_owner_class_to_value(&value, &class);
                         if let Object::Class(class_data) = &mut *class.kind_mut() {
                             class_data.attrs.insert(attr_name, value);

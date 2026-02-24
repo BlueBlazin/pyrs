@@ -1,9 +1,9 @@
 use super::super::{
-    HashMap, ObjRef, Object, RuntimeError, Value, Vm, bytes_like_from_value, is_truthy,
-    value_to_int,
+    BuiltinFunction, HashMap, ObjRef, Object, RuntimeError, Value, Vm, bytes_like_from_value,
+    is_truthy, value_to_int,
 };
 use blake2::{Blake2b512, Blake2s256};
-use hmac::{Hmac, Mac};
+use hmac::{Mac, SimpleHmac};
 use md5::Md5;
 use pbkdf2::pbkdf2_hmac;
 use scrypt::{Params as ScryptParams, scrypt};
@@ -278,6 +278,120 @@ impl HashState {
     }
 }
 
+#[derive(Clone)]
+pub(in crate::vm) enum HmacState {
+    Md5(SimpleHmac<Md5>),
+    Sha1(SimpleHmac<Sha1>),
+    Sha224(SimpleHmac<Sha224>),
+    Sha256(SimpleHmac<Sha256>),
+    Sha384(SimpleHmac<Sha384>),
+    Sha512(SimpleHmac<Sha512>),
+    Blake2b(SimpleHmac<Blake2b512>),
+    Blake2s(SimpleHmac<Blake2s256>),
+    Sha3_224(SimpleHmac<Sha3_224>),
+    Sha3_256(SimpleHmac<Sha3_256>),
+    Sha3_384(SimpleHmac<Sha3_384>),
+    Sha3_512(SimpleHmac<Sha3_512>),
+}
+
+impl HmacState {
+    fn kind(&self) -> HashKind {
+        match self {
+            Self::Md5(_) => HashKind::Md5,
+            Self::Sha1(_) => HashKind::Sha1,
+            Self::Sha224(_) => HashKind::Sha224,
+            Self::Sha256(_) => HashKind::Sha256,
+            Self::Sha384(_) => HashKind::Sha384,
+            Self::Sha512(_) => HashKind::Sha512,
+            Self::Blake2b(_) => HashKind::Blake2b,
+            Self::Blake2s(_) => HashKind::Blake2s,
+            Self::Sha3_224(_) => HashKind::Sha3_224,
+            Self::Sha3_256(_) => HashKind::Sha3_256,
+            Self::Sha3_384(_) => HashKind::Sha3_384,
+            Self::Sha3_512(_) => HashKind::Sha3_512,
+        }
+    }
+
+    fn new(kind: HashKind, key: &[u8]) -> Result<Self, RuntimeError> {
+        let map_err = |_| RuntimeError::new("ValueError: invalid hmac key");
+        match kind {
+            HashKind::Md5 => SimpleHmac::<Md5>::new_from_slice(key)
+                .map(Self::Md5)
+                .map_err(map_err),
+            HashKind::Sha1 => SimpleHmac::<Sha1>::new_from_slice(key)
+                .map(Self::Sha1)
+                .map_err(map_err),
+            HashKind::Sha224 => SimpleHmac::<Sha224>::new_from_slice(key)
+                .map(Self::Sha224)
+                .map_err(map_err),
+            HashKind::Sha256 => SimpleHmac::<Sha256>::new_from_slice(key)
+                .map(Self::Sha256)
+                .map_err(map_err),
+            HashKind::Sha384 => SimpleHmac::<Sha384>::new_from_slice(key)
+                .map(Self::Sha384)
+                .map_err(map_err),
+            HashKind::Sha512 => SimpleHmac::<Sha512>::new_from_slice(key)
+                .map(Self::Sha512)
+                .map_err(map_err),
+            HashKind::Blake2b => SimpleHmac::<Blake2b512>::new_from_slice(key)
+                .map(Self::Blake2b)
+                .map_err(map_err),
+            HashKind::Blake2s => SimpleHmac::<Blake2s256>::new_from_slice(key)
+                .map(Self::Blake2s)
+                .map_err(map_err),
+            HashKind::Sha3_224 => SimpleHmac::<Sha3_224>::new_from_slice(key)
+                .map(Self::Sha3_224)
+                .map_err(map_err),
+            HashKind::Sha3_256 => SimpleHmac::<Sha3_256>::new_from_slice(key)
+                .map(Self::Sha3_256)
+                .map_err(map_err),
+            HashKind::Sha3_384 => SimpleHmac::<Sha3_384>::new_from_slice(key)
+                .map(Self::Sha3_384)
+                .map_err(map_err),
+            HashKind::Sha3_512 => SimpleHmac::<Sha3_512>::new_from_slice(key)
+                .map(Self::Sha3_512)
+                .map_err(map_err),
+            HashKind::Shake128 | HashKind::Shake256 => {
+                Err(RuntimeError::value_error("no reason supplied"))
+            }
+        }
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        match self {
+            Self::Md5(state) => Mac::update(state, data),
+            Self::Sha1(state) => Mac::update(state, data),
+            Self::Sha224(state) => Mac::update(state, data),
+            Self::Sha256(state) => Mac::update(state, data),
+            Self::Sha384(state) => Mac::update(state, data),
+            Self::Sha512(state) => Mac::update(state, data),
+            Self::Blake2b(state) => Mac::update(state, data),
+            Self::Blake2s(state) => Mac::update(state, data),
+            Self::Sha3_224(state) => Mac::update(state, data),
+            Self::Sha3_256(state) => Mac::update(state, data),
+            Self::Sha3_384(state) => Mac::update(state, data),
+            Self::Sha3_512(state) => Mac::update(state, data),
+        }
+    }
+
+    fn digest_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Md5(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha1(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha224(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha256(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha384(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha512(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Blake2b(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Blake2s(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha3_224(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha3_256(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha3_384(state) => state.clone().finalize().into_bytes().to_vec(),
+            Self::Sha3_512(state) => state.clone().finalize().into_bytes().to_vec(),
+        }
+    }
+}
+
 impl Vm {
     fn hash_method_owner_name(&self, receiver: &ObjRef) -> String {
         let Object::Instance(instance_data) = &*receiver.kind() else {
@@ -417,6 +531,53 @@ impl Vm {
             .ok_or_else(|| RuntimeError::new(format!("ValueError: unsupported hash type {name}")))
     }
 
+    fn hash_kind_from_builtin_constructor(&self, builtin: BuiltinFunction) -> Option<HashKind> {
+        match builtin {
+            BuiltinFunction::HashlibMd5 => Some(HashKind::Md5),
+            BuiltinFunction::HashlibSha1 => Some(HashKind::Sha1),
+            BuiltinFunction::HashlibSha224 => Some(HashKind::Sha224),
+            BuiltinFunction::HashlibSha256 => Some(HashKind::Sha256),
+            BuiltinFunction::HashlibSha384 => Some(HashKind::Sha384),
+            BuiltinFunction::HashlibSha512 => Some(HashKind::Sha512),
+            BuiltinFunction::HashlibBlake2b => Some(HashKind::Blake2b),
+            BuiltinFunction::HashlibBlake2s => Some(HashKind::Blake2s),
+            BuiltinFunction::HashlibSha3_224 => Some(HashKind::Sha3_224),
+            BuiltinFunction::HashlibSha3_256 => Some(HashKind::Sha3_256),
+            BuiltinFunction::HashlibSha3_384 => Some(HashKind::Sha3_384),
+            BuiltinFunction::HashlibSha3_512 => Some(HashKind::Sha3_512),
+            BuiltinFunction::HashlibShake128 => Some(HashKind::Shake128),
+            BuiltinFunction::HashlibShake256 => Some(HashKind::Shake256),
+            _ => None,
+        }
+    }
+
+    fn unsupported_digestmod_error(&self, digestmod: &Value) -> RuntimeError {
+        let detail = match digestmod {
+            Value::None => "None".to_string(),
+            Value::Str(name) => name.clone(),
+            other => format!("<{} object>", self.value_type_name_for_error(other)),
+        };
+        RuntimeError::with_exception(
+            "UnsupportedDigestmodError",
+            Some(format!("Unsupported digestmod {detail}")),
+        )
+    }
+
+    fn hash_kind_from_digestmod_value(&self, digestmod: Value) -> Result<HashKind, RuntimeError> {
+        let kind = match &digestmod {
+            Value::Str(name) => HashKind::from_name(name)
+                .ok_or_else(|| self.unsupported_digestmod_error(&digestmod))?,
+            Value::Builtin(builtin) => self
+                .hash_kind_from_builtin_constructor(*builtin)
+                .ok_or_else(|| self.unsupported_digestmod_error(&digestmod))?,
+            _ => return Err(self.unsupported_digestmod_error(&digestmod)),
+        };
+        if kind.is_xof() {
+            return Err(RuntimeError::value_error("no reason supplied"));
+        }
+        Ok(kind)
+    }
+
     fn hash_receiver_from_args<'a>(
         &'a self,
         args: &'a [Value],
@@ -430,6 +591,70 @@ impl Vm {
         if !self.hash_states.contains_key(&receiver.id()) {
             return Err(RuntimeError::new(format!(
                 "TypeError: {method_name}() requires a hash object"
+            )));
+        }
+        Ok((receiver, self.hash_method_owner_name(receiver)))
+    }
+
+    fn hmac_class(&self) -> Option<ObjRef> {
+        let module = self.modules.get("_hashlib")?;
+        let Object::Module(module_data) = &*module.kind() else {
+            return None;
+        };
+        match module_data.globals.get("HMAC") {
+            Some(Value::Class(class)) => Some(class.clone()),
+            _ => None,
+        }
+    }
+
+    fn hmac_init_instance_attrs(&mut self, instance: &ObjRef, kind: HashKind) {
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data.attrs.insert(
+                "name".to_string(),
+                Value::Str(format!("hmac-{}", kind.hash_name())),
+            );
+            instance_data
+                .attrs
+                .insert("digest_size".to_string(), Value::Int(kind.digest_size()));
+            instance_data
+                .attrs
+                .insert("block_size".to_string(), Value::Int(kind.block_size()));
+        }
+    }
+
+    fn hmac_new_instance(
+        &mut self,
+        key: Vec<u8>,
+        msg: Option<Vec<u8>>,
+        digestmod: Value,
+    ) -> Result<Value, RuntimeError> {
+        let class = self
+            .hmac_class()
+            .ok_or_else(|| RuntimeError::runtime_error("HMAC backend type is unavailable"))?;
+        let kind = self.hash_kind_from_digestmod_value(digestmod)?;
+        let mut state = HmacState::new(kind, &key)?;
+        if let Some(msg) = msg {
+            state.update(&msg);
+        }
+        let instance = self.alloc_instance_for_class(&class);
+        self.hmac_init_instance_attrs(&instance, kind);
+        self.hmac_states.insert(instance.id(), state);
+        Ok(Value::Instance(instance))
+    }
+
+    fn hmac_receiver_from_args<'a>(
+        &'a self,
+        args: &'a [Value],
+        method_name: &str,
+    ) -> Result<(&'a ObjRef, String), RuntimeError> {
+        let Some(Value::Instance(receiver)) = args.first() else {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {method_name}() requires a HMAC object"
+            )));
+        };
+        if !self.hmac_states.contains_key(&receiver.id()) {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {method_name}() requires a HMAC object"
             )));
         }
         Ok((receiver, self.hash_method_owner_name(receiver)))
@@ -764,93 +989,281 @@ impl Vm {
         Ok(self.heap.alloc_bytes(out))
     }
 
+    pub(in crate::vm) fn builtin_hashlib_hmac_new(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3 {
+            return Err(RuntimeError::new(format!(
+                "TypeError: hmac_new() takes at most 3 arguments ({} given)",
+                args.len()
+            )));
+        }
+        if !args.is_empty() && kwargs.contains_key("key") {
+            return Err(RuntimeError::new(
+                "TypeError: argument for hmac_new() given by name ('key') and position (1)",
+            ));
+        }
+        if args.len() > 1 && kwargs.contains_key("msg") {
+            return Err(RuntimeError::new(
+                "TypeError: argument for hmac_new() given by name ('msg') and position (2)",
+            ));
+        }
+        if args.len() > 2 && kwargs.contains_key("digestmod") {
+            return Err(RuntimeError::new(
+                "TypeError: argument for hmac_new() given by name ('digestmod') and position (3)",
+            ));
+        }
+
+        let key = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("key").ok_or_else(|| {
+                RuntimeError::new("TypeError: hmac_new() missing required argument 'key' (pos 1)")
+            })?
+        };
+        let msg = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("msg")
+        };
+        let digestmod = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("digestmod")
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: hmac_new() takes at most 3 arguments ({} given)",
+                args.len() + 3
+            )));
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: hmac_new() takes at most 3 arguments ({} given)",
+                kwargs.len() + 3
+            )));
+        }
+        let digestmod = digestmod.ok_or_else(|| {
+            RuntimeError::new("TypeError: Missing required parameter 'digestmod'.")
+        })?;
+        let key = self.hash_payload_from_value(key)?;
+        let msg = match msg {
+            None | Some(Value::None) => None,
+            Some(value) => Some(self.hash_payload_from_value(value)?),
+        };
+        self.hmac_new_instance(key, msg, digestmod)
+    }
+
     pub(in crate::vm) fn builtin_hashlib_hmac_digest(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.len() > 3 {
+            return Err(RuntimeError::new(format!(
+                "TypeError: hmac_digest() takes at most 3 arguments ({} given)",
+                args.len()
+            )));
+        }
+        if !args.is_empty() && kwargs.contains_key("key") {
+            return Err(RuntimeError::new(
+                "TypeError: argument for hmac_digest() given by name ('key') and position (1)",
+            ));
+        }
+        if args.len() > 1 && kwargs.contains_key("msg") {
+            return Err(RuntimeError::new(
+                "TypeError: argument for hmac_digest() given by name ('msg') and position (2)",
+            ));
+        }
+        if args.len() > 2 && kwargs.contains_key("digest") {
+            return Err(RuntimeError::new(
+                "TypeError: argument for hmac_digest() given by name ('digest') and position (3)",
+            ));
+        }
+        let key = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("key").ok_or_else(|| {
+                RuntimeError::new(
+                    "TypeError: hmac_digest() missing required argument 'key' (pos 1)",
+                )
+            })?
+        };
+        let msg = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("msg").ok_or_else(|| {
+                RuntimeError::new(
+                    "TypeError: hmac_digest() missing required argument 'msg' (pos 2)",
+                )
+            })?
+        };
+        let digest = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("digest").ok_or_else(|| {
+                RuntimeError::new(
+                    "TypeError: hmac_digest() missing required argument 'digest' (pos 3)",
+                )
+            })?
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: hmac_digest() takes at most 3 arguments ({} given)",
+                args.len() + 3
+            )));
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: hmac_digest() takes at most 3 arguments ({} given)",
+                kwargs.len() + 3
+            )));
+        }
+        let key = self.hash_payload_from_value(key)?;
+        let msg = self.hash_payload_from_value(msg)?;
+        let kind = self.hash_kind_from_digestmod_value(digest)?;
+        let mut state = HmacState::new(kind, &key)?;
+        state.update(&msg);
+        Ok(self.heap.alloc_bytes(state.digest_bytes()))
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_hmac_update(
         &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        let (receiver, owner_name) = self.hmac_receiver_from_args(&args, "update")?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.update() takes no keyword arguments"
+            )));
+        }
+        let provided = args.len().saturating_sub(1);
+        if args.len() != 2 {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.update() takes exactly one argument ({provided} given)"
+            )));
+        }
+        let payload = self.hash_payload_from_value(args[1].clone())?;
+        let Some(state) = self.hmac_states.get_mut(&receiver.id()) else {
+            return Err(RuntimeError::new(
+                "TypeError: update() requires a HMAC object",
+            ));
+        };
+        state.update(&payload);
+        Ok(Value::None)
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_hmac_obj_digest(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (receiver, owner_name) = self.hmac_receiver_from_args(&args, "digest")?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.digest() takes no keyword arguments"
+            )));
+        }
+        let provided = args.len().saturating_sub(1);
+        if args.len() != 1 {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.digest() takes no arguments ({provided} given)"
+            )));
+        }
+        let state = self
+            .hmac_states
+            .get(&receiver.id())
+            .ok_or_else(|| RuntimeError::type_error("digest() requires a HMAC object"))?;
+        Ok(self.heap.alloc_bytes(state.digest_bytes()))
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_hmac_obj_hexdigest(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (receiver, owner_name) = self.hmac_receiver_from_args(&args, "hexdigest")?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.hexdigest() takes no keyword arguments"
+            )));
+        }
+        let provided = args.len().saturating_sub(1);
+        if args.len() != 1 {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.hexdigest() takes no arguments ({provided} given)"
+            )));
+        }
+        let state = self
+            .hmac_states
+            .get(&receiver.id())
+            .ok_or_else(|| RuntimeError::type_error("hexdigest() requires a HMAC object"))?;
+        let digest = state.digest_bytes();
+        let mut out = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            out.push_str(&format!("{byte:02x}"));
+        }
+        Ok(Value::Str(out))
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_hmac_copy(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (receiver, _owner_name) = self.hmac_receiver_from_args(&args, "copy")?;
         if !kwargs.is_empty() {
             return Err(RuntimeError::new(
-                "TypeError: hmac_digest() takes no keyword arguments",
+                "TypeError: copy() takes no keyword arguments",
             ));
         }
-        if args.len() != 3 {
-            return Err(RuntimeError::new(
-                "TypeError: hmac_digest() takes exactly 3 arguments",
-            ));
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error("copy() takes no arguments"));
         }
-        let key = self.hash_payload_from_value(args[0].clone())?;
-        let msg = self.hash_payload_from_value(args[1].clone())?;
-        let kind = self.hash_kind_from_value(args[2].clone())?;
-        let out = match kind {
-            HashKind::Md5 => {
-                let mut mac = Hmac::<Md5>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha1 => {
-                let mut mac = Hmac::<Sha1>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha224 => {
-                let mut mac = Hmac::<Sha224>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha256 => {
-                let mut mac = Hmac::<Sha256>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha384 => {
-                let mut mac = Hmac::<Sha384>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha512 => {
-                let mut mac = Hmac::<Sha512>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha3_224 => {
-                let mut mac = Hmac::<Sha3_224>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha3_256 => {
-                let mut mac = Hmac::<Sha3_256>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha3_384 => {
-                let mut mac = Hmac::<Sha3_384>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Sha3_512 => {
-                let mut mac = Hmac::<Sha3_512>::new_from_slice(&key)
-                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
-                Mac::update(&mut mac, &msg);
-                mac.finalize().into_bytes().to_vec()
-            }
-            HashKind::Blake2b | HashKind::Blake2s | HashKind::Shake128 | HashKind::Shake256 => {
-                return Err(RuntimeError::new(format!(
-                    "ValueError: unsupported hash type {}",
-                    kind.hash_name()
-                )));
-            }
-        };
-        Ok(self.heap.alloc_bytes(out))
+        let state = self
+            .hmac_states
+            .get(&receiver.id())
+            .ok_or_else(|| RuntimeError::type_error("copy() requires a HMAC object"))?
+            .clone();
+        let class = self
+            .hmac_class()
+            .ok_or_else(|| RuntimeError::runtime_error("HMAC backend type is unavailable"))?;
+        let kind = state.kind();
+        let new_instance = self.alloc_instance_for_class(&class);
+        self.hmac_init_instance_attrs(&new_instance, kind);
+        self.hmac_states.insert(new_instance.id(), state);
+        Ok(Value::Instance(new_instance))
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_hmac_repr(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let (receiver, owner_name) = self.hmac_receiver_from_args(&args, "__repr__")?;
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.__repr__() takes no keyword arguments"
+            )));
+        }
+        if args.len() != 1 {
+            let provided = args.len().saturating_sub(1);
+            return Err(RuntimeError::new(format!(
+                "TypeError: {owner_name}.__repr__() takes no arguments ({provided} given)"
+            )));
+        }
+        let state = self
+            .hmac_states
+            .get(&receiver.id())
+            .ok_or_else(|| RuntimeError::type_error("__repr__() requires a HMAC object"))?;
+        Ok(Value::Str(format!(
+            "<{} HMAC object @ 0x{:x}>",
+            state.kind().hash_name(),
+            receiver.id()
+        )))
     }
 
     pub(in crate::vm) fn builtin_hashlib_hash_update(

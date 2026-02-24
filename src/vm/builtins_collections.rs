@@ -2,11 +2,11 @@ use super::{
     BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, GeneratorResumeOutcome,
     HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
     NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
-    binary_operator, class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt,
-    dict_get_value, dict_remove_value, dict_set_value_checked, div_values, ensure_hashable,
-    floor_div_values, format_repr, format_value, is_missing_attribute_error, is_truthy,
-    lshift_values, mod_values, mul_values, or_values, pow_values, rshift_values, sub_values,
-    unary_predicate, value_to_int, xor_values,
+    binary_operator, bytes_like_from_value, class_name_for_instance, compare_ge, compare_gt,
+    compare_le, compare_lt, dict_get_value, dict_remove_value, dict_set_value_checked, div_values,
+    ensure_hashable, floor_div_values, format_repr, format_value, is_missing_attribute_error,
+    is_truthy, lshift_values, mod_values, mul_values, or_values, pow_values, rshift_values,
+    sub_values, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -275,24 +275,21 @@ impl Vm {
             diff == 0
         }
 
-        fn as_bytes(value: &Value) -> Option<Vec<u8>> {
-            match value {
-                Value::Bytes(obj) => match &*obj.kind() {
-                    Object::Bytes(bytes) => Some(bytes.clone()),
-                    _ => None,
-                },
-                Value::ByteArray(obj) => match &*obj.kind() {
-                    Object::ByteArray(bytes) => Some(bytes.clone()),
-                    _ => None,
-                },
-                _ => None,
-            }
-        }
+        let left_str = match &args[0] {
+            Value::Str(text) => Some(text.clone()),
+            Value::Instance(instance) => self.instance_backing_str(instance),
+            _ => None,
+        };
+        let right_str = match &args[1] {
+            Value::Str(text) => Some(text.clone()),
+            Value::Instance(instance) => self.instance_backing_str(instance),
+            _ => None,
+        };
 
-        match (&args[0], &args[1]) {
-            (Value::Str(left), Value::Str(right)) => {
+        match (left_str, right_str) {
+            (Some(left), Some(right)) => {
                 if !left.is_ascii() || !right.is_ascii() {
-                    return Err(RuntimeError::new(
+                    return Err(RuntimeError::type_error(
                         "comparing strings with non-ASCII characters is not supported",
                     ));
                 }
@@ -301,9 +298,12 @@ impl Vm {
                     right.as_bytes(),
                 )))
             }
-            _ => {
-                let left = as_bytes(&args[0]);
-                let right = as_bytes(&args[1]);
+            (Some(_), None) | (None, Some(_)) => Err(RuntimeError::type_error(
+                "a bytes-like object is required, not 'str'",
+            )),
+            (None, None) => {
+                let left = bytes_like_from_value(args[0].clone()).ok();
+                let right = bytes_like_from_value(args[1].clone()).ok();
                 match (left, right) {
                     (Some(left), Some(right)) => Ok(Value::Bool(constant_time_eq(&left, &right))),
                     _ => Err(RuntimeError::new(

@@ -273,3 +273,81 @@ has_scrypt = hasattr(hashlib, "scrypt")
         .join()
         .expect("hashlib stdlib regression thread should complete");
 }
+
+#[test]
+fn native_hashlib_hmac_surface_matches_expected_vectors() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _hashlib
+h = _hashlib.hmac_new(b"key", b"The quick brown fox jumps over the lazy dog", "sha256")
+hmac_hex = h.hexdigest()
+hmac_name = h.name
+hmac_digest_size = h.digest_size
+hmac_block_size = h.block_size
+h_copy = h.copy()
+h.update(b"!")
+h_copy_stable = h_copy.hexdigest() == hmac_hex
+single_eq = _hashlib.hmac_digest(b"key", b"data", "sha256") == _hashlib.hmac_new(b"key", b"data", "sha256").digest()
+single_eq_kw = _hashlib.hmac_digest(key=b"key", msg=b"data", digest="sha256") == _hashlib.hmac_new(b"key", b"data", "sha256").digest()
+try:
+    _hashlib.hmac_new(b"key", b"data", object())
+except Exception as exc:
+    unsupported_exc = type(exc).__name__
+unsupported_is_value_error = issubclass(_hashlib.UnsupportedDigestmodError, ValueError)
+try:
+    _hashlib.hmac_new(b"key", b"data", "shake_128")
+except Exception as exc:
+    shake_exc = type(exc).__name__
+try:
+    _hashlib.HMAC.value = None
+except Exception as exc:
+    immutable_exc = type(exc).__name__
+class B(bytes): pass
+class S(str): pass
+bytes_subclass_compare = _hashlib.compare_digest(B(b"abc"), B(b"abc"))
+str_subclass_compare = _hashlib.compare_digest(S("abc"), S("abc"))
+"#,
+    );
+
+    assert_eq!(
+        vm.get_global("hmac_hex"),
+        Some(Value::Str(
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8".to_string()
+        ))
+    );
+    assert_eq!(
+        vm.get_global("hmac_name"),
+        Some(Value::Str("hmac-sha256".to_string()))
+    );
+    assert_eq!(vm.get_global("hmac_digest_size"), Some(Value::Int(32)));
+    assert_eq!(vm.get_global("hmac_block_size"), Some(Value::Int(64)));
+    assert_eq!(vm.get_global("h_copy_stable"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("single_eq"), Some(Value::Bool(true)));
+    assert_eq!(vm.get_global("single_eq_kw"), Some(Value::Bool(true)));
+    assert_eq!(
+        vm.get_global("unsupported_exc"),
+        Some(Value::Str("UnsupportedDigestmodError".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("unsupported_is_value_error"),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(
+        vm.get_global("shake_exc"),
+        Some(Value::Str("ValueError".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("immutable_exc"),
+        Some(Value::Str("TypeError".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("bytes_subclass_compare"),
+        Some(Value::Bool(true))
+    );
+    assert_eq!(
+        vm.get_global("str_subclass_compare"),
+        Some(Value::Bool(true))
+    );
+}
