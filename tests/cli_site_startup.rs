@@ -222,7 +222,9 @@ for _name in ("sitecustomize", "usercustomize"):
 
 #[test]
 fn cli_adds_lib_dynload_path_when_detectable() {
-    let dynload = PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload");
+    let dynload = PathBuf::from(
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
+    );
     if !dynload.is_dir() {
         eprintln!("skipping dynload startup-path test: host lib-dynload not present");
         return;

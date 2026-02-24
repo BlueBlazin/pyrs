@@ -411,18 +411,11 @@ pub(super) fn cpython_try_binary_number_slot(
     }
     if trace {
         // SAFETY: type pointers were validated above for non-null.
-        let (
-            left_name,
-            right_name,
-            left_refcnt,
-            right_refcnt,
-            left_basicsize,
-            right_basicsize,
-        ) = unsafe {
-            let left_name = c_name_to_string((*left_type).tp_name)
-                .unwrap_or_else(|_| "<invalid>".to_string());
-            let right_name = c_name_to_string((*right_type).tp_name)
-                .unwrap_or_else(|_| "<invalid>".to_string());
+        let (left_name, right_name, left_refcnt, right_refcnt, left_basicsize, right_basicsize) = unsafe {
+            let left_name =
+                c_name_to_string((*left_type).tp_name).unwrap_or_else(|_| "<invalid>".to_string());
+            let right_name =
+                c_name_to_string((*right_type).tp_name).unwrap_or_else(|_| "<invalid>".to_string());
             let left_refcnt = left
                 .cast::<CpythonObjectHead>()
                 .as_ref()

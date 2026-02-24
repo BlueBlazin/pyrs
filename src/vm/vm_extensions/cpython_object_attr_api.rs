@@ -527,12 +527,14 @@ pub unsafe extern "C" fn PyObject_GetAttrString(
             ptr
         }
         Err(err) => {
-            if name == "__pyx_capi__" && std::env::var_os("PYRS_TRACE_PYX_CAPI_GETATTR_FAIL").is_some()
+            if name == "__pyx_capi__"
+                && std::env::var_os("PYRS_TRACE_PYX_CAPI_GETATTR_FAIL").is_some()
             {
                 match &object_value_for_debug {
                     Value::Module(module_obj) => {
                         if let Object::Module(module_data) = &*module_obj.kind() {
-                            let mut keys: Vec<String> = module_data.globals.keys().cloned().collect();
+                            let mut keys: Vec<String> =
+                                module_data.globals.keys().cloned().collect();
                             keys.sort();
                             eprintln!(
                                 "[pyx-capi] getattr-fail object={:p} module={} has_key={} keys={} sample={:?} err={}",

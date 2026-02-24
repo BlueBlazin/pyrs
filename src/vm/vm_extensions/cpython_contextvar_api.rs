@@ -340,7 +340,10 @@ pub unsafe extern "C" fn PyContextVar_Reset(var: *mut c_void, token: *mut c_void
             return -1;
         };
         if !matches!(
-            dict_get_value(&token_dict, &Value::Str(CONTEXTTOKEN_MARKER_KEY.to_string())),
+            dict_get_value(
+                &token_dict,
+                &Value::Str(CONTEXTTOKEN_MARKER_KEY.to_string())
+            ),
             Some(Value::Bool(true))
         ) {
             context.set_error("PyContextVar_Reset expected token object");

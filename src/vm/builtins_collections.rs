@@ -1,12 +1,12 @@
 use super::{
     BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, GeneratorResumeOutcome,
     HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
-    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, binary_operator,
-    class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_get_value,
-    dict_remove_value, dict_set_value_checked, div_values, ensure_hashable, floor_div_values,
-    format_repr, format_value, is_missing_attribute_error, is_truthy, lshift_values, mod_values,
-    mul_values, or_values, pow_values, rshift_values, sub_values, unary_predicate, value_to_int,
-    xor_values, and_values,
+    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
+    binary_operator, class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt,
+    dict_get_value, dict_remove_value, dict_set_value_checked, div_values, ensure_hashable,
+    floor_div_values, format_repr, format_value, is_missing_attribute_error, is_truthy,
+    lshift_values, mod_values, mul_values, or_values, pow_values, rshift_values, sub_values,
+    unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -3521,10 +3521,9 @@ impl Vm {
             if let Value::Module(module_obj) = &module
                 && let Object::Module(module_data) = &mut *module_obj.kind_mut()
             {
-                module_data.globals.insert(
-                    "__name__".to_string(),
-                    Value::Str(module_data.name.clone()),
-                );
+                module_data
+                    .globals
+                    .insert("__name__".to_string(), Value::Str(module_data.name.clone()));
                 module_data.globals.insert("__doc__".to_string(), doc_value);
                 module_data
                     .globals

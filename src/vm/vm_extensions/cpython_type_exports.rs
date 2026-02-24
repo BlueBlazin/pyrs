@@ -324,8 +324,7 @@ pub static mut PyFunction_Type: CpythonTypeObject =
 pub static mut PyGen_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_GENERATOR.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
-pub static mut PyCoro_Type: CpythonTypeObject =
-    empty_type(PY_TYPE_NAME_COROUTINE.as_ptr().cast());
+pub static mut PyCoro_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_COROUTINE.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyGetSetDescr_Type: CpythonTypeObject =

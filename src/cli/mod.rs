@@ -640,7 +640,11 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
     let mut seen = HashSet::new();
     let mut strict_site_import = false;
 
-    fn register_unique_path(out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, candidate: PathBuf) {
+    fn register_unique_path(
+        out: &mut Vec<PathBuf>,
+        seen: &mut HashSet<PathBuf>,
+        candidate: PathBuf,
+    ) {
         if candidate.as_os_str().is_empty() {
             return;
         }
@@ -690,8 +694,7 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
             &mut out,
             &mut seen,
             PathBuf::from(home).join("lib").join("python3.14"),
-        )
-        {
+        ) {
             register_dynload_for_root(&mut out, &mut seen, &root);
         }
     }

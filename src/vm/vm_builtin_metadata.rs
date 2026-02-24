@@ -959,14 +959,10 @@ impl Vm {
             "append" if builtin == BuiltinFunction::List => {
                 Ok(Value::Builtin(BuiltinFunction::ListAppendDescriptor))
             }
-            "__getitem__"
-                if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) =>
-            {
+            "__getitem__" if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorGetItem))
             }
-            "__contains__"
-                if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) =>
-            {
+            "__contains__" if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) => {
                 Ok(Value::Builtin(BuiltinFunction::OperatorContains))
             }
             "__len__"
@@ -1045,10 +1041,7 @@ impl Vm {
                         .globals
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::DictUpdateMethod,
-                    receiver,
-                ))
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictUpdateMethod, receiver))
             }
             "setdefault" if builtin == BuiltinFunction::Dict => {
                 let receiver = match self
@@ -1063,10 +1056,7 @@ impl Vm {
                         .globals
                         .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Dict));
                 }
-                Ok(self.alloc_native_bound_method(
-                    NativeMethodKind::DictSetDefault,
-                    receiver,
-                ))
+                Ok(self.alloc_native_bound_method(NativeMethodKind::DictSetDefault, receiver))
             }
             "get" if builtin == BuiltinFunction::Dict => {
                 let receiver = match self
@@ -1564,16 +1554,10 @@ impl Vm {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, list));
         }
         if attr_name == "__getitem__" {
-            return Ok(self.alloc_builtin_bound_method(
-                BuiltinFunction::OperatorGetItem,
-                list,
-            ));
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorGetItem, list));
         }
         if attr_name == "__contains__" {
-            return Ok(self.alloc_builtin_bound_method(
-                BuiltinFunction::OperatorContains,
-                list,
-            ));
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorContains, list));
         }
         if attr_name == "__iter__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, list));
@@ -1612,16 +1596,10 @@ impl Vm {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Len, tuple));
         }
         if attr_name == "__getitem__" {
-            return Ok(self.alloc_builtin_bound_method(
-                BuiltinFunction::OperatorGetItem,
-                tuple,
-            ));
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorGetItem, tuple));
         }
         if attr_name == "__contains__" {
-            return Ok(self.alloc_builtin_bound_method(
-                BuiltinFunction::OperatorContains,
-                tuple,
-            ));
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::OperatorContains, tuple));
         }
         if attr_name == "__iter__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, tuple));
@@ -3880,52 +3858,49 @@ impl Vm {
                             let mut init_args = Vec::with_capacity(args.len() + 1);
                             init_args.push(Value::Instance(instance.clone()));
                             init_args.extend(args);
-                            let bindings = match bind_arguments(
-                                &func_data,
-                                &self.heap,
-                                init_args,
-                                kwargs,
-                            ) {
-                                Ok(bindings) => bindings,
-                                Err(err) => {
-                                    if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
-                                        && err.message.contains("argument count mismatch")
-                                    {
-                                        let stack = self
-                                            .frames
-                                            .iter()
-                                            .rev()
-                                            .take(12)
-                                            .map(|frame| {
-                                                format!(
-                                                    "{}@{}:{}",
-                                                    frame.code.name,
-                                                    frame.code.filename,
-                                                    frame
-                                                        .code
-                                                        .locations
-                                                        .get(frame.last_ip)
-                                                        .map(|loc| loc.line)
-                                                        .unwrap_or(0)
-                                                )
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(" <- ");
-                                        eprintln!(
-                                            "[bind-args-stack] failing_fn={} file={} stack={}",
-                                            func_data.code.name, func_data.code.filename, stack
-                                        );
-                                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some() {
+                            let bindings =
+                                match bind_arguments(&func_data, &self.heap, init_args, kwargs) {
+                                    Ok(bindings) => bindings,
+                                    Err(err) => {
+                                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
+                                            && err.message.contains("argument count mismatch")
+                                        {
+                                            let stack = self
+                                                .frames
+                                                .iter()
+                                                .rev()
+                                                .take(12)
+                                                .map(|frame| {
+                                                    format!(
+                                                        "{}@{}:{}",
+                                                        frame.code.name,
+                                                        frame.code.filename,
+                                                        frame
+                                                            .code
+                                                            .locations
+                                                            .get(frame.last_ip)
+                                                            .map(|loc| loc.line)
+                                                            .unwrap_or(0)
+                                                    )
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join(" <- ");
                                             eprintln!(
-                                                "[bind-args-bt] failing_fn={} bt={}",
-                                                func_data.code.name,
-                                                std::backtrace::Backtrace::force_capture()
+                                                "[bind-args-stack] failing_fn={} file={} stack={}",
+                                                func_data.code.name, func_data.code.filename, stack
                                             );
+                                            if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some()
+                                            {
+                                                eprintln!(
+                                                    "[bind-args-bt] failing_fn={} bt={}",
+                                                    func_data.code.name,
+                                                    std::backtrace::Backtrace::force_capture()
+                                                );
+                                            }
                                         }
+                                        return Err(err);
                                     }
-                                    return Err(err);
-                                }
-                            };
+                                };
                             let cells =
                                 self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(

@@ -9,10 +9,10 @@ use super::{
     _PyObject_New, _PyObject_NewVar, CpythonAsyncMethods, CpythonBufferProcs, CpythonHeapTypeInfo,
     CpythonHeapTypeObject, CpythonMappingMethods, CpythonMemberDef, CpythonMethodDef,
     CpythonModuleCompatObject, CpythonNumberMethods, CpythonObjectHead, CpythonSequenceMethods,
-    CpythonTypeObject, CpythonTypeSpec,
-    InternalCallOutcome, ModuleCapiContext, PY_MEMBER_RELATIVE_OFFSET, PY_TPFLAGS_BASETYPE,
-    PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE,
-    PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
+    CpythonTypeObject, CpythonTypeSpec, InternalCallOutcome, ModuleCapiContext,
+    PY_MEMBER_RELATIVE_OFFSET, PY_TPFLAGS_BASETYPE, PY_TPFLAGS_BYTES_SUBCLASS,
+    PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
+    PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
     PY_TPFLAGS_TUPLE_SUBCLASS, PY_TPFLAGS_TYPE_SUBCLASS, PY_TPFLAGS_UNICODE_SUBCLASS,
     PY_TYPE_SLOT_AM_AITER, PY_TYPE_SLOT_AM_ANEXT, PY_TYPE_SLOT_AM_AWAIT, PY_TYPE_SLOT_AM_SEND,
     PY_TYPE_SLOT_BF_GETBUFFER, PY_TYPE_SLOT_BF_RELEASEBUFFER, PY_TYPE_SLOT_MAX,
@@ -561,8 +561,8 @@ pub(super) unsafe extern "C" fn cpython_type_tp_getattro(
     };
     let type_ptr = object.cast::<CpythonTypeObject>();
     let trace_type_getattr = std::env::var_os("PYRS_TRACE_TYPE_GETATTR").is_some();
-    let trace_prepare = std::env::var_os("PYRS_TRACE_TYPE_PREPARE").is_some()
-        && attr_name == "__prepare__";
+    let trace_prepare =
+        std::env::var_os("PYRS_TRACE_TYPE_PREPARE").is_some() && attr_name == "__prepare__";
     if trace_prepare {
         let object_tag = cpython_value_from_ptr(object)
             .map(|value| cpython_value_debug_tag(&value))
@@ -3214,10 +3214,7 @@ pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
     if trace {
         let type_name = unsafe { c_name_to_string((*type_ptr).tp_name) }
             .unwrap_or_else(|_| "<unnamed>".to_string());
-        eprintln!(
-            "[cpy-type-module] enter ty={:p} type={}",
-            ty, type_name
-        );
+        eprintln!("[cpy-type-module] enter ty={:p} type={}", ty, type_name);
     }
     let Some((module_ptr, type_name)) =
         cpython_heap_type_registry()
@@ -3256,9 +3253,7 @@ pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
     if trace {
         eprintln!(
             "[cpy-type-module] hit ty={:p} type={} module_ptr={:p}",
-            ty,
-            type_name,
-            module_ptr as *mut c_void
+            ty, type_name, module_ptr as *mut c_void
         );
     }
     module_ptr as *mut c_void
@@ -3306,7 +3301,10 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
         let (md_def, md_state) = unsafe {
             let module = module_ptr.cast::<CpythonModuleCompatObject>();
             (
-                module.as_ref().map(|raw| raw.md_def).unwrap_or(std::ptr::null_mut()),
+                module
+                    .as_ref()
+                    .map(|raw| raw.md_def)
+                    .unwrap_or(std::ptr::null_mut()),
                 module
                     .as_ref()
                     .map(|raw| raw.md_state)
@@ -3332,7 +3330,11 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
         }
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *context.vm };
-        let Some(bound_def) = vm.extension_module_def_registry.get(&context.module.id()).copied() else {
+        let Some(bound_def) = vm
+            .extension_module_def_registry
+            .get(&context.module.id())
+            .copied()
+        else {
             return None;
         };
         if bound_def != requested_module_def {
@@ -3356,13 +3358,14 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
         if let Ok(registry) = cpython_heap_type_registry().lock()
             && let Some(info) = registry.get(&key)
         {
-            if info.module_ptr != 0 && info.module_def_ptr != 0 && info.module_def_ptr == requested_module_def {
+            if info.module_ptr != 0
+                && info.module_def_ptr != 0
+                && info.module_def_ptr == requested_module_def
+            {
                 if trace_moddef {
                     eprintln!(
                         "[cpy-type-moddef] resolve source=heap_registry_direct current={:p} module_ptr={:p} module_def={:p}",
-                        current,
-                        info.module_ptr as *mut c_void,
-                        info.module_def_ptr as *mut c_void
+                        current, info.module_ptr as *mut c_void, info.module_def_ptr as *mut c_void
                     );
                 }
                 trace_module_ptr("heap_registry_direct_state", info.module_ptr as *mut c_void);
@@ -3390,9 +3393,7 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
                     if trace_moddef {
                         eprintln!(
                             "[cpy-type-moddef] resolve source=heap_registry_resolve current={:p} module_ptr={:p} resolved_def={:p}",
-                            current,
-                            module_ptr,
-                            requested_module_def as *mut c_void
+                            current, module_ptr, requested_module_def as *mut c_void
                         );
                     }
                     trace_module_ptr("heap_registry_resolve_state", module_ptr);
@@ -3409,10 +3410,12 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
         }
         // SAFETY: VM pointer is valid for active C-API context lifetime.
         let vm = unsafe { &mut *context.vm };
-        let module_id = vm
-            .extension_module_def_registry
-            .iter()
-            .find_map(|(module_id, def_ptr)| (*def_ptr == requested_module_def).then_some(*module_id))?;
+        let module_id =
+            vm.extension_module_def_registry
+                .iter()
+                .find_map(|(module_id, def_ptr)| {
+                    (*def_ptr == requested_module_def).then_some(*module_id)
+                })?;
         let module_obj = vm
             .modules
             .values()
@@ -3540,10 +3543,7 @@ pub unsafe extern "C" fn PyType_GetBaseByToken(
         current = unsafe { (*current).tp_base };
     }
     if trace_token {
-        eprintln!(
-            "[cpy-type-token] no-match ty={:p} token={:p}",
-            ty, token
-        );
+        eprintln!("[cpy-type-token] no-match ty={:p} token={:p}", ty, token);
     }
     0
 }

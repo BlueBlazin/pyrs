@@ -8856,7 +8856,8 @@ impl Vm {
                     self.attach_owner_class_to_value(&fset, owner);
                     self.attach_owner_class_to_value(&fdel, owner);
                 }
-                if let Some((func, _attr_name, _doc)) = self.cached_property_descriptor_parts(instance)
+                if let Some((func, _attr_name, _doc)) =
+                    self.cached_property_descriptor_parts(instance)
                 {
                     self.attach_owner_class_to_value(&func, owner);
                 }

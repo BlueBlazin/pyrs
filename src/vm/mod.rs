@@ -6852,7 +6852,11 @@ fn parse_simple_regex(pattern: &str) -> Option<ParsedSimpleRegex> {
 
     let mut capture_count = 0usize;
     let branches = parse_simple_regex_branches(&chars, &mut idx, &mut capture_count, false)?;
-    if idx + 1 < chars.len() && chars[idx] == '\\' && chars[idx + 1] == 'Z' && idx + 2 == chars.len() {
+    if idx + 1 < chars.len()
+        && chars[idx] == '\\'
+        && chars[idx + 1] == 'Z'
+        && idx + 2 == chars.len()
+    {
         end_anchor = true;
         idx += 2;
     } else if idx < chars.len() && chars[idx] == '$' && idx + 1 == chars.len() {
@@ -9532,9 +9536,7 @@ fn class_attr_walk(class: &ObjRef) -> Vec<ObjRef> {
             return None;
         };
         match class_data.attrs.get("__pyrs_cpython_proxy_ptr__") {
-            Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => {
-                Some((*raw_ptr as u64) | (1u64 << 63))
-            }
+            Some(Value::Int(raw_ptr)) if *raw_ptr >= 0 => Some((*raw_ptr as u64) | (1u64 << 63)),
             _ => None,
         }
     }

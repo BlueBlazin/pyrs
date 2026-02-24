@@ -13,14 +13,10 @@ use super::cpython_module_name_runtime::{
 use super::{
     InternalCallOutcome, PyErr_WarnEx, PyExc_DeprecationWarning, c_name_to_string,
     cpython_debug_compare_value, cpython_exception_ptr_for_name, cpython_set_error,
-    cpython_value_from_ptr, dict_get_value,
-    with_active_cpython_context_mut,
+    cpython_value_from_ptr, dict_get_value, with_active_cpython_context_mut,
 };
 
-fn set_context_error_from_runtime_error(
-    context: &mut super::ModuleCapiContext,
-    err: RuntimeError,
-) {
+fn set_context_error_from_runtime_error(context: &mut super::ModuleCapiContext, err: RuntimeError) {
     let RuntimeError { message, exception } = err;
     if let Some(exception_obj) = exception {
         let exception_name = exception_obj.name.clone();

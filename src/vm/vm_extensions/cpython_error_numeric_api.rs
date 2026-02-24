@@ -1507,7 +1507,10 @@ pub unsafe extern "C" fn PyErr_GivenExceptionMatches(
     if let Some(expected_name) = cpython_exception_expected_name_from_ptr(expected)
         && cpython_type_inherits_exception_name(given_type, &expected_name)
     {
-        if trace_import_match && (expected_name.contains("ImportError") || expected_name.contains("ModuleNotFoundError")) {
+        if trace_import_match
+            && (expected_name.contains("ImportError")
+                || expected_name.contains("ModuleNotFoundError"))
+        {
             eprintln!(
                 "[import-exc-match] inherits-name-hit given_type={:p} expected_name={}",
                 given_type, expected_name

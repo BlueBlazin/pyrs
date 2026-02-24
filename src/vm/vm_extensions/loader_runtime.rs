@@ -271,7 +271,8 @@ impl Vm {
         library_path: &Path,
         symbol: &str,
     ) -> Result<(), RuntimeError> {
-        let import_error = |message: String| RuntimeError::with_exception("ImportError", Some(message));
+        let import_error =
+            |message: String| RuntimeError::with_exception("ImportError", Some(message));
         let trace_slots = std::env::var_os("PYRS_TRACE_EXT_SLOTS").is_some();
         if trace_slots {
             eprintln!(
@@ -677,7 +678,8 @@ impl Vm {
                                             // SAFETY: module C-API context owns a valid VM pointer
                                             // for the duration of extension initialization.
                                             let vm = unsafe { &mut *module_ctx.vm };
-                                            let err = vm.runtime_error_from_active_exception(&message);
+                                            let err =
+                                                vm.runtime_error_from_active_exception(&message);
                                             let detail = if err.message.is_empty() {
                                                 message.clone()
                                             } else {

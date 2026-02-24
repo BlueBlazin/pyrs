@@ -9573,9 +9573,8 @@ impl Vm {
                     next > 2048
                 });
                 if overflow {
-                    ISINSTANCE_RECURSION_DEPTH.with(|depth| {
-                        depth.set(depth.get().saturating_sub(1))
-                    });
+                    ISINSTANCE_RECURSION_DEPTH
+                        .with(|depth| depth.set(depth.get().saturating_sub(1)));
                     return Err(RuntimeError::runtime_error(
                         "maximum recursion depth exceeded in isinstance()",
                     ));
@@ -9585,9 +9584,7 @@ impl Vm {
         }
         impl Drop for IsInstanceDepthGuard {
             fn drop(&mut self) {
-                ISINSTANCE_RECURSION_DEPTH.with(|depth| {
-                    depth.set(depth.get().saturating_sub(1))
-                });
+                ISINSTANCE_RECURSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
             }
         }
         let _depth_guard = IsInstanceDepthGuard::enter()?;
@@ -9815,9 +9812,8 @@ impl Vm {
                     next > 2048
                 });
                 if overflow {
-                    ISSUBCLASS_RECURSION_DEPTH.with(|depth| {
-                        depth.set(depth.get().saturating_sub(1))
-                    });
+                    ISSUBCLASS_RECURSION_DEPTH
+                        .with(|depth| depth.set(depth.get().saturating_sub(1)));
                     return Err(RuntimeError::runtime_error(
                         "maximum recursion depth exceeded in issubclass()",
                     ));
@@ -9827,9 +9823,7 @@ impl Vm {
         }
         impl Drop for IsSubclassDepthGuard {
             fn drop(&mut self) {
-                ISSUBCLASS_RECURSION_DEPTH.with(|depth| {
-                    depth.set(depth.get().saturating_sub(1))
-                });
+                ISSUBCLASS_RECURSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
             }
         }
         let _depth_guard = IsSubclassDepthGuard::enter()?;

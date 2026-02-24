@@ -19,8 +19,8 @@ use crate::extensions::{
     PyrsWritableBufferViewV1,
 };
 use crate::runtime::{
-    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, InstanceObject, NativeMethodKind,
-    NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
+    BigInt, BoundMethod, BuiltinFunction, ClassObject, ExceptionObject, InstanceObject,
+    NativeMethodKind, NativeMethodObject, Object, RuntimeError, Value, value_lookup_hash,
 };
 use crate::vm::ExtensionModuleStateEntry;
 
@@ -214,7 +214,8 @@ use self::cpython_error_numeric_api::{
     PyStructSequence_SetItem, PyUnstable_Object_IsUniqueReferencedTemporary,
     PyUnstable_Object_IsUniquelyReferenced, cpython_exception_class_name_from_ptr,
     cpython_exception_traceback_ptr_for_value, cpython_exception_type_ptr,
-    cpython_exception_type_ptr_for_value, cpython_ptr_is_type_object, cpython_safe_object_type_name,
+    cpython_exception_type_ptr_for_value, cpython_ptr_is_type_object,
+    cpython_safe_object_type_name,
 };
 use self::cpython_eval_api::{
     PyEval_GetBuiltins, PyEval_GetFrame, PyEval_GetFrameBuiltins, PyEval_GetFrameGlobals,
@@ -325,10 +326,10 @@ use self::cpython_object_call_api::{
     PyUnstable_Object_EnableDeferredRefcount, PyVectorcall_Call,
 };
 use self::cpython_object_item_compare_api::{
-    PyObject_DelItem, PyObject_GenericHash, PyObject_GetItem, PyObject_GetOptionalAttr, PyObject_Hash,
-    PyObject_HashNotImplemented, PyObject_IsInstance, PyObject_IsSubclass, PyObject_Length,
-    PyObject_LengthHint, PyObject_RichCompare, PyObject_RichCompareBool, PyObject_SetItem,
-    PyObject_Size, cpython_debug_compare_value, cpython_tuple_richcompare_slot,
+    PyObject_DelItem, PyObject_GenericHash, PyObject_GetItem, PyObject_GetOptionalAttr,
+    PyObject_Hash, PyObject_HashNotImplemented, PyObject_IsInstance, PyObject_IsSubclass,
+    PyObject_Length, PyObject_LengthHint, PyObject_RichCompare, PyObject_RichCompareBool,
+    PyObject_SetItem, PyObject_Size, cpython_debug_compare_value, cpython_tuple_richcompare_slot,
     cpython_type_name_for_object_ptr, cpython_value_type_name_from_ptr,
 };
 use self::cpython_object_lifecycle_api::{
@@ -3323,13 +3324,14 @@ fn cpython_call_noargs_attr_on_self(self_obj: *mut c_void, attr_name: &str) -> *
                 return std::ptr::null_mut();
             }
         };
-        let result = match cpython_call_internal_in_context(context, callable, Vec::new(), HashMap::new()) {
-            Ok(value) => value,
-            Err(err) => {
-                context.set_error(err);
-                return std::ptr::null_mut();
-            }
-        };
+        let result =
+            match cpython_call_internal_in_context(context, callable, Vec::new(), HashMap::new()) {
+                Ok(value) => value,
+                Err(err) => {
+                    context.set_error(err);
+                    return std::ptr::null_mut();
+                }
+            };
         context.alloc_cpython_ptr_for_value(result)
     })
     .unwrap_or_else(|err| {
@@ -5025,7 +5027,9 @@ impl ModuleCapiContext {
                 message
             );
         }
-        if !ptype.is_null() && let Some(type_name) = cpython_exception_class_name_from_ptr(ptype) {
+        if !ptype.is_null()
+            && let Some(type_name) = cpython_exception_class_name_from_ptr(ptype)
+        {
             let type_ptr = cpython_exception_type_ptr(ptype);
             if !type_ptr.is_null() {
                 self.exception_type_ptr_by_name
@@ -5169,9 +5173,7 @@ impl ModuleCapiContext {
                 caller.line()
             );
         }
-        if std::env::var_os("PYRS_TRACE_PYARROW_ERROR").is_some()
-            && message.contains("pyarrow")
-        {
+        if std::env::var_os("PYRS_TRACE_PYARROW_ERROR").is_some() && message.contains("pyarrow") {
             let stack = if self.vm.is_null() {
                 "<no-vm>".to_string()
             } else {
@@ -10859,9 +10861,7 @@ impl ModuleCapiContext {
             }
             2 => {
                 // SAFETY: kind=2 stores one u16 per codepoint.
-                let units = unsafe {
-                    std::slice::from_raw_parts(data_ptr.cast::<u16>(), length)
-                };
+                let units = unsafe { std::slice::from_raw_parts(data_ptr.cast::<u16>(), length) };
                 Some(
                     units
                         .iter()
@@ -10871,9 +10871,7 @@ impl ModuleCapiContext {
             }
             4 => {
                 // SAFETY: kind=4 stores one u32 per codepoint.
-                let units = unsafe {
-                    std::slice::from_raw_parts(data_ptr.cast::<u32>(), length)
-                };
+                let units = unsafe { std::slice::from_raw_parts(data_ptr.cast::<u32>(), length) };
                 Some(
                     units
                         .iter()
