@@ -193,6 +193,49 @@ err_update = capture(lambda: obj.update("abc"))
 }
 
 #[test]
+fn native_hashlib_update_rejects_non_buffer_inputs_and_exposes_gil_threshold_constants() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _hashlib, _sha2
+def capture(cb):
+    try:
+        cb()
+    except Exception as exc:
+        return f"{type(exc).__name__}:{exc}"
+    return "ok"
+
+h = _hashlib.hmac_new(b"key", b"msg", "sha256")
+err_update = capture(lambda: h.update([]))
+err_digest = capture(lambda: _hashlib.hmac_digest(b"key", [], "sha256"))
+gil_hashlib = _hashlib._GIL_MINSIZE
+gil_sha2 = _sha2._GIL_MINSIZE
+fromhex_ok = bytes.fromhex("00 ff").hex()
+"#,
+    );
+
+    assert_eq!(
+        vm.get_global("err_update"),
+        Some(Value::Str(
+            "TypeError:object supporting the buffer API required".to_string()
+        ))
+    );
+    assert_eq!(
+        vm.get_global("err_digest"),
+        Some(Value::Str(
+            "TypeError:object supporting the buffer API required".to_string()
+        ))
+    );
+    assert_eq!(vm.get_global("gil_hashlib"), Some(Value::Int(2048)));
+    assert_eq!(vm.get_global("gil_sha2"), Some(Value::Int(2048)));
+    assert_eq!(
+        vm.get_global("fromhex_ok"),
+        Some(Value::Str("00ff".to_string()))
+    );
+}
+
+#[test]
 fn hashlib_module_uses_native_md5_and_sha256_backends() {
     let Some(cpython_lib) = detect_cpython_lib() else {
         eprintln!("skipping hashlib stdlib path test (CPython Lib not found)");

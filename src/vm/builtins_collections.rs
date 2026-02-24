@@ -2,11 +2,11 @@ use super::{
     BoundMethod, BuiltinFunction, ClassObject, DEQUE_BACKING_STORAGE_ATTR, GeneratorResumeOutcome,
     HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject,
     NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, add_values, and_values,
-    binary_operator, bytes_like_from_value, class_name_for_instance, compare_ge, compare_gt,
-    compare_le, compare_lt, dict_get_value, dict_remove_value, dict_set_value_checked, div_values,
-    ensure_hashable, floor_div_values, format_repr, format_value, is_missing_attribute_error,
-    is_truthy, lshift_values, mod_values, mul_values, or_values, pow_values, rshift_values,
-    sub_values, unary_predicate, value_to_int, xor_values,
+    binary_operator, bytes_like_from_value, class_attr_lookup, class_name_for_instance, compare_ge,
+    compare_gt, compare_le, compare_lt, dict_get_value, dict_remove_value, dict_set_value_checked,
+    div_values, ensure_hashable, floor_div_values, format_repr, format_value,
+    is_missing_attribute_error, is_truthy, lshift_values, mod_values, mul_values, or_values,
+    pow_values, rshift_values, sub_values, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -3327,6 +3327,42 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         unary_predicate(args, kwargs, |value| matches!(value, Value::Builtin(_)))
+    }
+
+    pub(super) fn builtin_inspect_isdatadescriptor(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("predicate expects one argument"));
+        }
+        let value = &args[0];
+        if matches!(
+            value,
+            Value::Class(_) | Value::BoundMethod(_) | Value::Function(_)
+        ) {
+            return Ok(Value::Bool(false));
+        }
+        let is_data_descriptor = self
+            .class_of_value(value)
+            .map(|class| {
+                class_attr_lookup(&class, "__set__").is_some()
+                    || class_attr_lookup(&class, "__delete__").is_some()
+            })
+            .unwrap_or(false);
+        let object_has_data_descriptor_slot = ["__set__", "__delete__"].iter().any(|name| {
+            matches!(
+                self.builtin_hasattr(
+                    vec![value.clone(), Value::Str((*name).to_string())],
+                    HashMap::new()
+                ),
+                Ok(Value::Bool(true))
+            )
+        });
+        Ok(Value::Bool(
+            is_data_descriptor || object_has_data_descriptor_slot,
+        ))
     }
 
     pub(super) fn builtin_inspect_ismethodwrapper(

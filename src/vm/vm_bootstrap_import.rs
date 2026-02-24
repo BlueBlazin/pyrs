@@ -1964,15 +1964,23 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::HashlibHmacRepr),
             );
         }
+        self.synthetic_builtin_classes
+            .insert("__hashlib_hmac_type__".to_string(), hmac_type.clone());
         self.install_builtin_module(
             "_md5",
             &[("md5", BuiltinFunction::HashlibMd5)],
-            vec![("MD5Type", Value::Class(md5_type))],
+            vec![
+                ("MD5Type", Value::Class(md5_type)),
+                ("_GIL_MINSIZE", Value::Int(2048)),
+            ],
         );
         self.install_builtin_module(
             "_sha1",
             &[("sha1", BuiltinFunction::HashlibSha1)],
-            vec![("SHA1Type", Value::Class(sha1_type))],
+            vec![
+                ("SHA1Type", Value::Class(sha1_type)),
+                ("_GIL_MINSIZE", Value::Int(2048)),
+            ],
         );
         self.install_builtin_module(
             "_sha2",
@@ -1987,6 +1995,7 @@ impl Vm {
                 ("SHA256Type", Value::Class(sha256_type)),
                 ("SHA384Type", Value::Class(sha384_type)),
                 ("SHA512Type", Value::Class(sha512_type)),
+                ("_GIL_MINSIZE", Value::Int(2048)),
             ],
         );
         self.install_builtin_module(
@@ -2006,6 +2015,7 @@ impl Vm {
                 ("BLAKE2S_MAX_KEY_SIZE", Value::Int(32)),
                 ("BLAKE2S_SALT_SIZE", Value::Int(8)),
                 ("BLAKE2S_PERSON_SIZE", Value::Int(8)),
+                ("_GIL_MINSIZE", Value::Int(2048)),
             ],
         );
         self.install_builtin_module(
@@ -2025,6 +2035,7 @@ impl Vm {
                 ("_SHA3_512Type", Value::Class(sha3_512_type)),
                 ("_SHAKE128Type", Value::Class(shake128_type)),
                 ("_SHAKE256Type", Value::Class(shake256_type)),
+                ("_GIL_MINSIZE", Value::Int(2048)),
             ],
         );
         self.install_builtin_module(
@@ -2076,6 +2087,7 @@ impl Vm {
                     Value::ExceptionType("UnsupportedDigestmodError".to_string()),
                 ),
                 ("HMAC", Value::Class(hmac_type)),
+                ("_GIL_MINSIZE", Value::Int(2048)),
             ],
         );
         self.exception_parents.insert(
@@ -5185,6 +5197,7 @@ impl Vm {
                     "ismethoddescriptor",
                     BuiltinFunction::InspectIsMethodDescriptor,
                 ),
+                ("isdatadescriptor", BuiltinFunction::InspectIsDataDescriptor),
                 ("ismethodwrapper", BuiltinFunction::InspectIsMethodWrapper),
                 ("istraceback", BuiltinFunction::InspectIsTraceback),
                 ("isframe", BuiltinFunction::InspectIsFrame),

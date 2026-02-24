@@ -173,6 +173,7 @@ impl Vm {
                     | NativeMethodKind::StrIndex
                     | NativeMethodKind::StrRFind
                     | NativeMethodKind::BytesDecode
+                    | NativeMethodKind::BytesHex
                     | NativeMethodKind::BytesCount
                     | NativeMethodKind::BytesTranslate
                     | NativeMethodKind::ListSort
@@ -2223,6 +2224,25 @@ impl Vm {
                 )?;
                 let text = decode_text_bytes(&bytes, &encoding, &errors)?;
                 Ok(NativeCallResult::Value(Value::Str(text)))
+            }
+            NativeMethodKind::BytesHex => {
+                if !args.is_empty() || !kwargs.is_empty() {
+                    return Err(RuntimeError::new("TypeError: hex() takes no arguments"));
+                }
+                let bytes = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(value) => bytes_like_from_value(value.clone())?,
+                        None => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+                };
+                const HEX: &[u8; 16] = b"0123456789abcdef";
+                let mut out = String::with_capacity(bytes.len() * 2);
+                for byte in bytes {
+                    out.push(HEX[(byte >> 4) as usize] as char);
+                    out.push(HEX[(byte & 0x0f) as usize] as char);
+                }
+                Ok(NativeCallResult::Value(Value::Str(out)))
             }
             NativeMethodKind::BytesStartsWith | NativeMethodKind::BytesEndsWith => {
                 let method_name = if matches!(kind, NativeMethodKind::BytesStartsWith) {
@@ -7382,6 +7402,8 @@ impl Vm {
             BuiltinFunction::MemoryView => self.builtin_memoryview(args, kwargs),
             BuiltinFunction::FloatFromHex => self.builtin_float_fromhex(args, kwargs),
             BuiltinFunction::FloatHex => self.builtin_float_hex(args, kwargs),
+            BuiltinFunction::BytesFromHex => self.builtin_bytes_fromhex(args, kwargs),
+            BuiltinFunction::ByteArrayFromHex => self.builtin_bytearray_fromhex(args, kwargs),
             BuiltinFunction::StrMakeTrans => self.builtin_str_maketrans(args, kwargs),
             BuiltinFunction::BytesMakeTrans => self.builtin_bytes_maketrans(args, kwargs),
             BuiltinFunction::IntFromBytes => self.builtin_int_from_bytes(args, kwargs),
@@ -8256,6 +8278,9 @@ impl Vm {
             BuiltinFunction::InspectIsRoutine => self.builtin_inspect_isroutine(args, kwargs),
             BuiltinFunction::InspectIsMethodDescriptor => {
                 self.builtin_inspect_ismethoddescriptor(args, kwargs)
+            }
+            BuiltinFunction::InspectIsDataDescriptor => {
+                self.builtin_inspect_isdatadescriptor(args, kwargs)
             }
             BuiltinFunction::InspectIsMethodWrapper => {
                 self.builtin_inspect_ismethodwrapper(args, kwargs)

@@ -3054,6 +3054,97 @@ impl Vm {
         Ok(Value::Str(format_float_hex(value)))
     }
 
+    fn parse_fromhex_bytes(text: &str) -> Result<Vec<u8>, RuntimeError> {
+        let bytes = text.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len() / 2);
+        let mut i = 0usize;
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        while i < bytes.len() {
+            let hi = match bytes[i] {
+                b'0'..=b'9' => bytes[i] - b'0',
+                b'a'..=b'f' => bytes[i] - b'a' + 10,
+                b'A'..=b'F' => bytes[i] - b'A' + 10,
+                _ => {
+                    return Err(RuntimeError::value_error(format!(
+                        "non-hexadecimal number found in fromhex() arg at position {i}"
+                    )));
+                }
+            };
+            i += 1;
+            if i >= bytes.len() {
+                return Err(RuntimeError::value_error(
+                    "fromhex() arg must contain an even number of hexadecimal digits",
+                ));
+            }
+            let lo = match bytes[i] {
+                b'0'..=b'9' => bytes[i] - b'0',
+                b'a'..=b'f' => bytes[i] - b'a' + 10,
+                b'A'..=b'F' => bytes[i] - b'A' + 10,
+                _ => {
+                    return Err(RuntimeError::value_error(format!(
+                        "non-hexadecimal number found in fromhex() arg at position {i}"
+                    )));
+                }
+            };
+            i += 1;
+            out.push((hi << 4) | lo);
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+        }
+        Ok(out)
+    }
+
+    pub(super) fn builtin_bytes_fromhex(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("fromhex() takes no keyword arguments"));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new("fromhex() expects one argument"));
+        }
+        let text = match args.remove(0) {
+            Value::Str(text) => text,
+            value => {
+                return Err(RuntimeError::type_error(format!(
+                    "fromhex() argument must be str, not {}",
+                    self.value_type_name_for_error(&value)
+                )));
+            }
+        };
+        let bytes = Self::parse_fromhex_bytes(&text)?;
+        Ok(self.heap.alloc_bytes(bytes))
+    }
+
+    pub(super) fn builtin_bytearray_fromhex(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new("fromhex() takes no keyword arguments"));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new("fromhex() expects one argument"));
+        }
+        let text = match args.remove(0) {
+            Value::Str(text) => text,
+            value => {
+                return Err(RuntimeError::type_error(format!(
+                    "fromhex() argument must be str, not {}",
+                    self.value_type_name_for_error(&value)
+                )));
+            }
+        };
+        let bytes = Self::parse_fromhex_bytes(&text)?;
+        Ok(self.heap.alloc_bytearray(bytes))
+    }
+
     pub(super) fn builtin_str_maketrans(
         &self,
         mut args: Vec<Value>,

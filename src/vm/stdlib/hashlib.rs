@@ -408,8 +408,15 @@ impl Vm {
             Value::Str(_) => Err(RuntimeError::new(
                 "TypeError: Strings must be encoded before hashing",
             )),
-            other => bytes_like_from_value(other)
+            Value::Bytes(_)
+            | Value::ByteArray(_)
+            | Value::MemoryView(_)
+            | Value::Instance(_)
+            | Value::Module(_) => bytes_like_from_value(value)
                 .map_err(|_| RuntimeError::type_error("object supporting the buffer API required")),
+            _ => Err(RuntimeError::type_error(
+                "object supporting the buffer API required",
+            )),
         }
     }
 
@@ -597,14 +604,15 @@ impl Vm {
     }
 
     fn hmac_class(&self) -> Option<ObjRef> {
-        let module = self.modules.get("_hashlib")?;
-        let Object::Module(module_data) = &*module.kind() else {
-            return None;
-        };
-        match module_data.globals.get("HMAC") {
-            Some(Value::Class(class)) => Some(class.clone()),
-            _ => None,
+        if let Some(module) = self.modules.get("_hashlib")
+            && let Object::Module(module_data) = &*module.kind()
+            && let Some(Value::Class(class)) = module_data.globals.get("HMAC")
+        {
+            return Some(class.clone());
         }
+        self.synthetic_builtin_classes
+            .get("__hashlib_hmac_type__")
+            .cloned()
     }
 
     fn hmac_init_instance_attrs(&mut self, instance: &ObjRef, kind: HashKind) {

@@ -290,26 +290,26 @@ impl Vm {
         if bits == 0 {
             return Ok(Value::Int(0));
         }
-        if bits > 63 {
-            return Err(RuntimeError::value_error(
-                "getrandbits() supports up to 63 bits in this runtime",
-            ));
-        }
 
-        let mut produced = 0u64;
-        let mut consumed = 0i64;
-        while consumed < bits {
+        let requested_bits = bits as usize;
+        let mut produced = BigInt::zero();
+        let mut consumed = 0usize;
+        while consumed < requested_bits {
             let chunk = self.random.next_u32() as u64;
-            let take = std::cmp::min(32, (bits - consumed) as usize);
+            let take = std::cmp::min(32usize, requested_bits - consumed);
             let mask = if take == 32 {
-                u64::MAX
+                u32::MAX as u64
             } else {
                 (1u64 << take) - 1
             };
-            produced |= (chunk & mask) << consumed;
-            consumed += take as i64;
+            let piece = chunk & mask;
+            if piece != 0 {
+                let shifted = BigInt::from_u64(piece).shl_bits(consumed);
+                produced = produced.bitor(&shifted);
+            }
+            consumed += take;
         }
-        Ok(Value::Int(produced as i64))
+        Ok(value_from_bigint(produced))
     }
 
     pub(super) fn builtin_random_choice(

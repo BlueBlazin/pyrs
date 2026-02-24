@@ -258,6 +258,7 @@ pub enum NativeMethodKind {
     StrEncode,
     StrDecode,
     BytesDecode,
+    BytesHex,
     BytesStartsWith,
     BytesEndsWith,
     BytesCount,
@@ -2436,6 +2437,8 @@ pub enum BuiltinFunction {
     Str,
     StrMakeTrans,
     BytesMakeTrans,
+    BytesFromHex,
+    ByteArrayFromHex,
     Compile,
     Ord,
     Chr,
@@ -3085,6 +3088,7 @@ pub enum BuiltinFunction {
     InspectIsMethod,
     InspectIsRoutine,
     InspectIsMethodDescriptor,
+    InspectIsDataDescriptor,
     InspectIsMethodWrapper,
     InspectIsTraceback,
     InspectIsFrame,
@@ -5781,6 +5785,8 @@ impl BuiltinFunction {
             | BuiltinFunction::FloatHex
             | BuiltinFunction::StrMakeTrans
             | BuiltinFunction::BytesMakeTrans
+            | BuiltinFunction::BytesFromHex
+            | BuiltinFunction::ByteArrayFromHex
             | BuiltinFunction::Compile
             | BuiltinFunction::Callable
             | BuiltinFunction::IsInstance
@@ -6152,6 +6158,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectIsMethod
             | BuiltinFunction::InspectIsRoutine
             | BuiltinFunction::InspectIsMethodDescriptor
+            | BuiltinFunction::InspectIsDataDescriptor
             | BuiltinFunction::InspectIsMethodWrapper
             | BuiltinFunction::InspectIsTraceback
             | BuiltinFunction::InspectIsFrame
@@ -7724,6 +7731,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrEncode => "<bound method str.encode>".to_string(),
                     NativeMethodKind::StrDecode => "<bound method str.decode>".to_string(),
                     NativeMethodKind::BytesDecode => "<bound method bytes.decode>".to_string(),
+                    NativeMethodKind::BytesHex => "<bound method bytes.hex>".to_string(),
                     NativeMethodKind::BytesStartsWith => {
                         "<bound method bytes.startswith>".to_string()
                     }

@@ -891,6 +891,12 @@ impl Vm {
             "fromhex" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatFromHex))
             }
+            "fromhex" if builtin == BuiltinFunction::Bytes => {
+                Ok(Value::Builtin(BuiltinFunction::BytesFromHex))
+            }
+            "fromhex" if builtin == BuiltinFunction::ByteArray => {
+                Ok(Value::Builtin(BuiltinFunction::ByteArrayFromHex))
+            }
             "hex" if builtin == BuiltinFunction::Float => {
                 Ok(Value::Builtin(BuiltinFunction::FloatHex))
             }
@@ -1795,6 +1801,7 @@ impl Vm {
         };
         let kind = match attr_name {
             "decode" => NativeMethodKind::BytesDecode,
+            "hex" => NativeMethodKind::BytesHex,
             "startswith" => NativeMethodKind::BytesStartsWith,
             "endswith" => NativeMethodKind::BytesEndsWith,
             "count" => NativeMethodKind::BytesCount,
