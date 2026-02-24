@@ -476,7 +476,9 @@ fn instance_hashable_backing_value(instance: &ObjRef) -> Option<Value> {
     if let Some(Value::Float(number)) = instance_data.attrs.get(FLOAT_BACKING_STORAGE_ATTR) {
         return Some(Value::Float(*number));
     }
-    if let Some(Value::Complex { real, imag }) = instance_data.attrs.get(COMPLEX_BACKING_STORAGE_ATTR) {
+    if let Some(Value::Complex { real, imag }) =
+        instance_data.attrs.get(COMPLEX_BACKING_STORAGE_ATTR)
+    {
         return Some(Value::Complex {
             real: *real,
             imag: *imag,
@@ -2710,6 +2712,7 @@ pub enum BuiltinFunction {
     OsPathJoin,
     OsPathNormPath,
     OsPathNormCase,
+    OsPathSplitDrive,
     OsPathSplitRootEx,
     OsPathSplit,
     OsPathDirName,
@@ -3315,6 +3318,8 @@ pub enum BuiltinFunction {
     BinasciiCrc32,
     BinasciiB2aBase64,
     BinasciiA2bBase64,
+    BinasciiHexlify,
+    BinasciiUnhexlify,
     CsvReader,
     CsvWriter,
     CsvWriterRow,
@@ -4606,15 +4611,15 @@ impl BuiltinFunction {
             BuiltinFunction::TypeCall => {
                 Err(RuntimeError::new("type.__call__ requires VM context"))
             }
-            BuiltinFunction::GeneratorType => {
-                Err(RuntimeError::type_error("cannot create 'generator' instances"))
-            }
-            BuiltinFunction::CoroutineType => {
-                Err(RuntimeError::type_error("cannot create 'coroutine' instances"))
-            }
-            BuiltinFunction::AsyncGeneratorType => {
-                Err(RuntimeError::type_error("cannot create 'async_generator' instances"))
-            }
+            BuiltinFunction::GeneratorType => Err(RuntimeError::type_error(
+                "cannot create 'generator' instances",
+            )),
+            BuiltinFunction::CoroutineType => Err(RuntimeError::type_error(
+                "cannot create 'coroutine' instances",
+            )),
+            BuiltinFunction::AsyncGeneratorType => Err(RuntimeError::type_error(
+                "cannot create 'async_generator' instances",
+            )),
             BuiltinFunction::TypeInit => {
                 let payload_len = args.len().saturating_sub(1);
                 if payload_len != 1 && payload_len != 3 {
@@ -5939,6 +5944,7 @@ impl BuiltinFunction {
             | BuiltinFunction::OsPathJoin
             | BuiltinFunction::OsPathNormPath
             | BuiltinFunction::OsPathNormCase
+            | BuiltinFunction::OsPathSplitDrive
             | BuiltinFunction::OsPathSplitRootEx
             | BuiltinFunction::OsPathSplit
             | BuiltinFunction::OsPathDirName
@@ -6249,6 +6255,8 @@ impl BuiltinFunction {
             | BuiltinFunction::BinasciiCrc32
             | BuiltinFunction::BinasciiB2aBase64
             | BuiltinFunction::BinasciiA2bBase64
+            | BuiltinFunction::BinasciiHexlify
+            | BuiltinFunction::BinasciiUnhexlify
             | BuiltinFunction::CsvReader
             | BuiltinFunction::CsvWriter
             | BuiltinFunction::CsvWriterRow

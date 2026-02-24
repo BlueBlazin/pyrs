@@ -528,9 +528,7 @@ impl Vm {
                                 })?
                             }
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "dict.copy() receiver must be dict",
-                                ));
+                                return Err(RuntimeError::new("dict.copy() receiver must be dict"));
                             }
                         }
                     }
@@ -657,11 +655,7 @@ impl Vm {
                             }
                         } else {
                             for (key, value) in entries.iter() {
-                                dict_set_value_checked(
-                                    &dict_receiver,
-                                    key.clone(),
-                                    value.clone(),
-                                )?;
+                                dict_set_value_checked(&dict_receiver, key.clone(), value.clone())?;
                             }
                         }
                     } else {
@@ -737,9 +731,7 @@ impl Vm {
                         if module_data.name == "__dict_unbound_method__" =>
                     {
                         if args.is_empty() {
-                            return Err(RuntimeError::new(
-                                "dict.setdefault() expects an argument",
-                            ));
+                            return Err(RuntimeError::new("dict.setdefault() expects an argument"));
                         }
                         match args.remove(0) {
                             Value::Dict(dict_obj) => dict_obj,
@@ -788,9 +780,7 @@ impl Vm {
                                 })?
                             }
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "dict.get() receiver must be dict",
-                                ));
+                                return Err(RuntimeError::new("dict.get() receiver must be dict"));
                             }
                         }
                     }
@@ -1180,9 +1170,7 @@ impl Vm {
                                 })?
                             }
                             _ => {
-                                return Err(RuntimeError::new(
-                                    "dict.pop() receiver must be dict",
-                                ));
+                                return Err(RuntimeError::new("dict.pop() receiver must be dict"));
                             }
                         }
                     }
@@ -7610,6 +7598,7 @@ impl Vm {
             BuiltinFunction::OsPathJoin => self.builtin_os_path_join(args, kwargs),
             BuiltinFunction::OsPathNormPath => self.builtin_os_path_normpath(args, kwargs),
             BuiltinFunction::OsPathNormCase => self.builtin_os_path_normcase(args, kwargs),
+            BuiltinFunction::OsPathSplitDrive => self.builtin_os_path_splitdrive(args, kwargs),
             BuiltinFunction::OsPathSplitRootEx => self.builtin_os_path_splitroot_ex(args, kwargs),
             BuiltinFunction::OsPathSplit => self.builtin_os_path_split(args, kwargs),
             BuiltinFunction::OsPathDirName => self.builtin_os_path_dirname(args, kwargs),
@@ -8591,6 +8580,8 @@ impl Vm {
             BuiltinFunction::BinasciiCrc32 => self.builtin_binascii_crc32(args, kwargs),
             BuiltinFunction::BinasciiB2aBase64 => self.builtin_binascii_b2a_base64(args, kwargs),
             BuiltinFunction::BinasciiA2bBase64 => self.builtin_binascii_a2b_base64(args, kwargs),
+            BuiltinFunction::BinasciiHexlify => self.builtin_binascii_hexlify(args, kwargs),
+            BuiltinFunction::BinasciiUnhexlify => self.builtin_binascii_unhexlify(args, kwargs),
             BuiltinFunction::CsvReader => self.builtin_csv_reader(args, kwargs),
             BuiltinFunction::CsvWriter => self.builtin_csv_writer(args, kwargs),
             BuiltinFunction::CsvWriterRow => self.builtin_csv_writerow(args, kwargs),

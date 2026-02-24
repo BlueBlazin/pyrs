@@ -1346,6 +1346,7 @@ impl Vm {
                 ("lexists", BuiltinFunction::OsPathExists),
                 ("normpath", BuiltinFunction::OsPathNormPath),
                 ("normcase", BuiltinFunction::OsPathNormCase),
+                ("splitdrive", BuiltinFunction::OsPathSplitDrive),
                 ("abspath", BuiltinFunction::OsPathAbsPath),
                 ("expanduser", BuiltinFunction::OsPathExpandUser),
                 ("realpath", BuiltinFunction::OsPathRealPath),
@@ -2258,11 +2259,15 @@ impl Vm {
                 ("StreamWriter", stream_writer_class),
             ],
         );
+        self.install_module_alias_from_existing("_codecs", "codecs");
         self.install_builtin_module(
             "unicodedata",
             &[
                 ("normalize", BuiltinFunction::UnicodedataNormalize),
-                ("east_asian_width", BuiltinFunction::UnicodedataEastAsianWidth),
+                (
+                    "east_asian_width",
+                    BuiltinFunction::UnicodedataEastAsianWidth,
+                ),
             ],
             Vec::new(),
         );
@@ -2272,6 +2277,10 @@ impl Vm {
                 ("crc32", BuiltinFunction::BinasciiCrc32),
                 ("b2a_base64", BuiltinFunction::BinasciiB2aBase64),
                 ("a2b_base64", BuiltinFunction::BinasciiA2bBase64),
+                ("hexlify", BuiltinFunction::BinasciiHexlify),
+                ("b2a_hex", BuiltinFunction::BinasciiHexlify),
+                ("unhexlify", BuiltinFunction::BinasciiUnhexlify),
+                ("a2b_hex", BuiltinFunction::BinasciiUnhexlify),
             ],
             vec![
                 ("Error", Value::ExceptionType("Exception".to_string())),
@@ -3293,6 +3302,7 @@ impl Vm {
                 ),
             ],
         );
+        self.install_module_alias_from_existing("_functools", "functools");
         let typing_placeholder = self.heap.alloc_class(ClassObject::new(
             "typing.placeholder".to_string(),
             Vec::new(),
@@ -3583,6 +3593,7 @@ impl Vm {
                 ("UserString", Value::Class(user_string_class)),
             ],
         );
+        self.install_module_alias_from_existing("_collections", "collections");
         self.install_builtin_module(
             "collections.abc",
             &[],
@@ -6499,6 +6510,7 @@ impl Vm {
                 ("UTC", Value::Instance(timezone_utc)),
             ],
         );
+        self.install_module_alias_from_existing("_datetime", "datetime");
         let uuid_class = match self
             .heap
             .alloc_class(ClassObject::new("UUID".to_string(), Vec::new()))
@@ -6784,6 +6796,7 @@ impl Vm {
                 ("SIGTERM", Value::Int(SIGNAL_SIGTERM)),
             ],
         );
+        self.install_module_alias_from_existing("_signal", "signal");
         let socket_class = match self
             .heap
             .alloc_class(ClassObject::new("socket".to_string(), Vec::new()))
@@ -7244,6 +7257,43 @@ impl Vm {
         self.refresh_sys_modules_dict();
     }
 
+    fn install_module_alias_from_existing(&mut self, alias: &str, source_name: &str) {
+        if self.modules.contains_key(alias) {
+            return;
+        }
+        let Some(source_module) = self.modules.get(source_name).cloned() else {
+            return;
+        };
+        let alias_module = match self.heap.alloc_module(ModuleObject::new(alias.to_string())) {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        self.set_module_metadata(
+            &alias_module,
+            alias,
+            None,
+            None,
+            Some(BUILTIN_MODULE_LOADER),
+            false,
+            Vec::new(),
+            false,
+        );
+        let exported = if let Object::Module(data) = &*source_module.kind() {
+            Some(data.globals.clone())
+        } else {
+            None
+        };
+        if let Some(exported) = exported
+            && let Object::Module(alias_data) = &mut *alias_module.kind_mut()
+        {
+            alias_data.globals.extend(exported);
+            alias_data
+                .globals
+                .insert("__name__".to_string(), Value::Str(alias.to_string()));
+        }
+        self.register_module(alias, alias_module);
+    }
+
     fn install_abc_fallback_module(&mut self) -> Result<(), RuntimeError> {
         if self.modules.contains_key("abc") {
             return Ok(());
@@ -7337,6 +7387,7 @@ impl Vm {
             )],
             Vec::new(),
         );
+        self.install_module_alias_from_existing("_sysconfig", "sysconfig");
     }
 
     fn install_socket_fallback_module(&mut self) -> Result<(), RuntimeError> {
@@ -7388,6 +7439,10 @@ impl Vm {
             "sysconfig" => {
                 self.install_sysconfig_fallback_module();
                 Ok(true)
+            }
+            "_sysconfig" => {
+                self.install_sysconfig_fallback_module();
+                Ok(self.modules.contains_key("_sysconfig"))
             }
             "socket" => {
                 self.install_socket_fallback_module()?;

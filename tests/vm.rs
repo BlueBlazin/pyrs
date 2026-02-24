@@ -12948,8 +12948,9 @@ fn executes_c_decimal_binary_ops_without_crash() {
         eprintln!("skipping C decimal regression test (CPython Lib path not available)");
         return;
     };
-    let dynload_path =
-        PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload");
+    let dynload_path = PathBuf::from(
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
+    );
     if !dynload_path
         .join("_decimal.cpython-314-darwin.so")
         .is_file()
@@ -16371,6 +16372,57 @@ fn binascii_a2b_base64_decodes_standard_payloads() {
     let source = r#"import binascii
 payload = binascii.a2b_base64(b"YWI=\n")
 ok = (payload == b"ab")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn binascii_hexlify_and_unhexlify_roundtrip_bytes_and_str_inputs() {
+    let source = r#"import binascii
+ok = (
+    binascii.unhexlify("6869") == b"hi"
+    and binascii.a2b_hex(b"6869") == b"hi"
+    and binascii.hexlify(b"hi") == b"6869"
+    and binascii.b2a_hex(b"hi") == b"6869"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn os_path_splitdrive_matches_posix_shape() {
+    let source = r#"import os
+ok = (
+    os.path.splitdrive("/tmp/data.txt") == ("", "/tmp/data.txt")
+    and os.path.splitdrive("relative.txt") == ("", "relative.txt")
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn underscore_accelerator_aliases_import_and_expose_expected_symbols() {
+    let source = r#"import _codecs, _collections, _datetime, _functools, _signal, _sysconfig
+ok = (
+    hasattr(_codecs, "lookup")
+    and hasattr(_collections, "deque")
+    and hasattr(_datetime, "datetime")
+    and hasattr(_functools, "reduce")
+    and hasattr(_signal, "signal")
+    and hasattr(_sysconfig, "_get_sysconfigdata_name")
+)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

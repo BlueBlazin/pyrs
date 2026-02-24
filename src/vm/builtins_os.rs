@@ -3290,6 +3290,37 @@ impl Vm {
         }
     }
 
+    pub(super) fn builtin_os_path_splitdrive(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("splitdrive() expects one argument"));
+        }
+        let (path, return_bytes) = self.path_arg_to_string_and_type(args[0].clone())?;
+        let (drive, tail) = if cfg!(windows) {
+            let bytes = path.as_bytes();
+            if bytes.len() >= 2 && bytes[1] == b':' {
+                (path[..2].to_string(), path[2..].to_string())
+            } else {
+                (String::new(), path)
+            }
+        } else {
+            (String::new(), path)
+        };
+        if return_bytes {
+            Ok(self.heap.alloc_tuple(vec![
+                self.heap.alloc_bytes(drive.into_bytes()),
+                self.heap.alloc_bytes(tail.into_bytes()),
+            ]))
+        } else {
+            Ok(self
+                .heap
+                .alloc_tuple(vec![Value::Str(drive), Value::Str(tail)]))
+        }
+    }
+
     pub(super) fn builtin_os_path_splitroot_ex(
         &mut self,
         args: Vec<Value>,
@@ -5026,7 +5057,11 @@ impl Vm {
         }
         let text = match args.remove(0) {
             Value::Str(value) => value,
-            _ => return Err(RuntimeError::type_error("east_asian_width() argument must be str")),
+            _ => {
+                return Err(RuntimeError::type_error(
+                    "east_asian_width() argument must be str",
+                ));
+            }
         };
         let mut chars = text.chars();
         let Some(ch) = chars.next() else {
@@ -5244,6 +5279,73 @@ impl Vm {
             if pad == 0 {
                 out.push((triple & 0xff) as u8);
             }
+        }
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    pub(super) fn builtin_binascii_hexlify(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "hexlify() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new("hexlify() expects one argument"));
+        }
+        let data = bytes_like_from_value(args.remove(0))?;
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = Vec::with_capacity(data.len() * 2);
+        for byte in data {
+            out.push(HEX[(byte >> 4) as usize]);
+            out.push(HEX[(byte & 0x0f) as usize]);
+        }
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    pub(super) fn builtin_binascii_unhexlify(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "unhexlify() got an unexpected keyword argument",
+            ));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new("unhexlify() expects one argument"));
+        }
+        let raw = args.remove(0);
+        let input = match raw {
+            Value::Str(text) => text.into_bytes(),
+            other => bytes_like_from_value(other)?,
+        };
+        if input.len() % 2 != 0 {
+            return Err(RuntimeError::new("Odd-length string"));
+        }
+
+        let decode_nibble = |byte: u8| -> Option<u8> {
+            match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            }
+        };
+
+        let mut out = Vec::with_capacity(input.len() / 2);
+        for pair in input.chunks_exact(2) {
+            let Some(high) = decode_nibble(pair[0]) else {
+                return Err(RuntimeError::new("Non-hexadecimal digit found"));
+            };
+            let Some(low) = decode_nibble(pair[1]) else {
+                return Err(RuntimeError::new("Non-hexadecimal digit found"));
+            };
+            out.push((high << 4) | low);
         }
         Ok(self.heap.alloc_bytes(out))
     }
