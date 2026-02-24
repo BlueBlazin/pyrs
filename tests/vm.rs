@@ -16432,6 +16432,26 @@ ok = (
 }
 
 #[test]
+fn stringprep_import_uses_unicodedata_ucd_3_2_0_surface() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping stringprep import gate (CPython Lib not found)");
+        return;
+    };
+    let source = r#"import stringprep, unicodedata
+ok = (
+    hasattr(unicodedata, "ucd_3_2_0")
+    and unicodedata.ucd_3_2_0.unidata_version == "3.2.0"
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(&lib_path);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn itertools_islice_cycle_stops_without_materializing_infinite_input() {
     let source = r#"import itertools
 values = list(itertools.islice(itertools.cycle([1, 2]), 5))

@@ -2271,6 +2271,47 @@ impl Vm {
             ],
             Vec::new(),
         );
+        if let Some(unicodedata_module) = self.modules.get("unicodedata").cloned() {
+            if let Object::Module(module_data) = &mut *unicodedata_module.kind_mut() {
+                module_data
+                    .globals
+                    .insert("unidata_version".to_string(), Value::Str("16.0.0".to_string()));
+                let legacy = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("unicodedata.ucd_3_2_0".to_string()))
+                {
+                    Value::Module(module) => module,
+                    _ => unreachable!(),
+                };
+                self.set_module_metadata(
+                    &legacy,
+                    "unicodedata.ucd_3_2_0",
+                    None,
+                    None,
+                    Some(BUILTIN_MODULE_LOADER),
+                    false,
+                    Vec::new(),
+                    false,
+                );
+                if let Object::Module(legacy_data) = &mut *legacy.kind_mut() {
+                    legacy_data.globals.insert(
+                        "unidata_version".to_string(),
+                        Value::Str("3.2.0".to_string()),
+                    );
+                    legacy_data.globals.insert(
+                        "normalize".to_string(),
+                        Value::Builtin(BuiltinFunction::UnicodedataNormalize),
+                    );
+                    legacy_data.globals.insert(
+                        "east_asian_width".to_string(),
+                        Value::Builtin(BuiltinFunction::UnicodedataEastAsianWidth),
+                    );
+                }
+                module_data
+                    .globals
+                    .insert("ucd_3_2_0".to_string(), Value::Module(legacy));
+            }
+        }
         self.install_builtin_module(
             "binascii",
             &[
