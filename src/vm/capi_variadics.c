@@ -12,7 +12,12 @@
 #include <wchar.h>
 
 typedef intptr_t Py_ssize_t;
+typedef intptr_t Py_hash_t;
 typedef void (*PyOS_sighandler_t)(int);
+
+#ifndef PY_SSIZE_T_MAX
+#define PY_SSIZE_T_MAX INTPTR_MAX
+#endif
 
 extern void *pyrs_capi_tuple_pack_from_array(Py_ssize_t n, void *const *items);
 extern void pyrs_capi_set_error_message(const char *message);
@@ -33,6 +38,7 @@ extern Py_ssize_t PyList_Size(void *list);
 extern void *PyList_GetItem(void *list, Py_ssize_t index);
 extern int PyList_Append(void *list, void *item);
 extern void *PyDict_New(void);
+extern Py_ssize_t PyDict_Size(void *dict);
 extern void *PyDict_Keys(void *dict);
 extern int PyDict_SetItem(void *dict, void *key, void *value);
 extern void *PyDict_GetItemString(void *dict, const char *key);
@@ -42,12 +48,14 @@ extern void *PyLong_FromLongLong(long long value);
 extern void *PyLong_FromUnsignedLongLong(unsigned long long value);
 extern void *PyLong_FromSsize_t(Py_ssize_t value);
 extern long PyLong_AsLong(void *value);
+extern unsigned long PyLong_AsUnsignedLong(void *value);
 extern void *PyFloat_FromDouble(double value);
 extern void *PyBool_FromLong(long value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyUnicode_FromWideChar(const wchar_t *value, Py_ssize_t len);
 extern int PyBytes_AsStringAndSize(void *obj, char **buffer, Py_ssize_t *len);
 extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
+extern void *PyImport_ImportModule(const char *name);
 extern void *PyObject_Call(void *callable, void *args, void *kwargs);
 extern void *PyObject_CallObject(void *callable, void *args);
 extern void *PyObject_GetAttr(void *object, void *name);
@@ -55,11 +63,15 @@ extern void *PyObject_GetAttrString(void *object, const char *name);
 extern void *PyObject_Str(void *object);
 extern void *PyObject_Repr(void *object);
 extern void *PyObject_ASCII(void *object);
+extern Py_hash_t PyObject_Hash(void *object);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
 extern const char *PyUnicode_AsUTF8(void *object);
 extern void PyErr_BadInternalCall(void);
 extern void *PyErr_Occurred(void);
+extern void PyErr_SetString(void *exception, const char *message);
+extern void PyErr_Clear(void);
+extern void PyErr_WriteUnraisable(void *object);
 extern void Py_IncRef(void *object);
 extern void Py_DecRef(void *object);
 extern char _Py_NoneStruct;
@@ -67,6 +79,7 @@ extern char PyDict_Type;
 extern char PyTuple_Type;
 extern char PyUnicode_Type;
 extern char PyBytes_Type;
+extern char PyExc_TypeError;
 
 static void pyrs_sys_vwrite(void (*sink)(const char *), const char *format, va_list ap)
 {
@@ -2431,3 +2444,364 @@ int _PyArg_VaParseTupleAndKeywords_SizeT(
     va_end(lva);
     return result;
 }
+
+typedef struct {
+    uint8_t v;
+} _PyOnceFlag;
+
+typedef struct _PyArg_Parser {
+    const char *format;
+    const char * const *keywords;
+    const char *fname;
+    const char *custom_msg;
+    _PyOnceFlag once;
+    int is_kwtuple_owned;
+    int pos;
+    int min;
+    int max;
+    void *kwtuple;
+    struct _PyArg_Parser *next;
+} _PyArg_Parser;
+
+static int pyrs_lookup_keyword_index(const char * const *keywords, const char *name)
+{
+    if (keywords == NULL || name == NULL) {
+        return -1;
+    }
+    for (int i = 0; keywords[i] != NULL; i++) {
+        if (strcmp(keywords[i], name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int pyrs_keyword_count(const char * const *keywords)
+{
+    if (keywords == NULL) {
+        return 0;
+    }
+    int count = 0;
+    while (keywords[count] != NULL) {
+        count++;
+    }
+    return count;
+}
+
+int _PyArg_NoKeywords(const char *funcname, void *kwargs)
+{
+    if (kwargs == NULL) {
+        return 1;
+    }
+    Py_ssize_t size = PyDict_Size(kwargs);
+    if (size <= 0) {
+        return 1;
+    }
+    if (funcname == NULL) {
+        funcname = "<function>";
+    }
+    PyErr_Format((void *)&PyExc_TypeError, "%s() takes no keyword arguments", funcname);
+    return 0;
+}
+
+int _PyArg_CheckPositional(const char *name, Py_ssize_t nargs, Py_ssize_t min, Py_ssize_t max)
+{
+    if (max != PY_SSIZE_T_MAX && nargs >= min && nargs <= max) {
+        return 1;
+    }
+    if (max == PY_SSIZE_T_MAX && nargs >= min) {
+        return 1;
+    }
+    if (name == NULL) {
+        name = "<function>";
+    }
+    if (nargs < min) {
+        if (min == max) {
+            PyErr_Format(
+                (void *)&PyExc_TypeError,
+                "%s() takes exactly %zd positional argument%s (%zd given)",
+                name,
+                min,
+                min == 1 ? "" : "s",
+                nargs
+            );
+        } else {
+            PyErr_Format(
+                (void *)&PyExc_TypeError,
+                "%s() takes at least %zd positional argument%s (%zd given)",
+                name,
+                min,
+                min == 1 ? "" : "s",
+                nargs
+            );
+        }
+        return 0;
+    }
+    if (max != PY_SSIZE_T_MAX) {
+        PyErr_Format(
+            (void *)&PyExc_TypeError,
+            "%s() takes at most %zd positional argument%s (%zd given)",
+            name,
+            max,
+            max == 1 ? "" : "s",
+            nargs
+        );
+        return 0;
+    }
+    return 1;
+}
+
+void _PyArg_BadArgument(
+    const char *fname,
+    const char *displayname,
+    const char *expected,
+    void *arg
+)
+{
+    (void)arg;
+    if (fname == NULL) {
+        fname = "<function>";
+    }
+    if (displayname == NULL || displayname[0] == '\0') {
+        displayname = "argument";
+    }
+    if (expected == NULL || expected[0] == '\0') {
+        expected = "object";
+    }
+    PyErr_Format(
+        (void *)&PyExc_TypeError,
+        "%s(): %s must be %s",
+        fname,
+        displayname,
+        expected
+    );
+}
+
+void *PyImport_ImportModuleAttrString(const char *modname, const char *attrname)
+{
+    if (modname == NULL || attrname == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "PyImport_ImportModuleAttrString received null argument");
+        return NULL;
+    }
+    void *module = PyImport_ImportModule(modname);
+    if (module == NULL) {
+        return NULL;
+    }
+    void *attr = PyObject_GetAttrString(module, attrname);
+    Py_DecRef(module);
+    return attr;
+}
+
+Py_hash_t Py_HashBuffer(const void *ptr, Py_ssize_t len)
+{
+    if (len < 0) {
+        PyErr_SetString((void *)&PyExc_TypeError, "Py_HashBuffer length must be non-negative");
+        return -1;
+    }
+    const char *raw = (const char *)ptr;
+    void *bytes = PyBytes_FromStringAndSize(raw, len);
+    if (bytes == NULL) {
+        return -1;
+    }
+    Py_hash_t hash = PyObject_Hash(bytes);
+    Py_DecRef(bytes);
+    return hash;
+}
+
+int _PyLong_UnsignedInt_Converter(void *object, void *address)
+{
+    if (address == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_PyLong_UnsignedInt_Converter missing destination");
+        return 0;
+    }
+    unsigned long value = PyLong_AsUnsignedLong(object);
+    if (PyErr_Occurred() != NULL) {
+        return 0;
+    }
+    if (value > UINT_MAX) {
+        PyErr_SetString((void *)&PyExc_TypeError, "integer out of range for unsigned int");
+        return 0;
+    }
+    *((unsigned int *)address) = (unsigned int)value;
+    return 1;
+}
+
+void * const *_PyArg_UnpackKeywords(
+    void *const *args,
+    Py_ssize_t nargs,
+    void *kwargs,
+    void *kwnames,
+    _PyArg_Parser *parser,
+    int minpos,
+    int maxpos,
+    int minkw,
+    int varpos,
+    void **buf
+)
+{
+    if (parser == NULL || buf == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_PyArg_UnpackKeywords received null parser/buffer");
+        return NULL;
+    }
+    const char * const *keywords = parser->keywords;
+    int keyword_count = pyrs_keyword_count(keywords);
+    for (int i = 0; i < keyword_count; i++) {
+        buf[i] = NULL;
+    }
+
+    if (!varpos && maxpos >= 0 && nargs > (Py_ssize_t)maxpos) {
+        _PyArg_CheckPositional(parser->fname ? parser->fname : "<function>", nargs, minpos, maxpos);
+        return NULL;
+    }
+    if (nargs < (Py_ssize_t)minpos) {
+        _PyArg_CheckPositional(
+            parser->fname ? parser->fname : "<function>",
+            nargs,
+            minpos,
+            maxpos
+        );
+        return NULL;
+    }
+    if (nargs > (Py_ssize_t)keyword_count) {
+        nargs = keyword_count;
+    }
+    for (Py_ssize_t i = 0; i < nargs; i++) {
+        buf[i] = args ? args[i] : NULL;
+    }
+
+    Py_ssize_t provided_kw = 0;
+    if (kwnames != NULL) {
+        Py_ssize_t kw_count = PyTuple_Size(kwnames);
+        if (kw_count < 0) {
+            return NULL;
+        }
+        provided_kw += kw_count;
+        for (Py_ssize_t i = 0; i < kw_count; i++) {
+            void *name_obj = PyTuple_GetItem(kwnames, i);
+            const char *name = PyUnicode_AsUTF8(name_obj);
+            if (name == NULL) {
+                return NULL;
+            }
+            int index = pyrs_lookup_keyword_index(keywords, name);
+            if (index < 0) {
+                PyErr_Format(
+                    (void *)&PyExc_TypeError,
+                    "%s() got an unexpected keyword argument '%s'",
+                    parser->fname ? parser->fname : "<function>",
+                    name
+                );
+                return NULL;
+            }
+            if (buf[index] != NULL) {
+                PyErr_Format(
+                    (void *)&PyExc_TypeError,
+                    "%s() got multiple values for argument '%s'",
+                    parser->fname ? parser->fname : "<function>",
+                    name
+                );
+                return NULL;
+            }
+            if (args == NULL) {
+                return NULL;
+            }
+            buf[index] = args[nargs + i];
+        }
+    }
+
+    if (kwargs != NULL) {
+        void *keys = PyDict_Keys(kwargs);
+        if (keys == NULL) {
+            return NULL;
+        }
+        Py_ssize_t key_count = PyList_Size(keys);
+        if (key_count < 0) {
+            Py_DecRef(keys);
+            return NULL;
+        }
+        provided_kw += key_count;
+        for (Py_ssize_t i = 0; i < key_count; i++) {
+            void *key_obj = PyList_GetItem(keys, i);
+            const char *name = PyUnicode_AsUTF8(key_obj);
+            if (name == NULL) {
+                Py_DecRef(keys);
+                return NULL;
+            }
+            int index = pyrs_lookup_keyword_index(keywords, name);
+            if (index < 0) {
+                Py_DecRef(keys);
+                PyErr_Format(
+                    (void *)&PyExc_TypeError,
+                    "%s() got an unexpected keyword argument '%s'",
+                    parser->fname ? parser->fname : "<function>",
+                    name
+                );
+                return NULL;
+            }
+            if (buf[index] != NULL) {
+                Py_DecRef(keys);
+                PyErr_Format(
+                    (void *)&PyExc_TypeError,
+                    "%s() got multiple values for argument '%s'",
+                    parser->fname ? parser->fname : "<function>",
+                    name
+                );
+                return NULL;
+            }
+            void *value = PyDict_GetItemString(kwargs, name);
+            buf[index] = value;
+        }
+        Py_DecRef(keys);
+    }
+
+    int required_total = minpos + minkw;
+    int provided_total = 0;
+    for (int i = 0; i < keyword_count; i++) {
+        if (buf[i] != NULL) {
+            provided_total++;
+        }
+    }
+    if (provided_total < required_total) {
+        PyErr_Format(
+            (void *)&PyExc_TypeError,
+            "%s() missing required positional argument%s",
+            parser->fname ? parser->fname : "<function>",
+            (required_total - provided_total) == 1 ? "" : "s"
+        );
+        return NULL;
+    }
+    return (void * const *)buf;
+}
+
+void PyErr_FormatUnraisable(const char *format, ...)
+{
+    if (format != NULL && format[0] != '\0') {
+        va_list ap;
+        va_start(ap, format);
+        void *message = PyErr_FormatV((void *)&PyExc_TypeError, format, ap);
+        va_end(ap);
+        if (message != NULL) {
+            Py_DecRef(message);
+        }
+        PyErr_Clear();
+    }
+    PyErr_WriteUnraisable(NULL);
+}
+
+const unsigned int _Py_ctype_table[256] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 8, 8, 8, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 0, 0, 0, 0, 0, 0,
+    0, 18, 18, 18, 18, 18, 18, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0,
+    0, 17, 17, 17, 17, 17, 17, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};

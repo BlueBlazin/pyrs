@@ -88,8 +88,12 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - inventory source: CPython 3.14 `sys.stdlib_module_names` (`297` modules),
   - latest artifact: `perf/stdlib_full_probe_latest.json`,
   - current baseline:
-    - host-supported imports: `224/288` (out of `297` total inventory rows),
-    - comprehensive mapped test status: `PASS=25`, `FAIL=143`, `TIMEOUT=16`,
+    - host-supported imports: `233/288` (out of `297` total inventory rows),
+    - comprehensive mapped test status: `PASS=28`, `FAIL=147`, `TIMEOUT=15`,
+  - latest stdlib closure deltas:
+    - startup path discovery now appends CPython `lib-dynload` path when present,
+    - extension load failures now surface as `ImportError` (CPython fallback parity),
+    - C-API varargs/arg-parse compatibility exports extended in `src/vm/capi_variadics.c`,
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):

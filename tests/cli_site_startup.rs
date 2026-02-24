@@ -219,3 +219,32 @@ for _name in ("sitecustomize", "usercustomize"):
         "site startup should be silent when custom modules are absent, got: {stderr}"
     );
 }
+
+#[test]
+fn cli_adds_lib_dynload_path_when_detectable() {
+    let dynload = PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload");
+    if !dynload.is_dir() {
+        eprintln!("skipping dynload startup-path test: host lib-dynload not present");
+        return;
+    }
+
+    let root = temp_root("cli_dynload_path");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let script = root.join("main.py");
+    fs::write(
+        &script,
+        "import sys\nassert any(p.endswith('/lib-dynload') for p in sys.path)\n",
+    )
+    .expect("write script");
+
+    let script_arg = script.to_string_lossy();
+    let (code, _stdout, stderr) = run_pyrs(
+        &root,
+        &[script_arg.as_ref()],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+}

@@ -640,25 +640,60 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
     let mut seen = HashSet::new();
     let mut strict_site_import = false;
 
-    let mut register = |candidate: PathBuf| {
+    fn register_unique_path(out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, candidate: PathBuf) {
         if candidate.as_os_str().is_empty() {
             return;
         }
         let normalized = std::fs::canonicalize(&candidate).unwrap_or(candidate);
-        if !normalized.join("site.py").is_file() {
-            return;
-        }
         if seen.insert(normalized.clone()) {
             out.push(normalized);
         }
-    };
+    }
+
+    fn register_stdlib_root(
+        out: &mut Vec<PathBuf>,
+        seen: &mut HashSet<PathBuf>,
+        candidate: PathBuf,
+    ) -> Option<PathBuf> {
+        if candidate.as_os_str().is_empty() {
+            return None;
+        }
+        let normalized = std::fs::canonicalize(&candidate).unwrap_or(candidate);
+        if !normalized.join("site.py").is_file() {
+            return None;
+        }
+        if seen.insert(normalized.clone()) {
+            out.push(normalized.clone());
+        }
+        Some(normalized)
+    }
+
+    fn register_dynload_for_root(
+        out: &mut Vec<PathBuf>,
+        seen: &mut HashSet<PathBuf>,
+        root: &PathBuf,
+    ) {
+        let dynload = root.join("lib-dynload");
+        if dynload.is_dir() {
+            register_unique_path(out, seen, dynload);
+        }
+    }
 
     if let Ok(path) = env::var("PYRS_CPYTHON_LIB") {
         strict_site_import = true;
-        register(PathBuf::from(path));
+        if let Some(root) = register_stdlib_root(&mut out, &mut seen, PathBuf::from(path)) {
+            register_dynload_for_root(&mut out, &mut seen, &root);
+        }
     }
     if let Ok(home) = env::var("PYTHONHOME") {
-        register(PathBuf::from(home).join("lib").join("python3.14"));
+        if let Some(root) = register_stdlib_root(
+            &mut out,
+            &mut seen,
+            PathBuf::from(home).join("lib").join("python3.14"),
+        )
+        {
+            register_dynload_for_root(&mut out, &mut seen, &root);
+        }
     }
 
     for candidate in [
@@ -671,8 +706,9 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         let normalized = std::fs::canonicalize(&candidate_path).unwrap_or(candidate_path);
         if normalized.join("site.py").is_file() {
             if seen.insert(normalized.clone()) {
-                out.push(normalized);
+                out.push(normalized.clone());
             }
+            register_dynload_for_root(&mut out, &mut seen, &normalized);
             break;
         }
     }

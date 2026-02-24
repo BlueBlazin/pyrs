@@ -271,6 +271,7 @@ impl Vm {
         library_path: &Path,
         symbol: &str,
     ) -> Result<(), RuntimeError> {
+        let import_error = |message: String| RuntimeError::with_exception("ImportError", Some(message));
         let trace_slots = std::env::var_os("PYRS_TRACE_EXT_SLOTS").is_some();
         if trace_slots {
             eprintln!(
@@ -362,7 +363,7 @@ impl Vm {
             if symbol.starts_with("PyInit_") {
                 let (handle, init) =
                     load_dynamic_symbol::<CpythonExtensionInit>(library_path, symbol)
-                        .map_err(RuntimeError::new)?;
+                        .map_err(import_error)?;
                 (
                     symbol.to_string(),
                     ResolvedInit::Cpython {
@@ -393,14 +394,14 @@ impl Vm {
                                 },
                             ),
                             Err(cpython_err) => {
-                                return Err(RuntimeError::new(format!(
+                                return Err(import_error(format!(
                                     "{pyrs_err}; fallback '{}' also failed: {cpython_err}",
                                     cpython_symbol
                                 )));
                             }
                         }
                     }
-                    Err(err) => return Err(RuntimeError::new(err)),
+                    Err(err) => return Err(import_error(err)),
                 }
             }
         };

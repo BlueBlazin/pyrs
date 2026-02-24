@@ -4,6 +4,86 @@ use super::{
     CpythonBuffer, CpythonComplexValue, CpythonInittabInitFunc, CpythonTypeObject, Cwchar,
 };
 
+unsafe extern "C" {
+    fn _PyArg_BadArgument(
+        fname: *const c_char,
+        displayname: *const c_char,
+        expected: *const c_char,
+        arg: *mut c_void,
+    );
+    fn _PyArg_CheckPositional(
+        name: *const c_char,
+        nargs: isize,
+        min: isize,
+        max: isize,
+    ) -> c_int;
+    fn _PyArg_NoKeywords(funcname: *const c_char, kwargs: *mut c_void) -> c_int;
+    fn _PyArg_UnpackKeywords(
+        args: *const *mut c_void,
+        nargs: isize,
+        kwargs: *mut c_void,
+        kwnames: *mut c_void,
+        parser: *mut c_void,
+        minpos: c_int,
+        maxpos: c_int,
+        minkw: c_int,
+        varpos: c_int,
+        buf: *mut *mut c_void,
+    ) -> *const *mut c_void;
+    fn PyImport_ImportModuleAttrString(modname: *const c_char, attrname: *const c_char)
+    -> *mut c_void;
+    fn PyErr_FormatUnraisable(format: *const c_char, ...);
+    fn Py_HashBuffer(ptr: *const c_void, len: isize) -> isize;
+    fn _PyLong_UnsignedInt_Converter(obj: *mut c_void, addr: *mut c_void) -> c_int;
+    static _Py_ctype_table: [c_uint; 256];
+}
+
+#[used]
+static KEEP2___PYARG_BADARGUMENT: unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const c_char,
+    *mut c_void,
+) = _PyArg_BadArgument;
+#[used]
+static KEEP2___PYARG_CHECKPOSITIONAL: unsafe extern "C" fn(*const c_char, isize, isize, isize) -> c_int =
+    _PyArg_CheckPositional;
+#[used]
+static KEEP2___PYARG_NOKEYWORDS: unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int =
+    _PyArg_NoKeywords;
+#[used]
+static KEEP2___PYARG_UNPACKKEYWORDS: unsafe extern "C" fn(
+    *const *mut c_void,
+    isize,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    c_int,
+    c_int,
+    c_int,
+    c_int,
+    *mut *mut c_void,
+) -> *const *mut c_void = _PyArg_UnpackKeywords;
+#[used]
+static KEEP2_PYIMPORT_IMPORTMODULEATTRSTRING: unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+) -> *mut c_void = PyImport_ImportModuleAttrString;
+#[used]
+static KEEP2_PYERR_FORMATUNRAISABLE: unsafe extern "C" fn(*const c_char, ...) =
+    PyErr_FormatUnraisable;
+#[used]
+static KEEP2_PY_HASHBUFFER: unsafe extern "C" fn(*const c_void, isize) -> isize = Py_HashBuffer;
+#[used]
+static KEEP2__PYLONG_UNSIGNEDINT_CONVERTER: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    _PyLong_UnsignedInt_Converter;
+#[used]
+static KEEP2___PY_CTYPE_TABLE: unsafe extern "C" fn() -> *const c_uint = keep2_py_ctype_table;
+
+unsafe extern "C" fn keep2_py_ctype_table() -> *const c_uint {
+    unsafe { std::ptr::addr_of!(_Py_ctype_table[0]) }
+}
+
 #[used]
 static KEEP2_PYINSTANCEMETHOD_TYPE: unsafe extern "C" fn() -> *mut CpythonTypeObject =
     keep2_pyinstancemethod_type;
