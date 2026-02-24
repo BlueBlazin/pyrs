@@ -138,6 +138,32 @@ pub(super) struct CpythonComplexValue {
     pub(super) imag: f64,
 }
 
+#[repr(C)]
+pub(super) struct CpythonSpecializationCache {
+    pub(super) getitem: *mut c_void,
+    pub(super) getitem_version: u32,
+    pub(super) _padding: u32,
+    pub(super) init: *mut c_void,
+}
+
+#[repr(C)]
+pub(super) struct CpythonHeapTypeObject {
+    pub(super) ht_type: CpythonTypeObject,
+    pub(super) as_async: CpythonAsyncMethods,
+    pub(super) as_number: CpythonNumberMethods,
+    pub(super) as_mapping: CpythonMappingMethods,
+    pub(super) as_sequence: CpythonSequenceMethods,
+    pub(super) as_buffer: CpythonBufferProcs,
+    pub(super) ht_name: *mut c_void,
+    pub(super) ht_slots: *mut c_void,
+    pub(super) ht_qualname: *mut c_void,
+    pub(super) ht_cached_keys: *mut c_void,
+    pub(super) ht_module: *mut c_void,
+    pub(super) ht_tpname_storage: *mut c_char,
+    pub(super) ht_token: *mut c_void,
+    pub(super) spec_cache: CpythonSpecializationCache,
+}
+
 pub(super) const PY_MEMBER_T_SHORT: c_int = 0;
 pub(super) const PY_MEMBER_T_INT: c_int = 1;
 pub(super) const PY_MEMBER_T_LONG: c_int = 2;

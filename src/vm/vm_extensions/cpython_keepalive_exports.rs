@@ -11,6 +11,16 @@ unsafe extern "C" {
         expected: *const c_char,
         arg: *mut c_void,
     );
+    fn _Py_convert_optional_to_ssize_t(obj: *mut c_void, result: *mut c_void) -> c_int;
+    fn _PyArg_NoPositional(funcname: *const c_char, args: *mut c_void) -> c_int;
+    fn _PyArg_ParseStack(args: *const *mut c_void, nargs: isize, format: *const c_char, ...) -> c_int;
+    fn _PyArg_ParseStackAndKeywords(
+        args: *const *mut c_void,
+        nargs: isize,
+        kwnames: *mut c_void,
+        parser: *mut c_void,
+        ...,
+    ) -> c_int;
     fn _PyArg_CheckPositional(
         name: *const c_char,
         nargs: isize,
@@ -34,8 +44,110 @@ unsafe extern "C" {
     -> *mut c_void;
     fn PyErr_FormatUnraisable(format: *const c_char, ...);
     fn Py_HashBuffer(ptr: *const c_void, len: isize) -> isize;
+    fn _PyNumber_Index(obj: *mut c_void) -> *mut c_void;
     fn _PyLong_UnsignedInt_Converter(obj: *mut c_void, addr: *mut c_void) -> c_int;
+    fn _PyLong_UnsignedLong_Converter(obj: *mut c_void, addr: *mut c_void) -> c_int;
+    fn _PyLong_UnsignedLongLong_Converter(obj: *mut c_void, addr: *mut c_void) -> c_int;
+    fn _PyLong_AsByteArray(
+        long_obj: *mut c_void,
+        bytes: *mut u8,
+        n: usize,
+        little_endian: c_int,
+        is_signed: c_int,
+        with_exceptions: c_int,
+    ) -> c_int;
+    fn _PyLong_FromByteArray(
+        bytes: *const u8,
+        n: usize,
+        little_endian: c_int,
+        is_signed: c_int,
+    ) -> *mut c_void;
+    fn _PyLong_FromGid(gid: c_uint) -> *mut c_void;
+    fn _Py_Gid_Converter(obj: *mut c_void, out: *mut c_uint) -> c_int;
+    fn _PyLong_Format(obj: *mut c_void, base: c_int) -> *mut c_void;
+    fn _PyLong_GCD(a: *mut c_void, b: *mut c_void) -> *mut c_void;
+    fn _PyLong_GetNativeLayout() -> *const c_void;
+    fn _PyLong_Export(obj: *mut c_void, export_long: *mut c_void) -> c_int;
+    fn _PyLong_FreeExport(export_long: *mut c_void);
+    fn _PyLongWriter_Create(negative: c_int, ndigits: isize, digits: *mut *mut c_void) -> *mut c_void;
+    fn _PyLongWriter_Finish(writer: *mut c_void) -> *mut c_void;
+    fn _PyLongWriter_Discard(writer: *mut c_void);
+    fn PyLong_GetNativeLayout() -> *const c_void;
+    fn PyLong_Export(obj: *mut c_void, export_long: *mut c_void) -> c_int;
+    fn PyLong_FreeExport(export_long: *mut c_void);
+    fn PyLongWriter_Create(negative: c_int, ndigits: isize, digits: *mut *mut c_void) -> *mut c_void;
+    fn PyLongWriter_Finish(writer: *mut c_void) -> *mut c_void;
+    fn PyLongWriter_Discard(writer: *mut c_void);
+    fn _PySys_GetOptionalAttrString(name: *const c_char, result: *mut *mut c_void) -> c_int;
+    fn _PyUnicode_AsUTF8String(object: *mut c_void) -> *mut c_void;
+    fn _PyUnicode_EqualToASCIIString(unicode: *mut c_void, text: *const c_char) -> c_int;
+    fn _PyType_LookupRef(type_obj: *mut c_void, name: *mut c_void) -> *mut c_void;
+    fn _PyThreadState_GetCurrent() -> *mut c_void;
+    fn _PyErr_ChainExceptions1(exc: *mut c_void);
+    fn _PyObject_CallMethod(obj: *mut c_void, name: *mut c_void, format: *const c_char, ...) -> *mut c_void;
+    fn _PyObject_MakeTpCall(
+        callable: *mut c_void,
+        args: *const *mut c_void,
+        nargs: isize,
+        keywords: *mut c_void,
+    ) -> *mut c_void;
+    fn _Py_CheckFunctionResult(
+        tstate: *mut c_void,
+        callable: *mut c_void,
+        result: *mut c_void,
+        where_name: *const c_char,
+    ) -> *mut c_void;
+    fn _PyTuple_Resize(tuple: *mut *mut c_void, size: isize) -> c_int;
+    fn PyList_Clear(list: *mut c_void) -> c_int;
+    fn _PyList_AppendTakeRefListResize(list: *mut c_void, item: *mut c_void) -> *mut c_void;
+    fn _PyUnicodeWriter_Init(writer: *mut c_void);
+    fn _PyUnicodeWriter_PrepareInternal(writer: *mut c_void, length: isize, maxchar: c_uint) -> c_int;
+    fn _PyUnicodeWriter_WriteChar(writer: *mut c_void, ch: c_uint) -> c_int;
+    fn _PyUnicodeWriter_WriteStr(writer: *mut c_void, s: *mut c_void) -> c_int;
+    fn _PyUnicodeWriter_Finish(writer: *mut c_void) -> *mut c_void;
+    fn _PyUnicodeWriter_Dealloc(writer: *mut c_void);
+    fn _Py_strhex(argbuf: *const c_char, arglen: isize) -> *mut c_void;
+    fn _Py_hashtable_hash_ptr(key: *const c_void) -> usize;
+    fn _Py_hashtable_new(
+        hash_func: *mut c_void,
+        compare_func: *mut c_void,
+    ) -> *mut c_void;
+    fn _Py_hashtable_new_full(
+        hash_func: *mut c_void,
+        compare_func: *mut c_void,
+        key_destroy_func: *mut c_void,
+        value_destroy_func: *mut c_void,
+        allocator: *mut c_void,
+    ) -> *mut c_void;
+    fn _Py_hashtable_set(ht: *mut c_void, key: *const c_void, value: *mut c_void) -> c_int;
+    fn _Py_hashtable_get(ht: *mut c_void, key: *const c_void) -> *mut c_void;
+    fn _Py_hashtable_compare_direct(key1: *const c_void, key2: *const c_void) -> c_int;
+    fn _Py_hashtable_destroy(ht: *mut c_void);
+    fn _Py_c_abs(z: CpythonComplexValue) -> c_double;
+    fn _Py_c_diff(a: CpythonComplexValue, b: CpythonComplexValue) -> CpythonComplexValue;
+    fn _Py_c_neg(z: CpythonComplexValue) -> CpythonComplexValue;
+    fn _Py_c_quot(a: CpythonComplexValue, b: CpythonComplexValue) -> CpythonComplexValue;
+    fn _PyEval_SetProfile(tstate: *mut c_void, func: *mut c_void, arg: *mut c_void) -> c_int;
+    fn _PyDeadline_Init(timeout: i64) -> i64;
+    fn _PyDeadline_Get(deadline: i64) -> i64;
+    fn _PyTime_FromSeconds(seconds: c_int) -> i64;
+    fn _PyTime_FromLong(t: *mut i64, obj: *mut c_void) -> c_int;
+    fn _PyTime_FromSecondsObject(t: *mut i64, obj: *mut c_void, round: c_int) -> c_int;
+    fn _PyParkingLot_Park(
+        address: *const c_void,
+        expected: *const c_void,
+        address_size: usize,
+        timeout_ns: i64,
+        park_arg: *mut c_void,
+        detach: c_int,
+    ) -> c_int;
+    fn _PyParkingLot_Unpark(address: *const c_void, callback: *mut c_void, arg: *mut c_void);
+    fn _PyParkingLot_UnparkAll(address: *const c_void);
+    fn _PyParkingLot_AfterFork();
+    fn PyTime_PerfCounterRaw(result: *mut i64) -> c_int;
     static _Py_ctype_table: [c_uint; 256];
+    static _Py_ctype_tolower: [u8; 256];
+    static _Py_HashSecret: [u8; 24];
 }
 
 #[used]
@@ -45,6 +157,27 @@ static KEEP2___PYARG_BADARGUMENT: unsafe extern "C" fn(
     *const c_char,
     *mut c_void,
 ) = _PyArg_BadArgument;
+#[used]
+static KEEP2___PY_CONVERT_OPTIONAL_TO_SSIZE_T: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    _Py_convert_optional_to_ssize_t;
+#[used]
+static KEEP2___PYARG_NOPOSITIONAL: unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int =
+    _PyArg_NoPositional;
+#[used]
+static KEEP2___PYARG_PARSESTACK: unsafe extern "C" fn(
+    *const *mut c_void,
+    isize,
+    *const c_char,
+    ...,
+) -> c_int = _PyArg_ParseStack;
+#[used]
+static KEEP2___PYARG_PARSESTACKANDKEYWORDS: unsafe extern "C" fn(
+    *const *mut c_void,
+    isize,
+    *mut c_void,
+    *mut c_void,
+    ...,
+) -> c_int = _PyArg_ParseStackAndKeywords;
 #[used]
 static KEEP2___PYARG_CHECKPOSITIONAL: unsafe extern "C" fn(*const c_char, isize, isize, isize) -> c_int =
     _PyArg_CheckPositional;
@@ -75,13 +208,215 @@ static KEEP2_PYERR_FORMATUNRAISABLE: unsafe extern "C" fn(*const c_char, ...) =
 #[used]
 static KEEP2_PY_HASHBUFFER: unsafe extern "C" fn(*const c_void, isize) -> isize = Py_HashBuffer;
 #[used]
+static KEEP2___PYNUMBER_INDEX: unsafe extern "C" fn(*mut c_void) -> *mut c_void = _PyNumber_Index;
+#[used]
 static KEEP2__PYLONG_UNSIGNEDINT_CONVERTER: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
     _PyLong_UnsignedInt_Converter;
 #[used]
+static KEEP2__PYLONG_UNSIGNEDLONG_CONVERTER: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    _PyLong_UnsignedLong_Converter;
+#[used]
+static KEEP2__PYLONG_UNSIGNEDLONGLONG_CONVERTER: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    _PyLong_UnsignedLongLong_Converter;
+#[used]
+static KEEP2__PYLONG_ASBYTEARRAY: unsafe extern "C" fn(*mut c_void, *mut u8, usize, c_int, c_int, c_int) -> c_int =
+    _PyLong_AsByteArray;
+#[used]
+static KEEP2__PYLONG_FROMBYTEARRAY: unsafe extern "C" fn(*const u8, usize, c_int, c_int) -> *mut c_void =
+    _PyLong_FromByteArray;
+#[used]
+static KEEP2__PYLONG_FROMGID: unsafe extern "C" fn(c_uint) -> *mut c_void = _PyLong_FromGid;
+#[used]
+static KEEP2__PY_GID_CONVERTER: unsafe extern "C" fn(*mut c_void, *mut c_uint) -> c_int =
+    _Py_Gid_Converter;
+#[used]
+static KEEP2__PYLONG_FORMAT: unsafe extern "C" fn(*mut c_void, c_int) -> *mut c_void =
+    _PyLong_Format;
+#[used]
+static KEEP2__PYLONG_GCD: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    _PyLong_GCD;
+#[used]
+static KEEP2__PYLONG_GETNATIVELAYOUT: unsafe extern "C" fn() -> *const c_void =
+    _PyLong_GetNativeLayout;
+#[used]
+static KEEP2__PYLONG_EXPORT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    _PyLong_Export;
+#[used]
+static KEEP2__PYLONG_FREEEXPORT: unsafe extern "C" fn(*mut c_void) = _PyLong_FreeExport;
+#[used]
+static KEEP2__PYLONGWRITER_CREATE: unsafe extern "C" fn(c_int, isize, *mut *mut c_void) -> *mut c_void =
+    _PyLongWriter_Create;
+#[used]
+static KEEP2__PYLONGWRITER_FINISH: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    _PyLongWriter_Finish;
+#[used]
+static KEEP2__PYLONGWRITER_DISCARD: unsafe extern "C" fn(*mut c_void) = _PyLongWriter_Discard;
+#[used]
+static KEEP2_PYLONG_GETNATIVELAYOUT: unsafe extern "C" fn() -> *const c_void =
+    PyLong_GetNativeLayout;
+#[used]
+static KEEP2_PYLONG_EXPORT: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    PyLong_Export;
+#[used]
+static KEEP2_PYLONG_FREEEXPORT: unsafe extern "C" fn(*mut c_void) = PyLong_FreeExport;
+#[used]
+static KEEP2_PYLONGWRITER_CREATE: unsafe extern "C" fn(c_int, isize, *mut *mut c_void) -> *mut c_void =
+    PyLongWriter_Create;
+#[used]
+static KEEP2_PYLONGWRITER_FINISH: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    PyLongWriter_Finish;
+#[used]
+static KEEP2_PYLONGWRITER_DISCARD: unsafe extern "C" fn(*mut c_void) = PyLongWriter_Discard;
+#[used]
+static KEEP2__PYSYS_GETOPTIONALATTRSTRING: unsafe extern "C" fn(*const c_char, *mut *mut c_void) -> c_int =
+    _PySys_GetOptionalAttrString;
+#[used]
+static KEEP2__PYUNICODE_ASUTF8STRING: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    _PyUnicode_AsUTF8String;
+#[used]
+static KEEP2__PYUNICODE_EQUALTOASCIISTRING: unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int =
+    _PyUnicode_EqualToASCIIString;
+#[used]
+static KEEP2__PYTYPE_LOOKUPREF: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    _PyType_LookupRef;
+#[used]
+static KEEP2__PYTHREADSTATE_GETCURRENT: unsafe extern "C" fn() -> *mut c_void =
+    _PyThreadState_GetCurrent;
+#[used]
+static KEEP2__PYERR_CHAINEXCEPTIONS1: unsafe extern "C" fn(*mut c_void) = _PyErr_ChainExceptions1;
+#[used]
+static KEEP2__PYOBJECT_CALLMETHOD: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *const c_char,
+    ...,
+) -> *mut c_void = _PyObject_CallMethod;
+#[used]
+static KEEP2__PYOBJECT_MAKETPCALL: unsafe extern "C" fn(
+    *mut c_void,
+    *const *mut c_void,
+    isize,
+    *mut c_void,
+) -> *mut c_void = _PyObject_MakeTpCall;
+#[used]
+static KEEP2__PY_CHECKFUNCTIONRESULT: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *const c_char,
+) -> *mut c_void = _Py_CheckFunctionResult;
+#[used]
+static KEEP2__PYTUPLE_RESIZE: unsafe extern "C" fn(*mut *mut c_void, isize) -> c_int =
+    _PyTuple_Resize;
+#[used]
+static KEEP2_PYLIST_CLEAR: unsafe extern "C" fn(*mut c_void) -> c_int = PyList_Clear;
+#[used]
+static KEEP2__PYLIST_APPENDTAKEREFLISTRESIZE: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    _PyList_AppendTakeRefListResize;
+#[used]
+static KEEP2__PYUNICODEWRITER_INIT: unsafe extern "C" fn(*mut c_void) = _PyUnicodeWriter_Init;
+#[used]
+static KEEP2__PYUNICODEWRITER_PREPAREINTERNAL: unsafe extern "C" fn(*mut c_void, isize, c_uint) -> c_int =
+    _PyUnicodeWriter_PrepareInternal;
+#[used]
+static KEEP2__PYUNICODEWRITER_WRITECHAR: unsafe extern "C" fn(*mut c_void, c_uint) -> c_int =
+    _PyUnicodeWriter_WriteChar;
+#[used]
+static KEEP2__PYUNICODEWRITER_WRITESTR: unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int =
+    _PyUnicodeWriter_WriteStr;
+#[used]
+static KEEP2__PYUNICODEWRITER_FINISH: unsafe extern "C" fn(*mut c_void) -> *mut c_void =
+    _PyUnicodeWriter_Finish;
+#[used]
+static KEEP2__PYUNICODEWRITER_DEALLOC: unsafe extern "C" fn(*mut c_void) = _PyUnicodeWriter_Dealloc;
+#[used]
+static KEEP2__PY_STRHEX: unsafe extern "C" fn(*const c_char, isize) -> *mut c_void = _Py_strhex;
+#[used]
+static KEEP2__PY_HASHTABLE_HASH_PTR: unsafe extern "C" fn(*const c_void) -> usize =
+    _Py_hashtable_hash_ptr;
+#[used]
+static KEEP2__PY_HASHTABLE_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+    _Py_hashtable_new;
+#[used]
+static KEEP2__PY_HASHTABLE_NEW_FULL: unsafe extern "C" fn(
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+    *mut c_void,
+) -> *mut c_void = _Py_hashtable_new_full;
+#[used]
+static KEEP2__PY_HASHTABLE_SET: unsafe extern "C" fn(*mut c_void, *const c_void, *mut c_void) -> c_int =
+    _Py_hashtable_set;
+#[used]
+static KEEP2__PY_HASHTABLE_GET: unsafe extern "C" fn(*mut c_void, *const c_void) -> *mut c_void =
+    _Py_hashtable_get;
+#[used]
+static KEEP2__PY_HASHTABLE_COMPARE_DIRECT: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int =
+    _Py_hashtable_compare_direct;
+#[used]
+static KEEP2__PY_HASHTABLE_DESTROY: unsafe extern "C" fn(*mut c_void) = _Py_hashtable_destroy;
+#[used]
+static KEEP2__PY_C_ABS: unsafe extern "C" fn(CpythonComplexValue) -> c_double = _Py_c_abs;
+#[used]
+static KEEP2__PY_C_DIFF: unsafe extern "C" fn(CpythonComplexValue, CpythonComplexValue) -> CpythonComplexValue =
+    _Py_c_diff;
+#[used]
+static KEEP2__PY_C_NEG: unsafe extern "C" fn(CpythonComplexValue) -> CpythonComplexValue = _Py_c_neg;
+#[used]
+static KEEP2__PY_C_QUOT: unsafe extern "C" fn(CpythonComplexValue, CpythonComplexValue) -> CpythonComplexValue =
+    _Py_c_quot;
+#[used]
+static KEEP2__PYEVAL_SETPROFILE: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> c_int =
+    _PyEval_SetProfile;
+#[used]
+static KEEP2__PYDEADLINE_INIT: unsafe extern "C" fn(i64) -> i64 = _PyDeadline_Init;
+#[used]
+static KEEP2__PYDEADLINE_GET: unsafe extern "C" fn(i64) -> i64 = _PyDeadline_Get;
+#[used]
+static KEEP2__PYTIME_FROMSECONDS: unsafe extern "C" fn(c_int) -> i64 = _PyTime_FromSeconds;
+#[used]
+static KEEP2__PYTIME_FROMLONG: unsafe extern "C" fn(*mut i64, *mut c_void) -> c_int =
+    _PyTime_FromLong;
+#[used]
+static KEEP2__PYTIME_FROMSECONDSOBJECT: unsafe extern "C" fn(*mut i64, *mut c_void, c_int) -> c_int =
+    _PyTime_FromSecondsObject;
+#[used]
+static KEEP2__PYPARKINGLOT_PARK: unsafe extern "C" fn(
+    *const c_void,
+    *const c_void,
+    usize,
+    i64,
+    *mut c_void,
+    c_int,
+) -> c_int = _PyParkingLot_Park;
+#[used]
+static KEEP2__PYPARKINGLOT_UNPARK: unsafe extern "C" fn(*const c_void, *mut c_void, *mut c_void) =
+    _PyParkingLot_Unpark;
+#[used]
+static KEEP2__PYPARKINGLOT_UNPARKALL: unsafe extern "C" fn(*const c_void) =
+    _PyParkingLot_UnparkAll;
+#[used]
+static KEEP2__PYPARKINGLOT_AFTERFORK: unsafe extern "C" fn() = _PyParkingLot_AfterFork;
+#[used]
+static KEEP2_PYTIME_PERFCOUNTERRAW: unsafe extern "C" fn(*mut i64) -> c_int = PyTime_PerfCounterRaw;
+#[used]
 static KEEP2___PY_CTYPE_TABLE: unsafe extern "C" fn() -> *const c_uint = keep2_py_ctype_table;
+#[used]
+static KEEP2___PY_CTYPE_TOLOWER: unsafe extern "C" fn() -> *const u8 = keep2_py_ctype_tolower;
+#[used]
+static KEEP2___PY_HASHSECRET: unsafe extern "C" fn() -> *const u8 = keep2_py_hashsecret;
 
 unsafe extern "C" fn keep2_py_ctype_table() -> *const c_uint {
     unsafe { std::ptr::addr_of!(_Py_ctype_table[0]) }
+}
+
+unsafe extern "C" fn keep2_py_ctype_tolower() -> *const u8 {
+    unsafe { std::ptr::addr_of!(_Py_ctype_tolower[0]) }
+}
+
+unsafe extern "C" fn keep2_py_hashsecret() -> *const u8 {
+    unsafe { std::ptr::addr_of!(_Py_HashSecret[0]) }
 }
 
 #[used]
@@ -226,6 +561,9 @@ static KEEP2_PYOBJECT_GETTYPEDATA: unsafe extern "C" fn(*mut c_void, *mut c_void
     super::PyObject_GetTypeData;
 #[used]
 static KEEP2_PYOBJECT_HASH: unsafe extern "C" fn(*mut c_void) -> isize = super::PyObject_Hash;
+#[used]
+static KEEP2_PYOBJECT_GENERICHASH: unsafe extern "C" fn(*mut c_void) -> isize =
+    super::PyObject_GenericHash;
 #[used]
 static KEEP2_PYOBJECT_HASHNOTIMPLEMENTED: unsafe extern "C" fn(*mut c_void) -> isize =
     super::PyObject_HashNotImplemented;
@@ -967,6 +1305,9 @@ static KEEP3_PYCONTEXTVAR_GET: unsafe extern "C" fn(
 #[used]
 static KEEP3_PYCONTEXTVAR_SET: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     super::PyContextVar_Set;
+#[used]
+static KEEP3_PYCONTEXTVAR_RESET: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i32 =
+    super::PyContextVar_Reset;
 #[used]
 static KEEP3_PYMETHOD_NEW: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
     super::PyMethod_New;
@@ -1947,6 +2288,9 @@ static KEEP4__PYUNICODE_ISALPHA: unsafe extern "C" fn(u32) -> i32 = super::_PyUn
 #[used]
 static KEEP4__PYUNICODE_ISDECIMALDIGIT: unsafe extern "C" fn(u32) -> i32 =
     super::_PyUnicode_IsDecimalDigit;
+#[used]
+static KEEP4__PYUNICODE_TODECIMALDIGIT: unsafe extern "C" fn(u32) -> i32 =
+    super::_PyUnicode_ToDecimalDigit;
 #[used]
 static KEEP4__PYUNICODE_ISDIGIT: unsafe extern "C" fn(u32) -> i32 = super::_PyUnicode_IsDigit;
 #[used]

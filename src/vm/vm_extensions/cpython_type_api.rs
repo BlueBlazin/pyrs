@@ -7,8 +7,9 @@ use crate::runtime::{BuiltinFunction, Object, Value};
 
 use super::{
     _PyObject_New, _PyObject_NewVar, CpythonAsyncMethods, CpythonBufferProcs, CpythonHeapTypeInfo,
-    CpythonMappingMethods, CpythonMemberDef, CpythonMethodDef, CpythonNumberMethods,
-    CpythonObjectHead, CpythonSequenceMethods, CpythonTypeObject, CpythonTypeSpec,
+    CpythonHeapTypeObject, CpythonMappingMethods, CpythonMemberDef, CpythonMethodDef,
+    CpythonModuleCompatObject, CpythonNumberMethods, CpythonObjectHead, CpythonSequenceMethods,
+    CpythonTypeObject, CpythonTypeSpec,
     InternalCallOutcome, ModuleCapiContext, PY_MEMBER_RELATIVE_OFFSET, PY_TPFLAGS_BASETYPE,
     PY_TPFLAGS_BYTES_SUBCLASS, PY_TPFLAGS_DICT_SUBCLASS, PY_TPFLAGS_HEAPTYPE,
     PY_TPFLAGS_IMMUTABLETYPE, PY_TPFLAGS_LIST_SUBCLASS, PY_TPFLAGS_LONG_SUBCLASS, PY_TPFLAGS_READY,
@@ -2698,6 +2699,24 @@ fn cpython_type_from_spec_impl(
     unsafe {
         std::ptr::write(type_ptr, type_value);
     }
+    // Populate CPython heap-type extension fields consumed by inline/internal helpers
+    // (for example _PyType_GetModuleState and token-based lookups in extension code).
+    // SAFETY: heap_type_size is based on PyType_Type.tp_basicsize, which is initialized to
+    // CPython-compatible PyHeapTypeObject size in this runtime.
+    unsafe {
+        let heap_type = type_ptr.cast::<CpythonHeapTypeObject>();
+        (*heap_type).ht_module = if module.is_null() {
+            std::ptr::null_mut()
+        } else {
+            Py_IncRef(module);
+            module
+        };
+        (*heap_type).ht_token = if token == 0 {
+            std::ptr::null_mut()
+        } else {
+            token as *mut c_void
+        };
+    }
     if unsafe { PyType_Ready(type_ptr.cast::<c_void>()) } != 0 {
         // SAFETY: type pointer allocated above and not published on failure.
         unsafe {
@@ -3185,12 +3204,21 @@ pub unsafe extern "C" fn _PyType_Lookup(ty: *mut c_void, name: *mut c_void) -> *
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
+    let trace = std::env::var_os("PYRS_TRACE_TYPE_MODULE").is_some();
     if ty.is_null() {
         unsafe { PyErr_BadInternalCall() };
         return std::ptr::null_mut();
     }
     let type_ptr = ty.cast::<CpythonTypeObject>();
     let type_key = type_ptr as usize;
+    if trace {
+        let type_name = unsafe { c_name_to_string((*type_ptr).tp_name) }
+            .unwrap_or_else(|_| "<unnamed>".to_string());
+        eprintln!(
+            "[cpy-type-module] enter ty={:p} type={}",
+            ty, type_name
+        );
+    }
     let Some((module_ptr, type_name)) =
         cpython_heap_type_registry()
             .lock()
@@ -3207,6 +3235,9 @@ pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
             unsafe { PyExc_TypeError },
             format!("PyType_GetModule: Type '{type_name}' is not a heap type"),
         );
+        if trace {
+            eprintln!("[cpy-type-module] miss ty={:p} (not heap type)", ty);
+        }
         return std::ptr::null_mut();
     };
     if module_ptr == 0 {
@@ -3217,7 +3248,18 @@ pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
                 type_name
             ),
         );
+        if trace {
+            eprintln!("[cpy-type-module] no-module ty={:p} type={}", ty, type_name);
+        }
         return std::ptr::null_mut();
+    }
+    if trace {
+        eprintln!(
+            "[cpy-type-module] hit ty={:p} type={} module_ptr={:p}",
+            ty,
+            type_name,
+            module_ptr as *mut c_void
+        );
     }
     module_ptr as *mut c_void
 }
@@ -3226,9 +3268,19 @@ pub unsafe extern "C" fn PyType_GetModule(ty: *mut c_void) -> *mut c_void {
 pub unsafe extern "C" fn PyType_GetModuleState(ty: *mut c_void) -> *mut c_void {
     let module = unsafe { PyType_GetModule(ty) };
     if module.is_null() {
+        if std::env::var_os("PYRS_TRACE_TYPE_MODULE").is_some() {
+            eprintln!("[cpy-type-module] state miss ty={:p} module=<null>", ty);
+        }
         return std::ptr::null_mut();
     }
-    unsafe { PyModule_GetState(module) }
+    let state = unsafe { PyModule_GetState(module) };
+    if std::env::var_os("PYRS_TRACE_TYPE_MODULE").is_some() {
+        eprintln!(
+            "[cpy-type-module] state hit ty={:p} module={:p} state={:p}",
+            ty, module, state
+        );
+    }
+    state
 }
 
 #[unsafe(no_mangle)]
@@ -3244,19 +3296,139 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
         cpython_set_typed_error(unsafe { PyExc_TypeError }, "expected type object");
         return std::ptr::null_mut();
     }
+    let requested_module_def = module_def as usize;
+    let trace_moddef = std::env::var_os("PYRS_TRACE_CPY_TYPE_MODDEF").is_some();
+    let trace_module_ptr = |label: &str, module_ptr: *mut c_void| {
+        if !trace_moddef || module_ptr.is_null() {
+            return;
+        }
+        // SAFETY: diagnostics only; pointer may not actually be module layout, so guard output.
+        let (md_def, md_state) = unsafe {
+            let module = module_ptr.cast::<CpythonModuleCompatObject>();
+            (
+                module.as_ref().map(|raw| raw.md_def).unwrap_or(std::ptr::null_mut()),
+                module
+                    .as_ref()
+                    .map(|raw| raw.md_state)
+                    .unwrap_or(std::ptr::null_mut()),
+            )
+        };
+        eprintln!(
+            "[cpy-type-moddef] {} module_ptr={:p} md_def={:p} md_state={:p}",
+            label, module_ptr, md_def, md_state
+        );
+    };
+    if trace_moddef {
+        let type_name = unsafe { c_name_to_string((*ty.cast::<CpythonTypeObject>()).tp_name) }
+            .unwrap_or_else(|_| "<unnamed>".to_string());
+        eprintln!(
+            "[cpy-type-moddef] enter type={} ty={:p} requested_def={:p}",
+            type_name, ty, module_def
+        );
+    }
+    if let Ok(Some(active_module_ptr)) = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return None;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let Some(bound_def) = vm.extension_module_def_registry.get(&context.module.id()).copied() else {
+            return None;
+        };
+        if bound_def != requested_module_def {
+            return None;
+        }
+        Some(context.alloc_cpython_ptr_for_value(Value::Module(context.module.clone())))
+    }) && !active_module_ptr.is_null()
+    {
+        if trace_moddef {
+            eprintln!(
+                "[cpy-type-moddef] resolve source=active_context module_ptr={:p}",
+                active_module_ptr
+            );
+        }
+        trace_module_ptr("active_context_state", active_module_ptr);
+        return active_module_ptr;
+    }
     let mut current = ty.cast::<CpythonTypeObject>();
     while !current.is_null() {
         let key = current as usize;
         if let Ok(registry) = cpython_heap_type_registry().lock()
             && let Some(info) = registry.get(&key)
-            && info.module_ptr != 0
-            && info.module_def_ptr != 0
-            && info.module_def_ptr == module_def as usize
         {
-            return info.module_ptr as *mut c_void;
+            if info.module_ptr != 0 && info.module_def_ptr != 0 && info.module_def_ptr == requested_module_def {
+                if trace_moddef {
+                    eprintln!(
+                        "[cpy-type-moddef] resolve source=heap_registry_direct current={:p} module_ptr={:p} module_def={:p}",
+                        current,
+                        info.module_ptr as *mut c_void,
+                        info.module_def_ptr as *mut c_void
+                    );
+                }
+                trace_module_ptr("heap_registry_direct_state", info.module_ptr as *mut c_void);
+                return info.module_ptr as *mut c_void;
+            }
+            if info.module_ptr != 0 {
+                let module_ptr = info.module_ptr as *mut c_void;
+                let resolved_module_def = with_active_cpython_context_mut(|context| {
+                    if context.vm.is_null() {
+                        return None;
+                    }
+                    let module_value = context.cpython_value_from_ptr_or_proxy(module_ptr)?;
+                    let Value::Module(module_obj) = module_value else {
+                        return None;
+                    };
+                    // SAFETY: VM pointer is valid for active C-API context lifetime.
+                    let vm = unsafe { &mut *context.vm };
+                    vm.extension_module_def_registry
+                        .get(&module_obj.id())
+                        .copied()
+                })
+                .ok()
+                .flatten();
+                if resolved_module_def == Some(requested_module_def) {
+                    if trace_moddef {
+                        eprintln!(
+                            "[cpy-type-moddef] resolve source=heap_registry_resolve current={:p} module_ptr={:p} resolved_def={:p}",
+                            current,
+                            module_ptr,
+                            requested_module_def as *mut c_void
+                        );
+                    }
+                    trace_module_ptr("heap_registry_resolve_state", module_ptr);
+                    return module_ptr;
+                }
+            }
         }
         // SAFETY: current pointer is valid in MRO walk.
         current = unsafe { (*current).tp_base };
+    }
+    if let Ok(Some(any_bound_module_ptr)) = with_active_cpython_context_mut(|context| {
+        if context.vm.is_null() {
+            return None;
+        }
+        // SAFETY: VM pointer is valid for active C-API context lifetime.
+        let vm = unsafe { &mut *context.vm };
+        let module_id = vm
+            .extension_module_def_registry
+            .iter()
+            .find_map(|(module_id, def_ptr)| (*def_ptr == requested_module_def).then_some(*module_id))?;
+        let module_obj = vm
+            .modules
+            .values()
+            .find(|module| module.id() == module_id)
+            .cloned()?;
+        Some(context.alloc_cpython_ptr_for_value(Value::Module(module_obj)))
+    }) && !any_bound_module_ptr.is_null()
+    {
+        if trace_moddef {
+            eprintln!(
+                "[cpy-type-moddef] resolve source=vm_registry_scan module_ptr={:p}",
+                any_bound_module_ptr
+            );
+        }
+        trace_module_ptr("vm_registry_scan_state", any_bound_module_ptr);
+        return any_bound_module_ptr;
     }
     // SAFETY: `ty` is non-null and expected to be a type object.
     let type_name = unsafe { c_name_to_string((*ty.cast::<CpythonTypeObject>()).tp_name) }
@@ -3265,6 +3437,12 @@ pub unsafe extern "C" fn PyType_GetModuleByDef(
         unsafe { PyExc_TypeError },
         format!("PyType_GetModuleByDef: No superclass of '{type_name}' has the given module"),
     );
+    if trace_moddef {
+        eprintln!(
+            "[cpy-type-moddef] resolve source=none type={} requested_def={:p}",
+            type_name, module_def
+        );
+    }
     std::ptr::null_mut()
 }
 
@@ -3297,6 +3475,7 @@ pub unsafe extern "C" fn PyType_GetBaseByToken(
     token: *mut c_void,
     result: *mut *mut c_void,
 ) -> c_int {
+    let trace_token = std::env::var_os("PYRS_TRACE_TYPE_TOKEN").is_some();
     if !result.is_null() {
         // SAFETY: output pointer is caller-provided and writable.
         unsafe { *result = std::ptr::null_mut() };
@@ -3314,6 +3493,14 @@ pub unsafe extern "C" fn PyType_GetBaseByToken(
     }
     let token_key = token as usize;
     let mut current = ty.cast::<CpythonTypeObject>();
+    if trace_token {
+        let type_name = unsafe { c_name_to_string((*current).tp_name) }
+            .unwrap_or_else(|_| "<unnamed>".to_string());
+        eprintln!(
+            "[cpy-type-token] enter ty={:p} type={} token={:p}",
+            ty, type_name, token
+        );
+    }
     while !current.is_null() {
         let key = current as usize;
         if let Ok(registry) = cpython_heap_type_registry().lock()
@@ -3326,10 +3513,37 @@ pub unsafe extern "C" fn PyType_GetBaseByToken(
                 // SAFETY: result pointer holds a type object pointer that must be returned as new reference.
                 unsafe { Py_IncRef(*result) };
             }
+            if trace_token {
+                let type_name = unsafe { c_name_to_string((*current).tp_name) }
+                    .unwrap_or_else(|_| "<unnamed>".to_string());
+                eprintln!(
+                    "[cpy-type-token] match current={:p} type={} token={:p}",
+                    current, type_name, token
+                );
+            }
             return 1;
+        }
+        if trace_token {
+            let type_name = unsafe { c_name_to_string((*current).tp_name) }
+                .unwrap_or_else(|_| "<unnamed>".to_string());
+            let token_info = cpython_heap_type_registry()
+                .lock()
+                .ok()
+                .and_then(|registry| registry.get(&(current as usize)).map(|info| info.token))
+                .unwrap_or(0);
+            eprintln!(
+                "[cpy-type-token] miss current={:p} type={} token={:p} entry_token={:p}",
+                current, type_name, token, token_info as *mut c_void
+            );
         }
         // SAFETY: current pointer is valid in MRO walk.
         current = unsafe { (*current).tp_base };
+    }
+    if trace_token {
+        eprintln!(
+            "[cpy-type-token] no-match ty={:p} token={:p}",
+            ty, token
+        );
     }
     0
 }

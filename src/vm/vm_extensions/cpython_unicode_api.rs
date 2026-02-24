@@ -893,6 +893,38 @@ pub unsafe extern "C" fn PyUnicode_EqualToUTF8(unicode: *mut c_void, text: *cons
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyUnicode_EqualToASCIIString(
+    unicode: *mut c_void,
+    text: *const c_char,
+) -> c_int {
+    if text.is_null() {
+        return 0;
+    }
+    let ascii = match unsafe { CStr::from_ptr(text).to_bytes() } {
+        bytes if bytes.iter().all(|byte| *byte < 0x80) => bytes,
+        _ => return 0,
+    };
+    let ascii_text = match std::str::from_utf8(ascii) {
+        Ok(value) => value,
+        Err(_) => return 0,
+    };
+    with_active_cpython_context_mut(|context| {
+        let Some(value) = context.cpython_value_from_ptr(unicode) else {
+            return 0;
+        };
+        let Some(unicode_text) = cpython_unicode_text_from_value(&value) else {
+            return 0;
+        };
+        if unicode_text.is_ascii() && unicode_text == ascii_text {
+            1
+        } else {
+            0
+        }
+    })
+    .unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PyUnicode_EqualToUTF8AndSize(
     unicode: *mut c_void,
     text: *const c_char,

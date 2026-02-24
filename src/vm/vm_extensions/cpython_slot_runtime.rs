@@ -16,6 +16,24 @@ use super::{
     cpython_value_debug_tag, with_active_cpython_context_mut,
 };
 
+#[repr(C)]
+struct DebugMpdT {
+    flags: u8,
+    _padding: [u8; 7],
+    exp: isize,
+    digits: isize,
+    len: isize,
+    alloc: isize,
+    data: *mut c_void,
+}
+
+#[repr(C)]
+struct DebugDecimalObject {
+    head: CpythonObjectHead,
+    hash: isize,
+    dec: DebugMpdT,
+}
+
 pub(super) fn cpython_valid_type_ptr(type_ptr: *mut CpythonTypeObject) -> bool {
     const MIN_VALID_PTR: usize = 0x1_0000_0000;
     if type_ptr.is_null() {
@@ -359,6 +377,7 @@ pub(super) fn cpython_try_binary_number_slot(
     right: *mut c_void,
     slot_offset: usize,
 ) -> Option<*mut c_void> {
+    let trace = std::env::var_os("PYRS_TRACE_NUMBER_SLOT").is_some();
     const MIN_VALID_PTR: usize = 0x1_0000_0000;
     if left.is_null() || right.is_null() {
         return None;
@@ -390,6 +409,83 @@ pub(super) fn cpython_try_binary_number_slot(
     if left_type.is_null() || right_type.is_null() {
         return None;
     }
+    if trace {
+        // SAFETY: type pointers were validated above for non-null.
+        let (
+            left_name,
+            right_name,
+            left_refcnt,
+            right_refcnt,
+            left_basicsize,
+            right_basicsize,
+        ) = unsafe {
+            let left_name = c_name_to_string((*left_type).tp_name)
+                .unwrap_or_else(|_| "<invalid>".to_string());
+            let right_name = c_name_to_string((*right_type).tp_name)
+                .unwrap_or_else(|_| "<invalid>".to_string());
+            let left_refcnt = left
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_refcnt)
+                .unwrap_or(-1);
+            let right_refcnt = right
+                .cast::<CpythonObjectHead>()
+                .as_ref()
+                .map(|head| head.ob_refcnt)
+                .unwrap_or(-1);
+            (
+                left_name,
+                right_name,
+                left_refcnt,
+                right_refcnt,
+                (*left_type).tp_basicsize,
+                (*right_type).tp_basicsize,
+            )
+        };
+        eprintln!(
+            "[cpy-number-slot] begin slot_off={} left={:p} type={:p}({}) rc={} basicsize={} right={:p} type={:p}({}) rc={} basicsize={}",
+            slot_offset,
+            left,
+            left_type,
+            left_name,
+            left_refcnt,
+            left_basicsize,
+            right,
+            right_type,
+            right_name,
+            right_refcnt,
+            right_basicsize
+        );
+        if left_name == "decimal.Decimal" {
+            // SAFETY: debug-only memory probe for Decimal-compatible layout.
+            unsafe {
+                if let Some(left_dec) = left.cast::<DebugDecimalObject>().as_ref() {
+                    eprintln!(
+                        "[cpy-number-slot] left-dec ptr={:p} flags={} exp={} digits={} len={} alloc={} data={:p}",
+                        left,
+                        left_dec.dec.flags,
+                        left_dec.dec.exp,
+                        left_dec.dec.digits,
+                        left_dec.dec.len,
+                        left_dec.dec.alloc,
+                        left_dec.dec.data
+                    );
+                }
+                if let Some(right_dec) = right.cast::<DebugDecimalObject>().as_ref() {
+                    eprintln!(
+                        "[cpy-number-slot] right-dec ptr={:p} flags={} exp={} digits={} len={} alloc={} data={:p}",
+                        right,
+                        right_dec.dec.flags,
+                        right_dec.dec.exp,
+                        right_dec.dec.digits,
+                        right_dec.dec.len,
+                        right_dec.dec.alloc,
+                        right_dec.dec.data
+                    );
+                }
+            }
+        }
+    }
     // SAFETY: type pointers are non-null and read-only inspected.
     let slotv = unsafe { cpython_number_binop_slot(left_type, slot_offset) };
     // SAFETY: type pointers are non-null and read-only inspected.
@@ -404,6 +500,17 @@ pub(super) fn cpython_try_binary_number_slot(
     if slotv.is_none() && slotw.is_none() {
         return None;
     }
+    if trace {
+        eprintln!(
+            "[cpy-number-slot] dispatch slotv={} slotw={}",
+            slotv
+                .map(|slot| format!("{:p}", slot as *const c_void))
+                .unwrap_or_else(|| "<none>".to_string()),
+            slotw
+                .map(|slot| format!("{:p}", slot as *const c_void))
+                .unwrap_or_else(|| "<none>".to_string())
+        );
+    }
     let not_implemented = std::ptr::addr_of_mut!(_Py_NotImplementedStruct).cast::<c_void>();
     if let Some(slotv_fn) = slotv {
         if let Some(slotw_fn) = slotw
@@ -413,9 +520,15 @@ pub(super) fn cpython_try_binary_number_slot(
             // SAFETY: binary slot ABI matches `binaryfunc`.
             let result = unsafe { slotw_fn(left, right) };
             if result.is_null() {
+                if trace {
+                    eprintln!("[cpy-number-slot] subtype-right result=<null>");
+                }
                 return Some(std::ptr::null_mut());
             }
             if result != not_implemented {
+                if trace {
+                    eprintln!("[cpy-number-slot] subtype-right result={:p}", result);
+                }
                 return Some(result);
             }
             // SAFETY: slot returned new reference to NotImplemented.
@@ -425,9 +538,15 @@ pub(super) fn cpython_try_binary_number_slot(
         // SAFETY: binary slot ABI matches `binaryfunc`.
         let result = unsafe { slotv_fn(left, right) };
         if result.is_null() {
+            if trace {
+                eprintln!("[cpy-number-slot] left result=<null>");
+            }
             return Some(std::ptr::null_mut());
         }
         if result != not_implemented {
+            if trace {
+                eprintln!("[cpy-number-slot] left result={:p}", result);
+            }
             return Some(result);
         }
         // SAFETY: slot returned new reference to NotImplemented.
@@ -437,9 +556,15 @@ pub(super) fn cpython_try_binary_number_slot(
         // SAFETY: binary slot ABI matches `binaryfunc`.
         let result = unsafe { slotw_fn(left, right) };
         if result.is_null() {
+            if trace {
+                eprintln!("[cpy-number-slot] right result=<null>");
+            }
             return Some(std::ptr::null_mut());
         }
         if result != not_implemented {
+            if trace {
+                eprintln!("[cpy-number-slot] right result={:p}", result);
+            }
             return Some(result);
         }
         // SAFETY: slot returned new reference to NotImplemented.

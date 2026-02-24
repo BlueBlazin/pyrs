@@ -745,6 +745,11 @@ pub unsafe extern "C" fn PyObject_Hash(object: *mut c_void) -> isize {
     }
 }
 
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PyObject_GenericHash(object: *mut c_void) -> isize {
+    unsafe { PyObject_Hash(object) }
+}
+
 pub(super) fn cpython_value_type_name_from_ptr(object: *mut c_void) -> String {
     with_active_cpython_context_mut(|context| {
         if context.vm.is_null() {

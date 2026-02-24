@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use crate::runtime::{Object, Value};
-use crate::vm::{NativeCallResult, NativeMethodKind};
+use crate::vm::{NativeCallResult, NativeMethodKind, ensure_hashable};
 
 use super::{cpython_set_error, cpython_value_from_ptr, with_active_cpython_context_mut};
 
@@ -162,8 +162,9 @@ pub unsafe extern "C" fn PySet_Add(set: *mut c_void, key: *mut c_void) -> i32 {
             context.set_error("PySet_Add missing VM context");
             return -1;
         }
-        let receiver = match context.cpython_value_from_ptr(set) {
-            Some(Value::Set(set_obj)) => set_obj,
+        let (receiver, is_frozenset) = match context.cpython_value_from_ptr(set) {
+            Some(Value::Set(set_obj)) => (set_obj, false),
+            Some(Value::FrozenSet(set_obj)) => (set_obj, true),
             Some(_) => {
                 context.set_error("PySet_Add expected set object");
                 return -1;
@@ -182,16 +183,30 @@ pub unsafe extern "C" fn PySet_Add(set: *mut c_void, key: *mut c_void) -> i32 {
         };
         // SAFETY: VM pointer is valid for context lifetime.
         let vm = unsafe { &mut *context.vm };
-        match vm.call_native_method(
-            NativeMethodKind::SetAdd,
-            receiver,
-            vec![key_value],
-            HashMap::new(),
-        ) {
-            Ok(_) => 0,
-            Err(err) => {
+        if is_frozenset {
+            if let Err(err) = ensure_hashable(&key_value) {
                 context.set_error(err.message);
-                -1
+                return -1;
+            }
+            let mut receiver_kind = receiver.kind_mut();
+            let Object::FrozenSet(values) = &mut *receiver_kind else {
+                context.set_error("PySet_Add encountered invalid frozenset storage");
+                return -1;
+            };
+            values.insert(key_value);
+            0
+        } else {
+            match vm.call_native_method(
+                NativeMethodKind::SetAdd,
+                receiver,
+                vec![key_value],
+                HashMap::new(),
+            ) {
+                Ok(_) => 0,
+                Err(err) => {
+                    context.set_error(err.message);
+                    -1
+                }
             }
         }
     })

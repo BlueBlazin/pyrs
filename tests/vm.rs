@@ -12943,6 +12943,51 @@ fn executes_decimal_context_helpers() {
 }
 
 #[test]
+fn executes_c_decimal_binary_ops_without_crash() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping C decimal regression test (CPython Lib path not available)");
+        return;
+    };
+    let dynload_path =
+        PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload");
+    if !dynload_path
+        .join("_decimal.cpython-314-darwin.so")
+        .is_file()
+    {
+        eprintln!("skipping C decimal regression test (lib-dynload path not available)");
+        return;
+    }
+    let handle = std::thread::Builder::new()
+        .name("c-decimal-binary-ops".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = format!(
+                "import sys\nsys.path.insert(0, '{lib_path}')\nsys.path.insert(0, '{dynload_path}')\nimport _decimal\na = _decimal.Decimal('1.25')\nb = _decimal.Decimal('2.75')\ns = str(a + b)\np = str(a * b)\ncmp = (a == b)\nok = (s, p, cmp)\n",
+                lib_path = lib_path.to_string_lossy().replace('\\', "\\\\"),
+                dynload_path = dynload_path.to_string_lossy().replace('\\', "\\\\")
+            );
+            let module = parser::parse_module(&source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            let Some(Value::Tuple(result_tuple)) = vm.get_global("ok") else {
+                panic!("missing result tuple");
+            };
+            let Object::Tuple(items) = &*result_tuple.kind() else {
+                panic!("unexpected tuple storage");
+            };
+            assert_eq!(items.len(), 3);
+            assert_eq!(items[0], Value::Str("4.00".to_string()));
+            assert_eq!(items[1], Value::Str("3.4375".to_string()));
+            assert_eq!(items[2], Value::Bool(false));
+        })
+        .expect("spawn c-decimal-binary-ops thread");
+    handle
+        .join()
+        .expect("c-decimal-binary-ops thread should complete");
+}
+
+#[test]
 fn keyerror_and_indexerror_are_lookuperror_subclasses() {
     let source = "ok1 = issubclass(KeyError, LookupError)\nok2 = issubclass(IndexError, LookupError)\ncaught = False\ntry:\n    {}['missing']\nexcept LookupError:\n    caught = True\nok = ok1 and ok2 and caught\n";
     let module = parser::parse_module(source).expect("parse should succeed");

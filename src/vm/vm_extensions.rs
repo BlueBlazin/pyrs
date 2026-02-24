@@ -161,7 +161,9 @@ use self::cpython_context_runtime::{
     cpython_trace_flag_enabled, cpython_trace_numpy_reduce_enabled, cpython_value_from_ptr,
     cpython_value_from_ptr_or_proxy, with_active_cpython_context_mut,
 };
-use self::cpython_contextvar_api::{PyContextVar_Get, PyContextVar_New, PyContextVar_Set};
+use self::cpython_contextvar_api::{
+    PyContextVar_Get, PyContextVar_New, PyContextVar_Reset, PyContextVar_Set,
+};
 use self::cpython_datetime_runtime::{
     PYRS_DATETIME_CAPI, PYRS_DATETIME_CAPSULE_NAME, PYRS_DATETIME_DATE_TYPE,
     PYRS_DATETIME_DATETIME_TYPE, PYRS_DATETIME_DELTA_TYPE, PYRS_DATETIME_TIME_TYPE,
@@ -323,7 +325,7 @@ use self::cpython_object_call_api::{
     PyUnstable_Object_EnableDeferredRefcount, PyVectorcall_Call,
 };
 use self::cpython_object_item_compare_api::{
-    PyObject_DelItem, PyObject_GetItem, PyObject_GetOptionalAttr, PyObject_Hash,
+    PyObject_DelItem, PyObject_GenericHash, PyObject_GetItem, PyObject_GetOptionalAttr, PyObject_Hash,
     PyObject_HashNotImplemented, PyObject_IsInstance, PyObject_IsSubclass, PyObject_Length,
     PyObject_LengthHint, PyObject_RichCompare, PyObject_RichCompareBool, PyObject_SetItem,
     PyObject_Size, cpython_debug_compare_value, cpython_tuple_richcompare_slot,
@@ -340,14 +342,15 @@ use self::cpython_refcount_api::{
 use self::cpython_runtime_misc_api::{
     _Py_FatalErrorFunc, _Py_HashDouble, _PyErr_BadInternalCall, _PyUnicode_IsAlpha,
     _PyUnicode_IsDecimalDigit, _PyUnicode_IsDigit, _PyUnicode_IsLowercase, _PyUnicode_IsNumeric,
-    _PyUnicode_IsTitlecase, _PyUnicode_IsUppercase, _PyUnicode_IsWhitespace, Py_AddPendingCall,
-    Py_AtExit, Py_BytesMain, Py_CompileString, Py_DecodeLocale, Py_EncodeLocale, Py_EndInterpreter,
-    Py_Exit, Py_FatalError, Py_Finalize, Py_FinalizeEx, Py_GetArgcArgv, Py_GetBuildInfo,
-    Py_GetCompiler, Py_GetCopyright, Py_GetExecPrefix, Py_GetPath, Py_GetPlatform, Py_GetPrefix,
-    Py_GetProgramFullPath, Py_GetProgramName, Py_GetPythonHome, Py_GetRecursionLimit,
-    Py_GetVersion, Py_Initialize, Py_InitializeEx, Py_IsFinalizing, Py_Main, Py_MakePendingCalls,
-    Py_NewInterpreter, Py_PACK_FULL_VERSION, Py_PACK_VERSION, Py_ReprEnter, Py_ReprLeave,
-    Py_SetPath, Py_SetProgramName, Py_SetPythonHome, Py_SetRecursionLimit, PyErr_BadArgument,
+    _PyUnicode_IsTitlecase, _PyUnicode_IsUppercase, _PyUnicode_IsWhitespace,
+    _PyUnicode_ToDecimalDigit, Py_AddPendingCall, Py_AtExit, Py_BytesMain, Py_CompileString,
+    Py_DecodeLocale, Py_EncodeLocale, Py_EndInterpreter, Py_Exit, Py_FatalError, Py_Finalize,
+    Py_FinalizeEx, Py_GetArgcArgv, Py_GetBuildInfo, Py_GetCompiler, Py_GetCopyright,
+    Py_GetExecPrefix, Py_GetPath, Py_GetPlatform, Py_GetPrefix, Py_GetProgramFullPath,
+    Py_GetProgramName, Py_GetPythonHome, Py_GetRecursionLimit, Py_GetVersion, Py_Initialize,
+    Py_InitializeEx, Py_IsFinalizing, Py_Main, Py_MakePendingCalls, Py_NewInterpreter,
+    Py_PACK_FULL_VERSION, Py_PACK_VERSION, Py_ReprEnter, Py_ReprLeave, Py_SetPath,
+    Py_SetProgramName, Py_SetPythonHome, Py_SetRecursionLimit, PyErr_BadArgument,
     PyErr_BadInternalCall,
 };
 use self::cpython_sequence_mapping_api::{
@@ -865,6 +868,8 @@ const CPY_SLOT_GET_NAME: &[u8] = b"__get__\0";
 const CPY_SLOT_SET_NAME: &[u8] = b"__set__\0";
 const CPY_SLOT_DELETE_NAME: &[u8] = b"__delete__\0";
 const CPY_SLOT_INIT_NAME: &[u8] = b"__init__\0";
+const CPY_LONG_BIT_LENGTH_NAME: &[u8] = b"bit_length\0";
+const CPY_FLOAT_AS_INTEGER_RATIO_NAME: &[u8] = b"as_integer_ratio\0";
 
 static mut CPY_SLOT_LT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
     ml_name: CPY_SLOT_LT_NAME.as_ptr().cast::<c_char>(),
@@ -974,6 +979,36 @@ static mut CPY_SLOT_INIT_METHOD_DEF: CpythonMethodDef = CpythonMethodDef {
     ml_flags: METH_VARARGS | METH_KEYWORDS,
     ml_doc: std::ptr::null(),
 };
+
+static mut PY_LONG_TYPE_METHOD_DEFS: [CpythonMethodDef; 2] = [
+    CpythonMethodDef {
+        ml_name: CPY_LONG_BIT_LENGTH_NAME.as_ptr().cast::<c_char>(),
+        ml_meth: Some(cpython_long_bit_length_noargs_method),
+        ml_flags: METH_NOARGS,
+        ml_doc: std::ptr::null(),
+    },
+    CpythonMethodDef {
+        ml_name: std::ptr::null(),
+        ml_meth: None,
+        ml_flags: 0,
+        ml_doc: std::ptr::null(),
+    },
+];
+
+static mut PY_FLOAT_TYPE_METHOD_DEFS: [CpythonMethodDef; 2] = [
+    CpythonMethodDef {
+        ml_name: CPY_FLOAT_AS_INTEGER_RATIO_NAME.as_ptr().cast::<c_char>(),
+        ml_meth: Some(cpython_float_as_integer_ratio_noargs_method),
+        ml_flags: METH_NOARGS,
+        ml_doc: std::ptr::null(),
+    },
+    CpythonMethodDef {
+        ml_name: std::ptr::null(),
+        ml_meth: None,
+        ml_flags: 0,
+        ml_doc: std::ptr::null(),
+    },
+];
 
 #[repr(C)]
 struct CpythonDescrCompatObject {
@@ -3271,6 +3306,52 @@ unsafe extern "C" fn cpython_slot_dunder_init(
     none_ptr
 }
 
+fn cpython_call_noargs_attr_on_self(self_obj: *mut c_void, attr_name: &str) -> *mut c_void {
+    with_active_cpython_context_mut(|context| {
+        if self_obj.is_null() {
+            context.set_error("null self pointer for no-args method dispatch");
+            return std::ptr::null_mut();
+        }
+        let Some(target) = context.cpython_value_from_ptr_or_proxy(self_obj) else {
+            context.set_error("unknown self pointer for no-args method dispatch");
+            return std::ptr::null_mut();
+        };
+        let callable = match cpython_getattr_in_context(context, target, attr_name) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        let result = match cpython_call_internal_in_context(context, callable, Vec::new(), HashMap::new()) {
+            Ok(value) => value,
+            Err(err) => {
+                context.set_error(err);
+                return std::ptr::null_mut();
+            }
+        };
+        context.alloc_cpython_ptr_for_value(result)
+    })
+    .unwrap_or_else(|err| {
+        cpython_set_error(err);
+        std::ptr::null_mut()
+    })
+}
+
+unsafe extern "C" fn cpython_long_bit_length_noargs_method(
+    self_obj: *mut c_void,
+    _noargs: *mut c_void,
+) -> *mut c_void {
+    cpython_call_noargs_attr_on_self(self_obj, "bit_length")
+}
+
+unsafe extern "C" fn cpython_float_as_integer_ratio_noargs_method(
+    self_obj: *mut c_void,
+    _noargs: *mut c_void,
+) -> *mut c_void {
+    cpython_call_noargs_attr_on_self(self_obj, "as_integer_ratio")
+}
+
 unsafe extern "C" fn cpython_float_tp_new(
     subtype: *mut c_void,
     args: *mut c_void,
@@ -3466,6 +3547,7 @@ fn initialize_cpython_compat_type_objects() {
             std::ptr::addr_of_mut!(PyCapsule_Type),
             std::ptr::addr_of_mut!(PyClassMethodDescr_Type),
             std::ptr::addr_of_mut!(PyComplex_Type),
+            std::ptr::addr_of_mut!(PyCoro_Type),
             std::ptr::addr_of_mut!(PyDictItems_Type),
             std::ptr::addr_of_mut!(PyDictIterItem_Type),
             std::ptr::addr_of_mut!(PyDictIterKey_Type),
@@ -3536,11 +3618,14 @@ fn initialize_cpython_compat_type_objects() {
         PyLong_Type.tp_basicsize = 24;
         PyLong_Type.tp_itemsize = 4;
         PyLong_Type.tp_as_number = std::ptr::addr_of_mut!(PY_LONG_NUMBER_METHODS).cast();
+        PyLong_Type.tp_methods = std::ptr::addr_of_mut!(PY_LONG_TYPE_METHOD_DEFS).cast();
         PyBool_Type.tp_basicsize = 24;
         PyBool_Type.tp_itemsize = 4;
         PyBool_Type.tp_as_number = std::ptr::addr_of_mut!(PY_LONG_NUMBER_METHODS).cast();
         PyFloat_Type.tp_basicsize = 24;
         PyFloat_Type.tp_itemsize = 0;
+        PyFloat_Type.tp_as_number = std::ptr::addr_of_mut!(PY_FLOAT_NUMBER_METHODS).cast();
+        PyFloat_Type.tp_methods = std::ptr::addr_of_mut!(PY_FLOAT_TYPE_METHOD_DEFS).cast();
         PyFrame_Type.tp_basicsize = std::mem::size_of::<CpythonFrameCompatObject>() as isize;
         PyFrame_Type.tp_itemsize = 0;
         PyComplex_Type.tp_basicsize = std::mem::size_of::<CpythonComplexCompatObject>() as isize;
@@ -6762,6 +6847,10 @@ impl ModuleCapiContext {
             let vm = unsafe { &mut *self.vm };
             vm.capi_registry_record_ref_kind(owned.ptr(), CapiRefKind::Owned);
         }
+        // Owned references can escape a short-lived C-API call context (for example
+        // return values cached in runtime objects). Pin compat-owned pointers at the
+        // VM level before conversion so context teardown cannot reclaim escaped objects.
+        self.pin_owned_cpython_allocation_for_vm(object);
         self.cpython_value_from_ptr_or_proxy(object)
     }
 
@@ -6772,6 +6861,9 @@ impl ModuleCapiContext {
             let vm = unsafe { &mut *self.vm };
             vm.capi_registry_record_ref_kind(stolen.ptr(), CapiRefKind::Stolen);
         }
+        // Stolen references transfer ownership to the callee; pin compat-owned pointers
+        // to avoid use-after-free when the originating C-API context is dropped.
+        self.pin_owned_cpython_allocation_for_vm(object);
         self.cpython_value_from_ptr_or_proxy(object)
     }
 
@@ -10362,6 +10454,7 @@ impl ModuleCapiContext {
             Tuple(Vec<*mut c_void>),
             List(Vec<*mut c_void>),
             ByteArray(Vec<u8>),
+            Str(String),
             Exception {
                 args: *mut c_void,
                 notes: *mut c_void,
@@ -10420,6 +10513,9 @@ impl ModuleCapiContext {
                     };
                     Some(SyncPayload::ByteArray(bytes))
                 }
+                Value::Str(_) => self
+                    .unicode_text_from_raw_storage(ptr)
+                    .map(SyncPayload::Str),
                 Value::Exception(_) => {
                     // SAFETY: `ptr` is an owned base-exception-compatible allocation for this handle.
                     let raw_exception =
@@ -10599,6 +10695,13 @@ impl ModuleCapiContext {
                     }
                 }
             }
+            Some(SyncPayload::Str(text)) => {
+                if let Some(slot) = self.objects.get_mut(&handle)
+                    && matches!(slot.value, Value::Str(_))
+                {
+                    slot.value = Value::Str(text);
+                }
+            }
             Some(SyncPayload::Exception {
                 args,
                 notes,
@@ -10716,10 +10819,69 @@ impl ModuleCapiContext {
             Value::Tuple(_)
             | Value::List(_)
             | Value::ByteArray(_)
+            | Value::Str(_)
             | Value::Module(_)
             | Value::Exception(_) => true,
             Value::Instance(_) => self.value_is_exception_instance_like(&slot.value),
             _ => false,
+        }
+    }
+
+    fn unicode_text_from_raw_storage(&self, ptr: *mut c_void) -> Option<String> {
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: caller guarantees `ptr` references owned unicode-compatible storage.
+        let ascii = unsafe { ptr.cast::<CpythonAsciiUnicodeCompatObject>().as_ref()? };
+        let length = ascii.length.max(0) as usize;
+        let state = ascii.state;
+        let kind = (state >> 2) & 0b111;
+        let compact = ((state >> 5) & 1) != 0;
+        let is_ascii = ((state >> 6) & 1) != 0;
+        if !compact {
+            return None;
+        }
+        // SAFETY: compact unicode objects store data immediately after the header.
+        let data_ptr = unsafe {
+            if is_ascii {
+                ptr.cast::<u8>()
+                    .add(std::mem::size_of::<CpythonAsciiUnicodeCompatObject>())
+            } else {
+                ptr.cast::<u8>()
+                    .add(std::mem::size_of::<CpythonCompactUnicodeCompatObject>())
+            }
+        };
+        match kind {
+            1 => {
+                // SAFETY: kind=1 stores one byte per codepoint.
+                let bytes = unsafe { std::slice::from_raw_parts(data_ptr, length) };
+                Some(bytes.iter().map(|b| char::from(*b)).collect())
+            }
+            2 => {
+                // SAFETY: kind=2 stores one u16 per codepoint.
+                let units = unsafe {
+                    std::slice::from_raw_parts(data_ptr.cast::<u16>(), length)
+                };
+                Some(
+                    units
+                        .iter()
+                        .filter_map(|unit| char::from_u32(*unit as u32))
+                        .collect(),
+                )
+            }
+            4 => {
+                // SAFETY: kind=4 stores one u32 per codepoint.
+                let units = unsafe {
+                    std::slice::from_raw_parts(data_ptr.cast::<u32>(), length)
+                };
+                Some(
+                    units
+                        .iter()
+                        .filter_map(|unit| char::from_u32(*unit))
+                        .collect(),
+                )
+            }
+            _ => None,
         }
     }
 

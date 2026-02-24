@@ -6,7 +6,7 @@ use super::cpython_module_name_runtime::cpython_module_add_type_name;
 use super::cpython_module_runtime::{cpython_bind_module_def, cpython_new_module_data};
 use super::{
     CpythonMethodDef, CpythonModuleDef, CpythonModuleDefSlot, CpythonObjectHead, CpythonTypeObject,
-    ExtensionCallableKind, Py_DecRef, Py_XDecRef, PyErr_BadArgument, PyErr_BadInternalCall,
+    ExtensionCallableKind, Py_DecRef, Py_IncRef, Py_XDecRef, PyErr_BadArgument, PyErr_BadInternalCall,
     PyExc_SystemError, PyExc_TypeError, PyLong_FromLongLong, PyObject_SetAttrString, PyType_Ready,
     PyUnicode_AsUTF8, PyUnicode_FromString, c_name_to_string, cpython_new_ptr_for_value,
     cpython_set_error, cpython_set_typed_error, cpython_value_debug_tag,
@@ -413,6 +413,14 @@ pub unsafe extern "C" fn PyModule_AddObjectRef(
             context.set_error("PyModule_AddObjectRef module no longer valid");
             return -1;
         };
+        let previous_value_ptr = module_data
+            .globals
+            .get(&attr_name)
+            .cloned()
+            .map(|existing| context.alloc_cpython_ptr_for_value(existing))
+            .unwrap_or(std::ptr::null_mut());
+        // PyModule_AddObjectRef stores a new module reference.
+        unsafe { Py_IncRef(value_ptr) };
         if std::env::var_os("PYRS_TRACE_CPY_MODULE_ADD").is_some() {
             eprintln!(
                 "[cpy-module-add] module={} attr={} value_tag={} value_ptr={:p}",
@@ -424,11 +432,16 @@ pub unsafe extern "C" fn PyModule_AddObjectRef(
         }
         module_data.globals.insert(attr_name.clone(), value.clone());
         if let Err(err) = context.sync_module_dict_set(&module_obj, &attr_name, &value) {
+            // Roll back the module-held reference on failure.
+            unsafe { Py_DecRef(value_ptr) };
             context.set_error(format!(
                 "PyModule_AddObjectRef failed syncing module dict entry '{}': {}",
                 attr_name, err
             ));
             return -1;
+        }
+        if !previous_value_ptr.is_null() {
+            unsafe { Py_DecRef(previous_value_ptr) };
         }
         0
     }) {

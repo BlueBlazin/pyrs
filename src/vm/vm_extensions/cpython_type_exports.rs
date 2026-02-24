@@ -2,7 +2,7 @@ use std::ffi::{c_char, c_void};
 
 use super::{
     CpythonCompatObject, CpythonNumberMethods, CpythonTypeObject, EMPTY_TYPE_FLAGS,
-    cpython_long_nb_add_slot,
+    PyNumber_Absolute, cpython_long_nb_add_slot,
 };
 
 const fn empty_type(name: *const c_char) -> CpythonTypeObject {
@@ -102,6 +102,45 @@ pub(super) static mut PY_LONG_NUMBER_METHODS: CpythonNumberMethods = CpythonNumb
     nb_inplace_matrix_multiply: std::ptr::null_mut(),
 };
 
+pub(super) static mut PY_FLOAT_NUMBER_METHODS: CpythonNumberMethods = CpythonNumberMethods {
+    nb_add: std::ptr::null_mut(),
+    nb_subtract: std::ptr::null_mut(),
+    nb_multiply: std::ptr::null_mut(),
+    nb_remainder: std::ptr::null_mut(),
+    nb_divmod: std::ptr::null_mut(),
+    nb_power: std::ptr::null_mut(),
+    nb_negative: std::ptr::null_mut(),
+    nb_positive: std::ptr::null_mut(),
+    nb_absolute: PyNumber_Absolute as *mut c_void,
+    nb_bool: std::ptr::null_mut(),
+    nb_invert: std::ptr::null_mut(),
+    nb_lshift: std::ptr::null_mut(),
+    nb_rshift: std::ptr::null_mut(),
+    nb_and: std::ptr::null_mut(),
+    nb_xor: std::ptr::null_mut(),
+    nb_or: std::ptr::null_mut(),
+    nb_int: None,
+    nb_reserved: std::ptr::null_mut(),
+    nb_float: std::ptr::null_mut(),
+    nb_inplace_add: std::ptr::null_mut(),
+    nb_inplace_subtract: std::ptr::null_mut(),
+    nb_inplace_multiply: std::ptr::null_mut(),
+    nb_inplace_remainder: std::ptr::null_mut(),
+    nb_inplace_power: std::ptr::null_mut(),
+    nb_inplace_lshift: std::ptr::null_mut(),
+    nb_inplace_rshift: std::ptr::null_mut(),
+    nb_inplace_and: std::ptr::null_mut(),
+    nb_inplace_xor: std::ptr::null_mut(),
+    nb_inplace_or: std::ptr::null_mut(),
+    nb_floor_divide: std::ptr::null_mut(),
+    nb_true_divide: std::ptr::null_mut(),
+    nb_inplace_floor_divide: std::ptr::null_mut(),
+    nb_inplace_true_divide: std::ptr::null_mut(),
+    nb_index: None,
+    nb_matrix_multiply: std::ptr::null_mut(),
+    nb_inplace_matrix_multiply: std::ptr::null_mut(),
+};
+
 static PY_TYPE_NAME_OBJECT: &[u8; 7] = b"object\0";
 static PY_TYPE_NAME_TYPE: &[u8; 5] = b"type\0";
 static PY_TYPE_NAME_BOOL: &[u8; 5] = b"bool\0";
@@ -133,6 +172,7 @@ static PY_TYPE_NAME_FRAME: &[u8; 6] = b"frame\0";
 static PY_TYPE_NAME_FROZENSET: &[u8; 10] = b"frozenset\0";
 static PY_TYPE_NAME_FUNCTION: &[u8; 9] = b"function\0";
 static PY_TYPE_NAME_GENERATOR: &[u8; 10] = b"generator\0";
+static PY_TYPE_NAME_COROUTINE: &[u8; 10] = b"coroutine\0";
 static PY_TYPE_NAME_GETSET_DESCR: &[u8; 18] = b"getset_descriptor\0";
 static PY_TYPE_NAME_GENERIC_ALIAS: &[u8; 19] = b"types.GenericAlias\0";
 static PY_TYPE_NAME_LIST: &[u8; 5] = b"list\0";
@@ -282,6 +322,10 @@ pub static mut PyFunction_Type: CpythonTypeObject =
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyGen_Type: CpythonTypeObject = empty_type(PY_TYPE_NAME_GENERATOR.as_ptr().cast());
+#[unsafe(no_mangle)]
+#[used]
+pub static mut PyCoro_Type: CpythonTypeObject =
+    empty_type(PY_TYPE_NAME_COROUTINE.as_ptr().cast());
 #[unsafe(no_mangle)]
 #[used]
 pub static mut PyGetSetDescr_Type: CpythonTypeObject =

@@ -163,7 +163,6 @@ pub unsafe extern "C" fn PyTuple_SetItem(
     item: *mut c_void,
 ) -> i32 {
     with_active_cpython_context_mut(|context| {
-        let item_handle = context.cpython_handle_from_ptr(item);
         let Some(handle) = context.cpython_handle_from_ptr(tuple) else {
             context.set_error("PyTuple_SetItem received unknown tuple pointer");
             return -1;
@@ -310,9 +309,6 @@ pub unsafe extern "C" fn PyTuple_SetItem(
                     *items_ptr.add(idx as usize) = item;
                 }
             }
-        }
-        if let Some(item_handle) = item_handle {
-            let _ = context.decref(item_handle);
         }
         if std::env::var_os("PYRS_TRACE_CPY_TUPLE").is_some() {
             eprintln!(

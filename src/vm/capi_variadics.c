@@ -10,9 +10,19 @@
 #include <limits.h>
 #include <dlfcn.h>
 #include <wchar.h>
+#include <sys/types.h>
+#include <time.h>
+#include <errno.h>
+#include <locale.h>
 
 typedef intptr_t Py_ssize_t;
 typedef intptr_t Py_hash_t;
+typedef int64_t PyTime_t;
+typedef uintptr_t Py_uhash_t;
+typedef struct {
+    double real;
+    double imag;
+} Py_complex;
 typedef void (*PyOS_sighandler_t)(int);
 
 #ifndef PY_SSIZE_T_MAX
@@ -33,10 +43,12 @@ extern void *PyTuple_New(Py_ssize_t size);
 extern int PyTuple_SetItem(void *tuple, Py_ssize_t index, void *item);
 extern Py_ssize_t PyTuple_Size(void *tuple);
 extern void *PyTuple_GetItem(void *tuple, Py_ssize_t index);
+extern int PyTuple_Resize(void **tuple, Py_ssize_t size);
 extern void *PyList_New(Py_ssize_t size);
 extern Py_ssize_t PyList_Size(void *list);
 extern void *PyList_GetItem(void *list, Py_ssize_t index);
 extern int PyList_Append(void *list, void *item);
+extern int PyList_Extend(void *list, void *iterable);
 extern void *PyDict_New(void);
 extern Py_ssize_t PyDict_Size(void *dict);
 extern void *PyDict_Keys(void *dict);
@@ -49,27 +61,58 @@ extern void *PyLong_FromUnsignedLongLong(unsigned long long value);
 extern void *PyLong_FromSsize_t(Py_ssize_t value);
 extern long PyLong_AsLong(void *value);
 extern unsigned long PyLong_AsUnsignedLong(void *value);
+extern unsigned long long PyLong_AsUnsignedLongLong(void *value);
+extern long long PyLong_AsLongLong(void *value);
+extern Py_ssize_t PyLong_AsSsize_t(void *value);
+extern Py_ssize_t PyLong_AsNativeBytes(void *v, void *buffer, Py_ssize_t n_bytes, int flags);
+extern void *PyLong_FromNativeBytes(const void *buffer, size_t n_bytes, int flags);
 extern void *PyFloat_FromDouble(double value);
+extern double PyFloat_AsDouble(void *value);
 extern void *PyBool_FromLong(long value);
+extern void *PyUnicode_FromString(const char *value);
 extern void *PyUnicode_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyUnicode_FromWideChar(const wchar_t *value, Py_ssize_t len);
+extern void *PyUnicode_AsUTF8String(void *object);
+extern void *PyUnicode_FromOrdinal(int ordinal);
+extern void *PyUnicode_Concat(void *left, void *right);
+extern Py_ssize_t PyUnicode_GetLength(void *object);
+extern void *PyUnicode_Substring(void *object, Py_ssize_t start, Py_ssize_t end);
 extern int PyBytes_AsStringAndSize(void *obj, char **buffer, Py_ssize_t *len);
 extern void *PyBytes_FromStringAndSize(const char *value, Py_ssize_t size);
 extern void *PyImport_ImportModule(const char *name);
 extern void *PyObject_Call(void *callable, void *args, void *kwargs);
 extern void *PyObject_CallObject(void *callable, void *args);
+extern void *PyObject_CallMethod(void *object, const char *name, const char *format, ...);
 extern void *PyObject_GetAttr(void *object, void *name);
 extern void *PyObject_GetAttrString(void *object, const char *name);
+extern void *PyObject_GenericHash(void *object);
+extern void *_PyType_Lookup(void *type, void *name);
+extern void *PyObject_Type(void *object);
 extern void *PyObject_Str(void *object);
 extern void *PyObject_Repr(void *object);
 extern void *PyObject_ASCII(void *object);
 extern Py_hash_t PyObject_Hash(void *object);
 extern int PyObject_IsTrue(void *object);
 extern int PyType_IsSubtype(void *subtype, void *type);
+extern int PyErr_ExceptionMatches(void *exception);
 extern const char *PyUnicode_AsUTF8(void *object);
+extern void *PyThreadState_GetUnchecked(void);
+extern void *PyThreadState_Get(void);
+extern void *PyNumber_Index(void *object);
+extern Py_ssize_t PyNumber_AsSsize_t(void *object, void *exception);
+extern void *PyNumber_ToBase(void *object, int base);
+extern void *PyNumber_Absolute(void *object);
+extern void *PyNumber_Remainder(void *left, void *right);
+extern void *PyNumber_Negative(void *object);
+extern int PyTime_PerfCounterRaw(PyTime_t *result);
 extern void PyErr_BadInternalCall(void);
 extern void *PyErr_Occurred(void);
 extern void PyErr_SetString(void *exception, const char *message);
+extern void PyErr_SetObject(void *exception, void *value);
+extern void *PyErr_GetRaisedException(void);
+extern void PyErr_SetRaisedException(void *exception);
+extern void PyException_SetContext(void *exception, void *context);
+extern void *PyErr_NoMemory(void);
 extern void PyErr_Clear(void);
 extern void PyErr_WriteUnraisable(void *object);
 extern void Py_IncRef(void *object);
@@ -79,7 +122,12 @@ extern char PyDict_Type;
 extern char PyTuple_Type;
 extern char PyUnicode_Type;
 extern char PyBytes_Type;
+extern char PyLong_Type;
 extern char PyExc_TypeError;
+extern char PyExc_OverflowError;
+extern char PyExc_AttributeError;
+extern char PyExc_ValueError;
+extern char PyExc_SystemError;
 
 static void pyrs_sys_vwrite(void (*sink)(const char *), const char *format, va_list ap)
 {
@@ -2463,6 +2511,84 @@ typedef struct _PyArg_Parser {
     struct _PyArg_Parser *next;
 } _PyArg_Parser;
 
+typedef struct {
+    void *buffer;
+    void *data;
+    int kind;
+    uint32_t maxchar;
+    Py_ssize_t size;
+    Py_ssize_t pos;
+    Py_ssize_t min_length;
+    uint32_t min_char;
+    unsigned char overallocate;
+    unsigned char readonly;
+} _PyUnicodeWriter;
+
+typedef struct _Py_slist_item_s {
+    struct _Py_slist_item_s *next;
+} _Py_slist_item_t;
+
+typedef struct {
+    _Py_slist_item_t *head;
+} _Py_slist_t;
+
+typedef struct _Py_hashtable_entry_t {
+    _Py_slist_item_t _Py_slist_item;
+    Py_uhash_t key_hash;
+    const void *key;
+    void *value;
+} _Py_hashtable_entry_t;
+
+struct _Py_hashtable_t;
+typedef struct _Py_hashtable_t _Py_hashtable_t;
+
+typedef Py_uhash_t (*_Py_hashtable_hash_func)(const void *key);
+typedef int (*_Py_hashtable_compare_func)(const void *key1, const void *key2);
+typedef void (*_Py_hashtable_destroy_func)(void *key);
+typedef _Py_hashtable_entry_t* (*_Py_hashtable_get_entry_func)(
+    _Py_hashtable_t *ht,
+    const void *key
+);
+
+typedef struct {
+    void* (*malloc)(size_t size);
+    void (*free)(void *ptr);
+} _Py_hashtable_allocator_t;
+
+struct _Py_hashtable_t {
+    size_t nentries;
+    size_t nbuckets;
+    _Py_slist_t *buckets;
+
+    _Py_hashtable_get_entry_func get_entry_func;
+    _Py_hashtable_hash_func hash_func;
+    _Py_hashtable_compare_func compare_func;
+    _Py_hashtable_destroy_func key_destroy_func;
+    _Py_hashtable_destroy_func value_destroy_func;
+    _Py_hashtable_allocator_t alloc;
+};
+
+typedef struct {
+    uint8_t bits_per_digit;
+    uint8_t digit_size;
+    int8_t digits_order;
+    int8_t digit_endianness;
+} PyLongLayout;
+
+typedef struct {
+    int64_t value;
+    uint8_t negative;
+    Py_ssize_t ndigits;
+    const void *digits;
+    uintptr_t _reserved;
+} PyLongExport;
+
+typedef struct {
+    int negative;
+    Py_ssize_t ndigits;
+    uint32_t *digits;
+} _PyLongWriter;
+
 static int pyrs_lookup_keyword_index(const char * const *keywords, const char *name)
 {
     if (keywords == NULL || name == NULL) {
@@ -2772,6 +2898,1363 @@ void * const *_PyArg_UnpackKeywords(
     return (void * const *)buf;
 }
 
+int _PyArg_NoPositional(const char *funcname, void *args)
+{
+    if (args == NULL) {
+        return 1;
+    }
+    Py_ssize_t nargs = PyTuple_Size(args);
+    if (nargs <= 0) {
+        return 1;
+    }
+    if (funcname == NULL) {
+        funcname = "<function>";
+    }
+    PyErr_Format(
+        (void *)&PyExc_TypeError,
+        "%s() takes no positional arguments",
+        funcname
+    );
+    return 0;
+}
+
+int _PyArg_ParseStack(
+    void *const *args,
+    Py_ssize_t nargs,
+    const char *format,
+    ...
+)
+{
+    void *tuple = pyrs_capi_tuple_pack_from_array(nargs, args);
+    if (tuple == NULL) {
+        return 0;
+    }
+    va_list ap;
+    va_start(ap, format);
+    int ok = _PyArg_VaParse_SizeT(tuple, format, ap);
+    va_end(ap);
+    Py_DecRef(tuple);
+    return ok;
+}
+
+int _PyArg_ParseStackAndKeywords(
+    void *const *args,
+    Py_ssize_t nargs,
+    void *kwnames,
+    _PyArg_Parser *parser,
+    ...
+)
+{
+    if (parser == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_PyArg_ParseStackAndKeywords missing parser");
+        return 0;
+    }
+    void *tuple = pyrs_capi_tuple_pack_from_array(nargs, args);
+    if (tuple == NULL) {
+        return 0;
+    }
+    void *kwargs = NULL;
+    if (kwnames != NULL) {
+        kwargs = PyDict_New();
+        if (kwargs == NULL) {
+            Py_DecRef(tuple);
+            return 0;
+        }
+        Py_ssize_t kw_count = PyTuple_Size(kwnames);
+        if (kw_count < 0) {
+            Py_DecRef(tuple);
+            Py_DecRef(kwargs);
+            return 0;
+        }
+        for (Py_ssize_t i = 0; i < kw_count; i++) {
+            void *key = PyTuple_GetItem(kwnames, i);
+            void *value = args ? args[nargs + i] : NULL;
+            if (key == NULL || value == NULL || PyDict_SetItem(kwargs, key, value) < 0) {
+                Py_DecRef(tuple);
+                Py_DecRef(kwargs);
+                return 0;
+            }
+        }
+    }
+
+    const char *format = parser->format ? parser->format : "";
+    va_list ap;
+    va_start(ap, parser);
+    int ok = _PyArg_VaParseTupleAndKeywords_SizeT(
+        tuple,
+        kwargs,
+        format,
+        parser->keywords,
+        ap
+    );
+    va_end(ap);
+    Py_DecRef(tuple);
+    if (kwargs != NULL) {
+        Py_DecRef(kwargs);
+    }
+    return ok;
+}
+
+int _Py_convert_optional_to_ssize_t(void *obj, void *result)
+{
+    if (result == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_Py_convert_optional_to_ssize_t missing result");
+        return 0;
+    }
+    if (obj == (void *)&_Py_NoneStruct) {
+        return 1;
+    }
+    void *index_value = PyNumber_Index(obj);
+    if (index_value == NULL) {
+        return 0;
+    }
+    Py_ssize_t converted = PyNumber_AsSsize_t(index_value, (void *)&PyExc_OverflowError);
+    Py_DecRef(index_value);
+    if (converted == -1 && PyErr_Occurred() != NULL) {
+        return 0;
+    }
+    *((Py_ssize_t *)result) = converted;
+    return 1;
+}
+
+void *_PyNumber_Index(void *object)
+{
+    return PyNumber_Index(object);
+}
+
+int _PyLong_UnsignedLong_Converter(void *object, void *address)
+{
+    if (address == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_PyLong_UnsignedLong_Converter missing destination");
+        return 0;
+    }
+    unsigned long value = PyLong_AsUnsignedLong(object);
+    if (PyErr_Occurred() != NULL) {
+        return 0;
+    }
+    *((unsigned long *)address) = value;
+    return 1;
+}
+
+int _PyLong_UnsignedLongLong_Converter(void *object, void *address)
+{
+    if (address == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_PyLong_UnsignedLongLong_Converter missing destination");
+        return 0;
+    }
+    unsigned long long value = PyLong_AsUnsignedLongLong(object);
+    if (PyErr_Occurred() != NULL) {
+        return 0;
+    }
+    *((unsigned long long *)address) = value;
+    return 1;
+}
+
+int _PyLong_AsByteArray(
+    void *long_obj,
+    unsigned char *bytes,
+    size_t n,
+    int little_endian,
+    int is_signed,
+    int with_exceptions
+)
+{
+    if (long_obj == NULL || (bytes == NULL && n != 0)) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    int flags = little_endian ? 1 : 0;
+    if (!is_signed) {
+        flags |= 4;
+        flags |= 8;
+    }
+    Py_ssize_t required = PyLong_AsNativeBytes(long_obj, bytes, (Py_ssize_t)n, flags);
+    if (required < 0) {
+        return -1;
+    }
+    if (required > (Py_ssize_t)n) {
+        if (with_exceptions) {
+            PyErr_SetString((void *)&PyExc_OverflowError, "int too big to convert");
+        }
+        return -1;
+    }
+    return 0;
+}
+
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define PYRS_LONG_DIGIT_ENDIANNESS 1
+#else
+#define PYRS_LONG_DIGIT_ENDIANNESS -1
+#endif
+
+static const PyLongLayout PYRS_LONG_LAYOUT = {
+    .bits_per_digit = 30,
+    .digit_size = 4,
+    .digits_order = -1,
+    .digit_endianness = PYRS_LONG_DIGIT_ENDIANNESS,
+};
+
+static int pyrs_long_digits_from_unsigned_bytes(
+    const unsigned char *bytes,
+    size_t nbytes,
+    uint32_t **out_digits,
+    Py_ssize_t *out_ndigits
+)
+{
+    if (out_digits == NULL || out_ndigits == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    *out_digits = NULL;
+    *out_ndigits = 0;
+    if (nbytes == 0) {
+        uint32_t *digits = (uint32_t *)calloc(1, sizeof(uint32_t));
+        if (digits == NULL) {
+            PyErr_NoMemory();
+            return -1;
+        }
+        *out_digits = digits;
+        *out_ndigits = 1;
+        return 0;
+    }
+
+    size_t ndigits = (nbytes * 8 + 29) / 30;
+    if (ndigits == 0) {
+        ndigits = 1;
+    }
+    uint32_t *digits = (uint32_t *)calloc(ndigits, sizeof(uint32_t));
+    if (digits == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    for (size_t byte_index = 0; byte_index < nbytes; byte_index++) {
+        uint32_t chunk = (uint32_t)bytes[byte_index];
+        size_t bit_offset = byte_index * 8;
+        size_t digit_index = bit_offset / 30;
+        size_t shift = bit_offset % 30;
+        digits[digit_index] |= chunk << shift;
+        if (shift > 22 && digit_index + 1 < ndigits) {
+            digits[digit_index + 1] |= chunk >> (30 - shift);
+        }
+    }
+
+    while (ndigits > 1 && digits[ndigits - 1] == 0) {
+        ndigits--;
+    }
+
+    *out_digits = digits;
+    *out_ndigits = (Py_ssize_t)ndigits;
+    return 0;
+}
+
+static int pyrs_unsigned_bytes_from_long_digits(
+    const uint32_t *digits,
+    Py_ssize_t ndigits,
+    unsigned char **out_bytes,
+    size_t *out_nbytes
+)
+{
+    if (out_bytes == NULL || out_nbytes == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    *out_bytes = NULL;
+    *out_nbytes = 0;
+    if (ndigits <= 0 || digits == NULL) {
+        unsigned char *bytes = (unsigned char *)calloc(1, 1);
+        if (bytes == NULL) {
+            PyErr_NoMemory();
+            return -1;
+        }
+        *out_bytes = bytes;
+        *out_nbytes = 1;
+        return 0;
+    }
+
+    size_t nbits = (size_t)ndigits * 30;
+    size_t nbytes = (nbits + 7) / 8;
+    if (nbytes == 0) {
+        nbytes = 1;
+    }
+    unsigned char *bytes = (unsigned char *)calloc(nbytes, 1);
+    if (bytes == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    for (Py_ssize_t i = 0; i < ndigits; i++) {
+        uint32_t digit = digits[i] & 0x3FFFFFFFu;
+        size_t bit_offset = (size_t)i * 30;
+        size_t byte_index = bit_offset / 8;
+        size_t shift = bit_offset % 8;
+
+        uint64_t window = ((uint64_t)digit) << shift;
+        size_t window_len = 5;
+        if (byte_index + window_len > nbytes) {
+            window_len = nbytes - byte_index;
+        }
+        for (size_t j = 0; j < window_len; j++) {
+            bytes[byte_index + j] |= (unsigned char)((window >> (8 * j)) & 0xFFu);
+        }
+    }
+
+    while (nbytes > 1 && bytes[nbytes - 1] == 0) {
+        nbytes--;
+    }
+
+    *out_bytes = bytes;
+    *out_nbytes = nbytes;
+    return 0;
+}
+
+const PyLongLayout *_PyLong_GetNativeLayout(void)
+{
+    return &PYRS_LONG_LAYOUT;
+}
+
+int _PyLong_Export(void *obj, PyLongExport *export_long)
+{
+    if (export_long == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    memset(export_long, 0, sizeof(*export_long));
+    if (obj == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+
+    void *obj_type = PyObject_Type(obj);
+    if (obj_type == NULL) {
+        return -1;
+    }
+    int is_long = PyType_IsSubtype(obj_type, (void *)&PyLong_Type);
+    Py_DecRef(obj_type);
+    if (!is_long) {
+        PyErr_SetString((void *)&PyExc_TypeError, "expect int");
+        return -1;
+    }
+
+    long long small_value = PyLong_AsLongLong(obj);
+    if (!(small_value == -1 && PyErr_Occurred() != NULL)) {
+        export_long->value = (int64_t)small_value;
+        export_long->negative = 0;
+        export_long->ndigits = 0;
+        export_long->digits = NULL;
+        export_long->_reserved = 0;
+        return 0;
+    }
+    if (!PyErr_ExceptionMatches((void *)&PyExc_OverflowError)) {
+        return -1;
+    }
+    PyErr_Clear();
+
+    const int flags = 1 | 4 | 8;
+    void *source = obj;
+    int negative = 0;
+    Py_ssize_t nbytes = PyLong_AsNativeBytes(source, NULL, 0, flags);
+    if (nbytes < 0) {
+        if (!PyErr_ExceptionMatches((void *)&PyExc_ValueError)) {
+            return -1;
+        }
+        PyErr_Clear();
+        source = PyNumber_Negative(obj);
+        if (source == NULL) {
+            return -1;
+        }
+        negative = 1;
+        nbytes = PyLong_AsNativeBytes(source, NULL, 0, flags);
+        if (nbytes < 0) {
+            Py_DecRef(source);
+            return -1;
+        }
+    }
+
+    if (nbytes == 0) {
+        if (source != obj) {
+            Py_DecRef(source);
+        }
+        export_long->value = 0;
+        export_long->negative = 0;
+        export_long->ndigits = 0;
+        export_long->digits = NULL;
+        export_long->_reserved = 0;
+        return 0;
+    }
+
+    unsigned char *bytes = (unsigned char *)malloc((size_t)nbytes);
+    if (bytes == NULL) {
+        if (source != obj) {
+            Py_DecRef(source);
+        }
+        PyErr_NoMemory();
+        return -1;
+    }
+    if (PyLong_AsNativeBytes(source, bytes, nbytes, flags) < 0) {
+        if (source != obj) {
+            Py_DecRef(source);
+        }
+        free(bytes);
+        return -1;
+    }
+    if (source != obj) {
+        Py_DecRef(source);
+    }
+
+    uint32_t *digits = NULL;
+    Py_ssize_t ndigits = 0;
+    if (pyrs_long_digits_from_unsigned_bytes(bytes, (size_t)nbytes, &digits, &ndigits) < 0) {
+        free(bytes);
+        return -1;
+    }
+    free(bytes);
+
+    export_long->value = 0;
+    export_long->negative = (uint8_t)(negative ? 1 : 0);
+    export_long->ndigits = ndigits;
+    export_long->digits = digits;
+    export_long->_reserved = (uintptr_t)digits;
+    return 0;
+}
+
+void _PyLong_FreeExport(PyLongExport *export_long)
+{
+    if (export_long == NULL) {
+        return;
+    }
+    if (export_long->_reserved != 0) {
+        free((void *)export_long->_reserved);
+    }
+    export_long->_reserved = 0;
+    export_long->digits = NULL;
+    export_long->ndigits = 0;
+}
+
+_PyLongWriter *_PyLongWriter_Create(int negative, Py_ssize_t ndigits, void **digits)
+{
+    if (digits == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    *digits = NULL;
+    if (ndigits <= 0) {
+        PyErr_SetString((void *)&PyExc_ValueError, "ndigits must be positive");
+        return NULL;
+    }
+
+    _PyLongWriter *writer = (_PyLongWriter *)calloc(1, sizeof(_PyLongWriter));
+    if (writer == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    writer->digits = (uint32_t *)calloc((size_t)ndigits, sizeof(uint32_t));
+    if (writer->digits == NULL) {
+        free(writer);
+        PyErr_NoMemory();
+        return NULL;
+    }
+    writer->negative = negative ? 1 : 0;
+    writer->ndigits = ndigits;
+    *digits = writer->digits;
+    return writer;
+}
+
+void *_PyLongWriter_Finish(_PyLongWriter *writer)
+{
+    if (writer == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    unsigned char *bytes = NULL;
+    size_t nbytes = 0;
+    if (pyrs_unsigned_bytes_from_long_digits(writer->digits, writer->ndigits, &bytes, &nbytes) < 0) {
+        free(writer->digits);
+        free(writer);
+        return NULL;
+    }
+    int flags = 1 | 4;
+    void *value = PyLong_FromNativeBytes(bytes, nbytes, flags);
+    free(bytes);
+    if (value == NULL) {
+        free(writer->digits);
+        free(writer);
+        return NULL;
+    }
+
+    if (writer->negative && PyObject_IsTrue(value) == 1) {
+        void *negated = PyNumber_Negative(value);
+        Py_DecRef(value);
+        value = negated;
+    }
+
+    free(writer->digits);
+    free(writer);
+    return value;
+}
+
+void _PyLongWriter_Discard(_PyLongWriter *writer)
+{
+    if (writer == NULL) {
+        return;
+    }
+    free(writer->digits);
+    writer->digits = NULL;
+    free(writer);
+}
+
+const PyLongLayout *PyLong_GetNativeLayout(void)
+{
+    return _PyLong_GetNativeLayout();
+}
+
+int PyLong_Export(void *obj, PyLongExport *export_long)
+{
+    return _PyLong_Export(obj, export_long);
+}
+
+void PyLong_FreeExport(PyLongExport *export_long)
+{
+    _PyLong_FreeExport(export_long);
+}
+
+_PyLongWriter *PyLongWriter_Create(int negative, Py_ssize_t ndigits, void **digits)
+{
+    return _PyLongWriter_Create(negative, ndigits, digits);
+}
+
+void *PyLongWriter_Finish(_PyLongWriter *writer)
+{
+    return _PyLongWriter_Finish(writer);
+}
+
+void PyLongWriter_Discard(_PyLongWriter *writer)
+{
+    _PyLongWriter_Discard(writer);
+}
+
+void *_PyLong_FromByteArray(
+    const unsigned char *bytes,
+    size_t n,
+    int little_endian,
+    int is_signed
+)
+{
+    int flags = little_endian ? 1 : 0;
+    if (!is_signed) {
+        flags |= 4;
+    }
+    return PyLong_FromNativeBytes(bytes, n, flags);
+}
+
+void *_PyLong_FromGid(gid_t gid)
+{
+    return PyLong_FromUnsignedLong((unsigned long)gid);
+}
+
+void *_PyLong_Format(void *obj, int base)
+{
+    return PyNumber_ToBase(obj, base);
+}
+
+void *_PyLong_GCD(void *a, void *b)
+{
+    if (a == NULL || b == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    void *left = PyNumber_Absolute(a);
+    if (left == NULL) {
+        return NULL;
+    }
+    void *right = PyNumber_Absolute(b);
+    if (right == NULL) {
+        Py_DecRef(left);
+        return NULL;
+    }
+
+    while (1) {
+        int is_nonzero = PyObject_IsTrue(right);
+        if (is_nonzero < 0) {
+            Py_DecRef(left);
+            Py_DecRef(right);
+            return NULL;
+        }
+        if (!is_nonzero) {
+            Py_DecRef(right);
+            return left;
+        }
+        void *next = PyNumber_Remainder(left, right);
+        if (next == NULL) {
+            Py_DecRef(left);
+            Py_DecRef(right);
+            return NULL;
+        }
+        Py_DecRef(left);
+        left = right;
+        right = next;
+    }
+}
+
+void *_PyThreadState_GetCurrent(void)
+{
+    return PyThreadState_GetUnchecked();
+}
+
+void _PyErr_ChainExceptions1(void *exc)
+{
+    if (exc == NULL) {
+        return;
+    }
+    if (PyErr_Occurred() != NULL) {
+        void *current = PyErr_GetRaisedException();
+        if (current == NULL) {
+            PyErr_SetRaisedException(exc);
+            return;
+        }
+        PyException_SetContext(current, exc);
+        PyErr_SetRaisedException(current);
+        return;
+    }
+    PyErr_SetRaisedException(exc);
+}
+
+int _PyEval_SetProfile(void *tstate, void *func, void *arg)
+{
+    (void)tstate;
+    (void)func;
+    (void)arg;
+    return 0;
+}
+
+int _PySys_GetOptionalAttrString(const char *name, void **result)
+{
+    if (result == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_PySys_GetOptionalAttrString missing result");
+        return -1;
+    }
+    *result = NULL;
+    if (name == NULL) {
+        PyErr_SetString((void *)&PyExc_TypeError, "_PySys_GetOptionalAttrString missing name");
+        return -1;
+    }
+    void *sys_mod = PyImport_ImportModule("sys");
+    if (sys_mod == NULL) {
+        return -1;
+    }
+    void *attr = PyObject_GetAttrString(sys_mod, name);
+    Py_DecRef(sys_mod);
+    if (attr == NULL) {
+        if (PyErr_ExceptionMatches((void *)&PyExc_AttributeError)) {
+            PyErr_Clear();
+            *result = NULL;
+            return 0;
+        }
+        return -1;
+    }
+    *result = attr;
+    return 1;
+}
+
+void *_PyUnicode_AsUTF8String(void *object)
+{
+    return PyUnicode_AsUTF8String(object);
+}
+
+void *_PyType_LookupRef(void *type, void *name)
+{
+    void *value = _PyType_Lookup(type, name);
+    if (value != NULL) {
+        Py_IncRef(value);
+    }
+    return value;
+}
+
+void *_PyList_AppendTakeRefListResize(void *list, void *item)
+{
+    if (list == NULL || item == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (PyList_Append(list, item) < 0) {
+        Py_DecRef(item);
+        return NULL;
+    }
+    Py_DecRef(item);
+    return list;
+}
+
+void *_PyObject_CallMethod(void *object, void *name, const char *format, ...)
+{
+    if (object == NULL || name == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    void *callable = PyObject_GetAttr(object, name);
+    if (callable == NULL) {
+        return NULL;
+    }
+
+    void *args_tuple = NULL;
+    va_list ap;
+    va_start(ap, format);
+    if (format == NULL || format[0] == '\0') {
+        args_tuple = PyTuple_New(0);
+    } else {
+        void *built = Py_VaBuildValue(format, ap);
+        if (built == NULL) {
+            va_end(ap);
+            Py_DecRef(callable);
+            return NULL;
+        }
+        void *built_type = PyObject_Type(built);
+        int is_tuple = 0;
+        if (built_type != NULL) {
+            is_tuple = PyType_IsSubtype(built_type, (void *)&PyTuple_Type);
+            Py_DecRef(built_type);
+        }
+        if (is_tuple) {
+            args_tuple = built;
+        } else {
+            void *items[1] = {built};
+            args_tuple = pyrs_capi_tuple_pack_from_array(1, items);
+            Py_DecRef(built);
+        }
+    }
+    va_end(ap);
+
+    if (args_tuple == NULL) {
+        Py_DecRef(callable);
+        return NULL;
+    }
+    void *result = PyObject_CallObject(callable, args_tuple);
+    Py_DecRef(args_tuple);
+    Py_DecRef(callable);
+    return result;
+}
+
+void *_PyObject_MakeTpCall(
+    void *callable,
+    void *const *args,
+    Py_ssize_t nargs,
+    void *keywords
+)
+{
+    void *tuple = pyrs_capi_tuple_pack_from_array(nargs, args);
+    if (tuple == NULL) {
+        return NULL;
+    }
+    void *result = PyObject_Call(callable, tuple, keywords);
+    Py_DecRef(tuple);
+    return result;
+}
+
+void *_Py_CheckFunctionResult(
+    void *tstate,
+    void *callable,
+    void *result,
+    const char *where
+)
+{
+    (void)tstate;
+    if (result == NULL) {
+        if (PyErr_Occurred() == NULL) {
+            if (callable != NULL) {
+                PyErr_Format(
+                    (void *)&PyExc_SystemError,
+                    "%R returned NULL without setting an exception",
+                    callable
+                );
+            } else if (where != NULL) {
+                PyErr_Format(
+                    (void *)&PyExc_SystemError,
+                    "%s returned NULL without setting an exception",
+                    where
+                );
+            } else {
+                PyErr_SetString(
+                    (void *)&PyExc_SystemError,
+                    "function returned NULL without setting an exception"
+                );
+            }
+        }
+        return NULL;
+    }
+    if (PyErr_Occurred() != NULL) {
+        Py_DecRef(result);
+        if (callable != NULL) {
+            PyErr_Format(
+                (void *)&PyExc_SystemError,
+                "%R returned a result with an exception set",
+                callable
+            );
+        } else if (where != NULL) {
+            PyErr_Format(
+                (void *)&PyExc_SystemError,
+                "%s returned a result with an exception set",
+                where
+            );
+        } else {
+            PyErr_SetString(
+                (void *)&PyExc_SystemError,
+                "function returned a result with an exception set"
+            );
+        }
+        return NULL;
+    }
+    return result;
+}
+
+int PyList_Clear(void *list)
+{
+    if (list == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    void *result = PyObject_CallMethod(list, "clear", "");
+    if (result == NULL) {
+        return -1;
+    }
+    Py_DecRef(result);
+    return 0;
+}
+
+int PyTuple_Resize(void **ptuple, Py_ssize_t newsize)
+{
+    if (ptuple == NULL || newsize < 0) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    void *old_tuple = *ptuple;
+    if (old_tuple == NULL) {
+        *ptuple = PyTuple_New(newsize);
+        return *ptuple == NULL ? -1 : 0;
+    }
+
+    Py_ssize_t old_size = PyTuple_Size(old_tuple);
+    if (old_size < 0) {
+        return -1;
+    }
+
+    void *new_tuple = PyTuple_New(newsize);
+    if (new_tuple == NULL) {
+        return -1;
+    }
+
+    Py_ssize_t copy_size = old_size < newsize ? old_size : newsize;
+    for (Py_ssize_t i = 0; i < copy_size; i++) {
+        void *item = PyTuple_GetItem(old_tuple, i);
+        if (item == NULL) {
+            Py_DecRef(new_tuple);
+            return -1;
+        }
+        Py_IncRef(item);
+        if (PyTuple_SetItem(new_tuple, i, item) < 0) {
+            Py_DecRef(item);
+            Py_DecRef(new_tuple);
+            return -1;
+        }
+    }
+
+    Py_DecRef(old_tuple);
+    *ptuple = new_tuple;
+    return 0;
+}
+
+int _PyTuple_Resize(void **ptuple, Py_ssize_t newsize)
+{
+    return PyTuple_Resize(ptuple, newsize);
+}
+
+static int pyrs_unicode_writer_append(_PyUnicodeWriter *writer, void *piece)
+{
+    if (writer == NULL || piece == NULL) {
+        return -1;
+    }
+    if (writer->buffer == NULL) {
+        writer->buffer = piece;
+        return 0;
+    }
+    void *combined = PyUnicode_Concat(writer->buffer, piece);
+    Py_DecRef(piece);
+    if (combined == NULL) {
+        return -1;
+    }
+    Py_DecRef(writer->buffer);
+    writer->buffer = combined;
+    return 0;
+}
+
+void _PyUnicodeWriter_Init(_PyUnicodeWriter *writer)
+{
+    if (writer == NULL) {
+        return;
+    }
+    memset(writer, 0, sizeof(*writer));
+    writer->kind = 1;
+    writer->maxchar = 127;
+    writer->min_char = 127;
+}
+
+int _PyUnicodeWriter_PrepareInternal(
+    _PyUnicodeWriter *writer,
+    Py_ssize_t length,
+    uint32_t maxchar
+)
+{
+    if (writer == NULL || length < 0) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    if (maxchar > writer->maxchar) {
+        writer->maxchar = maxchar;
+    }
+    if (maxchar > 0xFFFF) {
+        writer->kind = 4;
+    } else if (maxchar > 0xFF) {
+        writer->kind = 2;
+    } else {
+        writer->kind = 1;
+    }
+    if (writer->size < writer->pos + length) {
+        writer->size = writer->pos + length;
+    }
+    return 0;
+}
+
+int _PyUnicodeWriter_WriteChar(_PyUnicodeWriter *writer, uint32_t ch)
+{
+    if (_PyUnicodeWriter_PrepareInternal(writer, 1, ch) < 0) {
+        return -1;
+    }
+    void *piece = PyUnicode_FromOrdinal((int)ch);
+    if (piece == NULL) {
+        return -1;
+    }
+    if (pyrs_unicode_writer_append(writer, piece) < 0) {
+        return -1;
+    }
+    writer->pos += 1;
+    return 0;
+}
+
+int _PyUnicodeWriter_WriteStr(_PyUnicodeWriter *writer, void *str)
+{
+    if (writer == NULL || str == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    Py_ssize_t len = PyUnicode_GetLength(str);
+    if (len < 0) {
+        return -1;
+    }
+    if (_PyUnicodeWriter_PrepareInternal(writer, len, writer->maxchar) < 0) {
+        return -1;
+    }
+    Py_IncRef(str);
+    if (pyrs_unicode_writer_append(writer, str) < 0) {
+        return -1;
+    }
+    writer->pos += len;
+    return 0;
+}
+
+void *_PyUnicodeWriter_Finish(_PyUnicodeWriter *writer)
+{
+    if (writer == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (writer->buffer == NULL) {
+        writer->buffer = PyUnicode_FromStringAndSize("", 0);
+        if (writer->buffer == NULL) {
+            return NULL;
+        }
+    }
+    void *result = writer->buffer;
+    writer->buffer = NULL;
+    writer->data = NULL;
+    writer->size = 0;
+    writer->pos = 0;
+    writer->readonly = 0;
+    return result;
+}
+
+void _PyUnicodeWriter_Dealloc(_PyUnicodeWriter *writer)
+{
+    if (writer == NULL) {
+        return;
+    }
+    if (writer->buffer != NULL) {
+        Py_DecRef(writer->buffer);
+        writer->buffer = NULL;
+    }
+    writer->data = NULL;
+    writer->size = 0;
+    writer->pos = 0;
+}
+
+void *_Py_strhex(const char *argbuf, const Py_ssize_t arglen)
+{
+    if (arglen < 0) {
+        PyErr_SetString((void *)&PyExc_ValueError, "negative arglen");
+        return NULL;
+    }
+    static const char hexdigits[] = "0123456789abcdef";
+    size_t out_len = (size_t)arglen * 2;
+    char *out = (char *)malloc(out_len + 1);
+    if (out == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    for (Py_ssize_t i = 0; i < arglen; i++) {
+        unsigned char b = (unsigned char)argbuf[i];
+        out[(size_t)i * 2] = hexdigits[b >> 4];
+        out[(size_t)i * 2 + 1] = hexdigits[b & 0x0F];
+    }
+    out[out_len] = '\0';
+    void *result = PyUnicode_FromStringAndSize(out, (Py_ssize_t)out_len);
+    free(out);
+    return result;
+}
+
+Py_uhash_t _Py_hashtable_hash_ptr(const void *key)
+{
+    uintptr_t x = (uintptr_t)key;
+    if (sizeof(uintptr_t) >= 2) {
+        x = (x >> 4) | (x << (8 * sizeof(uintptr_t) - 4));
+    }
+    return (Py_uhash_t)x;
+}
+
+int _Py_hashtable_compare_direct(const void *key1, const void *key2)
+{
+    return key1 == key2;
+}
+
+static _Py_hashtable_entry_t *pyrs_hashtable_get_entry(_Py_hashtable_t *ht, const void *key)
+{
+    if (ht == NULL || ht->nbuckets == 0) {
+        return NULL;
+    }
+    Py_uhash_t hash = ht->hash_func ? ht->hash_func(key) : _Py_hashtable_hash_ptr(key);
+    size_t bucket_index = (size_t)(hash % ht->nbuckets);
+    _Py_slist_item_t *item = ht->buckets[bucket_index].head;
+    while (item != NULL) {
+        _Py_hashtable_entry_t *entry = (_Py_hashtable_entry_t *)item;
+        if (entry->key_hash == hash) {
+            int equal = ht->compare_func
+                ? ht->compare_func(entry->key, key)
+                : _Py_hashtable_compare_direct(entry->key, key);
+            if (equal) {
+                return entry;
+            }
+        }
+        item = item->next;
+    }
+    return NULL;
+}
+
+static int pyrs_hashtable_resize(_Py_hashtable_t *ht, size_t next_buckets)
+{
+    _Py_slist_t *new_buckets = (_Py_slist_t *)ht->alloc.malloc(sizeof(_Py_slist_t) * next_buckets);
+    if (new_buckets == NULL) {
+        return -1;
+    }
+    memset(new_buckets, 0, sizeof(_Py_slist_t) * next_buckets);
+    for (size_t i = 0; i < ht->nbuckets; i++) {
+        _Py_slist_item_t *item = ht->buckets[i].head;
+        while (item != NULL) {
+            _Py_slist_item_t *next = item->next;
+            _Py_hashtable_entry_t *entry = (_Py_hashtable_entry_t *)item;
+            size_t bucket_index = (size_t)(entry->key_hash % next_buckets);
+            entry->_Py_slist_item.next = new_buckets[bucket_index].head;
+            new_buckets[bucket_index].head = &entry->_Py_slist_item;
+            item = next;
+        }
+    }
+    ht->alloc.free(ht->buckets);
+    ht->buckets = new_buckets;
+    ht->nbuckets = next_buckets;
+    return 0;
+}
+
+_Py_hashtable_t *_Py_hashtable_new_full(
+    _Py_hashtable_hash_func hash_func,
+    _Py_hashtable_compare_func compare_func,
+    _Py_hashtable_destroy_func key_destroy_func,
+    _Py_hashtable_destroy_func value_destroy_func,
+    _Py_hashtable_allocator_t *allocator
+)
+{
+    _Py_hashtable_allocator_t alloc;
+    alloc.malloc = allocator && allocator->malloc ? allocator->malloc : malloc;
+    alloc.free = allocator && allocator->free ? allocator->free : free;
+
+    _Py_hashtable_t *ht = (_Py_hashtable_t *)alloc.malloc(sizeof(_Py_hashtable_t));
+    if (ht == NULL) {
+        PyErr_NoMemory();
+        return NULL;
+    }
+    memset(ht, 0, sizeof(*ht));
+    ht->alloc = alloc;
+    ht->nbuckets = 16;
+    ht->buckets = (_Py_slist_t *)ht->alloc.malloc(sizeof(_Py_slist_t) * ht->nbuckets);
+    if (ht->buckets == NULL) {
+        ht->alloc.free(ht);
+        PyErr_NoMemory();
+        return NULL;
+    }
+    memset(ht->buckets, 0, sizeof(_Py_slist_t) * ht->nbuckets);
+    ht->hash_func = hash_func ? hash_func : _Py_hashtable_hash_ptr;
+    ht->compare_func = compare_func ? compare_func : _Py_hashtable_compare_direct;
+    ht->key_destroy_func = key_destroy_func;
+    ht->value_destroy_func = value_destroy_func;
+    ht->get_entry_func = pyrs_hashtable_get_entry;
+    return ht;
+}
+
+_Py_hashtable_t *_Py_hashtable_new(
+    _Py_hashtable_hash_func hash_func,
+    _Py_hashtable_compare_func compare_func
+)
+{
+    return _Py_hashtable_new_full(hash_func, compare_func, NULL, NULL, NULL);
+}
+
+void _Py_hashtable_clear(_Py_hashtable_t *ht)
+{
+    if (ht == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < ht->nbuckets; i++) {
+        _Py_slist_item_t *item = ht->buckets[i].head;
+        while (item != NULL) {
+            _Py_slist_item_t *next = item->next;
+            _Py_hashtable_entry_t *entry = (_Py_hashtable_entry_t *)item;
+            if (ht->key_destroy_func != NULL && entry->key != NULL) {
+                ht->key_destroy_func((void *)entry->key);
+            }
+            if (ht->value_destroy_func != NULL && entry->value != NULL) {
+                ht->value_destroy_func(entry->value);
+            }
+            ht->alloc.free(entry);
+            item = next;
+        }
+        ht->buckets[i].head = NULL;
+    }
+    ht->nentries = 0;
+}
+
+void _Py_hashtable_destroy(_Py_hashtable_t *ht)
+{
+    if (ht == NULL) {
+        return;
+    }
+    _Py_hashtable_clear(ht);
+    if (ht->buckets != NULL) {
+        ht->alloc.free(ht->buckets);
+    }
+    ht->alloc.free(ht);
+}
+
+int _Py_hashtable_set(_Py_hashtable_t *ht, const void *key, void *value)
+{
+    if (ht == NULL || key == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    _Py_hashtable_entry_t *existing = pyrs_hashtable_get_entry(ht, key);
+    if (existing != NULL) {
+        if (ht->value_destroy_func != NULL && existing->value != NULL) {
+            ht->value_destroy_func(existing->value);
+        }
+        existing->value = value;
+        return 0;
+    }
+    if (ht->nentries > ht->nbuckets * 3 / 4) {
+        if (pyrs_hashtable_resize(ht, ht->nbuckets * 2) < 0) {
+            PyErr_NoMemory();
+            return -1;
+        }
+    }
+    _Py_hashtable_entry_t *entry = (_Py_hashtable_entry_t *)ht->alloc.malloc(sizeof(_Py_hashtable_entry_t));
+    if (entry == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+    memset(entry, 0, sizeof(*entry));
+    entry->key = key;
+    entry->value = value;
+    entry->key_hash = ht->hash_func ? ht->hash_func(key) : _Py_hashtable_hash_ptr(key);
+    size_t bucket_index = (size_t)(entry->key_hash % ht->nbuckets);
+    entry->_Py_slist_item.next = ht->buckets[bucket_index].head;
+    ht->buckets[bucket_index].head = &entry->_Py_slist_item;
+    ht->nentries += 1;
+    return 0;
+}
+
+void *_Py_hashtable_get(_Py_hashtable_t *ht, const void *key)
+{
+    _Py_hashtable_entry_t *entry = pyrs_hashtable_get_entry(ht, key);
+    return entry ? entry->value : NULL;
+}
+
+double _Py_c_abs(Py_complex z)
+{
+    errno = 0;
+    return hypot(z.real, z.imag);
+}
+
+Py_complex _Py_c_diff(Py_complex a, Py_complex b)
+{
+    Py_complex out = {a.real - b.real, a.imag - b.imag};
+    return out;
+}
+
+Py_complex _Py_c_neg(Py_complex z)
+{
+    Py_complex out = {-z.real, -z.imag};
+    return out;
+}
+
+Py_complex _Py_c_quot(Py_complex a, Py_complex b)
+{
+    Py_complex out = {0.0, 0.0};
+    double denom = b.real * b.real + b.imag * b.imag;
+    if (denom == 0.0) {
+        errno = EDOM;
+        return out;
+    }
+    out.real = (a.real * b.real + a.imag * b.imag) / denom;
+    out.imag = (a.imag * b.real - a.real * b.imag) / denom;
+    return out;
+}
+
+int PyTime_PerfCounterRaw(PyTime_t *result)
+{
+    if (result == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return -1;
+    }
+    *result = (PyTime_t)ts.tv_sec * 1000000000LL + (PyTime_t)ts.tv_nsec;
+    return 0;
+}
+
+PyTime_t _PyTime_FromSeconds(int seconds)
+{
+    return (PyTime_t)seconds * 1000000000LL;
+}
+
+int _PyTime_FromLong(PyTime_t *t, void *obj)
+{
+    if (t == NULL || obj == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    long long value = PyLong_AsLongLong(obj);
+    if (value == -1 && PyErr_Occurred() != NULL) {
+        return -1;
+    }
+    *t = (PyTime_t)value;
+    return 0;
+}
+
+int _PyTime_FromSecondsObject(PyTime_t *t, void *obj, int round)
+{
+    if (t == NULL || obj == NULL) {
+        PyErr_BadInternalCall();
+        return -1;
+    }
+    double seconds = 0.0;
+    if (obj == (void *)&_Py_NoneStruct) {
+        PyErr_SetString((void *)&PyExc_TypeError, "None is not a valid timeout value");
+        return -1;
+    }
+    seconds = PyFloat_AsDouble(obj);
+    if (seconds == -1.0 && PyErr_Occurred() != NULL) {
+        PyErr_Clear();
+        long long as_int = PyLong_AsLongLong(obj);
+        if (as_int == -1 && PyErr_Occurred() != NULL) {
+            return -1;
+        }
+        seconds = (double)as_int;
+    }
+    double nanos = seconds * 1000000000.0;
+    if (round == 1) {
+        nanos = ceil(nanos);
+    } else if (round == 0) {
+        nanos = floor(nanos);
+    } else {
+        nanos = nearbyint(nanos);
+    }
+    *t = (PyTime_t)nanos;
+    return 0;
+}
+
+PyTime_t _PyDeadline_Init(PyTime_t timeout)
+{
+    PyTime_t now = 0;
+    (void)PyTime_PerfCounterRaw(&now);
+    return now + timeout;
+}
+
+PyTime_t _PyDeadline_Get(PyTime_t deadline)
+{
+    PyTime_t now = 0;
+    (void)PyTime_PerfCounterRaw(&now);
+    return deadline - now;
+}
+
+int _PyParkingLot_Park(
+    const void *address,
+    const void *expected,
+    size_t address_size,
+    PyTime_t timeout_ns,
+    void *park_arg,
+    int detach
+)
+{
+    (void)park_arg;
+    (void)detach;
+    if (address == NULL || expected == NULL) {
+        return -1;
+    }
+    if (!(address_size == 1 || address_size == 2 || address_size == 4 || address_size == 8)) {
+        return -1;
+    }
+    if (memcmp(address, expected, address_size) != 0) {
+        return -1;
+    }
+    if (timeout_ns == 0) {
+        return -2;
+    }
+    return 0;
+}
+
+typedef void _Py_unpark_fn_t(void *arg, void *park_arg, int has_more_waiters);
+
+void _PyParkingLot_Unpark(const void *address, _Py_unpark_fn_t *fn, void *arg)
+{
+    (void)address;
+    if (fn != NULL) {
+        fn(arg, NULL, 0);
+    }
+}
+
+void _PyParkingLot_UnparkAll(const void *address)
+{
+    (void)address;
+}
+
+void _PyParkingLot_AfterFork(void)
+{
+}
+
 void PyErr_FormatUnraisable(const char *format, ...)
 {
     if (format != NULL && format[0] != '\0') {
@@ -2805,3 +4288,73 @@ const unsigned int _Py_ctype_table[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 };
+
+unsigned char _Py_ctype_tolower[256];
+unsigned char _Py_ctype_toupper[256];
+
+typedef union {
+    unsigned char uc[24];
+    struct {
+        Py_hash_t prefix;
+        Py_hash_t suffix;
+    } fnv;
+    struct {
+        uint64_t k0;
+        uint64_t k1;
+    } siphash;
+    struct {
+        unsigned char padding[16];
+        Py_hash_t suffix;
+    } djbx33a;
+    struct {
+        unsigned char padding[16];
+        Py_hash_t hashsalt;
+    } expat;
+} _Py_HashSecret_t;
+
+_Py_HashSecret_t _Py_HashSecret = {0};
+
+char *(*PyOS_ReadlineFunctionPointer)(FILE *, FILE *, const char *) = NULL;
+void *_PyOS_ReadlineTState = NULL;
+
+char *_Py_SetLocaleFromEnv(int category)
+{
+    return setlocale(category, "");
+}
+
+int _Py_Gid_Converter(void *obj, gid_t *out)
+{
+    if (out == NULL) {
+        PyErr_BadInternalCall();
+        return 0;
+    }
+    unsigned long value = PyLong_AsUnsignedLong(obj);
+    if (PyErr_Occurred() != NULL) {
+        return 0;
+    }
+    *out = (gid_t)value;
+    return 1;
+}
+
+static void __attribute__((constructor)) pyrs_init_pyctype_tables(void)
+{
+    for (int i = 0; i < 256; i++) {
+        if (i >= 'A' && i <= 'Z') {
+            _Py_ctype_tolower[i] = (unsigned char)(i + ('a' - 'A'));
+        } else {
+            _Py_ctype_tolower[i] = (unsigned char)i;
+        }
+        if (i >= 'a' && i <= 'z') {
+            _Py_ctype_toupper[i] = (unsigned char)(i - ('a' - 'A'));
+        } else {
+            _Py_ctype_toupper[i] = (unsigned char)i;
+        }
+    }
+
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+        _Py_HashSecret.siphash.k0 = (uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 16);
+        _Py_HashSecret.siphash.k1 = ((uint64_t)ts.tv_nsec << 32) ^ (uint64_t)(uintptr_t)&_Py_HashSecret;
+        _Py_HashSecret.expat.hashsalt = (Py_hash_t)(_Py_HashSecret.siphash.k0 ^ _Py_HashSecret.siphash.k1);
+    }
+}

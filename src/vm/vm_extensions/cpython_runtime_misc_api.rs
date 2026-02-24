@@ -858,6 +858,14 @@ pub unsafe extern "C" fn _PyUnicode_IsDecimalDigit(ch: u32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn _PyUnicode_ToDecimalDigit(ch: u32) -> i32 {
+    char::from_u32(ch)
+        .and_then(|value| value.to_digit(10))
+        .map(|value| value as i32)
+        .unwrap_or(-1)
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn _PyUnicode_IsDigit(ch: u32) -> i32 {
     unsafe { _PyUnicode_IsDecimalDigit(ch) }
 }
