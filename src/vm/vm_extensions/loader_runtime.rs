@@ -856,6 +856,14 @@ impl Vm {
         name: &str,
         source_path: &Path,
     ) -> Result<(), RuntimeError> {
+        // `_elementtree` hard-links to `pyexpat.expat_CAPI` in module init. Until the
+        // capsule surface is implemented in pyrs, prefer CPython's pure-Python fallback
+        // path in `xml.etree.ElementTree` by making this extension unavailable.
+        if name == "_elementtree" {
+            return Err(RuntimeError::import_error(
+                "dynamic module '_elementtree' is unavailable",
+            ));
+        }
         let (abi_tag, entrypoint_name, plan) = if source_path
             .to_string_lossy()
             .ends_with(PYRS_EXTENSION_MANIFEST_SUFFIX)

@@ -88,12 +88,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - inventory source: CPython 3.14 `sys.stdlib_module_names` (`297` modules),
   - latest artifact: `perf/stdlib_full_probe_latest.json`,
   - current baseline:
-    - host-supported imports: `233/288` (out of `297` total inventory rows),
-    - comprehensive mapped test status: `PASS=28`, `FAIL=147`, `TIMEOUT=15`,
+    - host-supported imports: `278/288` (out of `297` total inventory rows),
+    - comprehensive mapped test status: `PASS=29`, `FAIL=173`, `TIMEOUT=20`,
   - latest stdlib closure deltas:
-    - startup path discovery now appends CPython `lib-dynload` path when present,
-    - extension load failures now surface as `ImportError` (CPython fallback parity),
-    - C-API varargs/arg-parse compatibility exports extended in `src/vm/capi_variadics.c`,
+    - native `_scproxy` substrate added (`_get_proxy_settings`, `_get_proxies`) to unblock urllib/ssl import paths on macOS,
+    - bootstrap `errno` constants expanded to CPython 3.14/macOS baseline (including `EALREADY` + `EWOULDBLOCK` alias),
+    - bootstrap `inspect` now exports `isabstract`, unblocking `test_abc` import path,
+    - `_ssl` bootstrap parity expanded with `Purpose` class baseline (remaining symbol families still open),
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):
@@ -1061,6 +1062,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - perf checkpoint: terminal arithmetic return fusion is active for `BinaryAdd` / `BinarySub` / `BinaryMul` / `BinaryDiv` / `BinaryFloorDiv` / `BinaryMod` on simple no-cells frames, and release builds use `lto = "fat"`; local gate currently measures `fib(29)` at ~`0.13s` user (`scripts/bench_fib_gate.sh`).
   - startup/import checkpoint: import resolver state now tracks `sys.path`/`meta_path`/`path_hooks` signatures to avoid repeated default-finder scans, default CPython stdlib auto-detection now selects a single canonical fallback root (instead of loading every discovered system path), sourceless `__pycache__/*.cpython-314.pyc` module/package imports are accepted when source files are absent, and pyc fallback diagnostics report exact translate/load failure reasons when `PYRS_IMPORT_PERF_VERBOSE=1`.
   - pyc translator checkpoint: marshal reader/writer now supports set/frozenset constants (`<`/`>`); `BINARY_OP` mapping covers the full CPython 3.14 arg table (including bitwise/shift/matmul and inplace variants); f-string translation paths handle `CONVERT_VALUE`/`FORMAT_SIMPLE`/`FORMAT_WITH_SPEC` plus `BUILD_STRING`; and CPython opcode coverage now includes `DICT_MERGE`, `COPY`, `SWAP`, masked `COMPARE_OP` decoding, `LOAD_SPECIAL`, `MATCH_CLASS`/`MATCH_KEYS`/`MATCH_MAPPING`/`MATCH_SEQUENCE`, `GET_LEN`, `BUILD_TEMPLATE`/`BUILD_INTERPOLATION`, and expanded intrinsic runtime support (`CALL_INTRINSIC_1`: `2/3/5/6/7/8/9/10/11`, `CALL_INTRINSIC_2`: `1/2/3/4/5`).
+  - CALL_FUNCTION_EX parity checkpoint: translated-`.pyc` CALL_FUNCTION_EX dispatch now avoids brittle small-arity `call_internal` fast paths and uses the same robust function/bound-method dispatch substrate as `CallFunctionVar`, closing the stack-overflow regression on pyc-mode `email` content-manager call chains (`m.set_content(...)` via pyc trampoline).
+  - `_elementtree` gating checkpoint: until `pyexpat.expat_CAPI` capsule compatibility is implemented, extension import for `_elementtree` is intentionally surfaced as `ImportError` so CPython `xml.etree.ElementTree` falls back to its pure-Python path; extended stdlib matrix remains `50/50` while this tracked gap stays open.
   - translated-`.pyc` exception-table runtime checkpoint: VM now executes CPython 3.14 exception-table handlers (`PUSH_EXC_INFO`/`POP_EXCEPT`/`WITH_EXCEPT_START`/`RERAISE`/`CHECK_EXC_MATCH`) with table-driven unwind dispatch and `RERAISE` lasti handling; translator jump-target math is corrected for 3.14 control-flow forms (`POP_JUMP_IF_*`, `SEND`, backward jumps), and CPython `CALL` stack layout (`callable`, `self_or_null`) is aligned for translated opcode paths.
   - opcode stack-layout checkpoint: `DICT_UPDATE`/`DICT_MERGE` and list stack-target lookup now follow CPython operand layout (`dict/list, unused[oparg-1], update -- ...`) after operand pop, removing false `stack underflow` errors on stdlib import paths (including `xml.etree.ElementTree`).
   - startup pyc-preference note: exception-table execution baseline is now active for translated `.pyc`; with `PYRS_IMPORT_PREFER_PYC=1`, `import site` no longer depends on source fallback for this gap. Remaining `.pyc` work is long-tail opcode/state parity closure.

@@ -1716,6 +1716,26 @@ impl Vm {
                 .attrs
                 .insert("__module__".to_string(), Value::Str("ssl".to_string()));
         }
+        let ssl_purpose_type = match self
+            .heap
+            .alloc_class(ClassObject::new("Purpose".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
+        if let Object::Class(class_data) = &mut *ssl_purpose_type.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("ssl".to_string()));
+            class_data.attrs.insert(
+                "SERVER_AUTH".to_string(),
+                Value::Str("1.3.6.1.5.5.7.3.1".to_string()),
+            );
+            class_data.attrs.insert(
+                "CLIENT_AUTH".to_string(),
+                Value::Str("1.3.6.1.5.5.7.3.2".to_string()),
+            );
+        }
         self.install_builtin_module(
             "ssl",
             &[
@@ -1731,6 +1751,7 @@ impl Vm {
             vec![
                 ("SSLContext", Value::Class(ssl_public_context_type)),
                 ("SSLSocket", Value::Class(ssl_socket_type)),
+                ("Purpose", Value::Class(ssl_purpose_type)),
                 ("PROTOCOL_TLS", Value::Int(2)),
                 ("PROTOCOL_TLS_CLIENT", Value::Int(16)),
                 ("PROTOCOL_TLS_SERVER", Value::Int(17)),
@@ -4836,16 +4857,112 @@ impl Vm {
         let errno_constants = vec![
             ("EPERM", 1),
             ("ENOENT", 2),
+            ("ESRCH", 3),
             ("EINTR", 4),
+            ("EIO", 5),
+            ("ENXIO", 6),
+            ("E2BIG", 7),
+            ("ENOEXEC", 8),
             ("EBADF", 9),
             ("ECHILD", 10),
-            ("EAGAIN", 11),
+            ("EDEADLK", 11),
+            ("ENOMEM", 12),
             ("EACCES", 13),
+            ("EFAULT", 14),
+            ("ENOTBLK", 15),
+            ("EBUSY", 16),
             ("EEXIST", 17),
+            ("EXDEV", 18),
+            ("ENODEV", 19),
             ("ENOTDIR", 20),
             ("EISDIR", 21),
             ("EINVAL", 22),
-            ("ENOSYS", 38),
+            ("ENFILE", 23),
+            ("EMFILE", 24),
+            ("ENOTTY", 25),
+            ("ETXTBSY", 26),
+            ("EFBIG", 27),
+            ("ENOSPC", 28),
+            ("ESPIPE", 29),
+            ("EROFS", 30),
+            ("EMLINK", 31),
+            ("EPIPE", 32),
+            ("EDOM", 33),
+            ("ERANGE", 34),
+            ("EAGAIN", 35),
+            ("EWOULDBLOCK", 35),
+            ("EINPROGRESS", 36),
+            ("EALREADY", 37),
+            ("ENOTSOCK", 38),
+            ("EDESTADDRREQ", 39),
+            ("EMSGSIZE", 40),
+            ("EPROTOTYPE", 41),
+            ("ENOPROTOOPT", 42),
+            ("EPROTONOSUPPORT", 43),
+            ("ESOCKTNOSUPPORT", 44),
+            ("ENOTSUP", 45),
+            ("EPFNOSUPPORT", 46),
+            ("EAFNOSUPPORT", 47),
+            ("EADDRINUSE", 48),
+            ("EADDRNOTAVAIL", 49),
+            ("ENETDOWN", 50),
+            ("ENETUNREACH", 51),
+            ("ENETRESET", 52),
+            ("ECONNABORTED", 53),
+            ("ECONNRESET", 54),
+            ("ENOBUFS", 55),
+            ("EISCONN", 56),
+            ("ENOTCONN", 57),
+            ("ESHUTDOWN", 58),
+            ("ETOOMANYREFS", 59),
+            ("ETIMEDOUT", 60),
+            ("ECONNREFUSED", 61),
+            ("ELOOP", 62),
+            ("ENAMETOOLONG", 63),
+            ("EHOSTDOWN", 64),
+            ("EHOSTUNREACH", 65),
+            ("ENOTEMPTY", 66),
+            ("EPROCLIM", 67),
+            ("EUSERS", 68),
+            ("EDQUOT", 69),
+            ("ESTALE", 70),
+            ("EREMOTE", 71),
+            ("EBADRPC", 72),
+            ("ERPCMISMATCH", 73),
+            ("EPROGUNAVAIL", 74),
+            ("EPROGMISMATCH", 75),
+            ("EPROCUNAVAIL", 76),
+            ("ENOLCK", 77),
+            ("ENOSYS", 78),
+            ("EFTYPE", 79),
+            ("EAUTH", 80),
+            ("ENEEDAUTH", 81),
+            ("EPWROFF", 82),
+            ("EDEVERR", 83),
+            ("EOVERFLOW", 84),
+            ("EBADEXEC", 85),
+            ("EBADARCH", 86),
+            ("ESHLIBVERS", 87),
+            ("EBADMACHO", 88),
+            ("ECANCELED", 89),
+            ("EIDRM", 90),
+            ("ENOMSG", 91),
+            ("EILSEQ", 92),
+            ("ENOATTR", 93),
+            ("EBADMSG", 94),
+            ("EMULTIHOP", 95),
+            ("ENODATA", 96),
+            ("ENOLINK", 97),
+            ("ENOSR", 98),
+            ("ENOSTR", 99),
+            ("EPROTO", 100),
+            ("ETIME", 101),
+            ("EOPNOTSUPP", 102),
+            ("ENOPOLICY", 103),
+            ("ENOTRECOVERABLE", 104),
+            ("EOWNERDEAD", 105),
+            ("EQFULL", 106),
+            ("ENOTCAPABLE", 107),
         ];
         let mut errno_values = Vec::new();
         let mut errorcode_entries = Vec::new();
@@ -4944,6 +5061,7 @@ impl Vm {
                 ("getdoc", BuiltinFunction::InspectGetDoc),
                 ("getsourcefile", BuiltinFunction::InspectGetSourceFile),
                 ("cleandoc", BuiltinFunction::InspectCleanDoc),
+                ("isabstract", BuiltinFunction::InspectIsAbstract),
                 ("isfunction", BuiltinFunction::InspectIsFunction),
                 ("ismethod", BuiltinFunction::InspectIsMethod),
                 ("isroutine", BuiltinFunction::InspectIsRoutine),
@@ -7083,6 +7201,17 @@ impl Vm {
                 ("AI_NUMERICSERV", Value::Int(1024)),
                 ("_GLOBAL_DEFAULT_TIMEOUT", Value::None),
             ],
+        );
+        self.install_builtin_module(
+            "_scproxy",
+            &[
+                (
+                    "_get_proxy_settings",
+                    BuiltinFunction::ScproxyGetProxySettings,
+                ),
+                ("_get_proxies", BuiltinFunction::ScproxyGetProxies),
+            ],
+            vec![],
         );
         self.install_builtin_module(
             "_warnings",

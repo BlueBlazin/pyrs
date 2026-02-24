@@ -3393,6 +3393,38 @@ impl Vm {
         Ok(args.remove(0))
     }
 
+    pub(super) fn builtin_inspect_isabstract(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("isabstract() expects one argument"));
+        }
+        let Some(Value::Class(class_ref)) = args.first() else {
+            return Ok(Value::Bool(false));
+        };
+        if let Some(abstract_methods) =
+            self.optional_getattr_value(Value::Class(class_ref.clone()), "__abstractmethods__")?
+            && is_truthy(&abstract_methods)
+        {
+            return Ok(Value::Bool(true));
+        }
+        let class_attrs = match &*class_ref.kind() {
+            Object::Class(class_data) => class_data.attrs.values().cloned().collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        for attr_value in class_attrs {
+            if let Some(is_abstract) =
+                self.optional_getattr_value(attr_value, "__isabstractmethod__")?
+                && is_truthy(&is_abstract)
+            {
+                return Ok(Value::Bool(true));
+            }
+        }
+        Ok(Value::Bool(false))
+    }
+
     pub(super) fn builtin_inspect_isclass(
         &mut self,
         args: Vec<Value>,

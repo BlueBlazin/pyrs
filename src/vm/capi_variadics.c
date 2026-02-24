@@ -572,6 +572,37 @@ void *PyErr_FormatV(void *exception, const char *format, va_list vargs)
     return result;
 }
 
+__attribute__((used, visibility("default")))
+void *_PyErr_Format(void *tstate, void *exception, const char *format, ...)
+{
+    (void)tstate;
+    va_list ap;
+    va_start(ap, format);
+    char *message = pyrs_format_pyerr_message(format, ap);
+    va_end(ap);
+    if (message == NULL) {
+        return pyrs_capi_pyerr_format_fallback(exception, format);
+    }
+    void *result = pyrs_capi_pyerr_format_fallback(exception, message);
+    free(message);
+    return result;
+}
+
+__attribute__((used, visibility("default")))
+void *_PyErr_FormatFromCause(void *exception, const char *format, ...)
+{
+    va_list ap;
+    va_start(ap, format);
+    char *message = pyrs_format_pyerr_message(format, ap);
+    va_end(ap);
+    if (message == NULL) {
+        return pyrs_capi_pyerr_format_fallback(exception, format);
+    }
+    void *result = pyrs_capi_pyerr_format_fallback(exception, message);
+    free(message);
+    return result;
+}
+
 typedef struct {
     Py_ssize_t ob_refcnt;
     void *ob_type;
@@ -4314,9 +4345,14 @@ typedef union {
 
 _Py_HashSecret_t _Py_HashSecret = {0};
 
+__attribute__((used, visibility("default")))
 char *(*PyOS_ReadlineFunctionPointer)(FILE *, FILE *, const char *) = NULL;
+__attribute__((used, visibility("default")))
+char *(*_PyOS_ReadlineFunctionPointer)(FILE *, FILE *, const char *) = NULL;
+__attribute__((used, visibility("default")))
 void *_PyOS_ReadlineTState = NULL;
 
+__attribute__((used, visibility("default")))
 char *_Py_SetLocaleFromEnv(int category)
 {
     return setlocale(category, "");

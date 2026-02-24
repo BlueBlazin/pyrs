@@ -3083,6 +3083,7 @@ pub enum BuiltinFunction {
     InspectGetDoc,
     InspectGetSourceFile,
     InspectCleanDoc,
+    InspectIsAbstract,
     InspectIsClass,
     InspectIsModule,
     InspectIsGenerator,
@@ -3310,6 +3311,8 @@ pub enum BuiltinFunction {
     SocketObjectClose,
     SocketObjectDetach,
     SocketObjectFileno,
+    ScproxyGetProxySettings,
+    ScproxyGetProxies,
     UuidClassInit,
     UuidGetNode,
     Uuid1,
@@ -6128,6 +6131,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectGetDoc
             | BuiltinFunction::InspectGetSourceFile
             | BuiltinFunction::InspectCleanDoc
+            | BuiltinFunction::InspectIsAbstract
             | BuiltinFunction::InspectIsClass
             | BuiltinFunction::InspectIsModule
             | BuiltinFunction::InspectIsGenerator
@@ -6251,6 +6255,8 @@ impl BuiltinFunction {
             | BuiltinFunction::SocketObjectClose
             | BuiltinFunction::SocketObjectDetach
             | BuiltinFunction::SocketObjectFileno
+            | BuiltinFunction::ScproxyGetProxySettings
+            | BuiltinFunction::ScproxyGetProxies
             | BuiltinFunction::UuidClassInit
             | BuiltinFunction::UuidGetNode
             | BuiltinFunction::Uuid1

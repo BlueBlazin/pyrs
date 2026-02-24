@@ -22,6 +22,7 @@ unsafe extern "C" {
 
 thread_local! {
     static CALL_BUILTIN_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static CALL_NATIVE_METHOD_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 fn parse_memoryview_cast_shape(value: &Value) -> Result<Vec<usize>, RuntimeError> {
@@ -136,6 +137,24 @@ impl Vm {
         mut args: Vec<Value>,
         mut kwargs: HashMap<String, Value>,
     ) -> Result<NativeCallResult, RuntimeError> {
+        let depth = CALL_NATIVE_METHOD_DEPTH.with(|depth| {
+            let next = depth.get().saturating_add(1);
+            depth.set(next);
+            next
+        });
+        struct CallNativeMethodDepthGuard;
+        impl Drop for CallNativeMethodDepthGuard {
+            fn drop(&mut self) {
+                CALL_NATIVE_METHOD_DEPTH.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1));
+                });
+            }
+        }
+        let _depth_guard = CallNativeMethodDepthGuard;
+        let hard_limit = (self.recursion_limit.max(1) as usize).saturating_mul(4);
+        if depth > hard_limit {
+            return Err(RuntimeError::new("maximum recursion depth exceeded"));
+        }
         if !kwargs.is_empty()
             && !matches!(
                 kind,
@@ -8208,6 +8227,7 @@ impl Vm {
                 self.builtin_inspect_getsourcefile(args, kwargs)
             }
             BuiltinFunction::InspectCleanDoc => self.builtin_inspect_cleandoc(args, kwargs),
+            BuiltinFunction::InspectIsAbstract => self.builtin_inspect_isabstract(args, kwargs),
             BuiltinFunction::InspectIsFunction => self.builtin_inspect_isfunction(args, kwargs),
             BuiltinFunction::InspectIsMethod => self.builtin_inspect_ismethod(args, kwargs),
             BuiltinFunction::InspectIsRoutine => self.builtin_inspect_isroutine(args, kwargs),
@@ -8572,6 +8592,10 @@ impl Vm {
             BuiltinFunction::SocketObjectClose => self.builtin_socket_object_close(args, kwargs),
             BuiltinFunction::SocketObjectDetach => self.builtin_socket_object_detach(args, kwargs),
             BuiltinFunction::SocketObjectFileno => self.builtin_socket_object_fileno(args, kwargs),
+            BuiltinFunction::ScproxyGetProxySettings => {
+                self.builtin_scproxy_get_proxy_settings(args, kwargs)
+            }
+            BuiltinFunction::ScproxyGetProxies => self.builtin_scproxy_get_proxies(args, kwargs),
             BuiltinFunction::UuidClassInit => self.builtin_uuid_class_init(args, kwargs),
             BuiltinFunction::UuidGetNode => self.builtin_uuid_getnode(args, kwargs),
             BuiltinFunction::Uuid1 => self.builtin_uuid1(args, kwargs),

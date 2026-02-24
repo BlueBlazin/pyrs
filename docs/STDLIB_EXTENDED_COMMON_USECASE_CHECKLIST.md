@@ -16,7 +16,7 @@ Important scope note:
 - Common-usecase smoke pass: `50/50`
 - Runtime: `target/debug/pyrs`
 - CPython Lib: `.local/Python-3.14.3/Lib`
-- Probe command: `python3 scripts/probe_stdlib_extended.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --out perf/stdlib_compat_extended_latest.json --timeout 20`
+- Probe command: `python3 scripts/probe_stdlib_extended.py --pyrs target/debug/pyrs --cpython-lib .local/Python-3.14.3/Lib --out perf/stdlib_compat_extended_latest.json --timeout 45`
 - Current failing modules: none.
 
 ## Checklist
@@ -67,7 +67,7 @@ Important scope note:
 | `smtplib` | DONE | PASS* | PASS* | targeted import + common constructor smoke is green; runtime still logs missing `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`) |
 | `imaplib` | DONE | PASS | PASS | targeted `Time2Internaldate(0)` smoke now green after `datetime.datetime.fromtimestamp` + `%z` baseline |
 | `ftplib` | DONE | PASS | PASS | - |
-| `xml` | DONE | PASS | PASS | native runtime `pyexpat` baseline is active; shim removed |
+| `xml` | DONE | PASS | PASS | native runtime `pyexpat` baseline is active; `_elementtree` is currently forced unavailable so `ElementTree` runs via CPython pure-Python fallback until `expat_CAPI` is implemented |
 | `html` | DONE | PASS | PASS | - |
 | `pickle` | DONE | PASS | PASS | - |
 | `gzip` | DONE | PASS | PASS | `bytes.lstrip`/`bytes.strip` parity landed, unblocking `gzip.decompress` smoke |

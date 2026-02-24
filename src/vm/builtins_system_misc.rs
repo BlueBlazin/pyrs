@@ -3534,6 +3534,36 @@ impl Vm {
         })
     }
 
+    pub(super) fn builtin_scproxy_get_proxy_settings(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "_get_proxy_settings() expects no arguments",
+            ));
+        }
+        Ok(self.heap.alloc_dict(vec![
+            (Value::Str("exclude_simple".to_string()), Value::Bool(false)),
+            (
+                Value::Str("exceptions".to_string()),
+                self.heap.alloc_tuple(Vec::new()),
+            ),
+        ]))
+    }
+
+    pub(super) fn builtin_scproxy_get_proxies(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("_get_proxies() expects no arguments"));
+        }
+        Ok(self.heap.alloc_dict(Vec::new()))
+    }
+
     pub(super) fn uuid_class_ref(&self) -> Result<ObjRef, RuntimeError> {
         let Some(module) = self.modules.get("uuid").cloned() else {
             return Err(RuntimeError::module_not_found_error(

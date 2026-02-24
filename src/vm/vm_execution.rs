@@ -1744,10 +1744,10 @@ impl Vm {
                         }
                     }
                 }
+                self.push_value(value);
                 if push_null {
                     self.push_value(Value::None);
                 }
-                self.push_value(value);
             }
             Opcode::LoadBuildClass => {
                 self.push_value(Value::Builtin(BuiltinFunction::BuildClass));
@@ -5944,12 +5944,11 @@ impl Vm {
             Opcode::CallFunctionEx => {
                 let kwargs_value = self.pop_value()?;
                 let args_value = self.pop_value()?;
-                let maybe_null_or_func = self.pop_value()?;
-                let func = if matches!(maybe_null_or_func, Value::None) {
-                    self.pop_value()?
-                } else {
-                    maybe_null_or_func
-                };
+                let mut null_sentinel = self.pop_value()?;
+                let mut func = self.pop_value()?;
+                if matches!(func, Value::None) && !matches!(null_sentinel, Value::None) {
+                    std::mem::swap(&mut func, &mut null_sentinel);
+                }
                 let kwargs = match kwargs_value {
                     Value::None => HashMap::new(),
                     Value::Dict(obj) => match &*obj.kind() {
@@ -5995,14 +5994,94 @@ impl Vm {
                     })?,
                 };
                 match func {
+                    Value::Function(func) => {
+                        self.push_function_call_from_obj(&func, args, kwargs)?;
+                    }
+                    Value::BoundMethod(method) => {
+                        let method_data = match &*method.kind() {
+                            Object::BoundMethod(data) => data.clone(),
+                            _ => {
+                                return Err(RuntimeError::type_error(
+                                    "attempted to call non-function",
+                                ));
+                            }
+                        };
+                        match &*method_data.function.kind() {
+                            Object::Function(_) => {
+                                let mut bound_args = Vec::with_capacity(args.len() + 1);
+                                bound_args.push(self.receiver_value(&method_data.receiver)?);
+                                bound_args.extend(args);
+                                self.push_function_call_from_obj(
+                                    &method_data.function,
+                                    bound_args,
+                                    kwargs,
+                                )?;
+                            }
+                            Object::NativeMethod(native) => {
+                                let caller_depth = self.frames.len();
+                                let caller_idx = caller_depth.saturating_sub(1);
+                                let caller_ip = self
+                                    .frames
+                                    .get(caller_idx)
+                                    .map(|frame| frame.ip)
+                                    .unwrap_or(0);
+                                let call_result = self.call_native_method(
+                                    native.kind,
+                                    method_data.receiver.clone(),
+                                    args,
+                                    kwargs,
+                                );
+                                self.finalize_native_opcode_call(
+                                    caller_depth,
+                                    caller_ip,
+                                    call_result,
+                                )?;
+                            }
+                            _ => match self.call_internal(
+                                Value::BoundMethod(method.clone()),
+                                args,
+                                kwargs,
+                            )? {
+                                InternalCallOutcome::Value(value) => {
+                                    self.push_value(value);
+                                }
+                                InternalCallOutcome::CallerExceptionHandled => {}
+                            },
+                        }
+                    }
+                    Value::Class(class) => {
+                        match self.call_internal(Value::Class(class), args, kwargs)? {
+                            InternalCallOutcome::Value(value) => self.push_value(value),
+                            InternalCallOutcome::CallerExceptionHandled => {}
+                        }
+                    }
+                    Value::Builtin(builtin) => {
+                        let caller_depth = self.frames.len();
+                        let caller_idx = caller_depth.saturating_sub(1);
+                        let caller_ip = self
+                            .frames
+                            .get(caller_idx)
+                            .map(|frame| frame.ip)
+                            .unwrap_or(0);
+                        let call_result = self.call_builtin(builtin, args, kwargs);
+                        self.finalize_builtin_opcode_call(caller_depth, caller_ip, call_result)?;
+                    }
+                    Value::Instance(instance) => {
+                        match self.call_internal(Value::Instance(instance), args, kwargs)? {
+                            InternalCallOutcome::Value(value) => self.push_value(value),
+                            InternalCallOutcome::CallerExceptionHandled => {}
+                        }
+                    }
                     Value::ExceptionType(name) => {
                         let value = self.instantiate_exception_type(&name, &args, &kwargs)?;
                         self.push_value(value);
                     }
-                    callable => match self.call_internal(callable, args, kwargs)? {
-                        InternalCallOutcome::Value(value) => self.push_value(value),
-                        InternalCallOutcome::CallerExceptionHandled => {}
-                    },
+                    other => {
+                        return Err(RuntimeError::new(format!(
+                            "attempted to call non-function: {}",
+                            format_value(&other)
+                        )));
+                    }
                 }
             }
             Opcode::JumpIfFalse => {

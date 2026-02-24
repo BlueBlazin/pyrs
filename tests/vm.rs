@@ -401,6 +401,129 @@ fn xml_elementtree_fromstring_smoke_uses_native_pyexpat() {
 }
 
 #[test]
+fn xml_elementtree_imports_with_elementtree_extension_unavailable() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nimport xml.etree.ElementTree as ET\nroot = ET.fromstring('<a><b/></a>')\nok = (root.tag == 'a' and root[0].tag == 'b')\n"
+    );
+    run_with_large_stack("vm-xml-etree-import-fallback", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn inspect_module_exports_isabstract_function() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nimport inspect\nok = hasattr(inspect, 'isabstract') and callable(inspect.isabstract)\n"
+    );
+    let module = parser::parse_module(&source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn errno_module_exposes_extended_constants_and_aliases() {
+    let source = "import errno\nok = hasattr(errno, 'EALREADY') and hasattr(errno, 'EWOULDBLOCK') and errno.EWOULDBLOCK == errno.EAGAIN and errno.errorcode.get(errno.EALREADY) == 'EALREADY'\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn scproxy_module_import_and_api_shape() {
+    let source = "import _scproxy\nsettings = _scproxy._get_proxy_settings()\nproxies = _scproxy._get_proxies()\nok = isinstance(settings, dict) and isinstance(proxies, dict) and ('exclude_simple' in settings)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn pyc_call_function_ex_bound_method_email_set_content_regression() {
+    let Some(python) = python314_path() else {
+        return;
+    };
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let Some(pyrs_bin) = pyrs_binary_path() else {
+        return;
+    };
+
+    let temp_dir = unique_temp_dir("pyrs_pyc_call_ex_email");
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let module_path = temp_dir.join("repro_call_ex.py");
+    let pyc_path = temp_dir.join("repro_call_ex.pyc");
+
+    std::fs::write(
+        &module_path,
+        "def g(msg, cm, args, kw):\n    cm.set_content(msg, *args, **kw)\n\ndef run(msg, cm):\n    return g(msg, cm, ('y',), {})\n",
+    )
+    .expect("write repro source");
+
+    let compile_cmd = format!(
+        "import py_compile\npy_compile.compile({src:?}, cfile={dst:?}, doraise=True, invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)\n",
+        src = module_path.to_string_lossy(),
+        dst = pyc_path.to_string_lossy(),
+    );
+    let compile_output = Command::new(python)
+        .arg("-S")
+        .arg("-c")
+        .arg(compile_cmd)
+        .output()
+        .expect("compile pyc repro");
+    assert!(
+        compile_output.status.success(),
+        "pyc compile failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compile_output.stdout),
+        String::from_utf8_lossy(&compile_output.stderr)
+    );
+
+    // Force sourceless import so this regression is guaranteed to exercise translated pyc.
+    std::fs::remove_file(&module_path).expect("remove source to force pyc import");
+
+    let probe = format!(
+        "import sys\nsys.path = [{lib:?}, {temp:?}]\nfrom email.message import EmailMessage\nimport repro_call_ex\nm = EmailMessage()\ncm = m.policy.content_manager\nrepro_call_ex.run(m, cm)\nprint('ok')\n",
+        lib = lib_path,
+        temp = temp_dir,
+    );
+    let run_output = Command::new(pyrs_bin)
+        .env("PYRS_CPYTHON_LIB", &lib_path)
+        .env("PYRS_IMPORT_PREFER_PYC", "1")
+        .arg("-S")
+        .arg("-c")
+        .arg(probe)
+        .output()
+        .expect("run pyc call_ex repro");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    assert!(
+        run_output.status.success(),
+        "pyc call_ex regression probe failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let last_line = stdout.lines().last().unwrap_or_default().trim();
+    assert_eq!(last_line, "ok");
+}
+
+#[test]
 fn concurrent_futures_threadpool_smoke_no_semaphore_overrelease() {
     let Some(lib_path) = cpython_lib_path() else {
         return;
