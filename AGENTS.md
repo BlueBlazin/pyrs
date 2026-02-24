@@ -83,6 +83,15 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
+- Full stdlib baseline checkpoint (2026-02-24):
+  - added exhaustive probe runner: `scripts/probe_stdlib_full.py`,
+  - inventory source: CPython 3.14 `sys.stdlib_module_names` (`297` modules),
+  - latest artifact: `perf/stdlib_full_probe_latest.json`,
+  - current baseline:
+    - host-supported imports: `224/288` (out of `297` total inventory rows),
+    - comprehensive mapped test status: `PASS=25`, `FAIL=143`, `TIMEOUT=16`,
+  - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
+  - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):
   - Template string literals (`t"..."`) are now source-compiled through the same runtime
     interpolation/template substrate used by translated CPython bytecode:

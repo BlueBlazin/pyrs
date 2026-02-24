@@ -4,6 +4,12 @@ This checklist tracks the expanded stdlib smoke matrix beyond the top-stdlib bas
 
 Source artifact: `perf/stdlib_compat_extended_latest.json`
 
+Important scope note:
+- This is a curated **50-module common-usecase** matrix only.
+- Full CPython 3.14 stdlib baseline across all modules is tracked separately in:
+  - `docs/STDLIB_FULL_BASELINE.md`
+  - `perf/stdlib_full_probe_latest.json`
+
 ## Latest Probe Summary
 - Total modules: `50`
 - Import pass: `50/50`
