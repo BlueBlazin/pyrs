@@ -55,6 +55,12 @@ sha256_digest_size = sha256_obj.digest_size
 sha256_block_size = sha256_obj.block_size
 sha384_abc = _sha2.sha384(b"abc").hexdigest()
 sha512_abc = _sha2.sha512(b"abc").hexdigest()
+import _sha1, _sha3, _blake2
+sha1_abc = _sha1.sha1(b"abc").hexdigest()
+sha3_256_abc = _sha3.sha3_256(b"abc").hexdigest()
+shake128_8 = _sha3.shake_128(b"abc").hexdigest(8)
+blake2b_abc = _blake2.blake2b(b"abc").hexdigest()
+blake2s_abc = _blake2.blake2s(b"abc").hexdigest()
 "#,
     );
 
@@ -110,6 +116,32 @@ ce80e2a9ac94fa54ca49f"
     );
     assert_eq!(vm.get_global("sha256_digest_size"), Some(Value::Int(32)));
     assert_eq!(vm.get_global("sha256_block_size"), Some(Value::Int(64)));
+    assert_eq!(
+        vm.get_global("sha1_abc"),
+        Some(Value::Str(
+            "a9993e364706816aba3e25717850c26c9cd0d89d".to_string()
+        ))
+    );
+    assert_eq!(
+        vm.get_global("sha3_256_abc"),
+        Some(Value::Str(
+            "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532".to_string()
+        ))
+    );
+    assert_eq!(
+        vm.get_global("shake128_8"),
+        Some(Value::Str("5881092dd818bf5c".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("blake2b_abc"),
+        Some(Value::Str("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("blake2s_abc"),
+        Some(Value::Str(
+            "508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982".to_string()
+        ))
+    );
 }
 
 #[test]
@@ -176,10 +208,19 @@ fn hashlib_module_uses_native_md5_and_sha256_backends() {
                 &mut vm,
                 r#"
 import hashlib
+import binascii
 md5_hex = hashlib.md5(b"abc", usedforsecurity=False).hexdigest()
 sha256_hex = hashlib.sha256(b"abc").hexdigest()
+sha1_hex = hashlib.sha1(b"abc").hexdigest()
+sha3_hex = hashlib.sha3_256(b"abc").hexdigest()
+b2b_hex = hashlib.blake2b(b"abc").hexdigest()
+shake_hex = hashlib.shake_128(b"abc").hexdigest(8)
+pbkdf2_hex = binascii.hexlify(hashlib.pbkdf2_hmac("sha256", b"password", b"salt", 1, 32)).decode()
+scrypt_len = len(hashlib.scrypt(b"password", salt=b"salt", n=16, r=8, p=1, dklen=64))
 has_md5 = hasattr(hashlib, "md5")
 has_sha256 = hasattr(hashlib, "sha256")
+has_pbkdf2 = hasattr(hashlib, "pbkdf2_hmac")
+has_scrypt = hasattr(hashlib, "scrypt")
 "#,
             );
 
@@ -193,8 +234,39 @@ has_sha256 = hasattr(hashlib, "sha256")
                     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".to_string()
                 ))
             );
+            assert_eq!(
+                vm.get_global("sha1_hex"),
+                Some(Value::Str(
+                    "a9993e364706816aba3e25717850c26c9cd0d89d".to_string()
+                ))
+            );
+            assert_eq!(
+                vm.get_global("sha3_hex"),
+                Some(Value::Str(
+                    "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"
+                        .to_string()
+                ))
+            );
+            assert_eq!(
+                vm.get_global("b2b_hex"),
+                Some(Value::Str("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923".to_string()))
+            );
+            assert_eq!(
+                vm.get_global("shake_hex"),
+                Some(Value::Str("5881092dd818bf5c".to_string()))
+            );
+            assert_eq!(
+                vm.get_global("pbkdf2_hex"),
+                Some(Value::Str(
+                    "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
+                        .to_string()
+                ))
+            );
+            assert_eq!(vm.get_global("scrypt_len"), Some(Value::Int(64)));
             assert_eq!(vm.get_global("has_md5"), Some(Value::Bool(true)));
             assert_eq!(vm.get_global("has_sha256"), Some(Value::Bool(true)));
+            assert_eq!(vm.get_global("has_pbkdf2"), Some(Value::Bool(true)));
+            assert_eq!(vm.get_global("has_scrypt"), Some(Value::Bool(true)));
         })
         .expect("spawn hashlib stdlib regression thread");
     handle

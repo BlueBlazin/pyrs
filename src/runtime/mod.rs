@@ -2822,10 +2822,23 @@ pub enum BuiltinFunction {
     SqliteRowEq,
     SqliteRowHash,
     HashlibMd5,
+    HashlibSha1,
     HashlibSha224,
     HashlibSha256,
     HashlibSha384,
     HashlibSha512,
+    HashlibBlake2b,
+    HashlibBlake2s,
+    HashlibSha3_224,
+    HashlibSha3_256,
+    HashlibSha3_384,
+    HashlibSha3_512,
+    HashlibShake128,
+    HashlibShake256,
+    HashlibNew,
+    HashlibPbkdf2Hmac,
+    HashlibScrypt,
+    HashlibHmacDigest,
     HashlibHashUpdate,
     HashlibHashDigest,
     HashlibHashHexDigest,
@@ -5995,10 +6008,23 @@ impl BuiltinFunction {
             | BuiltinFunction::JsonMakeEncoder
             | BuiltinFunction::JsonMakeEncoderCall
             | BuiltinFunction::HashlibMd5
+            | BuiltinFunction::HashlibSha1
             | BuiltinFunction::HashlibSha224
             | BuiltinFunction::HashlibSha256
             | BuiltinFunction::HashlibSha384
             | BuiltinFunction::HashlibSha512
+            | BuiltinFunction::HashlibBlake2b
+            | BuiltinFunction::HashlibBlake2s
+            | BuiltinFunction::HashlibSha3_224
+            | BuiltinFunction::HashlibSha3_256
+            | BuiltinFunction::HashlibSha3_384
+            | BuiltinFunction::HashlibSha3_512
+            | BuiltinFunction::HashlibShake128
+            | BuiltinFunction::HashlibShake256
+            | BuiltinFunction::HashlibNew
+            | BuiltinFunction::HashlibPbkdf2Hmac
+            | BuiltinFunction::HashlibScrypt
+            | BuiltinFunction::HashlibHmacDigest
             | BuiltinFunction::HashlibHashUpdate
             | BuiltinFunction::HashlibHashDigest
             | BuiltinFunction::HashlibHashHexDigest

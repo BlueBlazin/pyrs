@@ -1,123 +1,279 @@
 use super::super::{
     HashMap, ObjRef, Object, RuntimeError, Value, Vm, bytes_like_from_value, is_truthy,
+    value_to_int,
 };
+use blake2::{Blake2b512, Blake2s256};
+use hmac::{Hmac, Mac};
 use md5::Md5;
-use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
+use pbkdf2::pbkdf2_hmac;
+use scrypt::{Params as ScryptParams, scrypt};
+use sha1::Sha1;
+use sha2::digest::{Digest, ExtendableOutput, Update, XofReader};
+use sha2::{Sha224, Sha256, Sha384, Sha512};
+use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
 
 const HASH_KIND_ATTR: &str = "__pyrs_hash_kind__";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HashKind {
     Md5,
+    Sha1,
     Sha224,
     Sha256,
     Sha384,
     Sha512,
+    Blake2b,
+    Blake2s,
+    Sha3_224,
+    Sha3_256,
+    Sha3_384,
+    Sha3_512,
+    Shake128,
+    Shake256,
 }
 
 impl HashKind {
     fn module_name(self) -> &'static str {
         match self {
             Self::Md5 => "_md5",
+            Self::Sha1 => "_sha1",
             Self::Sha224 | Self::Sha256 | Self::Sha384 | Self::Sha512 => "_sha2",
+            Self::Blake2b | Self::Blake2s => "_blake2",
+            Self::Sha3_224
+            | Self::Sha3_256
+            | Self::Sha3_384
+            | Self::Sha3_512
+            | Self::Shake128
+            | Self::Shake256 => "_sha3",
         }
     }
 
     fn class_symbol(self) -> &'static str {
         match self {
             Self::Md5 => "MD5Type",
+            Self::Sha1 => "SHA1Type",
             Self::Sha224 => "SHA224Type",
             Self::Sha256 => "SHA256Type",
             Self::Sha384 => "SHA384Type",
             Self::Sha512 => "SHA512Type",
+            Self::Blake2b => "_BLAKE2bType",
+            Self::Blake2s => "_BLAKE2sType",
+            Self::Sha3_224 => "_SHA3_224Type",
+            Self::Sha3_256 => "_SHA3_256Type",
+            Self::Sha3_384 => "_SHA3_384Type",
+            Self::Sha3_512 => "_SHA3_512Type",
+            Self::Shake128 => "_SHAKE128Type",
+            Self::Shake256 => "_SHAKE256Type",
         }
     }
 
     fn hash_name(self) -> &'static str {
         match self {
             Self::Md5 => "md5",
+            Self::Sha1 => "sha1",
             Self::Sha224 => "sha224",
             Self::Sha256 => "sha256",
             Self::Sha384 => "sha384",
             Self::Sha512 => "sha512",
+            Self::Blake2b => "blake2b",
+            Self::Blake2s => "blake2s",
+            Self::Sha3_224 => "sha3_224",
+            Self::Sha3_256 => "sha3_256",
+            Self::Sha3_384 => "sha3_384",
+            Self::Sha3_512 => "sha3_512",
+            Self::Shake128 => "shake_128",
+            Self::Shake256 => "shake_256",
         }
     }
 
     fn digest_size(self) -> i64 {
         match self {
             Self::Md5 => 16,
+            Self::Sha1 => 20,
             Self::Sha224 => 28,
             Self::Sha256 => 32,
             Self::Sha384 => 48,
             Self::Sha512 => 64,
+            Self::Blake2b => 64,
+            Self::Blake2s => 32,
+            Self::Sha3_224 => 28,
+            Self::Sha3_256 => 32,
+            Self::Sha3_384 => 48,
+            Self::Sha3_512 => 64,
+            Self::Shake128 | Self::Shake256 => 0,
         }
     }
 
     fn block_size(self) -> i64 {
         match self {
-            Self::Md5 | Self::Sha224 | Self::Sha256 => 64,
-            Self::Sha384 | Self::Sha512 => 128,
+            Self::Md5 | Self::Sha1 | Self::Sha224 | Self::Sha256 => 64,
+            Self::Sha384 | Self::Sha512 | Self::Blake2b => 128,
+            Self::Blake2s => 64,
+            Self::Sha3_224 => 144,
+            Self::Sha3_256 => 136,
+            Self::Sha3_384 => 104,
+            Self::Sha3_512 => 72,
+            Self::Shake128 => 168,
+            Self::Shake256 => 136,
         }
     }
 
     fn tag(self) -> &'static str {
         match self {
             Self::Md5 => "md5",
+            Self::Sha1 => "sha1",
             Self::Sha224 => "sha224",
             Self::Sha256 => "sha256",
             Self::Sha384 => "sha384",
             Self::Sha512 => "sha512",
+            Self::Blake2b => "blake2b",
+            Self::Blake2s => "blake2s",
+            Self::Sha3_224 => "sha3_224",
+            Self::Sha3_256 => "sha3_256",
+            Self::Sha3_384 => "sha3_384",
+            Self::Sha3_512 => "sha3_512",
+            Self::Shake128 => "shake_128",
+            Self::Shake256 => "shake_256",
         }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "md5" => Some(Self::Md5),
+            "sha1" => Some(Self::Sha1),
+            "sha224" => Some(Self::Sha224),
+            "sha256" => Some(Self::Sha256),
+            "sha384" => Some(Self::Sha384),
+            "sha512" => Some(Self::Sha512),
+            "blake2b" => Some(Self::Blake2b),
+            "blake2s" => Some(Self::Blake2s),
+            "sha3_224" => Some(Self::Sha3_224),
+            "sha3_256" => Some(Self::Sha3_256),
+            "sha3_384" => Some(Self::Sha3_384),
+            "sha3_512" => Some(Self::Sha3_512),
+            "shake_128" => Some(Self::Shake128),
+            "shake_256" => Some(Self::Shake256),
+            _ => None,
+        }
+    }
+
+    fn is_xof(self) -> bool {
+        matches!(self, Self::Shake128 | Self::Shake256)
     }
 }
 
 #[derive(Clone)]
 pub(in crate::vm) enum HashState {
     Md5(Md5),
+    Sha1(Sha1),
     Sha224(Sha224),
     Sha256(Sha256),
     Sha384(Sha384),
     Sha512(Sha512),
+    Blake2b(Blake2b512),
+    Blake2s(Blake2s256),
+    Sha3_224(Sha3_224),
+    Sha3_256(Sha3_256),
+    Sha3_384(Sha3_384),
+    Sha3_512(Sha3_512),
+    Shake128(Shake128),
+    Shake256(Shake256),
 }
 
 impl HashState {
     fn kind(&self) -> HashKind {
         match self {
             Self::Md5(_) => HashKind::Md5,
+            Self::Sha1(_) => HashKind::Sha1,
             Self::Sha224(_) => HashKind::Sha224,
             Self::Sha256(_) => HashKind::Sha256,
             Self::Sha384(_) => HashKind::Sha384,
             Self::Sha512(_) => HashKind::Sha512,
+            Self::Blake2b(_) => HashKind::Blake2b,
+            Self::Blake2s(_) => HashKind::Blake2s,
+            Self::Sha3_224(_) => HashKind::Sha3_224,
+            Self::Sha3_256(_) => HashKind::Sha3_256,
+            Self::Sha3_384(_) => HashKind::Sha3_384,
+            Self::Sha3_512(_) => HashKind::Sha3_512,
+            Self::Shake128(_) => HashKind::Shake128,
+            Self::Shake256(_) => HashKind::Shake256,
         }
     }
 
     fn new(kind: HashKind) -> Self {
         match kind {
             HashKind::Md5 => Self::Md5(Md5::new()),
+            HashKind::Sha1 => Self::Sha1(Sha1::new()),
             HashKind::Sha224 => Self::Sha224(Sha224::new()),
             HashKind::Sha256 => Self::Sha256(Sha256::new()),
             HashKind::Sha384 => Self::Sha384(Sha384::new()),
             HashKind::Sha512 => Self::Sha512(Sha512::new()),
+            HashKind::Blake2b => Self::Blake2b(Blake2b512::new()),
+            HashKind::Blake2s => Self::Blake2s(Blake2s256::new()),
+            HashKind::Sha3_224 => Self::Sha3_224(Sha3_224::new()),
+            HashKind::Sha3_256 => Self::Sha3_256(Sha3_256::new()),
+            HashKind::Sha3_384 => Self::Sha3_384(Sha3_384::new()),
+            HashKind::Sha3_512 => Self::Sha3_512(Sha3_512::new()),
+            HashKind::Shake128 => Self::Shake128(Shake128::default()),
+            HashKind::Shake256 => Self::Shake256(Shake256::default()),
         }
     }
 
     fn update(&mut self, data: &[u8]) {
         match self {
-            Self::Md5(state) => state.update(data),
-            Self::Sha224(state) => state.update(data),
-            Self::Sha256(state) => state.update(data),
-            Self::Sha384(state) => state.update(data),
-            Self::Sha512(state) => state.update(data),
+            Self::Md5(state) => Update::update(state, data),
+            Self::Sha1(state) => Update::update(state, data),
+            Self::Sha224(state) => Update::update(state, data),
+            Self::Sha256(state) => Update::update(state, data),
+            Self::Sha384(state) => Update::update(state, data),
+            Self::Sha512(state) => Update::update(state, data),
+            Self::Blake2b(state) => Update::update(state, data),
+            Self::Blake2s(state) => Update::update(state, data),
+            Self::Sha3_224(state) => Update::update(state, data),
+            Self::Sha3_256(state) => Update::update(state, data),
+            Self::Sha3_384(state) => Update::update(state, data),
+            Self::Sha3_512(state) => Update::update(state, data),
+            Self::Shake128(state) => Update::update(state, data),
+            Self::Shake256(state) => Update::update(state, data),
         }
     }
 
-    fn digest_bytes(&self) -> Vec<u8> {
+    fn digest_bytes(&self, len: Option<usize>) -> Result<Vec<u8>, RuntimeError> {
         match self {
-            Self::Md5(state) => state.clone().finalize().to_vec(),
-            Self::Sha224(state) => state.clone().finalize().to_vec(),
-            Self::Sha256(state) => state.clone().finalize().to_vec(),
-            Self::Sha384(state) => state.clone().finalize().to_vec(),
-            Self::Sha512(state) => state.clone().finalize().to_vec(),
+            Self::Md5(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha1(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha224(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha256(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha384(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha512(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Blake2b(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Blake2s(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha3_224(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha3_256(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha3_384(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Sha3_512(state) => Ok(state.clone().finalize().to_vec()),
+            Self::Shake128(state) => {
+                let requested = len.ok_or_else(|| {
+                    RuntimeError::new(
+                        "TypeError: digest() missing required argument 'length' (pos 1)",
+                    )
+                })?;
+                let mut out = vec![0u8; requested];
+                let mut reader = state.clone().finalize_xof();
+                reader.read(&mut out);
+                Ok(out)
+            }
+            Self::Shake256(state) => {
+                let requested = len.ok_or_else(|| {
+                    RuntimeError::new(
+                        "TypeError: digest() missing required argument 'length' (pos 1)",
+                    )
+                })?;
+                let mut out = vec![0u8; requested];
+                let mut reader = state.clone().finalize_xof();
+                reader.read(&mut out);
+                Ok(out)
+            }
         }
     }
 }
@@ -253,6 +409,14 @@ impl Vm {
         self.hash_new_instance(kind, payload)
     }
 
+    fn hash_kind_from_value(&self, value: Value) -> Result<HashKind, RuntimeError> {
+        let Value::Str(name) = value else {
+            return Err(RuntimeError::new("TypeError: hash name must be a string"));
+        };
+        HashKind::from_name(&name)
+            .ok_or_else(|| RuntimeError::new(format!("ValueError: unsupported hash type {name}")))
+    }
+
     fn hash_receiver_from_args<'a>(
         &'a self,
         args: &'a [Value],
@@ -277,6 +441,14 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         self.hash_constructor(HashKind::Md5, args, kwargs, "md5")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_sha1(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Sha1, args, kwargs, "sha1")
     }
 
     pub(in crate::vm) fn builtin_hashlib_sha224(
@@ -309,6 +481,376 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         self.hash_constructor(HashKind::Sha512, args, kwargs, "sha512")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_blake2b(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Blake2b, args, kwargs, "blake2b")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_blake2s(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Blake2s, args, kwargs, "blake2s")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_sha3_224(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Sha3_224, args, kwargs, "sha3_224")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_sha3_256(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Sha3_256, args, kwargs, "sha3_256")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_sha3_384(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Sha3_384, args, kwargs, "sha3_384")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_sha3_512(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Sha3_512, args, kwargs, "sha3_512")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_shake128(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Shake128, args, kwargs, "shake_128")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_shake256(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        self.hash_constructor(HashKind::Shake256, args, kwargs, "shake_256")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_new(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "TypeError: new() missing required argument 'name' (pos 1)",
+            ));
+        }
+        let kind = self.hash_kind_from_value(args.remove(0))?;
+        self.hash_constructor(kind, args, kwargs, "new")
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_pbkdf2_hmac(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() && !kwargs.contains_key("hash_name") {
+            return Err(RuntimeError::new(
+                "TypeError: pbkdf2_hmac() missing required argument 'hash_name' (pos 1)",
+            ));
+        }
+        let hash_name = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs
+                .remove("hash_name")
+                .ok_or_else(|| RuntimeError::new("TypeError: missing hash_name"))?
+        };
+        if !args.is_empty() && kwargs.contains_key("hash_name") {
+            return Err(RuntimeError::new(
+                "TypeError: pbkdf2_hmac() got multiple values for argument 'hash_name'",
+            ));
+        }
+        let kind = self.hash_kind_from_value(hash_name)?;
+        if kind.is_xof() {
+            return Err(RuntimeError::new(format!(
+                "ValueError: unsupported hash type {}",
+                kind.hash_name()
+            )));
+        }
+        let password = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("password").ok_or_else(|| {
+                RuntimeError::new(
+                    "TypeError: pbkdf2_hmac() missing required argument 'password' (pos 2)",
+                )
+            })?
+        };
+        let salt = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("salt").ok_or_else(|| {
+                RuntimeError::new(
+                    "TypeError: pbkdf2_hmac() missing required argument 'salt' (pos 3)",
+                )
+            })?
+        };
+        let iterations = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs.remove("iterations").ok_or_else(|| {
+                RuntimeError::new(
+                    "TypeError: pbkdf2_hmac() missing required argument 'iterations' (pos 4)",
+                )
+            })?
+        };
+        let dklen = if !args.is_empty() {
+            Some(args.remove(0))
+        } else {
+            kwargs.remove("dklen")
+        };
+        if !args.is_empty() {
+            return Err(RuntimeError::new(
+                "TypeError: pbkdf2_hmac() takes at most 5 positional arguments",
+            ));
+        }
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: pbkdf2_hmac() got an unexpected keyword argument '{unexpected}'"
+            )));
+        }
+        let password_bytes = self.hash_payload_from_value(password)?;
+        let salt_bytes = self.hash_payload_from_value(salt)?;
+        let rounds = value_to_int(iterations)?;
+        if rounds <= 0 {
+            return Err(RuntimeError::new(
+                "ValueError: iteration value must be greater than 0.",
+            ));
+        }
+        let out_len = if let Some(value) = dklen {
+            let len = value_to_int(value)?;
+            if len <= 0 {
+                return Err(RuntimeError::new(
+                    "ValueError: key length must be greater than 0.",
+                ));
+            }
+            len as usize
+        } else {
+            kind.digest_size() as usize
+        };
+        let mut out = vec![0u8; out_len];
+        match kind {
+            HashKind::Md5 => {
+                pbkdf2_hmac::<Md5>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha1 => {
+                pbkdf2_hmac::<Sha1>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha224 => {
+                pbkdf2_hmac::<Sha224>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha256 => {
+                pbkdf2_hmac::<Sha256>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha384 => {
+                pbkdf2_hmac::<Sha384>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha512 => {
+                pbkdf2_hmac::<Sha512>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha3_224 => {
+                pbkdf2_hmac::<Sha3_224>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha3_256 => {
+                pbkdf2_hmac::<Sha3_256>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha3_384 => {
+                pbkdf2_hmac::<Sha3_384>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Sha3_512 => {
+                pbkdf2_hmac::<Sha3_512>(&password_bytes, &salt_bytes, rounds as u32, &mut out)
+            }
+            HashKind::Blake2b | HashKind::Blake2s | HashKind::Shake128 | HashKind::Shake256 => {
+                return Err(RuntimeError::new(format!(
+                    "ValueError: unsupported hash type {}",
+                    kind.hash_name()
+                )));
+            }
+        }
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_scrypt(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "TypeError: scrypt() missing required argument 'password' (pos 1)",
+            ));
+        }
+        if args.len() > 1 {
+            return Err(RuntimeError::new(
+                "TypeError: scrypt() takes exactly one positional argument",
+            ));
+        }
+        let password = self.hash_payload_from_value(args.remove(0))?;
+        let salt = kwargs
+            .remove("salt")
+            .ok_or_else(|| RuntimeError::new("TypeError: scrypt() missing required keyword 'salt'"))
+            .and_then(|value| self.hash_payload_from_value(value))?;
+        let n = kwargs
+            .remove("n")
+            .ok_or_else(|| RuntimeError::new("TypeError: scrypt() missing required keyword 'n'"))
+            .and_then(value_to_int)?;
+        let r = kwargs
+            .remove("r")
+            .ok_or_else(|| RuntimeError::new("TypeError: scrypt() missing required keyword 'r'"))
+            .and_then(value_to_int)?;
+        let p = kwargs
+            .remove("p")
+            .ok_or_else(|| RuntimeError::new("TypeError: scrypt() missing required keyword 'p'"))
+            .and_then(value_to_int)?;
+        let _maxmem = kwargs
+            .remove("maxmem")
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(0);
+        let dklen = kwargs
+            .remove("dklen")
+            .map(value_to_int)
+            .transpose()?
+            .unwrap_or(64);
+        if let Some(unexpected) = kwargs.keys().next() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: scrypt() got an unexpected keyword argument '{unexpected}'"
+            )));
+        }
+        if n <= 1 || (n & (n - 1)) != 0 {
+            return Err(RuntimeError::new(
+                "ValueError: n must be a power of 2 greater than 1.",
+            ));
+        }
+        if r <= 0 || p <= 0 {
+            return Err(RuntimeError::new(
+                "ValueError: r and p must be positive integers.",
+            ));
+        }
+        if dklen <= 0 {
+            return Err(RuntimeError::new(
+                "ValueError: key length must be greater than 0.",
+            ));
+        }
+        let log_n = (n as u64).trailing_zeros() as u8;
+        let params = ScryptParams::new(log_n, r as u32, p as u32, dklen as usize)
+            .map_err(|err| RuntimeError::new(format!("ValueError: {err}")))?;
+        let mut out = vec![0u8; dklen as usize];
+        scrypt(&password, &salt, &params, &mut out)
+            .map_err(|err| RuntimeError::new(format!("ValueError: {err}")))?;
+        Ok(self.heap.alloc_bytes(out))
+    }
+
+    pub(in crate::vm) fn builtin_hashlib_hmac_digest(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "TypeError: hmac_digest() takes no keyword arguments",
+            ));
+        }
+        if args.len() != 3 {
+            return Err(RuntimeError::new(
+                "TypeError: hmac_digest() takes exactly 3 arguments",
+            ));
+        }
+        let key = self.hash_payload_from_value(args[0].clone())?;
+        let msg = self.hash_payload_from_value(args[1].clone())?;
+        let kind = self.hash_kind_from_value(args[2].clone())?;
+        let out = match kind {
+            HashKind::Md5 => {
+                let mut mac = Hmac::<Md5>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha1 => {
+                let mut mac = Hmac::<Sha1>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha224 => {
+                let mut mac = Hmac::<Sha224>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha256 => {
+                let mut mac = Hmac::<Sha256>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha384 => {
+                let mut mac = Hmac::<Sha384>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha512 => {
+                let mut mac = Hmac::<Sha512>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha3_224 => {
+                let mut mac = Hmac::<Sha3_224>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha3_256 => {
+                let mut mac = Hmac::<Sha3_256>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha3_384 => {
+                let mut mac = Hmac::<Sha3_384>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Sha3_512 => {
+                let mut mac = Hmac::<Sha3_512>::new_from_slice(&key)
+                    .map_err(|_| RuntimeError::new("ValueError: invalid hmac key"))?;
+                Mac::update(&mut mac, &msg);
+                mac.finalize().into_bytes().to_vec()
+            }
+            HashKind::Blake2b | HashKind::Blake2s | HashKind::Shake128 | HashKind::Shake256 => {
+                return Err(RuntimeError::new(format!(
+                    "ValueError: unsupported hash type {}",
+                    kind.hash_name()
+                )));
+            }
+        };
+        Ok(self.heap.alloc_bytes(out))
     }
 
     pub(in crate::vm) fn builtin_hashlib_hash_update(
@@ -349,17 +891,33 @@ impl Vm {
                 "TypeError: {owner_name}.digest() takes no keyword arguments"
             )));
         }
-        let provided = args.len().saturating_sub(1);
-        if args.len() != 1 {
-            return Err(RuntimeError::new(format!(
-                "TypeError: {owner_name}.digest() takes no arguments ({provided} given)"
-            )));
-        }
-        let digest = self
+        let state = self
             .hash_states
             .get(&receiver.id())
-            .ok_or_else(|| RuntimeError::type_error("digest() requires a hash object"))?
-            .digest_bytes();
+            .ok_or_else(|| RuntimeError::type_error("digest() requires a hash object"))?;
+        let len = if state.kind().is_xof() {
+            if args.len() != 2 {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: {owner_name}.digest() missing required argument 'length' (pos 1)"
+                )));
+            }
+            let requested = value_to_int(args[1].clone())?;
+            if requested < 0 {
+                return Err(RuntimeError::new(
+                    "ValueError: digest length must be non-negative",
+                ));
+            }
+            Some(requested as usize)
+        } else {
+            let provided = args.len().saturating_sub(1);
+            if args.len() != 1 {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: {owner_name}.digest() takes no arguments ({provided} given)"
+                )));
+            }
+            None
+        };
+        let digest = state.digest_bytes(len)?;
         Ok(self.heap.alloc_bytes(digest))
     }
 
@@ -374,17 +932,33 @@ impl Vm {
                 "TypeError: {owner_name}.hexdigest() takes no keyword arguments"
             )));
         }
-        let provided = args.len().saturating_sub(1);
-        if args.len() != 1 {
-            return Err(RuntimeError::new(format!(
-                "TypeError: {owner_name}.hexdigest() takes no arguments ({provided} given)"
-            )));
-        }
-        let digest = self
+        let state = self
             .hash_states
             .get(&receiver.id())
-            .ok_or_else(|| RuntimeError::type_error("hexdigest() requires a hash object"))?
-            .digest_bytes();
+            .ok_or_else(|| RuntimeError::type_error("hexdigest() requires a hash object"))?;
+        let len = if state.kind().is_xof() {
+            if args.len() != 2 {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: {owner_name}.hexdigest() missing required argument 'length' (pos 1)"
+                )));
+            }
+            let requested = value_to_int(args[1].clone())?;
+            if requested < 0 {
+                return Err(RuntimeError::new(
+                    "ValueError: digest length must be non-negative",
+                ));
+            }
+            Some(requested as usize)
+        } else {
+            let provided = args.len().saturating_sub(1);
+            if args.len() != 1 {
+                return Err(RuntimeError::new(format!(
+                    "TypeError: {owner_name}.hexdigest() takes no arguments ({provided} given)"
+                )));
+            }
+            None
+        };
+        let digest = state.digest_bytes(len)?;
         let mut out = String::with_capacity(digest.len() * 2);
         for byte in digest {
             out.push_str(&format!("{byte:02x}"));

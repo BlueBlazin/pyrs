@@ -3278,10 +3278,9 @@ impl Vm {
                 .map(|value| normalize_parameters(self, value))
                 .or_else(|| copied_parameters.map(|value| normalize_parameters(self, value)))
                 .unwrap_or(Value::None);
-            replacement_data.attrs.insert(
-                "parameters".to_string(),
-                normalized_parameters,
-            );
+            replacement_data
+                .attrs
+                .insert("parameters".to_string(), normalized_parameters);
             replacement_data.attrs.insert(
                 "return_annotation".to_string(),
                 return_annotation_override

@@ -265,7 +265,7 @@ impl Vm {
             _ => {
                 return Err(RuntimeError::type_error(
                     "popen() arg 1 must be str command",
-                ))
+                ));
             }
         };
         let mode = match mode_value {
@@ -2419,7 +2419,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() {
-            return Err(RuntimeError::new("pipe.read() expects no keyword arguments"));
+            return Err(RuntimeError::new(
+                "pipe.read() expects no keyword arguments",
+            ));
         }
         let instance = self.take_bound_instance_arg(&mut args, "pipe.read")?;
         let size = if args.is_empty() {
@@ -2427,7 +2429,9 @@ impl Vm {
         } else if args.len() == 1 {
             value_to_int(args.remove(0))?
         } else {
-            return Err(RuntimeError::new("pipe.read() expects at most one argument"));
+            return Err(RuntimeError::new(
+                "pipe.read() expects at most one argument",
+            ));
         };
         let (pid, kind, text_mode, encoding) =
             self.subprocess_pipe_metadata(&Value::Instance(instance), "pipe.read")?;
@@ -2487,10 +2491,7 @@ impl Vm {
             }
         }
         if text_mode {
-            let codec = encoding
-                .as_deref()
-                .unwrap_or("utf-8")
-                .to_ascii_lowercase();
+            let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
             if codec != "utf-8" && codec != "utf8" {
                 return Err(RuntimeError::new(
                     "only utf-8 subprocess text encoding is supported",

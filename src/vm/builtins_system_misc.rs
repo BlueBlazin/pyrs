@@ -3066,7 +3066,10 @@ impl Vm {
             return Err(RuntimeError::type_error("localeconv() takes no arguments"));
         }
         Ok(self.heap.alloc_dict(vec![
-            (Value::Str("decimal_point".to_string()), Value::Str(".".to_string())),
+            (
+                Value::Str("decimal_point".to_string()),
+                Value::Str(".".to_string()),
+            ),
             (
                 Value::Str("thousands_sep".to_string()),
                 Value::Str(String::new()),

@@ -1875,56 +1875,19 @@ impl Vm {
             ],
             Vec::new(),
         );
-        let md5_type = match self
-            .heap
-            .alloc_class(ClassObject::new("md5".to_string(), Vec::new()))
-        {
-            Value::Class(class) => class,
-            _ => unreachable!(),
-        };
-        if let Object::Class(class_data) = &mut *md5_type.kind_mut() {
-            class_data
-                .attrs
-                .insert("__module__".to_string(), Value::Str("_md5".to_string()));
-            class_data.attrs.insert(
-                "__pyrs_disallow_instantiation__".to_string(),
-                Value::Bool(true),
-            );
-            class_data.attrs.insert(
-                "update".to_string(),
-                Value::Builtin(BuiltinFunction::HashlibHashUpdate),
-            );
-            class_data.attrs.insert(
-                "digest".to_string(),
-                Value::Builtin(BuiltinFunction::HashlibHashDigest),
-            );
-            class_data.attrs.insert(
-                "hexdigest".to_string(),
-                Value::Builtin(BuiltinFunction::HashlibHashHexDigest),
-            );
-            class_data.attrs.insert(
-                "copy".to_string(),
-                Value::Builtin(BuiltinFunction::HashlibHashCopy),
-            );
-        }
-        self.install_builtin_module(
-            "_md5",
-            &[("md5", BuiltinFunction::HashlibMd5)],
-            vec![("MD5Type", Value::Class(md5_type))],
-        );
-
-        let build_sha2_type = |name: &str| {
+        let build_hash_type = |module_name: &str, class_name: &str| {
             let class = match self
                 .heap
-                .alloc_class(ClassObject::new(name.to_string(), Vec::new()))
+                .alloc_class(ClassObject::new(class_name.to_string(), Vec::new()))
             {
                 Value::Class(class) => class,
                 _ => unreachable!(),
             };
             if let Object::Class(class_data) = &mut *class.kind_mut() {
-                class_data
-                    .attrs
-                    .insert("__module__".to_string(), Value::Str("_sha2".to_string()));
+                class_data.attrs.insert(
+                    "__module__".to_string(),
+                    Value::Str(module_name.to_string()),
+                );
                 class_data.attrs.insert(
                     "__pyrs_disallow_instantiation__".to_string(),
                     Value::Bool(true),
@@ -1948,10 +1911,30 @@ impl Vm {
             }
             class
         };
-        let sha224_type = build_sha2_type("SHA224Type");
-        let sha256_type = build_sha2_type("SHA256Type");
-        let sha384_type = build_sha2_type("SHA384Type");
-        let sha512_type = build_sha2_type("SHA512Type");
+        let md5_type = build_hash_type("_md5", "md5");
+        let sha1_type = build_hash_type("_sha1", "sha1");
+        let sha224_type = build_hash_type("_sha2", "SHA224Type");
+        let sha256_type = build_hash_type("_sha2", "SHA256Type");
+        let sha384_type = build_hash_type("_sha2", "SHA384Type");
+        let sha512_type = build_hash_type("_sha2", "SHA512Type");
+        let blake2b_type = build_hash_type("_blake2", "blake2b");
+        let blake2s_type = build_hash_type("_blake2", "blake2s");
+        let sha3_224_type = build_hash_type("_sha3", "sha3_224");
+        let sha3_256_type = build_hash_type("_sha3", "sha3_256");
+        let sha3_384_type = build_hash_type("_sha3", "sha3_384");
+        let sha3_512_type = build_hash_type("_sha3", "sha3_512");
+        let shake128_type = build_hash_type("_sha3", "shake_128");
+        let shake256_type = build_hash_type("_sha3", "shake_256");
+        self.install_builtin_module(
+            "_md5",
+            &[("md5", BuiltinFunction::HashlibMd5)],
+            vec![("MD5Type", Value::Class(md5_type))],
+        );
+        self.install_builtin_module(
+            "_sha1",
+            &[("sha1", BuiltinFunction::HashlibSha1)],
+            vec![("SHA1Type", Value::Class(sha1_type))],
+        );
         self.install_builtin_module(
             "_sha2",
             &[
@@ -1966,6 +1949,97 @@ impl Vm {
                 ("SHA384Type", Value::Class(sha384_type)),
                 ("SHA512Type", Value::Class(sha512_type)),
             ],
+        );
+        self.install_builtin_module(
+            "_blake2",
+            &[
+                ("blake2b", BuiltinFunction::HashlibBlake2b),
+                ("blake2s", BuiltinFunction::HashlibBlake2s),
+            ],
+            vec![
+                ("_BLAKE2bType", Value::Class(blake2b_type)),
+                ("_BLAKE2sType", Value::Class(blake2s_type)),
+                ("BLAKE2B_MAX_DIGEST_SIZE", Value::Int(64)),
+                ("BLAKE2B_MAX_KEY_SIZE", Value::Int(64)),
+                ("BLAKE2B_SALT_SIZE", Value::Int(16)),
+                ("BLAKE2B_PERSON_SIZE", Value::Int(16)),
+                ("BLAKE2S_MAX_DIGEST_SIZE", Value::Int(32)),
+                ("BLAKE2S_MAX_KEY_SIZE", Value::Int(32)),
+                ("BLAKE2S_SALT_SIZE", Value::Int(8)),
+                ("BLAKE2S_PERSON_SIZE", Value::Int(8)),
+            ],
+        );
+        self.install_builtin_module(
+            "_sha3",
+            &[
+                ("sha3_224", BuiltinFunction::HashlibSha3_224),
+                ("sha3_256", BuiltinFunction::HashlibSha3_256),
+                ("sha3_384", BuiltinFunction::HashlibSha3_384),
+                ("sha3_512", BuiltinFunction::HashlibSha3_512),
+                ("shake_128", BuiltinFunction::HashlibShake128),
+                ("shake_256", BuiltinFunction::HashlibShake256),
+            ],
+            vec![
+                ("_SHA3_224Type", Value::Class(sha3_224_type)),
+                ("_SHA3_256Type", Value::Class(sha3_256_type)),
+                ("_SHA3_384Type", Value::Class(sha3_384_type)),
+                ("_SHA3_512Type", Value::Class(sha3_512_type)),
+                ("_SHAKE128Type", Value::Class(shake128_type)),
+                ("_SHAKE256Type", Value::Class(shake256_type)),
+            ],
+        );
+        self.install_builtin_module(
+            "_hashlib",
+            &[
+                ("new", BuiltinFunction::HashlibNew),
+                ("pbkdf2_hmac", BuiltinFunction::HashlibPbkdf2Hmac),
+                ("scrypt", BuiltinFunction::HashlibScrypt),
+                ("hmac_digest", BuiltinFunction::HashlibHmacDigest),
+                ("compare_digest", BuiltinFunction::OperatorCompareDigest),
+                ("openssl_md5", BuiltinFunction::HashlibMd5),
+                ("openssl_sha1", BuiltinFunction::HashlibSha1),
+                ("openssl_sha224", BuiltinFunction::HashlibSha224),
+                ("openssl_sha256", BuiltinFunction::HashlibSha256),
+                ("openssl_sha384", BuiltinFunction::HashlibSha384),
+                ("openssl_sha512", BuiltinFunction::HashlibSha512),
+                ("openssl_blake2b", BuiltinFunction::HashlibBlake2b),
+                ("openssl_blake2s", BuiltinFunction::HashlibBlake2s),
+                ("openssl_sha3_224", BuiltinFunction::HashlibSha3_224),
+                ("openssl_sha3_256", BuiltinFunction::HashlibSha3_256),
+                ("openssl_sha3_384", BuiltinFunction::HashlibSha3_384),
+                ("openssl_sha3_512", BuiltinFunction::HashlibSha3_512),
+                ("openssl_shake_128", BuiltinFunction::HashlibShake128),
+                ("openssl_shake_256", BuiltinFunction::HashlibShake256),
+            ],
+            vec![
+                (
+                    "openssl_md_meth_names",
+                    self.heap.alloc_frozenset(vec![
+                        Value::Str("md5".to_string()),
+                        Value::Str("sha1".to_string()),
+                        Value::Str("sha224".to_string()),
+                        Value::Str("sha256".to_string()),
+                        Value::Str("sha384".to_string()),
+                        Value::Str("sha512".to_string()),
+                        Value::Str("blake2b".to_string()),
+                        Value::Str("blake2s".to_string()),
+                        Value::Str("sha3_224".to_string()),
+                        Value::Str("sha3_256".to_string()),
+                        Value::Str("sha3_384".to_string()),
+                        Value::Str("sha3_512".to_string()),
+                        Value::Str("shake_128".to_string()),
+                        Value::Str("shake_256".to_string()),
+                    ]),
+                ),
+                (
+                    "UnsupportedDigestmodError",
+                    Value::ExceptionType("UnsupportedDigestmodError".to_string()),
+                ),
+            ],
+        );
+        self.exception_parents.insert(
+            "UnsupportedDigestmodError".to_string(),
+            "ValueError".to_string(),
         );
         let pickle_buffer_class = match self
             .heap
@@ -2295,9 +2369,10 @@ impl Vm {
         );
         if let Some(unicodedata_module) = self.modules.get("unicodedata").cloned() {
             if let Object::Module(module_data) = &mut *unicodedata_module.kind_mut() {
-                module_data
-                    .globals
-                    .insert("unidata_version".to_string(), Value::Str("16.0.0".to_string()));
+                module_data.globals.insert(
+                    "unidata_version".to_string(),
+                    Value::Str("16.0.0".to_string()),
+                );
                 let legacy = match self
                     .heap
                     .alloc_module(ModuleObject::new("unicodedata.ucd_3_2_0".to_string()))
