@@ -4981,6 +4981,13 @@ impl Vm {
                             func_data.annotations = Some(annotations);
                         }
                     }
+                    0x10 => {
+                        if !matches!(attr, Value::None) && !self.is_callable_value(&attr) {
+                            return Err(RuntimeError::new("annotate must be callable"));
+                        }
+                        let dict = self.ensure_function_dict(&func)?;
+                        self.dict_set_str_key(&dict, "__annotate__".to_string(), attr)?;
+                    }
                     0x08 => {
                         let closure = match attr {
                             Value::Tuple(obj) => match &*obj.kind() {

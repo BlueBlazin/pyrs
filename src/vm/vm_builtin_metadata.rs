@@ -2314,15 +2314,56 @@ impl Vm {
         &mut self,
         func: &ObjRef,
     ) -> Result<ObjRef, RuntimeError> {
+        let (existing_annotations, function_dict) = {
+            let func_ref = func.kind();
+            let Object::Function(func_data) = &*func_ref else {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            };
+            (func_data.annotations.clone(), func_data.dict.clone())
+        };
+        if let Some(obj) = existing_annotations {
+            return Ok(obj);
+        }
+
+        let annotate_callable = function_dict
+            .as_ref()
+            .and_then(|dict| dict_get_value(dict, &Value::Str("__annotate__".to_string())))
+            .filter(|value| !matches!(value, Value::None));
+        if let Some(annotate_callable) = annotate_callable
+            && self.is_callable_value(&annotate_callable)
+        {
+            match self.call_internal(
+                annotate_callable,
+                vec![Value::Int(1)],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(Value::Dict(dict)) => {
+                    let mut func_ref = func.kind_mut();
+                    let Object::Function(func_data) = &mut *func_ref else {
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
+                    };
+                    func_data.annotations = Some(dict.clone());
+                    return Ok(dict);
+                }
+                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(
+                        self.runtime_error_from_active_exception("function.__annotate__ failed")
+                    );
+                }
+            }
+        }
+
         let mut func_ref = func.kind_mut();
         let Object::Function(func_data) = &mut *func_ref else {
             return Err(RuntimeError::attribute_error(
                 "attribute access unsupported type",
             ));
         };
-        if let Some(obj) = &func_data.annotations {
-            return Ok(obj.clone());
-        }
         let dict = self.heap.alloc_dict(Vec::new());
         let obj = match dict {
             Value::Dict(obj) => obj,
