@@ -176,6 +176,7 @@ impl Vm {
                     | NativeMethodKind::BytesDecode
                     | NativeMethodKind::BytesHex
                     | NativeMethodKind::BytesCount
+                    | NativeMethodKind::BytesSplit
                     | NativeMethodKind::BytesTranslate
                     | NativeMethodKind::ListSort
                     | NativeMethodKind::MemoryViewCast
@@ -2571,6 +2572,125 @@ impl Vm {
                     Ok(NativeCallResult::Value(Value::Int(-1)))
                 }
             }
+            NativeMethodKind::BytesSplit => {
+                let mut sep_kw = kwargs.remove("sep");
+                let mut maxsplit_kw = kwargs.remove("maxsplit");
+                if !kwargs.is_empty() {
+                    return Err(RuntimeError::new(
+                        "split() got an unexpected keyword argument",
+                    ));
+                }
+                if args.len() > 2 {
+                    return Err(RuntimeError::new("split() expects at most 2 arguments"));
+                }
+                let sep_arg = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                };
+                if sep_arg.is_some() && sep_kw.is_some() {
+                    return Err(RuntimeError::new("split() got multiple values for sep"));
+                }
+                let sep_value = sep_arg.or_else(|| sep_kw.take());
+
+                let maxsplit_arg = if !args.is_empty() {
+                    Some(args.remove(0))
+                } else {
+                    None
+                };
+                if maxsplit_arg.is_some() && maxsplit_kw.is_some() {
+                    return Err(RuntimeError::new(
+                        "split() got multiple values for maxsplit",
+                    ));
+                }
+                let maxsplit = if let Some(value) = maxsplit_arg.or_else(|| maxsplit_kw.take()) {
+                    value_to_int(value)?
+                } else {
+                    -1
+                };
+
+                let receiver_value = match &*receiver.kind() {
+                    Object::Module(module_data) => module_data
+                        .globals
+                        .get("value")
+                        .cloned()
+                        .ok_or_else(|| RuntimeError::type_error("bytes receiver is invalid"))?,
+                    _ => return Err(RuntimeError::type_error("bytes receiver is invalid")),
+                };
+                let bytes = bytes_like_from_value(receiver_value.clone())?;
+                let output_bytearray = matches!(receiver_value, Value::ByteArray(_));
+
+                let parts = match sep_value {
+                    Some(Value::None) | None => {
+                        let len = bytes.len();
+                        let mut idx = 0usize;
+                        while idx < len && bytes[idx].is_ascii_whitespace() {
+                            idx += 1;
+                        }
+                        if idx == len {
+                            Vec::new()
+                        } else if maxsplit == 0 {
+                            vec![bytes[idx..].to_vec()]
+                        } else {
+                            let mut out = Vec::new();
+                            while idx < len {
+                                if maxsplit >= 0 && out.len() as i64 == maxsplit {
+                                    out.push(bytes[idx..].to_vec());
+                                    break;
+                                }
+                                let start = idx;
+                                while idx < len && !bytes[idx].is_ascii_whitespace() {
+                                    idx += 1;
+                                }
+                                out.push(bytes[start..idx].to_vec());
+                                while idx < len && bytes[idx].is_ascii_whitespace() {
+                                    idx += 1;
+                                }
+                            }
+                            out
+                        }
+                    }
+                    Some(value) => {
+                        let sep = bytes_like_from_value(value)?;
+                        if sep.is_empty() {
+                            return Err(RuntimeError::value_error("empty separator"));
+                        }
+                        if maxsplit == 0 {
+                            vec![bytes]
+                        } else {
+                            let mut out = Vec::new();
+                            let mut start = 0usize;
+                            let mut splits = 0i64;
+                            while start <= bytes.len() {
+                                if maxsplit >= 0 && splits >= maxsplit {
+                                    break;
+                                }
+                                let Some(rel) = find_bytes_subslice(&bytes[start..], &sep) else {
+                                    break;
+                                };
+                                let split_at = start + rel;
+                                out.push(bytes[start..split_at].to_vec());
+                                start = split_at + sep.len();
+                                splits += 1;
+                            }
+                            out.push(bytes[start..].to_vec());
+                            out
+                        }
+                    }
+                };
+
+                let values = parts
+                    .into_iter()
+                    .map(|part| {
+                        if output_bytearray {
+                            self.heap.alloc_bytearray(part)
+                        } else {
+                            self.heap.alloc_bytes(part)
+                        }
+                    })
+                    .collect();
+                Ok(NativeCallResult::Value(self.heap.alloc_list(values)))
+            }
             NativeMethodKind::BytesSplitLines => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
@@ -4441,8 +4561,8 @@ impl Vm {
                 if width <= text_len {
                     return Ok(NativeCallResult::Value(Value::Str(text)));
                 }
-                let total_pad =
-                    usize::try_from(width - text_len).map_err(|_| RuntimeError::new("center() width is too large"))?;
+                let total_pad = usize::try_from(width - text_len)
+                    .map_err(|_| RuntimeError::new("center() width is too large"))?;
                 let left_pad = total_pad / 2;
                 let right_pad = total_pad - left_pad;
                 let mut out = String::with_capacity(
@@ -7944,6 +8064,9 @@ impl Vm {
                 self.builtin_pathlib_path_joinpath(args, kwargs)
             }
             BuiltinFunction::PathlibPathStr => self.builtin_pathlib_path_str(args, kwargs),
+            BuiltinFunction::PwdGetPwAll => self.builtin_pwd_getpwall(args, kwargs),
+            BuiltinFunction::PwdGetPwNam => self.builtin_pwd_getpwnam(args, kwargs),
+            BuiltinFunction::PwdGetPwUid => self.builtin_pwd_getpwuid(args, kwargs),
             BuiltinFunction::PosixSubprocessForkExec => {
                 self.builtin_posixsubprocess_fork_exec(args, kwargs)
             }
@@ -7982,6 +8105,7 @@ impl Vm {
                 self.builtin_subprocess_pipe_close(args, kwargs)
             }
             BuiltinFunction::SubprocessCleanup => self.builtin_subprocess_cleanup(args, kwargs),
+            BuiltinFunction::SubprocessRun => self.builtin_subprocess_run(args, kwargs),
             BuiltinFunction::SubprocessCheckCall => {
                 self.builtin_subprocess_check_call(args, kwargs)
             }
@@ -8368,6 +8492,16 @@ impl Vm {
             }
             BuiltinFunction::UnicodedataEastAsianWidth => {
                 self.builtin_unicodedata_east_asian_width(args, kwargs)
+            }
+            BuiltinFunction::UnicodedataCategory => self.builtin_unicodedata_category(args, kwargs),
+            BuiltinFunction::UnicodedataBidirectional => {
+                self.builtin_unicodedata_bidirectional(args, kwargs)
+            }
+            BuiltinFunction::UnicodedataLegacyCategory => {
+                self.builtin_unicodedata_legacy_category(args, kwargs)
+            }
+            BuiltinFunction::UnicodedataLegacyBidirectional => {
+                self.builtin_unicodedata_legacy_bidirectional(args, kwargs)
             }
             BuiltinFunction::SelectSelect => self.builtin_select_select(args, kwargs),
             BuiltinFunction::ReSearch => self.builtin_re_search(args, kwargs),

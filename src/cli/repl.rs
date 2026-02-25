@@ -231,6 +231,7 @@ fn build_vm(import_site: bool, interactive: bool) -> Result<Vm, String> {
     let mut vm = Vm::new();
     super::configure_vm_for_command(&mut vm, import_site)?;
     vm.set_sys_interactive_flag(interactive);
+    vm.set_sys_argv(vec![String::new()]);
     Ok(vm)
 }
 

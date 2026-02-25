@@ -122,6 +122,43 @@ fn cli_no_site_flag_skips_startup_site_import() {
 }
 
 #[test]
+fn cli_script_sets_sys_argv_without_executable_prefix() {
+    let root = temp_root("cli_sys_argv_script");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let script = root.join("main.py");
+    fs::write(&script, "import sys\nprint(repr(sys.argv))\n").expect("write script");
+    let script_arg = script.to_string_lossy().to_string();
+
+    let (code, stdout, stderr) = run_pyrs(
+        &root,
+        &[script_arg.as_str(), "--flag", "value"],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    let expected = format!("['{}', '--flag', 'value']", script_arg);
+    assert_eq!(stdout.trim(), expected);
+}
+
+#[test]
+fn cli_dash_c_sets_sys_argv_like_cpython() {
+    let root = temp_root("cli_sys_argv_dash_c");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let (code, stdout, stderr) = run_pyrs(
+        &root,
+        &["-c", "import sys; print(repr(sys.argv))", "extra", "args"],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert_eq!(stdout.trim(), "['-c', 'extra', 'args']");
+}
+
+#[test]
 fn cli_no_args_executes_stdin_when_not_interactive() {
     let root = temp_root("cli_stdin_exec");
     let stdlib = root.join("Lib");

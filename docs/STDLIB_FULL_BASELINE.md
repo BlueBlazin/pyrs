@@ -57,6 +57,28 @@ python3 scripts/probe_stdlib_full.py \
     its own `lib-dynload` directory.
 
 ## Latest Closure Deltas
+- CLI `sys.argv` shape now matches CPython startup mode semantics:
+  - script execution now sets `sys.argv` to `[script_path, ...script_args]`
+    (without executable prefix),
+  - `-c` execution now sets `sys.argv` to `["-c", ...args]`,
+  - REPL/stdin startup now sets `sys.argv` to `[""]`.
+- `pwd` closure was expanded from stubs to native behavior:
+  - `pwd.getpwall`, `pwd.getpwnam`, and `pwd.getpwuid` now read `/etc/passwd`
+    and return tuple-backed `pwd.struct_passwd` instances with field attrs.
+  - `test.test_pwd` is now green in targeted probe runs.
+- `subprocess`/process-argv parity improved:
+  - sequence argv conversion now accepts path-like elements via `os.fspath`
+    conversion, not only `str/bytes`.
+  - this unblocked translation-path subprocess invocations (`pygettext`)
+    from the prior argv-shape failure mode.
+- bytes API coverage expanded:
+  - native `bytes.split` / `bytearray.split` with `sep`/`maxsplit` and
+    whitespace semantics landed, returning receiver-typed chunk elements.
+- `unicodedata` baseline expanded:
+  - native `category()` and `bidirectional()` are now exported on both
+    `unicodedata` and `unicodedata.ucd_3_2_0`.
+  - known residual: surrogate-codepoint fidelity is still constrained by current
+    UTF-8 `str` storage representation (tracked via stdlib-failure lane evidence).
 - VM call argument-binding parity was tightened for positional-only parameters:
   - keyword names matching positional-only params are now routed into `**kwargs` when a
     var-keyword slot exists (CPython behavior),

@@ -9,6 +9,7 @@ use super::{
     parse_decimal_bigint_literal, parse_modules_to_block_literal, parse_string_formatter,
     pow_values, seconds_to_system_time, split_formatter_field_name, system_time_to_secs_f64,
     value_from_bigint, value_to_bigint, value_to_f64, value_to_int, value_to_process_text,
+    value_to_sequence_items,
 };
 
 const CODECS_ATTR_ENCODING: &str = "__pyrs_codec_encoding__";
@@ -20,6 +21,82 @@ const SUBPROCESS_PIPE_KIND_ATTR: &str = "__pyrs_kind";
 const SUBPROCESS_PIPE_ENCODING_ATTR: &str = "__pyrs_encoding";
 const SUBPROCESS_PIPE_TEXT_ATTR: &str = "__pyrs_text";
 const PATHLIB_PATH_VALUE_ATTR: &str = "__pyrs_path_value__";
+
+fn unicode_is_private_use(code: u32) -> bool {
+    matches!(
+        code,
+        0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD
+    )
+}
+
+fn unicode_is_space_separator(code: u32) -> bool {
+    matches!(
+        code,
+        0x0020 | 0x00A0 | 0x1680 | 0x2000..=0x200A | 0x202F | 0x205F | 0x3000
+    )
+}
+
+fn unicodedata_category_for(code: u32, legacy_32: bool) -> &'static str {
+    // CPython's ucd_3_2_0 differs on a few historical points used by stringprep.
+    if legacy_32 && code == 0x0221 {
+        return "Cn";
+    }
+    if (0xD800..=0xDFFF).contains(&code) {
+        return "Cs";
+    }
+    if unicode_is_private_use(code) {
+        return "Co";
+    }
+    if code <= 0x1F || (0x7F..=0x9F).contains(&code) {
+        return "Cc";
+    }
+    if unicode_is_space_separator(code) {
+        return "Zs";
+    }
+    let Some(ch) = char::from_u32(code) else {
+        return "Cn";
+    };
+    if ch.is_uppercase() {
+        "Lu"
+    } else if ch.is_lowercase() {
+        "Ll"
+    } else if ch.is_ascii_digit() {
+        "Nd"
+    } else if ch.is_alphabetic() {
+        "Lo"
+    } else if ch.is_numeric() {
+        "No"
+    } else if ch.is_whitespace() {
+        "Zs"
+    } else {
+        "Po"
+    }
+}
+
+fn unicodedata_bidirectional_for(code: u32, _legacy_32: bool) -> &'static str {
+    if code == 0x05BF {
+        return "NSM";
+    }
+    if (0x0590..=0x08FF).contains(&code) {
+        // Hebrew/Arabic blocks: keep enough fidelity for stringprep d1/d2 checks.
+        if (0x0600..=0x06FF).contains(&code)
+            || (0x0750..=0x077F).contains(&code)
+            || (0x08A0..=0x08FF).contains(&code)
+        {
+            return "AL";
+        }
+        return "R";
+    }
+    if let Some(ch) = char::from_u32(code) {
+        if ch.is_ascii_alphabetic() {
+            return "L";
+        }
+        if ch.is_ascii_digit() {
+            return "EN";
+        }
+    }
+    "ON"
+}
 
 impl Vm {
     fn os_error_exception_name(err: &std::io::Error) -> &'static str {
@@ -482,9 +559,7 @@ impl Vm {
             }
         };
         if args.len() != 1 {
-            return Err(RuntimeError::new(
-                "terminal_size() expects one argument",
-            ));
+            return Err(RuntimeError::new("terminal_size() expects one argument"));
         }
         let values = match &args[0] {
             Value::Tuple(obj) => match &*obj.kind() {
@@ -2060,7 +2135,7 @@ impl Vm {
     }
 
     pub(super) fn subprocess_argv_from_value(
-        &self,
+        &mut self,
         value: Value,
     ) -> Result<Vec<String>, RuntimeError> {
         match value {
@@ -2069,7 +2144,26 @@ impl Vm {
                 Object::Bytes(bytes) => Ok(vec![String::from_utf8_lossy(bytes).into_owned()]),
                 _ => Err(RuntimeError::new("args must be str/bytes or sequence")),
             },
-            other => collect_process_argv(&other),
+            Value::Tuple(_) | Value::List(_) => {
+                let mut argv = Vec::new();
+                for item in value_to_sequence_items(&value)? {
+                    let entry = match item {
+                        Value::Str(text) => text,
+                        Value::Bytes(obj) => match &*obj.kind() {
+                            Object::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "process argument must be str or bytes",
+                                ));
+                            }
+                        },
+                        other => self.path_arg_to_string(other)?,
+                    };
+                    argv.push(entry);
+                }
+                Ok(argv)
+            }
+            other => Ok(vec![self.path_arg_to_string(other)?]),
         }
     }
 
@@ -2860,6 +2954,217 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_subprocess_run(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if args.is_empty() && !kwargs.contains_key("args") {
+            return Err(RuntimeError::new("run() missing args"));
+        }
+        let cmd_value = if !args.is_empty() {
+            args.remove(0)
+        } else {
+            kwargs
+                .remove("args")
+                .ok_or_else(|| RuntimeError::new("run() missing args"))?
+        };
+        let mut argv = self.subprocess_argv_from_value(cmd_value.clone())?;
+        argv = self.rewrite_pyrs_subprocess_argv(argv)?;
+        if argv.is_empty() {
+            return Err(RuntimeError::new("run() empty command"));
+        }
+
+        let capture_output = kwargs
+            .remove("capture_output")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let check = kwargs
+            .remove("check")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let stdin_spec = kwargs.remove("stdin").unwrap_or(Value::None);
+        let mut stdout_spec = kwargs.remove("stdout").unwrap_or(Value::None);
+        let mut stderr_spec = kwargs.remove("stderr").unwrap_or(Value::None);
+        let input_value = kwargs.remove("input");
+        let cwd = match kwargs.remove("cwd") {
+            Some(Value::None) | None => None,
+            Some(value) => Some(self.path_arg_to_string(value)?),
+        };
+        let env = match kwargs.remove("env") {
+            Some(value) => Some(self.subprocess_env_from_value(value)?),
+            None => None,
+        };
+        let text_mode = kwargs
+            .remove("text")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let universal_newlines = kwargs
+            .remove("universal_newlines")
+            .map(|value| is_truthy(&value))
+            .unwrap_or(false);
+        let encoding = kwargs.remove("encoding").and_then(|value| match value {
+            Value::Str(text) => Some(text),
+            Value::None => None,
+            _ => None,
+        });
+        let _timeout = kwargs.remove("timeout");
+        let _shell = kwargs.remove("shell");
+        let _bufsize = kwargs.remove("bufsize");
+        let _errors = kwargs.remove("errors");
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "run() got an unexpected keyword argument",
+            ));
+        }
+        let explicit_text = text_mode || universal_newlines || encoding.is_some();
+
+        if capture_output {
+            if !matches!(stdout_spec, Value::None) || !matches!(stderr_spec, Value::None) {
+                return Err(RuntimeError::value_error(
+                    "stdout and stderr arguments may not be used with capture_output",
+                ));
+            }
+            stdout_spec = Value::Int(-1);
+            stderr_spec = Value::Int(-1);
+        }
+
+        let mut command = Command::new(&argv[0]);
+        if argv.len() > 1 {
+            command.args(&argv[1..]);
+        }
+        if let Some(path) = cwd {
+            command.current_dir(path);
+        }
+        if let Some(env_entries) = env {
+            command.env_clear();
+            for (key, value) in env_entries {
+                command.env(key, value);
+            }
+        }
+        if input_value.is_some() || matches!(stdin_spec, Value::Int(-1)) {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        if matches!(stdout_spec, Value::Int(-1)) {
+            command.stdout(Stdio::piped());
+        } else {
+            command.stdout(Stdio::inherit());
+        }
+        if matches!(stderr_spec, Value::Int(-1)) {
+            command.stderr(Stdio::piped());
+        } else if matches!(stderr_spec, Value::Int(-2)) {
+            command.stderr(Stdio::piped());
+        } else {
+            command.stderr(Stdio::inherit());
+        }
+
+        let output = if let Some(input) = input_value {
+            let mut child = command
+                .spawn()
+                .map_err(|err| RuntimeError::new(format!("run() failed: {err}")))?;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let payload = match input {
+                    Value::Str(text) if explicit_text => {
+                        let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
+                        if codec != "utf-8" && codec != "utf8" {
+                            return Err(RuntimeError::new(
+                                "only utf-8 subprocess text encoding is supported",
+                            ));
+                        }
+                        text.into_bytes()
+                    }
+                    other => self.value_to_bytes_payload(other)?,
+                };
+                stdin
+                    .write_all(&payload)
+                    .map_err(|err| RuntimeError::new(format!("stdin write failed: {err}")))?;
+            }
+            child
+                .wait_with_output()
+                .map_err(|err| RuntimeError::new(format!("run() failed: {err}")))?
+        } else {
+            command
+                .output()
+                .map_err(|err| RuntimeError::new(format!("run() failed: {err}")))?
+        };
+
+        let is_pyrs = is_pyrs_executable(&argv[0]);
+        let stderr_text = String::from_utf8_lossy(&output.stderr);
+        let success = output.status.success() || (is_pyrs && stderr_text.contains("SystemExit: 0"));
+        let returncode = if success {
+            output.status.code().unwrap_or(0)
+        } else {
+            output.status.code().unwrap_or(-1)
+        };
+
+        let stdout_value = if matches!(stdout_spec, Value::Int(-1)) {
+            if explicit_text {
+                let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
+                if codec != "utf-8" && codec != "utf8" {
+                    return Err(RuntimeError::new(
+                        "only utf-8 subprocess text encoding is supported",
+                    ));
+                }
+                Value::Str(String::from_utf8_lossy(&output.stdout).to_string())
+            } else {
+                self.heap.alloc_bytes(output.stdout)
+            }
+        } else {
+            Value::None
+        };
+        let stderr_value =
+            if matches!(stderr_spec, Value::Int(-1)) || matches!(stderr_spec, Value::Int(-2)) {
+                if explicit_text {
+                    let codec = encoding.as_deref().unwrap_or("utf-8").to_ascii_lowercase();
+                    if codec != "utf-8" && codec != "utf8" {
+                        return Err(RuntimeError::new(
+                            "only utf-8 subprocess text encoding is supported",
+                        ));
+                    }
+                    Value::Str(String::from_utf8_lossy(&output.stderr).to_string())
+                } else {
+                    self.heap.alloc_bytes(output.stderr)
+                }
+            } else {
+                Value::None
+            };
+
+        let completed_class = self
+            .modules
+            .get("subprocess")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("CompletedProcess").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| RuntimeError::new("subprocess.CompletedProcess missing"))?;
+        let completed = self.alloc_instance_for_class(&completed_class);
+        if let Object::Instance(instance_data) = &mut *completed.kind_mut() {
+            instance_data.attrs.insert("args".to_string(), cmd_value);
+            instance_data
+                .attrs
+                .insert("returncode".to_string(), Value::Int(returncode as i64));
+            instance_data
+                .attrs
+                .insert("stdout".to_string(), stdout_value);
+            instance_data
+                .attrs
+                .insert("stderr".to_string(), stderr_value);
+        } else {
+            return Err(RuntimeError::new("CompletedProcess construction failed"));
+        }
+
+        if check && !success {
+            return Err(RuntimeError::new("CalledProcessError"));
+        }
+        Ok(Value::Instance(completed))
+    }
+
     pub(super) fn builtin_subprocess_check_call(
         &mut self,
         mut args: Vec<Value>,
@@ -2991,6 +3296,187 @@ impl Vm {
         Self::instance_attr_set(&instance, "stdout", stdout)?;
         Self::instance_attr_set(&instance, "stderr", stderr)?;
         Ok(Value::None)
+    }
+
+    fn pwd_struct_passwd_class(&self) -> Option<ObjRef> {
+        self.modules
+            .get("pwd")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("struct_passwd").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+    }
+
+    fn pwd_entries(
+        &self,
+    ) -> Result<Vec<(String, String, i64, i64, String, String, String)>, RuntimeError> {
+        let contents = fs::read_to_string("/etc/passwd")
+            .map_err(|err| RuntimeError::new(format!("pwd database unavailable: {err}")))?;
+        let mut out = Vec::new();
+        for line in contents.lines() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let parts = line.split(':').collect::<Vec<_>>();
+            if parts.len() < 7 {
+                continue;
+            }
+            let Ok(uid) = parts[2].parse::<i64>() else {
+                continue;
+            };
+            let Ok(gid) = parts[3].parse::<i64>() else {
+                continue;
+            };
+            out.push((
+                parts[0].to_string(),
+                parts[1].to_string(),
+                uid,
+                gid,
+                parts[4].to_string(),
+                parts[5].to_string(),
+                parts[6].to_string(),
+            ));
+        }
+        Ok(out)
+    }
+
+    fn pwd_struct_from_tuple(
+        &mut self,
+        class: &ObjRef,
+        entry: (String, String, i64, i64, String, String, String),
+    ) -> Result<Value, RuntimeError> {
+        let (name, passwd, uid, gid, gecos, dir, shell) = entry;
+        let instance = self.alloc_instance_for_class(class);
+        let tuple_values = vec![
+            Value::Str(name.clone()),
+            Value::Str(passwd.clone()),
+            Value::Int(uid),
+            Value::Int(gid),
+            Value::Str(gecos.clone()),
+            Value::Str(dir.clone()),
+            Value::Str(shell.clone()),
+        ];
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("pw_name".to_string(), Value::Str(name));
+            instance_data
+                .attrs
+                .insert("pw_passwd".to_string(), Value::Str(passwd));
+            instance_data
+                .attrs
+                .insert("pw_uid".to_string(), Value::Int(uid));
+            instance_data
+                .attrs
+                .insert("pw_gid".to_string(), Value::Int(gid));
+            instance_data
+                .attrs
+                .insert("pw_gecos".to_string(), Value::Str(gecos));
+            instance_data
+                .attrs
+                .insert("pw_dir".to_string(), Value::Str(dir));
+            instance_data
+                .attrs
+                .insert("pw_shell".to_string(), Value::Str(shell));
+            instance_data.attrs.insert(
+                TUPLE_BACKING_STORAGE_ATTR.to_string(),
+                self.heap.alloc_tuple(tuple_values),
+            );
+        } else {
+            return Err(RuntimeError::new(
+                "pwd.struct_passwd instance construction failed",
+            ));
+        }
+        Ok(Value::Instance(instance))
+    }
+
+    pub(super) fn builtin_pwd_getpwall(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::type_error("getpwall() takes no arguments"));
+        }
+        let class = self
+            .pwd_struct_passwd_class()
+            .ok_or_else(|| RuntimeError::new("pwd.struct_passwd missing"))?;
+        let values = self
+            .pwd_entries()?
+            .into_iter()
+            .map(|entry| self.pwd_struct_from_tuple(&class, entry))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.heap.alloc_list(values))
+    }
+
+    pub(super) fn builtin_pwd_getpwnam(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "getpwnam() takes exactly one argument",
+            ));
+        }
+        let Value::Str(name) = &args[0] else {
+            return Err(RuntimeError::type_error("getpwnam() argument must be str"));
+        };
+        if name.contains('\0') {
+            return Err(RuntimeError::value_error("embedded null character"));
+        }
+        let class = self
+            .pwd_struct_passwd_class()
+            .ok_or_else(|| RuntimeError::new("pwd.struct_passwd missing"))?;
+        for entry in self.pwd_entries()? {
+            if entry.0 == *name {
+                return self.pwd_struct_from_tuple(&class, entry);
+            }
+        }
+        Err(RuntimeError::key_error(name.clone()))
+    }
+
+    pub(super) fn builtin_pwd_getpwuid(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error(
+                "getpwuid() takes exactly one argument",
+            ));
+        }
+        let uid = match &args[0] {
+            Value::Int(value) => *value,
+            Value::Bool(value) => {
+                if *value {
+                    1
+                } else {
+                    0
+                }
+            }
+            Value::BigInt(_) => {
+                return Err(RuntimeError::key_error("<uid>".to_string()));
+            }
+            _ => return Err(RuntimeError::type_error("getpwuid() argument must be int")),
+        };
+        // CPython reserves -1 as always-invalid uid lookup.
+        if uid == -1 {
+            return Err(RuntimeError::key_error(uid.to_string()));
+        }
+        let class = self
+            .pwd_struct_passwd_class()
+            .ok_or_else(|| RuntimeError::new("pwd.struct_passwd missing"))?;
+        for entry in self.pwd_entries()? {
+            if entry.2 == uid {
+                return self.pwd_struct_from_tuple(&class, entry);
+            }
+        }
+        Err(RuntimeError::key_error(uid.to_string()))
     }
 
     pub(super) fn builtin_os_wifstopped(
@@ -5284,49 +5770,10 @@ impl Vm {
 
     pub(super) fn builtin_unicodedata_east_asian_width(
         &self,
-        mut args: Vec<Value>,
-        mut kwargs: HashMap<String, Value>,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if args.len() > 1 {
-            return Err(RuntimeError::new("east_asian_width() expects one argument"));
-        }
-        if let Some(value) = kwargs.remove("unistr") {
-            if !args.is_empty() {
-                return Err(RuntimeError::new(
-                    "east_asian_width() got multiple values for argument 'unistr'",
-                ));
-            }
-            args.push(value);
-        }
-        if !kwargs.is_empty() {
-            return Err(RuntimeError::new(
-                "east_asian_width() got an unexpected keyword argument",
-            ));
-        }
-        if args.len() != 1 {
-            return Err(RuntimeError::new(
-                "east_asian_width() missing required argument 'unistr'",
-            ));
-        }
-        let text = match args.remove(0) {
-            Value::Str(value) => value,
-            _ => {
-                return Err(RuntimeError::type_error(
-                    "east_asian_width() argument must be str",
-                ));
-            }
-        };
-        let mut chars = text.chars();
-        let Some(ch) = chars.next() else {
-            return Err(RuntimeError::type_error(
-                "east_asian_width() argument must be a single character",
-            ));
-        };
-        if chars.next().is_some() {
-            return Err(RuntimeError::type_error(
-                "east_asian_width() argument must be a single character",
-            ));
-        }
+        let ch = self.unicodedata_single_char_arg(args, kwargs, "east_asian_width")?;
         let code = ch as u32;
         let width_class = if matches!(
             code,
@@ -5352,6 +5799,101 @@ impl Vm {
             "N"
         };
         Ok(Value::Str(width_class.to_string()))
+    }
+
+    pub(super) fn builtin_unicodedata_category(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let ch = self.unicodedata_single_char_arg(args, kwargs, "category")?;
+        Ok(Value::Str(
+            unicodedata_category_for(ch as u32, false).to_string(),
+        ))
+    }
+
+    pub(super) fn builtin_unicodedata_bidirectional(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let ch = self.unicodedata_single_char_arg(args, kwargs, "bidirectional")?;
+        Ok(Value::Str(
+            unicodedata_bidirectional_for(ch as u32, false).to_string(),
+        ))
+    }
+
+    pub(super) fn builtin_unicodedata_legacy_category(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let ch = self.unicodedata_single_char_arg(args, kwargs, "category")?;
+        Ok(Value::Str(
+            unicodedata_category_for(ch as u32, true).to_string(),
+        ))
+    }
+
+    pub(super) fn builtin_unicodedata_legacy_bidirectional(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let ch = self.unicodedata_single_char_arg(args, kwargs, "bidirectional")?;
+        Ok(Value::Str(
+            unicodedata_bidirectional_for(ch as u32, true).to_string(),
+        ))
+    }
+
+    fn unicodedata_single_char_arg(
+        &self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+        method_name: &str,
+    ) -> Result<char, RuntimeError> {
+        if args.len() > 1 {
+            return Err(RuntimeError::new(format!(
+                "{method_name}() expects one argument"
+            )));
+        }
+        if let Some(value) = kwargs.remove("unistr") {
+            if !args.is_empty() {
+                return Err(RuntimeError::new(format!(
+                    "{method_name}() got multiple values for argument 'unistr'"
+                )));
+            }
+            args.push(value);
+        }
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(format!(
+                "{method_name}() got an unexpected keyword argument"
+            )));
+        }
+        if args.len() != 1 {
+            return Err(RuntimeError::new(format!(
+                "{method_name}() missing required argument 'unistr'"
+            )));
+        }
+        let text = match args.remove(0) {
+            Value::Str(value) => value,
+            _ => {
+                return Err(RuntimeError::type_error(format!(
+                    "{method_name}() argument must be str"
+                )));
+            }
+        };
+        let mut chars = text.chars();
+        let Some(ch) = chars.next() else {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() argument must be a single character"
+            )));
+        };
+        if chars.next().is_some() {
+            return Err(RuntimeError::type_error(format!(
+                "{method_name}() argument must be a single character"
+            )));
+        }
+        Ok(ch)
     }
 
     pub(super) fn builtin_binascii_crc32(

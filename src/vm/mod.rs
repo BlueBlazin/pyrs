@@ -3893,6 +3893,18 @@ impl Vm {
         }
     }
 
+    pub fn set_sys_argv(&mut self, argv: Vec<String>) {
+        let Some(sys_module) = self.modules.get("sys").cloned() else {
+            return;
+        };
+        let values = argv.into_iter().map(Value::Str).collect::<Vec<_>>();
+        if let Object::Module(module_data) = &mut *sys_module.kind_mut() {
+            module_data
+                .globals
+                .insert("argv".to_string(), self.heap.alloc_list(values));
+        }
+    }
+
     fn install_importlib_modules(&mut self) {
         let importlib = match self.heap.alloc_module(ModuleObject::new("importlib")) {
             Value::Module(obj) => obj,

@@ -14884,7 +14884,18 @@ fn os_terminal_size_is_unpackable_and_tuple_like() {
 
 #[test]
 fn str_center_padding_matches_cpython() {
-    let source = "a = 'x'.center(4, '-')\nb = 'x'.center(5, '-')\nok = (a == '-x--' and b == '--x--')\n";
+    let source =
+        "a = 'x'.center(4, '-')\nb = 'x'.center(5, '-')\nok = (a == '-x--' and b == '--x--')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn bytes_split_supports_separator_and_bytearray_receiver() {
+    let source = "a = b'a/b/c'.split(b'/')\nb = bytearray(b'x y  z').split()\nok = (a == [b'a', b'b', b'c'] and isinstance(b[0], bytearray) and b == [bytearray(b'x'), bytearray(b'y'), bytearray(b'z')])\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

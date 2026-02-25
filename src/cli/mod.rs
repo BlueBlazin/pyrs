@@ -88,25 +88,31 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
             0
         }
         Some(flag) if flag == "-c" => match args.next() {
-            Some(source) => match run_command(&source, import_site) {
-                Ok(()) => 0,
-                Err(err) => {
-                    eprintln!("{}", error_style::format_error_for_stderr(&err));
-                    2
+            Some(source) => {
+                let command_args = args.collect::<Vec<_>>();
+                match run_command(&source, command_args, import_site) {
+                    Ok(()) => 0,
+                    Err(err) => {
+                        eprintln!("{}", error_style::format_error_for_stderr(&err));
+                        2
+                    }
                 }
-            },
+            }
             None => {
                 eprintln!("error: -c expects command string");
                 2
             }
         },
-        Some(path) => match run_file(&path, import_site) {
-            Ok(()) => 0,
-            Err(err) => {
-                eprintln!("{}", error_style::format_error_for_stderr(&err));
-                2
+        Some(path) => {
+            let script_args = args.collect::<Vec<_>>();
+            match run_file(&path, script_args, import_site) {
+                Ok(()) => 0,
+                Err(err) => {
+                    eprintln!("{}", error_style::format_error_for_stderr(&err));
+                    2
+                }
             }
-        },
+        }
     }
 }
 
@@ -114,9 +120,13 @@ fn print_help() {
     println!("{HELP}");
 }
 
-fn run_file(path: &str, import_site: bool) -> Result<(), String> {
+fn run_file(path: &str, script_args: Vec<String>, import_site: bool) -> Result<(), String> {
     let mut vm = Vm::new();
     configure_vm_for_execution(&mut vm, path, import_site)?;
+    let mut argv = Vec::with_capacity(1 + script_args.len());
+    argv.push(path.to_string());
+    argv.extend(script_args);
+    vm.set_sys_argv(argv);
     if path.ends_with(".pyc") {
         let exec_result = vm.execute_pyc_file(path);
         let shutdown_result = vm.run_shutdown_hooks();
@@ -143,9 +153,13 @@ fn run_file(path: &str, import_site: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn run_command(source: &str, import_site: bool) -> Result<(), String> {
+fn run_command(source: &str, command_args: Vec<String>, import_site: bool) -> Result<(), String> {
     let mut vm = Vm::new();
     configure_vm_for_command(&mut vm, import_site)?;
+    let mut argv = Vec::with_capacity(1 + command_args.len());
+    argv.push("-c".to_string());
+    argv.extend(command_args);
+    vm.set_sys_argv(argv);
     vm.cache_source_text("<string>", source);
 
     let module = parser::parse_module(source)

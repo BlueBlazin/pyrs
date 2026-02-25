@@ -1832,6 +1832,7 @@ impl Vm {
             "count" => NativeMethodKind::BytesCount,
             "find" => NativeMethodKind::BytesFind,
             "index" => NativeMethodKind::BytesIndex,
+            "split" => NativeMethodKind::BytesSplit,
             "splitlines" => NativeMethodKind::BytesSplitLines,
             "translate" => NativeMethodKind::BytesTranslate,
             "join" => NativeMethodKind::BytesJoin,
@@ -2732,11 +2733,11 @@ impl Vm {
             "__func__" => as_value(&function_kind, &function)
                 .ok_or_else(|| RuntimeError::attribute_error("attribute access unsupported type")),
             "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
-            | "__type_params__" | "__builtins__" => {
+            | "__type_params__" | "__builtins__" | "__globals__" => {
                 if let BoundFunctionKind::NativeMethod(kind) = &function_kind {
                     if matches!(
                         attr_name,
-                        "__annotate__" | "__type_params__" | "__builtins__"
+                        "__annotate__" | "__type_params__" | "__builtins__" | "__globals__"
                     ) {
                         return Err(RuntimeError::attribute_error(format!(
                             "method has no attribute '{}'",

@@ -8650,6 +8650,28 @@ impl Vm {
         needle: Value,
         container: Value,
     ) -> Result<bool, RuntimeError> {
+        if let Value::List(obj) = &container
+            && let Object::List(values) = &*obj.kind()
+        {
+            for item in values {
+                let equals = self.compare_eq_runtime(item.clone(), needle.clone())?;
+                if self.truthy_from_value(&equals)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        if let Value::Tuple(obj) = &container
+            && let Object::Tuple(values) = &*obj.kind()
+        {
+            for item in values {
+                let equals = self.compare_eq_runtime(item.clone(), needle.clone())?;
+                if self.truthy_from_value(&equals)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
         if let Value::Dict(dict) = &container {
             return self.dict_contains_key_checked_runtime(dict, &needle);
         }
@@ -8657,6 +8679,30 @@ impl Vm {
             && let Some(backing_dict) = self.instance_backing_dict(instance)
         {
             return self.dict_contains_key_checked_runtime(&backing_dict, &needle);
+        }
+        if let Value::Instance(instance) = &container
+            && let Some(backing_list) = self.instance_backing_list(instance)
+            && let Object::List(values) = &*backing_list.kind()
+        {
+            for item in values {
+                let equals = self.compare_eq_runtime(item.clone(), needle.clone())?;
+                if self.truthy_from_value(&equals)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        if let Value::Instance(instance) = &container
+            && let Some(backing_tuple) = self.instance_backing_tuple(instance)
+            && let Object::Tuple(values) = &*backing_tuple.kind()
+        {
+            for item in values {
+                let equals = self.compare_eq_runtime(item.clone(), needle.clone())?;
+                if self.truthy_from_value(&equals)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
         }
         match compare_in(&needle, &container) {
             Ok(found) => Ok(found),

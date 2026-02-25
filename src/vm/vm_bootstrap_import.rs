@@ -2516,6 +2516,8 @@ impl Vm {
                     "east_asian_width",
                     BuiltinFunction::UnicodedataEastAsianWidth,
                 ),
+                ("category", BuiltinFunction::UnicodedataCategory),
+                ("bidirectional", BuiltinFunction::UnicodedataBidirectional),
             ],
             Vec::new(),
         );
@@ -2554,6 +2556,14 @@ impl Vm {
                     legacy_data.globals.insert(
                         "east_asian_width".to_string(),
                         Value::Builtin(BuiltinFunction::UnicodedataEastAsianWidth),
+                    );
+                    legacy_data.globals.insert(
+                        "category".to_string(),
+                        Value::Builtin(BuiltinFunction::UnicodedataLegacyCategory),
+                    );
+                    legacy_data.globals.insert(
+                        "bidirectional".to_string(),
+                        Value::Builtin(BuiltinFunction::UnicodedataLegacyBidirectional),
                     );
                 }
                 module_data
@@ -6699,6 +6709,7 @@ impl Vm {
             "subprocess",
             &[
                 ("_cleanup", BuiltinFunction::SubprocessCleanup),
+                ("run", BuiltinFunction::SubprocessRun),
                 ("check_call", BuiltinFunction::SubprocessCheckCall),
                 ("_args_from_interpreter_flags", BuiltinFunction::List),
             ],
@@ -7303,9 +7314,9 @@ impl Vm {
         self.install_builtin_module(
             "pwd",
             &[
-                ("getpwall", BuiltinFunction::List),
-                ("getpwnam", BuiltinFunction::NoOp),
-                ("getpwuid", BuiltinFunction::NoOp),
+                ("getpwall", BuiltinFunction::PwdGetPwAll),
+                ("getpwnam", BuiltinFunction::PwdGetPwNam),
+                ("getpwuid", BuiltinFunction::PwdGetPwUid),
             ],
             vec![("struct_passwd", pwd_struct_passwd_class)],
         );

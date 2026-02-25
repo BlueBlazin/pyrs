@@ -264,6 +264,7 @@ pub enum NativeMethodKind {
     BytesCount,
     BytesFind,
     BytesIndex,
+    BytesSplit,
     BytesSplitLines,
     BytesTranslate,
     BytesJoin,
@@ -2789,6 +2790,9 @@ pub enum BuiltinFunction {
     PathlibPathInit,
     PathlibPathJoinPath,
     PathlibPathStr,
+    PwdGetPwAll,
+    PwdGetPwNam,
+    PwdGetPwUid,
     OsWaitPid,
     PosixSubprocessForkExec,
     SubprocessPopenInit,
@@ -2804,6 +2808,7 @@ pub enum BuiltinFunction {
     SubprocessPipeFlush,
     SubprocessPipeClose,
     SubprocessCleanup,
+    SubprocessRun,
     SubprocessCheckCall,
     SubprocessCompletedProcessInit,
     JsonDumps,
@@ -2993,6 +2998,10 @@ pub enum BuiltinFunction {
     CodecsIncrementalDecoderSetState,
     UnicodedataNormalize,
     UnicodedataEastAsianWidth,
+    UnicodedataCategory,
+    UnicodedataBidirectional,
+    UnicodedataLegacyCategory,
+    UnicodedataLegacyBidirectional,
     ReSearch,
     ReMatch,
     ReFullMatch,
@@ -6054,6 +6063,9 @@ impl BuiltinFunction {
             | BuiltinFunction::PathlibPathInit
             | BuiltinFunction::PathlibPathJoinPath
             | BuiltinFunction::PathlibPathStr
+            | BuiltinFunction::PwdGetPwAll
+            | BuiltinFunction::PwdGetPwNam
+            | BuiltinFunction::PwdGetPwUid
             | BuiltinFunction::OsWaitPid
             | BuiltinFunction::PosixSubprocessForkExec
             | BuiltinFunction::SubprocessPopenInit
@@ -6069,6 +6081,7 @@ impl BuiltinFunction {
             | BuiltinFunction::SubprocessPipeFlush
             | BuiltinFunction::SubprocessPipeClose
             | BuiltinFunction::SubprocessCleanup
+            | BuiltinFunction::SubprocessRun
             | BuiltinFunction::SubprocessCheckCall
             | BuiltinFunction::SubprocessCompletedProcessInit
             | BuiltinFunction::JsonDumps
@@ -6136,6 +6149,10 @@ impl BuiltinFunction {
             | BuiltinFunction::CodecsIncrementalDecoderSetState
             | BuiltinFunction::UnicodedataNormalize
             | BuiltinFunction::UnicodedataEastAsianWidth
+            | BuiltinFunction::UnicodedataCategory
+            | BuiltinFunction::UnicodedataBidirectional
+            | BuiltinFunction::UnicodedataLegacyCategory
+            | BuiltinFunction::UnicodedataLegacyBidirectional
             | BuiltinFunction::SelectSelect
             | BuiltinFunction::ReSearch
             | BuiltinFunction::ReMatch
@@ -7799,6 +7816,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::BytesCount => "<bound method bytes.count>".to_string(),
                     NativeMethodKind::BytesFind => "<bound method bytes.find>".to_string(),
                     NativeMethodKind::BytesIndex => "<bound method bytes.index>".to_string(),
+                    NativeMethodKind::BytesSplit => "<bound method bytes.split>".to_string(),
                     NativeMethodKind::BytesSplitLines => {
                         "<bound method bytes.splitlines>".to_string()
                     }
