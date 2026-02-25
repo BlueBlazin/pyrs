@@ -9616,14 +9616,32 @@ impl Vm {
                 let key = Value::Str(name.to_string());
                 if let Some(Value::Module(module)) = dict_get_value(&modules_dict, &key) {
                     self.modules.insert(name.to_string(), module.clone());
+                    self.apply_post_import_fixups(name, &module);
                     return module;
                 }
             }
             if let Some(module) = self.modules.get(name).cloned() {
+                self.apply_post_import_fixups(name, &module);
                 return module;
             }
         }
+        self.apply_post_import_fixups(name, &fallback);
         fallback
+    }
+
+    fn apply_post_import_fixups(&mut self, name: &str, module: &ObjRef) {
+        if name == "_threading_local" {
+            let local_class = match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("local").cloned(),
+                _ => None,
+            };
+            if let Some(local_class) = local_class
+                && let Some(thread_module) = self.modules.get("_thread").cloned()
+                && let Object::Module(module_data) = &mut *thread_module.kind_mut()
+            {
+                module_data.globals.insert("_local".to_string(), local_class);
+            }
+        }
     }
 
     pub(super) fn fromlist_requested(&self, fromlist: &Value) -> bool {

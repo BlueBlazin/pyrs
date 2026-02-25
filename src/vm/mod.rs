@@ -1607,6 +1607,7 @@ impl Vm {
         });
         let outcome = self.call_internal(callable, args, kwargs);
         VM_THREAD_IDENT_OVERRIDE.with(|slot| slot.set(previous));
+        self.thread_info_objects.remove(&thread_ident);
         outcome.map(|result| (thread_ident, result))
     }
 

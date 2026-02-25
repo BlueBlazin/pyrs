@@ -5385,7 +5385,25 @@ impl Vm {
         }
 
         if attr_name == "__dict__" {
-            let has_dynamic_dict = match collect_slot_names(&class_ref) {
+            let slot_layout = collect_slot_names(&class_ref);
+            let inherited_slot_names = if slot_layout.is_none() {
+                let mut inherited = Vec::new();
+                for candidate in class_attr_walk(&class_ref).into_iter().skip(1) {
+                    if let Object::Class(class_data) = &*candidate.kind()
+                        && let Some(slots) = &class_data.slots
+                    {
+                        for slot in slots {
+                            if !inherited.iter().any(|existing| existing == slot) {
+                                inherited.push(slot.clone());
+                            }
+                        }
+                    }
+                }
+                inherited
+            } else {
+                Vec::new()
+            };
+            let has_dynamic_dict = match &slot_layout {
                 Some(allowed_slots) => {
                     allowed_slots.iter().any(|name| name == "__dict__")
                         || class_inherits_dynamic_instance_dict(&class_ref)
@@ -5408,9 +5426,64 @@ impl Vm {
                 {
                     return Ok(AttrAccessOutcome::Value(Value::Dict(dict_obj.clone())));
                 }
-                let dict_value = self
-                    .heap
-                    .alloc_dict(Self::instance_dict_entries(instance_data));
+                let dict_entries = match &slot_layout {
+                    Some(allowed_slots) => instance_data
+                        .attrs
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            if matches!(
+                                name.as_str(),
+                                LIST_BACKING_STORAGE_ATTR
+                                    | TUPLE_BACKING_STORAGE_ATTR
+                                    | STR_BACKING_STORAGE_ATTR
+                                    | BYTES_BACKING_STORAGE_ATTR
+                                    | INT_BACKING_STORAGE_ATTR
+                                    | FLOAT_BACKING_STORAGE_ATTR
+                                    | COMPLEX_BACKING_STORAGE_ATTR
+                                    | DICT_BACKING_STORAGE_ATTR
+                                    | SET_BACKING_STORAGE_ATTR
+                                    | FROZENSET_BACKING_STORAGE_ATTR
+                                    | INSTANCE_DICT_STORAGE_ATTR
+                            ) {
+                                return None;
+                            }
+                            if allowed_slots.iter().any(|slot| slot == name) {
+                                return None;
+                            }
+                            Some((Value::Str(name.clone()), value.clone()))
+                        })
+                        .collect(),
+                    None if inherited_slot_names.is_empty() => {
+                        Self::instance_dict_entries(instance_data)
+                    }
+                    None => instance_data
+                        .attrs
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            if matches!(
+                                name.as_str(),
+                                LIST_BACKING_STORAGE_ATTR
+                                    | TUPLE_BACKING_STORAGE_ATTR
+                                    | STR_BACKING_STORAGE_ATTR
+                                    | BYTES_BACKING_STORAGE_ATTR
+                                    | INT_BACKING_STORAGE_ATTR
+                                    | FLOAT_BACKING_STORAGE_ATTR
+                                    | COMPLEX_BACKING_STORAGE_ATTR
+                                    | DICT_BACKING_STORAGE_ATTR
+                                    | SET_BACKING_STORAGE_ATTR
+                                    | FROZENSET_BACKING_STORAGE_ATTR
+                                    | INSTANCE_DICT_STORAGE_ATTR
+                            ) {
+                                return None;
+                            }
+                            if inherited_slot_names.iter().any(|slot| slot == name) {
+                                return None;
+                            }
+                            Some((Value::Str(name.clone()), value.clone()))
+                        })
+                        .collect(),
+                };
+                let dict_value = self.heap.alloc_dict(dict_entries);
                 instance_data
                     .attrs
                     .insert(INSTANCE_DICT_STORAGE_ATTR.to_string(), dict_value.clone());
@@ -5488,13 +5561,37 @@ impl Vm {
         }
 
         if let Object::Instance(instance_data) = &*instance.kind() {
-            if let Some(attr) = instance_data.attrs.get(attr_name).cloned() {
-                return Ok(AttrAccessOutcome::Value(attr));
+            let slot_layout = collect_slot_names(&class_ref);
+            let mut has_dynamic_dict = true;
+            let mut attr_is_declared_slot = false;
+            if let Some(allowed_slots) = &slot_layout {
+                has_dynamic_dict = allowed_slots.iter().any(|name| name == "__dict__")
+                    || class_inherits_dynamic_instance_dict(&class_ref);
+                attr_is_declared_slot = allowed_slots.iter().any(|name| name == attr_name);
             }
-            if let Some(Value::Dict(dict_obj)) = instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-                && let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
+            if let Some(allowed_slots) = &slot_layout
+                && has_dynamic_dict
+                && !attr_is_declared_slot
+                && !allowed_slots.is_empty()
             {
-                return Ok(AttrAccessOutcome::Value(attr));
+                if let Some(Value::Dict(dict_obj)) =
+                    instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+                    && let Some(attr) =
+                        dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
+                {
+                    return Ok(AttrAccessOutcome::Value(attr));
+                }
+            } else {
+                if let Some(attr) = instance_data.attrs.get(attr_name).cloned() {
+                    return Ok(AttrAccessOutcome::Value(attr));
+                }
+                if let Some(Value::Dict(dict_obj)) =
+                    instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+                    && let Some(attr) =
+                        dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
+                {
+                    return Ok(AttrAccessOutcome::Value(attr));
+                }
             }
         }
 
@@ -6252,17 +6349,118 @@ impl Vm {
             }
         }
 
+        if attr_name == "__dict__" {
+            let Value::Dict(new_dict) = value else {
+                return Err(RuntimeError::type_error("__dict__ must be set to a dict"));
+            };
+            let slot_layout = collect_slot_names(&class_ref);
+            let inherited_slot_names = if slot_layout.is_none() {
+                let mut inherited = Vec::new();
+                for candidate in class_attr_walk(&class_ref).into_iter().skip(1) {
+                    if let Object::Class(class_data) = &*candidate.kind()
+                        && let Some(slots) = &class_data.slots
+                    {
+                        for slot in slots {
+                            if !inherited.iter().any(|existing| existing == slot) {
+                                inherited.push(slot.clone());
+                            }
+                        }
+                    }
+                }
+                inherited
+            } else {
+                Vec::new()
+            };
+            let has_dynamic_dict = match &slot_layout {
+                Some(allowed_slots) => {
+                    allowed_slots.iter().any(|name| name == "__dict__")
+                        || class_inherits_dynamic_instance_dict(&class_ref)
+                }
+                None => true,
+            };
+            if !has_dynamic_dict {
+                return Err(RuntimeError::attribute_error(format!(
+                    "'{}' object has no attribute '__dict__'",
+                    class_name_for_instance(instance).unwrap_or_else(|| "object".to_string())
+                )));
+            }
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                let values_to_mirror = match &*new_dict.kind() {
+                    Object::Dict(entries) => Some(entries.clone()),
+                    _ => None,
+                };
+                instance_data.attrs.insert(
+                    INSTANCE_DICT_STORAGE_ATTR.to_string(),
+                    Value::Dict(new_dict.clone()),
+                );
+
+                // Clear dynamic attributes from the inline attr map to avoid stale
+                // cross-thread/object dict leakage; keep slots and storage attrs.
+                instance_data.attrs.retain(|name, _| {
+                    if matches!(
+                        name.as_str(),
+                        LIST_BACKING_STORAGE_ATTR
+                            | TUPLE_BACKING_STORAGE_ATTR
+                            | STR_BACKING_STORAGE_ATTR
+                            | BYTES_BACKING_STORAGE_ATTR
+                            | INT_BACKING_STORAGE_ATTR
+                            | FLOAT_BACKING_STORAGE_ATTR
+                            | COMPLEX_BACKING_STORAGE_ATTR
+                            | DICT_BACKING_STORAGE_ATTR
+                            | SET_BACKING_STORAGE_ATTR
+                            | FROZENSET_BACKING_STORAGE_ATTR
+                            | INSTANCE_DICT_STORAGE_ATTR
+                    ) {
+                        return true;
+                    }
+                    if let Some(allowed_slots) = &slot_layout {
+                        return allowed_slots.iter().any(|slot| slot == name);
+                    }
+                    inherited_slot_names.iter().any(|slot| slot == name)
+                });
+
+                // Slot-less classes keep a mirrored inline attr map; slot classes
+                // with dynamic dict use INSTANCE_DICT_STORAGE_ATTR as source-of-truth
+                // for non-slot attributes.
+                if slot_layout.is_none()
+                    && inherited_slot_names.is_empty()
+                    && let Some(entries) = values_to_mirror
+                {
+                    for (key, dict_value) in entries {
+                        if let Value::Str(name) = key {
+                            instance_data.attrs.insert(name, dict_value);
+                        }
+                    }
+                }
+            }
+            return Ok(AttrMutationOutcome::Done);
+        }
+
         if let Some(allowed_slots) = collect_slot_names(&class_ref) {
             let has_dynamic_dict = allowed_slots.iter().any(|name| name == "__dict__")
                 || class_inherits_dynamic_instance_dict(&class_ref);
             if has_dynamic_dict {
+                let attr_is_declared_slot = allowed_slots.iter().any(|name| name == attr_name);
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
-                    if let Some(Value::Dict(dict_obj)) =
-                        instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-                    {
-                        dict_set_value(dict_obj, Value::Str(attr_name.to_string()), value.clone());
+                    if attr_is_declared_slot {
+                        instance_data.attrs.insert(attr_name.to_string(), value);
+                    } else {
+                        let dict_obj = match instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR) {
+                            Some(Value::Dict(dict_obj)) => dict_obj.clone(),
+                            _ => {
+                                let dict_obj = self.heap.alloc_dict(Vec::new());
+                                instance_data.attrs.insert(
+                                    INSTANCE_DICT_STORAGE_ATTR.to_string(),
+                                    dict_obj.clone(),
+                                );
+                                match dict_obj {
+                                    Value::Dict(dict_ref) => dict_ref,
+                                    _ => unreachable!(),
+                                }
+                            }
+                        };
+                        dict_set_value(&dict_obj, Value::Str(attr_name.to_string()), value);
                     }
-                    instance_data.attrs.insert(attr_name.to_string(), value);
                 }
                 return Ok(AttrMutationOutcome::Done);
             }

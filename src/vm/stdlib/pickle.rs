@@ -1,6 +1,7 @@
 use super::super::{
-    BYTES_BACKING_STORAGE_ATTR, BuiltinFunction, HashMap, InternalCallOutcome, IteratorKind,
-    IteratorObject, NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm,
+    AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BuiltinFunction, HashMap,
+    INSTANCE_DICT_STORAGE_ATTR, InternalCallOutcome, IteratorKind, IteratorObject,
+    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm,
     class_name_for_instance, is_truthy, runtime_error_matches_exception, value_from_bigint,
     value_to_int,
 };
@@ -2737,11 +2738,56 @@ impl Vm {
         match value {
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
-                    let entries = Self::instance_dict_entries(instance_data);
-                    if entries.is_empty() {
-                        Ok(Value::None)
+                    let dict_entries: Vec<(Value, Value)> = if let Some(Value::Dict(dict_obj)) =
+                        instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
+                    {
+                        match &*dict_obj.kind() {
+                            Object::Dict(entries) => entries.iter().cloned().collect(),
+                            _ => Vec::new(),
+                        }
                     } else {
-                        Ok(self.heap.alloc_dict(entries))
+                        Self::instance_dict_entries(instance_data)
+                    };
+                    let mut slot_entries: Vec<(Value, Value)> = Vec::new();
+                    let mut seen_slots: HashSet<String> = HashSet::new();
+                    for class in self.class_mro_entries(&instance_data.class) {
+                        let Object::Class(class_data) = &*class.kind() else {
+                            continue;
+                        };
+                        let Some(slots) = &class_data.slots else {
+                            continue;
+                        };
+                        for slot_name in slots {
+                            if slot_name == "__dict__" || slot_name == "__weakref__" {
+                                continue;
+                            }
+                            if !seen_slots.insert(slot_name.clone()) {
+                                continue;
+                            }
+                            if let Some(value) = instance_data.attrs.get(slot_name).cloned() {
+                                slot_entries.push((Value::Str(slot_name.clone()), value));
+                            }
+                        }
+                    }
+
+                    if slot_entries.is_empty() {
+                        if dict_entries.is_empty() {
+                            Ok(Value::None)
+                        } else {
+                            Ok(self.heap.alloc_dict(dict_entries))
+                        }
+                    } else {
+                        let dict_state = if dict_entries.is_empty() {
+                            Value::None
+                        } else {
+                            self.heap.alloc_dict(dict_entries)
+                        };
+                        let slot_state = if slot_entries.is_empty() {
+                            Value::None
+                        } else {
+                            self.heap.alloc_dict(slot_entries)
+                        };
+                        Ok(self.heap.alloc_tuple(vec![dict_state, slot_state]))
                     }
                 }
                 _ => Ok(Value::None),
@@ -2765,17 +2811,25 @@ impl Vm {
                 "object.__setstate__() requires an instance receiver",
             ));
         };
-        let apply_state_dict = |instance: &ObjRef, state: &ObjRef| -> Result<(), RuntimeError> {
+        let mut apply_state_dict =
+            |instance: &ObjRef, state: &ObjRef| -> Result<(), RuntimeError> {
             let entries: Vec<(Value, Value)> = match &*state.kind() {
                 Object::Dict(entries) => entries.iter().cloned().collect(),
                 _ => return Err(RuntimeError::new("state dictionary must be a dict object")),
             };
-            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            if matches!(&*instance.kind(), Object::Instance(_)) {
                 for (key, value) in entries {
                     let Value::Str(name) = key else {
                         return Err(RuntimeError::new("state dictionary keys must be strings"));
                     };
-                    instance_data.attrs.insert(name, value);
+                    match self.store_attr_instance_direct(instance, &name, value)? {
+                        AttrMutationOutcome::Done => {}
+                        AttrMutationOutcome::ExceptionHandled => {
+                            return Err(RuntimeError::new(
+                                "state assignment failed for instance attribute",
+                            ));
+                        }
+                    }
                 }
                 Ok(())
             } else {

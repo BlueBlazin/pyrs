@@ -78,6 +78,16 @@ python3 scripts/probe_stdlib_full.py \
 - `_thread` bootstrap now exports `_local` and thread identity objects are stable per ident
   (instead of allocating a fresh pseudo-thread object per call), closing `_threading_local.local`
   stack-overflow behavior in cycle-collection/attribute-access paths.
+- `_threading_local` import finalization now rebinds `_thread._local` to `_threading_local.local`
+  so `_thread` local behavior follows CPython's pure-Python fallback semantics instead of the
+  previous placeholder class.
+- synthetic-thread identity objects are now released at synthetic-thread exit to avoid retention
+  leaks through long-running `_threading_local` test loops.
+- instance `__dict__` handling was tightened for slot-bearing classes:
+  - slot-storage attrs no longer leak into `__dict__`,
+  - inherited-slot boundaries are preserved on `__dict__` assignment.
+- pickle object state now preserves dynamic dict and slot state together in object get/set-state
+  flows, restoring slot+dict roundtrip coverage in `SlotList`-style tests.
 - Added native `_scproxy` bootstrap module (`_get_proxy_settings`, `_get_proxies`) so urllib/ssl import flows no longer hard-fail on missing macOS proxy extension.
 - Expanded `errno` bootstrap constants to CPython 3.14/macOS baseline (including `EALREADY`, `EWOULDBLOCK` alias) to close import blockers in ssl/network paths.
 - Added `inspect.isabstract` to bootstrap inspect surface to unblock `test_abc` import path.
