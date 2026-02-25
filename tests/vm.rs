@@ -14784,6 +14784,24 @@ ok = (out == ['missing'])
 }
 
 #[test]
+fn threading_thread_ctor_accepts_target_and_args_positional_pair() {
+    let source = r#"import threading
+out = []
+def work(i):
+    out.append(i)
+t = threading.Thread(work, (7,))
+t.start()
+t.join()
+ok = (out == [7])
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn dataclasses_core_helpers_work() {
     let Some(lib) = cpython_lib_path() else {
         return;

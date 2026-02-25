@@ -1593,6 +1593,29 @@ impl Vm {
         ident
     }
 
+    fn clear_synthetic_thread_localimpl_entries(&mut self, thread_obj: &ObjRef) {
+        let thread_key = Value::Int(thread_obj.id() as i64);
+        let snapshot = self.heap.snapshot_objects();
+        for obj in snapshot {
+            let dict_obj = {
+                let Object::Instance(instance_data) = &*obj.kind() else {
+                    continue;
+                };
+                let Object::Class(class_data) = &*instance_data.class.kind() else {
+                    continue;
+                };
+                if class_data.name != "_localimpl" {
+                    continue;
+                }
+                let Some(Value::Dict(dict_obj)) = instance_data.attrs.get("dicts") else {
+                    continue;
+                };
+                dict_obj.clone()
+            };
+            let _ = dict_remove_value(&dict_obj, &thread_key);
+        }
+    }
+
     fn call_internal_in_synthetic_thread(
         &mut self,
         callable: Value,
@@ -1607,6 +1630,10 @@ impl Vm {
         });
         let outcome = self.call_internal(callable, args, kwargs);
         VM_THREAD_IDENT_OVERRIDE.with(|slot| slot.set(previous));
+        let thread_obj = self.thread_info_objects.get(&thread_ident).cloned();
+        if let Some(thread_obj) = thread_obj.as_ref() {
+            self.clear_synthetic_thread_localimpl_entries(thread_obj);
+        }
         self.thread_info_objects.remove(&thread_ident);
         outcome.map(|result| (thread_ident, result))
     }
@@ -4082,6 +4109,8 @@ impl Vm {
                 ("meth_fastcall_keywords", BuiltinFunction::NoOp),
                 ("meth_noargs", BuiltinFunction::NoOp),
                 ("meth_o", BuiltinFunction::NoOp),
+                ("call_in_temporary_c_thread", BuiltinFunction::NoOp),
+                ("join_temporary_c_thread", BuiltinFunction::NoOp),
             ],
             vec![
                 ("INT_MAX", Value::Int(i32::MAX as i64)),

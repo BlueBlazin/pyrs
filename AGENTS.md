@@ -104,6 +104,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - synthetic thread identity objects are now dropped at synthetic-thread exit, preventing unbounded retention of per-thread helper objects in `_threading_local` paths,
     - instance `__dict__` storage semantics now preserve slot vs dynamic-attribute boundaries (including inherited slot names) instead of leaking slot storage attrs into `__dict__`,
     - pickle object-state get/set paths now preserve both dynamic dict state and slot state using attribute-store semantics, restoring slot+dict roundtrip coverage (`SlotList`-style surfaces),
+    - `test.test_threading_local` coverage improved substantially:
+      - `ThreadLocalTest`/`PyThreadingLocalTest` now clear local-ref and argument-binding regressions,
+      - `_testcapi` temporary-thread hooks are now present as no-op compatibility surfaces,
+      - remaining known gap in this lane is real thread-scheduling parity (`derived_cycle_dealloc`) under synthetic-thread execution model,
     - native `_scproxy` substrate added (`_get_proxy_settings`, `_get_proxies`) to unblock urllib/ssl import paths on macOS,
     - bootstrap `errno` constants expanded to CPython 3.14/macOS baseline (including `EALREADY` + `EWOULDBLOCK` alias),
     - bootstrap `inspect` now exports `isabstract`, unblocking `test_abc` import path,

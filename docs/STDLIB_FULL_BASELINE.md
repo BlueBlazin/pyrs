@@ -88,6 +88,12 @@ python3 scripts/probe_stdlib_full.py \
   - inherited-slot boundaries are preserved on `__dict__` assignment.
 - pickle object state now preserves dynamic dict and slot state together in object get/set-state
   flows, restoring slot+dict roundtrip coverage in `SlotList`-style tests.
+- `threading/_threading_local` lane closure status:
+  - `_thread._local` now points at `_threading_local.local`,
+  - local-ref cleanup and constructor-argument handling regressions were fixed,
+  - `_testcapi.call_in_temporary_c_thread`/`join_temporary_c_thread` are present as compatibility no-ops,
+  - one known residual mismatch remains in `test_threading_local.*.test_derived_cycle_dealloc`
+    due synthetic-thread scheduling limits (no true concurrent thread execution yet).
 - Added native `_scproxy` bootstrap module (`_get_proxy_settings`, `_get_proxies`) so urllib/ssl import flows no longer hard-fail on missing macOS proxy extension.
 - Expanded `errno` bootstrap constants to CPython 3.14/macOS baseline (including `EALREADY`, `EWOULDBLOCK` alias) to close import blockers in ssl/network paths.
 - Added `inspect.isabstract` to bootstrap inspect surface to unblock `test_abc` import path.

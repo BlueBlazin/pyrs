@@ -2256,15 +2256,12 @@ impl Vm {
                 "Thread.__init__() expects up to 6 positional arguments",
             ));
         }
-        let group = if !args.is_empty() {
+        let mut group = if !args.is_empty() {
             args.remove(0)
         } else {
             kwargs.remove("group").unwrap_or(Value::None)
         };
-        if group != Value::None {
-            return Err(RuntimeError::new("group argument must be None for now"));
-        }
-        let target = if !args.is_empty() {
+        let mut target = if !args.is_empty() {
             args.remove(0)
         } else {
             kwargs.remove("target").unwrap_or(Value::None)
@@ -2274,7 +2271,7 @@ impl Vm {
         } else {
             kwargs.remove("name").unwrap_or(Value::None)
         };
-        let call_args = if !args.is_empty() {
+        let mut call_args = if !args.is_empty() {
             args.remove(0)
         } else {
             kwargs
@@ -2293,6 +2290,31 @@ impl Vm {
         } else {
             kwargs.remove("daemon").unwrap_or(Value::None)
         };
+
+        if group != Value::None {
+            let kwargs_is_empty_dict = matches!(
+                &call_kwargs,
+                Value::Dict(dict) if matches!(&*dict.kind(), Object::Dict(entries) if entries.is_empty())
+            );
+            let call_args_is_empty_tuple = matches!(
+                &call_args,
+                Value::Tuple(tuple) if matches!(&*tuple.kind(), Object::Tuple(values) if values.is_empty())
+            );
+            let shifted_target_args_pair = matches!(target, Value::Tuple(_) | Value::List(_))
+                && matches!(name, Value::None)
+                && kwargs_is_empty_dict
+                && call_args_is_empty_tuple
+                && matches!(daemon, Value::None);
+            if shifted_target_args_pair {
+                call_args = target;
+                target = group;
+                group = Value::None;
+            }
+        }
+        if group != Value::None {
+            return Err(RuntimeError::new("group argument must be None for now"));
+        }
+
         if !args.is_empty() || !kwargs.is_empty() {
             return Err(RuntimeError::new(
                 "Thread.__init__() got unexpected arguments",
