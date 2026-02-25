@@ -1079,6 +1079,7 @@ pub struct Vm {
     list_eq_in_progress: Vec<(u64, u64)>,
     repr_in_progress: Vec<u64>,
     recursion_limit: i64,
+    switch_interval: f64,
     gc_enabled: bool,
     gc_thresholds: [usize; 3],
     gc_counts: [usize; 3],
@@ -1342,6 +1343,7 @@ impl Vm {
             list_eq_in_progress: Vec::new(),
             repr_in_progress: Vec::new(),
             recursion_limit: 1000,
+            switch_interval: 0.005,
             gc_enabled: true,
             gc_thresholds: [
                 GC_DEFAULT_THRESHOLD0,
@@ -3413,6 +3415,14 @@ impl Vm {
             module_data.globals.insert(
                 "setrecursionlimit".to_string(),
                 Value::Builtin(BuiltinFunction::SysSetRecursionLimit),
+            );
+            module_data.globals.insert(
+                "getswitchinterval".to_string(),
+                Value::Builtin(BuiltinFunction::SysGetSwitchInterval),
+            );
+            module_data.globals.insert(
+                "setswitchinterval".to_string(),
+                Value::Builtin(BuiltinFunction::SysSetSwitchInterval),
             );
             module_data.globals.insert(
                 "_clear_type_descriptors".to_string(),
@@ -8832,6 +8842,7 @@ fn bind_arguments(
     heap: &Heap,
     mut positional: Vec<Value>,
     mut kwargs: HashMap<String, Value>,
+    kwargs_order: Option<Vec<String>>,
 ) -> Result<BoundArguments, RuntimeError> {
     let posonly_len = func.code.posonly_params.len();
     let params_len = func.code.params.len();
@@ -8907,18 +8918,31 @@ fn bind_arguments(
         bound[idx] = Some(value);
     }
 
-    let mut extra_kwargs: HashMap<String, Value> = HashMap::new();
+    let mut extra_kwargs: Vec<(String, Value)> = Vec::new();
+    let mut extra_kwargs_seen: HashSet<String> = HashSet::new();
     let mut kwonly_values: HashMap<String, Value> = HashMap::new();
+    let mut ordered_kwargs: Vec<(String, Value)> = Vec::new();
+    if let Some(order) = kwargs_order {
+        for name in order {
+            if let Some(value) = kwargs.remove(&name) {
+                ordered_kwargs.push((name, value));
+            }
+        }
+    }
     for (name, value) in kwargs.drain() {
+        ordered_kwargs.push((name, value));
+    }
+
+    for (name, value) in ordered_kwargs {
         if func.code.posonly_params.iter().any(|param| param == &name) {
             if func.code.kwarg.is_some() {
-                if extra_kwargs.contains_key(&name) {
+                if !extra_kwargs_seen.insert(name.clone()) {
                     return Err(RuntimeError::type_error(format!(
                         "{}() got multiple values for argument '{}'",
                         func.code.name, name
                     )));
                 }
-                extra_kwargs.insert(name, value);
+                extra_kwargs.push((name, value));
                 continue;
             }
             if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
@@ -8958,13 +8982,13 @@ fn bind_arguments(
             }
             kwonly_values.insert(name, value);
         } else if func.code.kwarg.is_some() {
-            if extra_kwargs.contains_key(&name) {
+            if !extra_kwargs_seen.insert(name.clone()) {
                 return Err(RuntimeError::type_error(format!(
                     "{}() got multiple values for argument '{}'",
                     func.code.name, name
                 )));
             }
-            extra_kwargs.insert(name, value);
+            extra_kwargs.push((name, value));
         } else {
             if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
                 eprintln!(

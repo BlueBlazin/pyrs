@@ -2086,6 +2086,17 @@ fn executes_double_star_kwargs() {
 }
 
 #[test]
+fn kwargs_binding_preserves_callsite_order_for_varkw() {
+    let source = "def f(**kw):\n    return list(kw.items())\na = f(a=1, b=2)\nb = f(b=2, a=1)\nc = f(x=1, **{'z': 3, 'y': 2})\nok = (a == [('a', 1), ('b', 2)] and b == [('b', 2), ('a', 1)] and c == [('x', 1), ('z', 3), ('y', 2)])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn executes_varargs_definition() {
     let source = "def total(*args):\n    s = 0\n    for v in args:\n        s = s + v\n    return s\nx = total(1, 2, 3)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -13088,6 +13099,16 @@ fn collections_namedtuple_instances_support_iteration_len_and_getitem() {
 }
 
 #[test]
+fn collections_namedtuple_instances_compare_equal_to_plain_tuples() {
+    let source = "import collections\nCacheInfo = collections.namedtuple('CacheInfo', 'hits misses maxsize currsize')\ninfo = CacheInfo(hits=0, misses=5, maxsize=35, currsize=1)\nok = (info == (0, 5, 35, 1) and (0, 5, 35, 1) == info and tuple(info) == (0, 5, 35, 1))\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn collections_namedtuple_make_builds_instances_from_iterables() {
     let source = "import collections\nM = collections.namedtuple('M', 'x y')\na = M._make([4, 5])\nb = M._make((6, 7))\nok = isinstance(a, M) and a.x == 4 and a.y == 5 and b.x == 6 and b.y == 7\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -13287,6 +13308,26 @@ fn executes_thread_count_baseline() {
 #[test]
 fn executes_threading_class_methods_baseline() {
     let source = "import threading\nout = []\ndef worker(x):\n    out.append(x)\nt = threading.Thread(target=worker, args=(7,))\na = t.is_alive()\nt.start()\nt.join()\nb = t.is_alive()\nok = (not a) and (not b) and out == [7]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn executes_threading_thread_init_list_args_and_dict_kwargs() {
+    let source = "import threading\nout = []\ndef worker(x, y=0):\n    out.append(x + y)\nt = threading.Thread(target=worker, args=[2], kwargs={'y': 3})\nt.start()\nt.join()\nok = out == [5]\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn sys_switchinterval_get_set_roundtrip_and_validation() {
+    let source = "import sys\norig = sys.getswitchinterval()\nsys.setswitchinterval(0.002)\nchanged = sys.getswitchinterval()\nerr = False\ntry:\n    sys.setswitchinterval(0)\nexcept ValueError:\n    err = True\nsys.setswitchinterval(orig)\nok = isinstance(orig, float) and abs(changed - 0.002) < 1e-12 and err\n";
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

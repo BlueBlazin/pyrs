@@ -3912,8 +3912,13 @@ impl Vm {
                             let mut init_args = Vec::with_capacity(args.len() + 1);
                             init_args.push(Value::Instance(instance.clone()));
                             init_args.extend(args);
-                            let bindings =
-                                match bind_arguments(&func_data, &self.heap, init_args, kwargs) {
+                            let bindings = match bind_arguments(
+                                &func_data,
+                                &self.heap,
+                                init_args,
+                                kwargs,
+                                None,
+                            ) {
                                     Ok(bindings) => bindings,
                                     Err(err) => {
                                         if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
@@ -4823,6 +4828,7 @@ impl Vm {
             bound_values[index] = Some(value);
         }
         if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            let mut tuple_values = Vec::with_capacity(fields.len());
             for (index, name) in fields.iter().enumerate() {
                 let Some(value) = bound_values[index].clone() else {
                     return Err(RuntimeError::new(format!(
@@ -4830,8 +4836,13 @@ impl Vm {
                         name
                     )));
                 };
-                instance_data.attrs.insert(name.clone(), value);
+                instance_data.attrs.insert(name.clone(), value.clone());
+                tuple_values.push(value);
             }
+            instance_data.attrs.insert(
+                TUPLE_BACKING_STORAGE_ATTR.to_string(),
+                self.heap.alloc_tuple(tuple_values),
+            );
             Ok(())
         } else {
             Err(RuntimeError::new(

@@ -2327,11 +2327,14 @@ impl Vm {
         };
         let args_value = match call_args {
             Value::Tuple(tuple) => Value::Tuple(tuple),
-            _ => return Err(RuntimeError::new("Thread args must be a tuple")),
+            Value::List(list) => Value::List(list),
+            Value::None => self.heap.alloc_tuple(Vec::new()),
+            other => other,
         };
         let kwargs_value = match call_kwargs {
             Value::Dict(dict) => Value::Dict(dict),
-            _ => return Err(RuntimeError::new("Thread kwargs must be a dict")),
+            Value::None => self.heap.alloc_dict(Vec::new()),
+            other => other,
         };
         Self::instance_attr_set(&instance, "_target", target)?;
         Self::instance_attr_set(&instance, "_name", name_value)?;
@@ -2367,22 +2370,39 @@ impl Vm {
                     Object::Tuple(values) => values.clone(),
                     _ => Vec::new(),
                 },
-                _ => Vec::new(),
+                Some(Value::List(list)) => match &*list.kind() {
+                    Object::List(values) => values.clone(),
+                    _ => Vec::new(),
+                },
+                Some(_) => {
+                    return Err(RuntimeError::type_error(
+                        "argument after * must be an iterable",
+                    ));
+                }
+                None => Vec::new(),
             };
             let call_kwargs = match Self::instance_attr_get(&instance, "_kwargs") {
                 Some(Value::Dict(dict)) => match &*dict.kind() {
                     Object::Dict(entries) => {
                         let mut out = HashMap::new();
                         for (key, value) in entries {
-                            if let Value::Str(name) = key {
-                                out.insert(name.clone(), value.clone());
-                            }
+                            let Value::Str(name) = key else {
+                                return Err(RuntimeError::type_error(
+                                    "keyword name must be string",
+                                ));
+                            };
+                            out.insert(name.clone(), value.clone());
                         }
                         out
                     }
                     _ => HashMap::new(),
                 },
-                _ => HashMap::new(),
+                Some(Value::None) | None => HashMap::new(),
+                Some(_) => {
+                    return Err(RuntimeError::type_error(
+                        "argument after ** must be a mapping",
+                    ));
+                }
             };
             if matches!(target, Value::Builtin(BuiltinFunction::OsRead))
                 && call_kwargs.is_empty()

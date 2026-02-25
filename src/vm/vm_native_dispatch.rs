@@ -7560,6 +7560,12 @@ impl Vm {
             BuiltinFunction::SysSetRecursionLimit => {
                 self.builtin_sys_setrecursionlimit(args, kwargs)
             }
+            BuiltinFunction::SysGetSwitchInterval => {
+                self.builtin_sys_getswitchinterval(args, kwargs)
+            }
+            BuiltinFunction::SysSetSwitchInterval => {
+                self.builtin_sys_setswitchinterval(args, kwargs)
+            }
             BuiltinFunction::SysAudit => self.builtin_sys_audit(args, kwargs),
             BuiltinFunction::SysAddAuditHook => self.builtin_sys_addaudithook(args, kwargs),
             BuiltinFunction::SysClearTypeDescriptors => {

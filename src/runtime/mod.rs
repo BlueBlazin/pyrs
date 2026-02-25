@@ -2555,6 +2555,8 @@ pub enum BuiltinFunction {
     SysGetSizeOf,
     SysGetRecursionLimit,
     SysSetRecursionLimit,
+    SysGetSwitchInterval,
+    SysSetSwitchInterval,
     SysAudit,
     SysAddAuditHook,
     SysClearTypeDescriptors,
@@ -5845,6 +5847,8 @@ impl BuiltinFunction {
             | BuiltinFunction::SysGetSizeOf
             | BuiltinFunction::SysGetRecursionLimit
             | BuiltinFunction::SysSetRecursionLimit
+            | BuiltinFunction::SysGetSwitchInterval
+            | BuiltinFunction::SysSetSwitchInterval
             | BuiltinFunction::SysAudit
             | BuiltinFunction::SysAddAuditHook
             | BuiltinFunction::SysClearTypeDescriptors

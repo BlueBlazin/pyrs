@@ -118,6 +118,10 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `_blake2` now applies full constructor parameter-block semantics (`fanout`/`depth`/`leaf_size`/`node_offset`/`node_depth`/`inner_size`/`last_node`) with CPython vector parity,
     - descriptor-wrapper parity now includes `__get__` behavior for classmethod/staticmethod wrappers, closing the stdlib `functools` import blocker in `partialmethod(classmethod(...))` paths,
     - non-writable method-attribute assignment now raises `AttributeError` (CPython parity) instead of `RuntimeError` for read-only method attributes like `__self__`,
+    - Python-function call binding now preserves keyword insertion order through VM call paths (`CALL_KW`/`CALL_FUNCTION_EX`), including ordered `**kwargs` propagation into `**kw` parameters (PEP 468 parity),
+    - `sys.getswitchinterval()` / `sys.setswitchinterval()` are now implemented with CPython-style validation (`> 0.0`),
+    - namedtuple instance construction now always materializes tuple backing storage, restoring tuple-equality parity for `cache_info()`/`_CacheInfo`-style call sites,
+    - known remaining `functools` blocker: `TestLRUPy.test_lru_cache_threaded2` still mismatches because `threading.Thread.start()` currently executes through synthetic-thread semantics (no true concurrent contention behavior yet),
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):

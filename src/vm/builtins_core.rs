@@ -2808,6 +2808,39 @@ impl Vm {
         Ok(Value::None)
     }
 
+    pub(super) fn builtin_sys_getswitchinterval(
+        &self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new(
+                "sys.getswitchinterval() expects no arguments",
+            ));
+        }
+        Ok(Value::Float(self.switch_interval))
+    }
+
+    pub(super) fn builtin_sys_setswitchinterval(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new(
+                "sys.setswitchinterval() expects one argument",
+            ));
+        }
+        let interval = value_to_f64(args[0].clone())?;
+        if interval <= 0.0 {
+            return Err(RuntimeError::value_error(
+                "switch interval must be strictly positive",
+            ));
+        }
+        self.switch_interval = interval;
+        Ok(Value::None)
+    }
+
     pub(super) fn builtin_memoryview(
         &mut self,
         mut args: Vec<Value>,

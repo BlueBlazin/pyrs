@@ -5345,6 +5345,7 @@ impl Vm {
                     return Err(RuntimeError::new("call arg count mismatch"));
                 }
                 let mut kwargs = HashMap::new();
+                let mut kwargs_order = Vec::with_capacity(kw_count);
                 for idx in (0..kw_count).rev() {
                     let value = self.pop_value()?;
                     let name = kw_names
@@ -5353,8 +5354,10 @@ impl Vm {
                         .get(idx)
                         .cloned()
                         .ok_or_else(|| RuntimeError::new("kw name index out of range"))?;
-                    kwargs.insert(name, value);
+                    kwargs.insert(name.clone(), value);
+                    kwargs_order.push(name);
                 }
+                kwargs_order.reverse();
                 let mut args = Vec::with_capacity(pos_count - kw_count);
                 for _ in 0..(pos_count - kw_count) {
                     args.push(self.pop_value()?);
@@ -5378,9 +5381,19 @@ impl Vm {
                     fast_dispatched = self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
                 }
                 if !fast_dispatched {
+                    let kwargs_order_opt = if kwargs_order.is_empty() {
+                        None
+                    } else {
+                        Some(kwargs_order.clone())
+                    };
                     match func {
                         Value::Function(func) => {
-                            self.push_function_call_from_obj(&func, args, kwargs)?;
+                            self.push_function_call_from_obj_with_kwarg_order(
+                                &func,
+                                args,
+                                kwargs,
+                                kwargs_order_opt,
+                            )?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -5396,10 +5409,11 @@ impl Vm {
                                     let mut bound_args = Vec::with_capacity(args.len() + 1);
                                     bound_args.push(self.receiver_value(&method_data.receiver)?);
                                     bound_args.extend(args);
-                                    self.push_function_call_from_obj(
+                                    self.push_function_call_from_obj_with_kwarg_order(
                                         &method_data.function,
                                         bound_args,
                                         kwargs,
+                                        kwargs_order_opt,
                                     )?;
                                 }
                                 Object::NativeMethod(native) => {
@@ -5511,14 +5525,17 @@ impl Vm {
                     return Err(RuntimeError::new("call arg count mismatch"));
                 }
                 let mut kwargs = HashMap::new();
+                let mut kwargs_order = Vec::with_capacity(kw_count);
                 for idx in (0..kw_count).rev() {
                     let value = self.pop_value()?;
                     let name = kw_names
                         .get(idx)
                         .cloned()
                         .ok_or_else(|| RuntimeError::new("kw name index out of range"))?;
-                    kwargs.insert(name, value);
+                    kwargs.insert(name.clone(), value);
+                    kwargs_order.push(name);
                 }
+                kwargs_order.reverse();
                 let mut args = Vec::with_capacity(pos_total - kw_count);
                 for _ in 0..(pos_total - kw_count) {
                     args.push(self.pop_value()?);
@@ -5541,9 +5558,19 @@ impl Vm {
                     fast_dispatched = self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
                 }
                 if !fast_dispatched {
+                    let kwargs_order_opt = if kwargs_order.is_empty() {
+                        None
+                    } else {
+                        Some(kwargs_order.clone())
+                    };
                     match func {
                         Value::Function(func) => {
-                            self.push_function_call_from_obj(&func, args, kwargs)?;
+                            self.push_function_call_from_obj_with_kwarg_order(
+                                &func,
+                                args,
+                                kwargs,
+                                kwargs_order_opt,
+                            )?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -5559,10 +5586,11 @@ impl Vm {
                                     let mut bound_args = Vec::with_capacity(args.len() + 1);
                                     bound_args.push(self.receiver_value(&method_data.receiver)?);
                                     bound_args.extend(args);
-                                    self.push_function_call_from_obj(
+                                    self.push_function_call_from_obj_with_kwarg_order(
                                         &method_data.function,
                                         bound_args,
                                         kwargs,
+                                        kwargs_order_opt,
                                     )?;
                                 }
                                 Object::NativeMethod(native) => {
@@ -5651,6 +5679,7 @@ impl Vm {
                     .ok_or_else(|| RuntimeError::new("missing call argument"))?;
                 let (pos_count, kw_count) = decode_call_counts(arg);
                 let mut kwargs = HashMap::new();
+                let mut kwargs_order = Vec::with_capacity(kw_count);
                 for _ in 0..kw_count {
                     let value = self.pop_value()?;
                     let name = self.pop_value()?;
@@ -5661,8 +5690,10 @@ impl Vm {
                     if kwargs.contains_key(&name) {
                         return Err(RuntimeError::new("duplicate keyword argument"));
                     }
-                    kwargs.insert(name, value);
+                    kwargs.insert(name.clone(), value);
+                    kwargs_order.push(name);
                 }
+                kwargs_order.reverse();
                 let mut args = Vec::with_capacity(pos_count);
                 for _ in 0..pos_count {
                     args.push(self.pop_value()?);
@@ -5674,9 +5705,19 @@ impl Vm {
                     fast_dispatched = self.dispatch_small_arity_no_kwargs_call(&func, &mut args)?;
                 }
                 if !fast_dispatched {
+                    let kwargs_order_opt = if kwargs_order.is_empty() {
+                        None
+                    } else {
+                        Some(kwargs_order.clone())
+                    };
                     match func {
                         Value::Function(func) => {
-                            self.push_function_call_from_obj(&func, args, kwargs)?;
+                            self.push_function_call_from_obj_with_kwarg_order(
+                                &func,
+                                args,
+                                kwargs,
+                                kwargs_order_opt,
+                            )?;
                         }
                         Value::BoundMethod(method) => {
                             let method_data = match &*method.kind() {
@@ -5692,10 +5733,11 @@ impl Vm {
                                     let mut bound_args = Vec::with_capacity(args.len() + 1);
                                     bound_args.push(self.receiver_value(&method_data.receiver)?);
                                     bound_args.extend(args);
-                                    self.push_function_call_from_obj(
+                                    self.push_function_call_from_obj_with_kwarg_order(
                                         &method_data.function,
                                         bound_args,
                                         kwargs,
+                                        kwargs_order_opt,
                                     )?;
                                 }
                                 Object::NativeMethod(native) => {
@@ -5776,10 +5818,11 @@ impl Vm {
                 let kwargs_value = self.pop_value()?;
                 let args_value = self.pop_value()?;
                 let func = self.pop_value()?;
-                let kwargs = match kwargs_value {
+                let (kwargs, kwargs_order) = match kwargs_value {
                     Value::Dict(obj) => match &*obj.kind() {
                         Object::Dict(entries) => {
                             let mut map = HashMap::new();
+                            let mut order = Vec::with_capacity(entries.len());
                             for (key, value) in entries {
                                 let key = match key {
                                     Value::Str(name) => name.clone(),
@@ -5792,9 +5835,10 @@ impl Vm {
                                 if map.contains_key(&key) {
                                     return Err(RuntimeError::new("duplicate keyword argument"));
                                 }
-                                map.insert(key, value.clone());
+                                map.insert(key.clone(), value.clone());
+                                order.push(key);
                             }
-                            map
+                            (map, order)
                         }
                         _ => return Err(RuntimeError::new("call kwargs must be dict")),
                     },
@@ -5810,7 +5854,17 @@ impl Vm {
 
                 match func {
                     Value::Function(func) => {
-                        self.push_function_call_from_obj(&func, args, kwargs)?;
+                        let kwargs_order_opt = if kwargs_order.is_empty() {
+                            None
+                        } else {
+                            Some(kwargs_order.clone())
+                        };
+                        self.push_function_call_from_obj_with_kwarg_order(
+                            &func,
+                            args,
+                            kwargs,
+                            kwargs_order_opt,
+                        )?;
                     }
                     Value::BoundMethod(method) => {
                         let method_data = match &*method.kind() {
@@ -5826,10 +5880,16 @@ impl Vm {
                                 let mut bound_args = Vec::with_capacity(args.len() + 1);
                                 bound_args.push(self.receiver_value(&method_data.receiver)?);
                                 bound_args.extend(args);
-                                self.push_function_call_from_obj(
+                                let kwargs_order_opt = if kwargs_order.is_empty() {
+                                    None
+                                } else {
+                                    Some(kwargs_order.clone())
+                                };
+                                self.push_function_call_from_obj_with_kwarg_order(
                                     &method_data.function,
                                     bound_args,
                                     kwargs,
+                                    kwargs_order_opt,
                                 )?;
                             }
                             Object::NativeMethod(native) => {
@@ -6026,11 +6086,12 @@ impl Vm {
                 if matches!(func, Value::None) && !matches!(null_sentinel, Value::None) {
                     std::mem::swap(&mut func, &mut null_sentinel);
                 }
-                let kwargs = match kwargs_value {
-                    Value::None => HashMap::new(),
+                let (kwargs, kwargs_order) = match kwargs_value {
+                    Value::None => (HashMap::new(), Vec::new()),
                     Value::Dict(obj) => match &*obj.kind() {
                         Object::Dict(entries) => {
                             let mut map = HashMap::new();
+                            let mut order = Vec::with_capacity(entries.len());
                             for (key, value) in entries {
                                 let key = match key {
                                     Value::Str(name) => name.clone(),
@@ -6045,9 +6106,10 @@ impl Vm {
                                         "duplicate keyword argument",
                                     ));
                                 }
-                                map.insert(key, value.clone());
+                                map.insert(key.clone(), value.clone());
+                                order.push(key);
                             }
-                            map
+                            (map, order)
                         }
                         _ => return Err(RuntimeError::type_error("call kwargs must be dict")),
                     },
@@ -6072,7 +6134,17 @@ impl Vm {
                 };
                 match func {
                     Value::Function(func) => {
-                        self.push_function_call_from_obj(&func, args, kwargs)?;
+                        let kwargs_order_opt = if kwargs_order.is_empty() {
+                            None
+                        } else {
+                            Some(kwargs_order.clone())
+                        };
+                        self.push_function_call_from_obj_with_kwarg_order(
+                            &func,
+                            args,
+                            kwargs,
+                            kwargs_order_opt,
+                        )?;
                     }
                     Value::BoundMethod(method) => {
                         let method_data = match &*method.kind() {
@@ -6088,10 +6160,16 @@ impl Vm {
                                 let mut bound_args = Vec::with_capacity(args.len() + 1);
                                 bound_args.push(self.receiver_value(&method_data.receiver)?);
                                 bound_args.extend(args);
-                                self.push_function_call_from_obj(
+                                let kwargs_order_opt = if kwargs_order.is_empty() {
+                                    None
+                                } else {
+                                    Some(kwargs_order.clone())
+                                };
+                                self.push_function_call_from_obj_with_kwarg_order(
                                     &method_data.function,
                                     bound_args,
                                     kwargs,
+                                    kwargs_order_opt,
                                 )?;
                             }
                             Object::NativeMethod(native) => {
@@ -11838,6 +11916,16 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<(), RuntimeError> {
+        self.push_function_call_from_obj_with_kwarg_order(func, args, kwargs, None)
+    }
+
+    pub(super) fn push_function_call_from_obj_with_kwarg_order(
+        &mut self,
+        func: &ObjRef,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Result<(), RuntimeError> {
         let (code, module, closure, owner_class, simple_positional_path) = {
             let func_kind = func.kind();
             let func_data = match &*func_kind {
@@ -11870,7 +11958,7 @@ impl Vm {
                 Object::Function(data) => data,
                 _ => return Err(RuntimeError::type_error("attempted to call non-function")),
             };
-            match bind_arguments(func_data, &self.heap, args, kwargs) {
+            match bind_arguments(func_data, &self.heap, args, kwargs, kwargs_order) {
                 Ok(bindings) => bindings,
                 Err(err) => {
                     if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
