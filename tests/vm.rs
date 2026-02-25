@@ -13411,6 +13411,30 @@ fn executes_threading_sync_primitives_baseline() {
 }
 
 #[test]
+fn unittest_mock_magic_methods_participate_in_operator_dispatch() {
+    let Some(lib_path) = cpython_lib_path() else {
+        eprintln!("skipping unittest.mock operator dispatch test (CPython Lib not available)");
+        return;
+    };
+    let handle = std::thread::Builder::new()
+        .name("unittest-mock-operator-dispatch".to_string())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = "import unittest.mock as mock\nx = mock.Mock()\nx.__mul__ = mock.Mock(return_value=15)\nx.__hash__ = mock.Mock(return_value=999)\nok = ((x * 3) == 15 and hash(x) == 999 and x.__hash__.call_count == 1)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.add_module_path(&lib_path);
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        })
+        .expect("spawn unittest-mock-operator-dispatch thread");
+    handle
+        .join()
+        .expect("unittest-mock-operator-dispatch thread should complete");
+}
+
+#[test]
 fn executes_socket_object_methods_baseline() {
     let source = "import _socket\ns = _socket.socket()\nfd0 = s.fileno()\nfd1 = s.detach()\nfd2 = s.fileno()\ns.close()\nok = isinstance(fd0, int) and fd1 == fd0 and fd2 == -1\n";
     let module = parser::parse_module(source).expect("parse should succeed");

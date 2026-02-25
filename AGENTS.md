@@ -121,6 +121,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - Python-function call binding now preserves keyword insertion order through VM call paths (`CALL_KW`/`CALL_FUNCTION_EX`), including ordered `**kwargs` propagation into `**kw` parameters (PEP 468 parity),
     - `sys.getswitchinterval()` / `sys.setswitchinterval()` are now implemented with CPython-style validation (`> 0.0`),
     - namedtuple instance construction now always materializes tuple backing storage, restoring tuple-equality parity for `cache_info()`/`_CacheInfo`-style call sites,
+    - special-method dispatch now falls back to calling non-descriptor class attributes with the receiver prepended (for example `unittest.mock.Mock`-assigned `__mul__`/`__hash__` magic methods now participate in operator/hash dispatch),
     - known remaining `functools` blocker: `TestLRUPy.test_lru_cache_threaded2` still mismatches because `threading.Thread.start()` currently executes through synthetic-thread semantics (no true concurrent contention behavior yet),
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).

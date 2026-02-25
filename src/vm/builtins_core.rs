@@ -818,17 +818,19 @@ impl Vm {
         let target = args.remove(0);
         let hash_value = match target {
             Value::Instance(_) | Value::Class(_) | Value::Super(_) => {
-                let Some(hash_method) = self.lookup_bound_special_method(&target, "__hash__")?
+                let Some(hash_value) = self.call_special_method_with_fallback(
+                    &target,
+                    "__hash__",
+                    Vec::new(),
+                    "hash special method raised",
+                )?
                 else {
                     return Err(RuntimeError::type_error(format!(
                         "unhashable type: '{}'",
                         self.value_type_name_for_error(&target)
                     )));
                 };
-                let result = match self.call_internal(hash_method, Vec::new(), HashMap::new())? {
-                    InternalCallOutcome::Value(value) => value_to_int(value)?,
-                    InternalCallOutcome::CallerExceptionHandled => return Ok(Value::None),
-                };
+                let result = value_to_int(hash_value)?;
                 if result == -1 { -2 } else { result }
             }
             _ => {
@@ -8621,16 +8623,12 @@ impl Vm {
         method_name: &str,
         arg: Value,
     ) -> Result<Option<Value>, RuntimeError> {
-        let Some(callable) = self.lookup_bound_special_method(receiver, method_name)? else {
-            return Ok(None);
-        };
-        match self.call_internal(callable, vec![arg], HashMap::new())? {
-            InternalCallOutcome::Value(value) => Ok(Some(value)),
-            InternalCallOutcome::CallerExceptionHandled => {
-                Err(self
-                    .runtime_error_from_active_exception("binary operator special method raised"))
-            }
-        }
+        self.call_special_method_with_fallback(
+            receiver,
+            method_name,
+            vec![arg],
+            "binary operator special method raised",
+        )
     }
 
     pub(super) fn call_unary_special_method(
@@ -8638,14 +8636,37 @@ impl Vm {
         receiver: &Value,
         method_name: &str,
     ) -> Result<Option<Value>, RuntimeError> {
-        let Some(callable) = self.lookup_bound_special_method(receiver, method_name)? else {
+        self.call_special_method_with_fallback(
+            receiver,
+            method_name,
+            Vec::new(),
+            "unary operator special method raised",
+        )
+    }
+
+    fn call_special_method_with_fallback(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        mut args: Vec<Value>,
+        error_context: &str,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some(class_ref) = self.class_of_value(receiver) else {
             return Ok(None);
         };
-        match self.call_internal(callable, Vec::new(), HashMap::new())? {
+        let Some(method) = class_attr_lookup(&class_ref, method_name) else {
+            return Ok(None);
+        };
+        let callable = if let Some(bound) = self.bind_descriptor_method(method.clone(), receiver)? {
+            bound
+        } else {
+            args.insert(0, receiver.clone());
+            method
+        };
+        match self.call_internal(callable, args, HashMap::new())? {
             InternalCallOutcome::Value(value) => Ok(Some(value)),
             InternalCallOutcome::CallerExceptionHandled => {
-                Err(self
-                    .runtime_error_from_active_exception("unary operator special method raised"))
+                Err(self.runtime_error_from_active_exception(error_context))
             }
         }
     }
