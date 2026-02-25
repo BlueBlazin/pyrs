@@ -96,6 +96,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - bootstrap `inspect` now exports `isabstract`, unblocking `test_abc` import path,
     - `_ssl` bootstrap parity expanded with `Purpose` class baseline (remaining symbol families still open),
     - `_blake2` now applies full constructor parameter-block semantics (`fanout`/`depth`/`leaf_size`/`node_offset`/`node_depth`/`inner_size`/`last_node`) with CPython vector parity,
+    - CPython `test.test_hashlib` resource-disabled lane now runs green end-to-end (`82` run, `15` skipped, `0` fail/err),
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):
