@@ -2122,11 +2122,22 @@ pub unsafe extern "C" fn pyrs_capi_pyerr_format_fallback(
             Backtrace::force_capture()
         );
     }
-    if exception.is_null() {
-        cpython_set_error(message);
+    let exception_type = if exception.is_null() {
+        unsafe { PyExc_RuntimeError }
     } else {
-        cpython_set_typed_error(exception, message);
+        exception
+    };
+    let message_value = cpython_new_ptr_for_value(Value::Str(message.clone()));
+    if message_value.is_null() {
+        if exception.is_null() {
+            cpython_set_error(message);
+        } else {
+            cpython_set_typed_error(exception, message);
+        }
+        return std::ptr::null_mut();
     }
+    unsafe { PyErr_SetObject(exception_type, message_value) };
+    unsafe { Py_DecRef(message_value) };
     std::ptr::null_mut()
 }
 

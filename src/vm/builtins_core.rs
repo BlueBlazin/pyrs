@@ -8,19 +8,20 @@ use super::{
     MONITORING_EVENT_BRANCH_LEFT, MONITORING_EVENT_BRANCH_RIGHT, MONITORING_EVENT_C_RAISE,
     MONITORING_EVENT_C_RETURN, MONITORING_EVENT_CALL, MONITORING_EVENT_SET_MAX,
     MONITORING_LOCAL_EVENT_SET_MAX, MONITORING_MAX_USER_TOOL_ID, ModuleObject, NativeMethodKind,
-    NativeMethodObject, ObjRef, Object, Ordering, PY_TPFLAGS_HEAPTYPE, Rc, RuntimeError,
-    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR,
-    Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
-    call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, class_of_class, compare_ge,
-    compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
-    dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
-    encode_text_bytes, format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
-    is_import_error_family, is_missing_attribute_error, is_os_error_family,
-    is_runtime_type_name_marker, matmul_values, mul_values, neg_value, normalize_codec_encoding,
-    normalize_codec_errors, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser,
-    pos_value, round_float_with_ndigits, runtime_error_matches_exception, sub_values,
-    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
-    weakref_target_id, weakref_target_object, with_bytes_like_source, xor_values,
+    NativeMethodObject, ObjRef, Object, Ordering, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
+    Rc, RuntimeError, SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject,
+    TUPLE_BACKING_STORAGE_ATTR, Value, Vm, Write, add_values, bigint_from_bytes,
+    bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup, class_attr_walk,
+    class_of_class, compare_ge, compare_gt, compare_in, compare_le, compare_lt, compare_order,
+    compiler, decode_text_bytes, dedup_hashable_values, dict_remove_value, dict_set_value,
+    dict_set_value_checked, div_values, encode_text_bytes, format_float_hex, format_repr,
+    format_value, frame_cell_value, invert_value, is_import_error_family,
+    is_missing_attribute_error, is_os_error_family, is_runtime_type_name_marker, matmul_values,
+    mul_values, neg_value, normalize_codec_encoding, normalize_codec_errors, or_values,
+    ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
+    runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
+    value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
+    with_bytes_like_source, xor_values,
 };
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
@@ -1010,7 +1011,8 @@ impl Vm {
             })
             .unwrap_or(0);
         drop(class_kind);
-        if (flags & PY_TPFLAGS_HEAPTYPE) == 0 {
+        let flags = self.cpython_proxy_type_flags(&class).unwrap_or(flags);
+        if (flags & PY_TPFLAGS_HEAPTYPE) == 0 || (flags & PY_TPFLAGS_IMMUTABLETYPE) != 0 {
             return Err(RuntimeError::type_error("argument is immutable"));
         }
         if let Object::Class(class_data) = &mut *class.kind_mut() {
@@ -11165,8 +11167,10 @@ impl Vm {
                     ),
                     _ => (None, "type".to_string()),
                 };
+                let flags = flags.or_else(|| self.cpython_proxy_type_flags(&class));
                 if let Some(flags) = flags
-                    && (flags & PY_TPFLAGS_HEAPTYPE) == 0
+                    && ((flags & PY_TPFLAGS_HEAPTYPE) == 0
+                        || (flags & PY_TPFLAGS_IMMUTABLETYPE) != 0)
                 {
                     return Err(RuntimeError::type_error(format!(
                         "cannot set attribute '{}' of immutable type '{}'",
@@ -11241,6 +11245,29 @@ impl Vm {
                 }
             }
             Value::Class(class) => {
+                let (flags, class_name) = match &*class.kind() {
+                    Object::Class(class_data) => (
+                        class_data
+                            .attrs
+                            .get("__flags__")
+                            .and_then(|value| match value {
+                                Value::Int(flags) => Some(*flags),
+                                _ => None,
+                            }),
+                        class_data.name.clone(),
+                    ),
+                    _ => (None, "type".to_string()),
+                };
+                let flags = flags.or_else(|| self.cpython_proxy_type_flags(&class));
+                if let Some(flags) = flags
+                    && ((flags & PY_TPFLAGS_HEAPTYPE) == 0
+                        || (flags & PY_TPFLAGS_IMMUTABLETYPE) != 0)
+                {
+                    return Err(RuntimeError::type_error(format!(
+                        "cannot delete attribute '{}' of immutable type '{}'",
+                        name, class_name
+                    )));
+                }
                 if let Object::Class(class_data) = &mut *class.kind_mut()
                     && class_data.attrs.remove(&name).is_none()
                 {

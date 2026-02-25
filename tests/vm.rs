@@ -1514,6 +1514,28 @@ fn inspect_parameter_replace_preserves_fields_and_applies_overrides() {
 }
 
 #[test]
+fn inspect_signature_bind_validates_and_returns_bound_arguments() {
+    let source = "import inspect\nsig = inspect.signature(lambda a, b=1, *, c=2, **kw: 0)\nba = sig.bind(10, c=3, d=4)\nargs = ba.arguments\nok = (args['a'] == 10 and args['c'] == 3 and isinstance(args['kw'], dict) and args['kw']['d'] == 4)\nmissing_raises = False\ntry:\n    sig.bind(c=3)\nexcept TypeError:\n    missing_raises = True\nok = ok and missing_raises\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn hmac_keyword_digest_paths_do_not_raise_systemerror() {
+    let source = "try:\n    import _hmac\nexcept ImportError:\n    ok = True\nelse:\n    ok = (_hmac.compute_digest(b'k', b'm', digest='md5') == _hmac.compute_digest(b'k', b'm', 'md5'))\n    try:\n        _hmac.compute_digest(b'k', b'm', digest='unknown')\n    except BaseException as exc:\n        ok = ok and (type(exc).__name__ != 'SystemError')\n    else:\n        ok = False\n    try:\n        _hmac.new(b'k', b'm', digestmod='unknown')\n    except BaseException as exc:\n        ok = ok and (type(exc).__name__ != 'SystemError')\n    else:\n        ok = False\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn exposes_inspect_private_mro_helpers() {
     let source = "import inspect\nclass A:\n    pass\nclass B(A):\n    pass\nmro = inspect._static_getmro(B)\nd = inspect._get_dunder_dict_of_class(B)\nbuiltins_ns = inspect._get_dunder_dict_of_class(int)\nmappingproxy = type(type.__dict__)\ns = inspect._sentinel\nok = (mro[0] is B) and (mro[1] is A) and ('__module__' in d) and isinstance(d, mappingproxy) and isinstance(builtins_ns, mappingproxy) and (inspect._sentinel is s)\n";
     let module = parser::parse_module(source).expect("parse should succeed");

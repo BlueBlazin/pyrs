@@ -272,3 +272,53 @@ fn cli_pyrs_cpython_lib_isolation_skips_host_framework_stdlib_paths() {
     );
     assert_eq!(code, 0, "stderr:\n{stderr}");
 }
+
+#[test]
+fn cli_pyrs_cpython_lib_uses_host_dynload_fallback_without_host_stdlib_root() {
+    let mut host_dynload: Option<PathBuf> = None;
+    for candidate in [
+        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
+        "/opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
+        "/usr/local/lib/python3.14/lib-dynload",
+        "/usr/lib/python3.14/lib-dynload",
+    ] {
+        let path = PathBuf::from(candidate);
+        if path.is_dir() {
+            host_dynload = Some(path);
+            break;
+        }
+    }
+    let Some(host_dynload) = host_dynload else {
+        eprintln!("skipping host dynload fallback test: no host lib-dynload found");
+        return;
+    };
+
+    let root = temp_root("cli_dynload_host_fallback");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let host_dynload_normalized = fs::canonicalize(&host_dynload).unwrap_or(host_dynload);
+    let host_stdlib_root = host_dynload_normalized
+        .parent()
+        .expect("host dynload should have parent")
+        .to_path_buf();
+    let script = root.join("main.py");
+    fs::write(
+        &script,
+        &format!(
+            "import os, sys\nexpected_dyn = os.path.normpath({:?})\nforbidden_root = os.path.normpath({:?})\npaths = [os.path.normpath(p) for p in sys.path]\nassert expected_dyn in paths, paths\nassert forbidden_root not in paths, paths\n",
+            host_dynload_normalized.to_string_lossy(),
+            host_stdlib_root.to_string_lossy()
+        ),
+    )
+    .expect("write script");
+
+    let script_arg = script.to_string_lossy();
+    let (code, _stdout, stderr) = run_pyrs(
+        &root,
+        &[script_arg.as_ref()],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+}

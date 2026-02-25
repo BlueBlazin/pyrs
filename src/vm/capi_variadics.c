@@ -2800,131 +2800,233 @@ void * const *_PyArg_UnpackKeywords(
         PyErr_SetString((void *)&PyExc_TypeError, "_PyArg_UnpackKeywords received null parser/buffer");
         return NULL;
     }
+    if (kwnames != NULL && !is_tuple_object(kwnames)) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
+    if (args == NULL) {
+        if (nargs == 0 && kwargs == NULL && kwnames == NULL) {
+            args = (void *const *)buf;
+        } else {
+            PyErr_BadInternalCall();
+            return NULL;
+        }
+    }
     const char * const *keywords = parser->keywords;
+    if (keywords == NULL) {
+        PyErr_BadInternalCall();
+        return NULL;
+    }
     int keyword_count = pyrs_keyword_count(keywords);
+    int posonly = parser->pos;
+    if (posonly < 0) {
+        posonly = 0;
+    }
+    int minposonly = posonly < minpos ? posonly : minpos;
+    int maxargs = posonly + keyword_count;
+    int reqlimit = minkw ? maxpos + minkw : minpos;
     for (int i = 0; i < keyword_count; i++) {
         buf[i] = NULL;
+    }
+
+    Py_ssize_t nkwargs = 0;
+    void * const *kwstack = NULL;
+    if (kwargs != NULL) {
+        nkwargs = PyDict_Size(kwargs);
+        if (nkwargs < 0) {
+            return NULL;
+        }
+    } else if (kwnames != NULL) {
+        nkwargs = PyTuple_Size(kwnames);
+        if (nkwargs < 0) {
+            return NULL;
+        }
+        kwstack = args + nargs;
+    }
+
+    if (nkwargs == 0 && minkw == 0 && minpos <= nargs && (varpos || nargs <= maxpos)) {
+        return args;
+    }
+
+    if (!varpos && (nargs + nkwargs) > (Py_ssize_t)maxargs) {
+        PyErr_Format(
+            (void *)&PyExc_TypeError,
+            "%s() takes at most %d %sargument%s (%zd given)",
+            parser->fname ? parser->fname : "<function>",
+            maxargs,
+            nargs == 0 ? "keyword " : "",
+            maxargs == 1 ? "" : "s",
+            nargs + nkwargs
+        );
+        return NULL;
     }
 
     if (!varpos && maxpos >= 0 && nargs > (Py_ssize_t)maxpos) {
         _PyArg_CheckPositional(parser->fname ? parser->fname : "<function>", nargs, minpos, maxpos);
         return NULL;
     }
-    if (nargs < (Py_ssize_t)minpos) {
+
+    if (nargs < (Py_ssize_t)minposonly) {
         _PyArg_CheckPositional(
             parser->fname ? parser->fname : "<function>",
             nargs,
-            minpos,
-            maxpos
+            minposonly,
+            (varpos || minposonly < maxpos) ? PY_SSIZE_T_MAX : maxpos
         );
         return NULL;
     }
-    if (nargs > (Py_ssize_t)keyword_count) {
-        nargs = keyword_count;
+
+    if (varpos && nargs > (Py_ssize_t)maxpos) {
+        nargs = maxpos;
     }
-    for (Py_ssize_t i = 0; i < nargs; i++) {
+
+    for (Py_ssize_t i = 0; i < nargs && i < (Py_ssize_t)maxargs; i++) {
         buf[i] = args ? args[i] : NULL;
     }
 
-    Py_ssize_t provided_kw = 0;
-    if (kwnames != NULL) {
-        Py_ssize_t kw_count = PyTuple_Size(kwnames);
-        if (kw_count < 0) {
-            return NULL;
+    for (int i = (nargs > posonly) ? (int)nargs : posonly; i < maxargs; i++) {
+        void *current_arg = NULL;
+        const char *keyword = keywords[i - posonly];
+        if (nkwargs > 0) {
+            if (kwargs != NULL) {
+                current_arg = PyDict_GetItemString(kwargs, keyword);
+            } else if (kwnames != NULL && kwstack != NULL) {
+                Py_ssize_t kw_count = PyTuple_Size(kwnames);
+                if (kw_count < 0) {
+                    return NULL;
+                }
+                for (Py_ssize_t j = 0; j < kw_count; j++) {
+                    void *name_obj = PyTuple_GetItem(kwnames, j);
+                    const char *name = PyUnicode_AsUTF8(name_obj);
+                    if (name == NULL) {
+                        return NULL;
+                    }
+                    if (strcmp(name, keyword) == 0) {
+                        current_arg = kwstack[j];
+                        break;
+                    }
+                }
+            }
+        } else if (i >= reqlimit) {
+            break;
         }
-        provided_kw += kw_count;
-        for (Py_ssize_t i = 0; i < kw_count; i++) {
-            void *name_obj = PyTuple_GetItem(kwnames, i);
-            const char *name = PyUnicode_AsUTF8(name_obj);
-            if (name == NULL) {
-                return NULL;
-            }
-            int index = pyrs_lookup_keyword_index(keywords, name);
-            if (index < 0) {
-                PyErr_Format(
-                    (void *)&PyExc_TypeError,
-                    "%s() got an unexpected keyword argument '%s'",
-                    parser->fname ? parser->fname : "<function>",
-                    name
-                );
-                return NULL;
-            }
-            if (buf[index] != NULL) {
-                PyErr_Format(
-                    (void *)&PyExc_TypeError,
-                    "%s() got multiple values for argument '%s'",
-                    parser->fname ? parser->fname : "<function>",
-                    name
-                );
-                return NULL;
-            }
-            if (args == NULL) {
-                return NULL;
-            }
-            buf[index] = args[nargs + i];
+
+        buf[i] = current_arg;
+        if (current_arg != NULL) {
+            nkwargs--;
+        } else if (i < minpos || (maxpos <= i && i < reqlimit)) {
+            PyErr_Format(
+                (void *)&PyExc_TypeError,
+                "%s() missing required argument '%s' (pos %d)",
+                parser->fname ? parser->fname : "<function>",
+                keyword,
+                i + 1
+            );
+            return NULL;
         }
     }
 
-    if (kwargs != NULL) {
-        void *keys = PyDict_Keys(kwargs);
-        if (keys == NULL) {
-            return NULL;
+    if (nkwargs > 0) {
+        for (int i = posonly; i < (int)nargs && i < maxargs; i++) {
+            const char *keyword = keywords[i - posonly];
+            void *current_arg = NULL;
+            if (kwargs != NULL) {
+                current_arg = PyDict_GetItemString(kwargs, keyword);
+            } else if (kwnames != NULL && kwstack != NULL) {
+                Py_ssize_t kw_count = PyTuple_Size(kwnames);
+                if (kw_count < 0) {
+                    return NULL;
+                }
+                for (Py_ssize_t j = 0; j < kw_count; j++) {
+                    void *name_obj = PyTuple_GetItem(kwnames, j);
+                    const char *name = PyUnicode_AsUTF8(name_obj);
+                    if (name == NULL) {
+                        return NULL;
+                    }
+                    if (strcmp(name, keyword) == 0) {
+                        current_arg = kwstack[j];
+                        break;
+                    }
+                }
+            }
+            if (current_arg != NULL) {
+                PyErr_Format(
+                    (void *)&PyExc_TypeError,
+                    "argument for %s() given by name ('%s') and position (%d)",
+                    parser->fname ? parser->fname : "<function>",
+                    keyword,
+                    i + 1
+                );
+                return NULL;
+            }
         }
-        Py_ssize_t key_count = PyList_Size(keys);
-        if (key_count < 0) {
+
+        if (kwargs != NULL) {
+            void *keys = PyDict_Keys(kwargs);
+            if (keys == NULL) {
+                return NULL;
+            }
+            Py_ssize_t key_count = PyList_Size(keys);
+            if (key_count < 0) {
+                Py_DecRef(keys);
+                return NULL;
+            }
+            for (Py_ssize_t i = 0; i < key_count; i++) {
+                void *key_obj = PyList_GetItem(keys, i);
+                const char *name = PyUnicode_AsUTF8(key_obj);
+                if (name == NULL) {
+                    Py_DecRef(keys);
+                    return NULL;
+                }
+                if (pyrs_lookup_keyword_index(keywords, name) < 0) {
+                    Py_DecRef(keys);
+                    PyErr_Format(
+                        (void *)&PyExc_TypeError,
+                        "%s() got an unexpected keyword argument '%s'",
+                        parser->fname ? parser->fname : "<function>",
+                        name
+                    );
+                    return NULL;
+                }
+            }
             Py_DecRef(keys);
+        } else if (kwnames != NULL) {
+            Py_ssize_t kw_count = PyTuple_Size(kwnames);
+            if (kw_count < 0) {
+                return NULL;
+            }
+            for (Py_ssize_t i = 0; i < kw_count; i++) {
+                void *name_obj = PyTuple_GetItem(kwnames, i);
+                const char *name = PyUnicode_AsUTF8(name_obj);
+                if (name == NULL) {
+                    return NULL;
+                }
+                if (pyrs_lookup_keyword_index(keywords, name) < 0) {
+                    PyErr_Format(
+                        (void *)&PyExc_TypeError,
+                        "%s() got an unexpected keyword argument '%s'",
+                        parser->fname ? parser->fname : "<function>",
+                        name
+                    );
+                    return NULL;
+                }
+            }
+        } else {
+            PyErr_Format(
+                (void *)&PyExc_TypeError,
+                "%s() got unexpected keyword arguments",
+                parser->fname ? parser->fname : "<function>"
+            );
             return NULL;
         }
-        provided_kw += key_count;
-        for (Py_ssize_t i = 0; i < key_count; i++) {
-            void *key_obj = PyList_GetItem(keys, i);
-            const char *name = PyUnicode_AsUTF8(key_obj);
-            if (name == NULL) {
-                Py_DecRef(keys);
-                return NULL;
-            }
-            int index = pyrs_lookup_keyword_index(keywords, name);
-            if (index < 0) {
-                Py_DecRef(keys);
-                PyErr_Format(
-                    (void *)&PyExc_TypeError,
-                    "%s() got an unexpected keyword argument '%s'",
-                    parser->fname ? parser->fname : "<function>",
-                    name
-                );
-                return NULL;
-            }
-            if (buf[index] != NULL) {
-                Py_DecRef(keys);
-                PyErr_Format(
-                    (void *)&PyExc_TypeError,
-                    "%s() got multiple values for argument '%s'",
-                    parser->fname ? parser->fname : "<function>",
-                    name
-                );
-                return NULL;
-            }
-            void *value = PyDict_GetItemString(kwargs, name);
-            buf[index] = value;
+        if (nkwargs > 0) {
+            PyErr_Format(
+                (void *)&PyExc_TypeError,
+                "%s() got unexpected keyword arguments",
+                parser->fname ? parser->fname : "<function>"
+            );
+            return NULL;
         }
-        Py_DecRef(keys);
-    }
-
-    int required_total = minpos + minkw;
-    int provided_total = 0;
-    for (int i = 0; i < keyword_count; i++) {
-        if (buf[i] != NULL) {
-            provided_total++;
-        }
-    }
-    if (provided_total < required_total) {
-        PyErr_Format(
-            (void *)&PyExc_TypeError,
-            "%s() missing required positional argument%s",
-            parser->fname ? parser->fname : "<function>",
-            (required_total - provided_total) == 1 ? "" : "s"
-        );
-        return NULL;
     }
     return (void * const *)buf;
 }

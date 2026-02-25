@@ -4,16 +4,17 @@ use super::{
     AttrMutationOutcome, BigInt, Block, BoundMethod, BuiltinFunction, CodeObject,
     FormatterFieldKey, Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome,
     HashMap, InstanceObject, Instruction, InternalCallOutcome, IteratorKind, IteratorObject,
-    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering, Rc, ReMode,
-    RePatternValue, RuntimeError, Value, Vm, bigint_to_fixed_bytes, bytes_like_from_value,
-    call_builtin_with_kwargs, class_attr_lookup, decode_text_bytes, dedup_hashable_values,
-    dict_get_value, dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes,
-    ensure_hashable, exception_is_named, find_bytes_subslice, is_truthy, memoryview_bounds,
-    memoryview_decode_tolist, memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
-    normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
-    parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
-    re_pattern_from_compiled_module, runtime_error_matches_exception, split_formatter_field_name,
-    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
+    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
+    PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
+    bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
+    decode_text_bytes, dedup_hashable_values, dict_get_value, dict_remove_value, dict_set_value,
+    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
+    find_bytes_subslice, is_truthy, memoryview_bounds, memoryview_decode_tolist,
+    memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
+    normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
+    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
+    runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
+    value_to_bigint, value_to_int, with_bytes_like_source,
 };
 
 unsafe extern "C" {
@@ -6316,10 +6317,17 @@ impl Vm {
         let Object::Class(class_data) = &*class_kind else {
             return None;
         };
-        let Some(Value::Bool(true)) = class_data.attrs.get("__pyrs_disallow_instantiation__")
-        else {
+        let runtime_disallow = matches!(
+            class_data.attrs.get("__pyrs_disallow_instantiation__"),
+            Some(Value::Bool(true))
+        );
+        let proxy_disallow = self
+            .cpython_proxy_type_flags(class)
+            .map(|flags| (flags & PY_TPFLAGS_DISALLOW_INSTANTIATION) != 0)
+            .unwrap_or(false);
+        if !runtime_disallow && !proxy_disallow {
             return None;
-        };
+        }
         let module_name = match class_data.attrs.get("__module__") {
             Some(Value::Str(name)) => name.clone(),
             _ => "builtins".to_string(),
@@ -8361,6 +8369,12 @@ impl Vm {
             }
             BuiltinFunction::InspectSignatureReplace => {
                 self.builtin_inspect_signature_replace(args, kwargs)
+            }
+            BuiltinFunction::InspectSignatureBind => {
+                self.builtin_inspect_signature_bind(args, kwargs, false)
+            }
+            BuiltinFunction::InspectSignatureBindPartial => {
+                self.builtin_inspect_signature_bind(args, kwargs, true)
             }
             BuiltinFunction::InspectParameterInit => {
                 self.builtin_inspect_parameter_init(args, kwargs)

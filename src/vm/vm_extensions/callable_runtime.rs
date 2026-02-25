@@ -174,20 +174,17 @@ impl Vm {
             }
         };
         if status != 0 {
-            let detail = call_ctx
-                .last_error
-                .as_deref()
-                .map(|text| format!(": {text}"))
-                .unwrap_or_default();
+            if let Some(detail) = call_ctx.last_error.clone() {
+                return Err(RuntimeError::new(detail));
+            }
             return Err(RuntimeError::new(format!(
-                "extension function '{}.{}' failed with status {}{}",
+                "RuntimeError: extension function '{}.{}' failed with status {}",
                 match &*entry.module.kind() {
                     Object::Module(module_data) => module_data.name.clone(),
                     _ => "<extension>".to_string(),
                 },
                 entry.name,
-                status,
-                detail
+                status
             )));
         }
         if result_handle == 0 {

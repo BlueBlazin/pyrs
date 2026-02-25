@@ -15,6 +15,7 @@ use super::{
     cpython_type_tp_getattro, cpython_valid_type_ptr, cpython_value_debug_tag,
     is_cpython_proxy_class,
 };
+const PY_TPFLAGS_DISALLOW_INSTANTIATION: i64 = 1 << 7;
 
 impl Vm {
     pub(in crate::vm) fn cpython_proxy_raw_ptr_is_callable(raw_ptr: *mut c_void) -> bool {
@@ -133,6 +134,33 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        if let Value::Class(class) = proxy_value {
+            let proxy_disallow = self
+                .cpython_proxy_type_flags(class)
+                .map(|flags| (flags & PY_TPFLAGS_DISALLOW_INSTANTIATION) != 0)
+                .unwrap_or(false);
+            if proxy_disallow {
+                let (module_name, class_name) = match &*class.kind() {
+                    Object::Class(class_data) => {
+                        let module_name = match class_data.attrs.get("__module__") {
+                            Some(Value::Str(name)) => name.clone(),
+                            _ => "builtins".to_string(),
+                        };
+                        (module_name, class_data.name.clone())
+                    }
+                    _ => ("builtins".to_string(), "type".to_string()),
+                };
+                let qualified_name = if module_name == "builtins" {
+                    class_name
+                } else {
+                    format!("{module_name}.{class_name}")
+                };
+                return Err(RuntimeError::type_error(format!(
+                    "cannot create '{}' instances",
+                    qualified_name
+                )));
+            }
+        }
         let Some(raw_ptr) = Self::cpython_proxy_raw_ptr_from_value(proxy_value) else {
             return Err(RuntimeError::new(
                 "internal error: proxy call target missing raw pointer",

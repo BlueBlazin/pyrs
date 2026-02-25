@@ -9,13 +9,14 @@ use super::{
     INSTANCE_DICT_STORAGE_ATTR, InstanceObject, Instruction, InternalCallOutcome,
     LoadAttrSiteCacheEntry, LoadAttrSiteCacheKind, LoadGlobalSiteCacheEntry, ModuleObject,
     NativeMethodKind, NativeMethodObject, ObjRef, Object, OneArgCallHotPath,
-    OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, QuickenedSiteKind, Rc, RuntimeError,
-    SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame, Value, Vm, and_values, apply_bindings,
-    bind_arguments, builtin_exception_parent, class_attr_lookup, class_attr_lookup_direct,
-    decode_call_counts, deref_name, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value, dict_set_value_checked, ensure_hashable, exception_message_from_call_args,
-    floor_div_values, format_repr, format_value, is_comprehension_code, is_import_error_family,
-    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
+    OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
+    QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame,
+    Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
+    class_attr_lookup, class_attr_lookup_direct, decode_call_counts, deref_name,
+    dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value,
+    dict_set_value_checked, ensure_hashable, exception_message_from_call_args, floor_div_values,
+    format_repr, format_value, is_comprehension_code, is_import_error_family, is_os_error_family,
+    is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
     memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
     mod_values, module_globals_version, pos_value, pow_values, rshift_values,
     runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
@@ -2386,8 +2387,10 @@ impl Vm {
                             ),
                             _ => (None, "type".to_string()),
                         };
+                        let flags = flags.or_else(|| self.cpython_proxy_type_flags(&class));
                         if let Some(flags) = flags
-                            && (flags & PY_TPFLAGS_HEAPTYPE) == 0
+                            && ((flags & PY_TPFLAGS_HEAPTYPE) == 0
+                                || (flags & PY_TPFLAGS_IMMUTABLETYPE) != 0)
                         {
                             return Err(RuntimeError::type_error(format!(
                                 "cannot set attribute '{}' of immutable type '{}'",
@@ -2478,11 +2481,13 @@ impl Vm {
                             ),
                             _ => (None, "type".to_string()),
                         };
+                        let flags = flags.or_else(|| self.cpython_proxy_type_flags(&class));
                         if let Some(flags) = flags
-                            && (flags & PY_TPFLAGS_HEAPTYPE) == 0
+                            && ((flags & PY_TPFLAGS_HEAPTYPE) == 0
+                                || (flags & PY_TPFLAGS_IMMUTABLETYPE) != 0)
                         {
                             return Err(RuntimeError::type_error(format!(
-                                "cannot set attribute '{}' of immutable type '{}'",
+                                "cannot delete attribute '{}' of immutable type '{}'",
                                 attr_name, class_name
                             )));
                         }
@@ -2557,6 +2562,29 @@ impl Vm {
                         }
                     }
                     Value::Class(class) => {
+                        let (flags, class_name) = match &*class.kind() {
+                            Object::Class(class_data) => (
+                                class_data
+                                    .attrs
+                                    .get("__flags__")
+                                    .and_then(|value| match value {
+                                        Value::Int(flags) => Some(*flags),
+                                        _ => None,
+                                    }),
+                                class_data.name.clone(),
+                            ),
+                            _ => (None, "type".to_string()),
+                        };
+                        let flags = flags.or_else(|| self.cpython_proxy_type_flags(&class));
+                        if let Some(flags) = flags
+                            && ((flags & PY_TPFLAGS_HEAPTYPE) == 0
+                                || (flags & PY_TPFLAGS_IMMUTABLETYPE) != 0)
+                        {
+                            return Err(RuntimeError::type_error(format!(
+                                "cannot set attribute '{}' of immutable type '{}'",
+                                attr_name, class_name
+                            )));
+                        }
                         if let Object::Class(class_data) = &mut *class.kind_mut()
                             && class_data.attrs.remove(&attr_name).is_none()
                         {

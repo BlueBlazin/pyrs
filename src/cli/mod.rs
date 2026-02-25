@@ -676,17 +676,37 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         out: &mut Vec<PathBuf>,
         seen: &mut HashSet<PathBuf>,
         root: &PathBuf,
-    ) {
+    ) -> bool {
         let dynload = root.join("lib-dynload");
         if dynload.is_dir() {
             register_unique_path(out, seen, dynload);
+            return true;
         }
+        false
     }
 
     if let Ok(path) = env::var("PYRS_CPYTHON_LIB") {
         strict_site_import = true;
+        let mut has_local_dynload = false;
         if let Some(root) = register_stdlib_root(&mut out, &mut seen, PathBuf::from(path)) {
-            register_dynload_for_root(&mut out, &mut seen, &root);
+            has_local_dynload = register_dynload_for_root(&mut out, &mut seen, &root);
+        }
+        // Keep stdlib root isolated from host .py trees, but if the isolated
+        // root has no adjacent lib-dynload, fall back to a host 3.14
+        // lib-dynload directory for native extension loading.
+        if !has_local_dynload {
+            for candidate in [
+                "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
+                "/opt/homebrew/Frameworks/Python.framework/Versions/3.14/lib/python3.14",
+                "/usr/local/lib/python3.14",
+                "/usr/lib/python3.14",
+            ] {
+                let candidate_path = PathBuf::from(candidate);
+                let normalized = std::fs::canonicalize(&candidate_path).unwrap_or(candidate_path);
+                if register_dynload_for_root(&mut out, &mut seen, &normalized) {
+                    break;
+                }
+            }
         }
         // When PYRS_CPYTHON_LIB is set, keep sys.path isolated to that stdlib root
         // (plus its adjacent lib-dynload if present) instead of mixing in host

@@ -3290,6 +3290,191 @@ impl Vm {
         Ok(Value::Instance(replacement))
     }
 
+    pub(super) fn builtin_inspect_signature_bind(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        allow_partial: bool,
+    ) -> Result<Value, RuntimeError> {
+        let method_name = if allow_partial {
+            "Signature.bind_partial"
+        } else {
+            "Signature.bind"
+        };
+        let instance = self.take_bound_instance_arg(&mut args, method_name)?;
+        let Some(parameters_value) = Self::instance_attr_get(&instance, "parameters") else {
+            return Err(RuntimeError::new(
+                "Signature.bind() receiver is missing parameters",
+            ));
+        };
+        let Some(inspect_module) = self.modules.get("inspect").cloned() else {
+            return Err(RuntimeError::new("inspect module is unavailable"));
+        };
+        let empty_sentinel = match &*inspect_module.kind() {
+            Object::Module(module_data) => module_data
+                .globals
+                .get("_empty")
+                .cloned()
+                .unwrap_or(Value::None),
+            _ => Value::None,
+        };
+        let bound_arguments_class = match &*inspect_module.kind() {
+            Object::Module(module_data) => module_data.globals.get("BoundArguments").cloned(),
+            _ => None,
+        }
+        .and_then(|value| match value {
+            Value::Class(class_obj) => Some(class_obj),
+            _ => None,
+        });
+        let is_empty = |value: &Value| match (value, &empty_sentinel) {
+            (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
+            _ => value == &empty_sentinel,
+        };
+
+        let mut parameter_entries: Vec<(String, i64, Value)> = Vec::new();
+        if let Value::Dict(parameter_dict) = parameters_value
+            && let Object::Dict(entries) = &*parameter_dict.kind()
+        {
+            for (key, parameter) in entries.iter() {
+                let Value::Str(name) = key else {
+                    continue;
+                };
+                let kind = match &parameter {
+                    Value::Instance(parameter_instance) => {
+                        match Self::instance_attr_get(parameter_instance, "kind") {
+                            Some(Value::Int(raw_kind)) => raw_kind,
+                            _ => 1,
+                        }
+                    }
+                    _ => 1,
+                };
+                let default = match &parameter {
+                    Value::Instance(parameter_instance) => {
+                        Self::instance_attr_get(parameter_instance, "default")
+                            .unwrap_or_else(|| empty_sentinel.clone())
+                    }
+                    _ => empty_sentinel.clone(),
+                };
+                parameter_entries.push((name.clone(), kind, default));
+            }
+        }
+
+        let mut positional_index = 0usize;
+        let mut consumed_keywords: HashMap<String, bool> = HashMap::new();
+        let mut bound_entries: Vec<(Value, Value)> = Vec::new();
+        let mut var_keyword_parameter: Option<String> = None;
+
+        for (name, kind, default) in parameter_entries {
+            match kind {
+                0 => {
+                    if kwargs.contains_key(&name) {
+                        return Err(RuntimeError::new(format!(
+                            "TypeError: {method_name}() positional-only parameter '{name}' passed as keyword"
+                        )));
+                    }
+                    if let Some(value) = args.get(positional_index).cloned() {
+                        positional_index += 1;
+                        bound_entries.push((Value::Str(name), value));
+                    } else if !allow_partial && is_empty(&default) {
+                        return Err(RuntimeError::new(format!(
+                            "TypeError: missing a required argument: '{name}'"
+                        )));
+                    }
+                }
+                1 => {
+                    let positional_value = args.get(positional_index).cloned();
+                    let keyword_value = kwargs.get(&name).cloned();
+                    match (positional_value, keyword_value) {
+                        (Some(_), Some(_)) => {
+                            return Err(RuntimeError::new(format!(
+                                "TypeError: multiple values for argument '{name}'"
+                            )));
+                        }
+                        (Some(value), None) => {
+                            positional_index += 1;
+                            bound_entries.push((Value::Str(name), value));
+                        }
+                        (None, Some(value)) => {
+                            consumed_keywords.insert(name.clone(), true);
+                            bound_entries.push((Value::Str(name), value));
+                        }
+                        (None, None) => {
+                            if !allow_partial && is_empty(&default) {
+                                return Err(RuntimeError::new(format!(
+                                    "TypeError: missing a required argument: '{name}'"
+                                )));
+                            }
+                        }
+                    }
+                }
+                2 => {
+                    let mut rest = Vec::new();
+                    while let Some(value) = args.get(positional_index).cloned() {
+                        positional_index += 1;
+                        rest.push(value);
+                    }
+                    bound_entries.push((Value::Str(name), self.heap.alloc_tuple(rest)));
+                }
+                3 => {
+                    if let Some(value) = kwargs.get(&name).cloned() {
+                        consumed_keywords.insert(name.clone(), true);
+                        bound_entries.push((Value::Str(name), value));
+                    } else if !allow_partial && is_empty(&default) {
+                        return Err(RuntimeError::new(format!(
+                            "TypeError: missing a required argument: '{name}'"
+                        )));
+                    }
+                }
+                4 => {
+                    var_keyword_parameter = Some(name);
+                }
+                _ => {}
+            }
+        }
+
+        if positional_index < args.len() {
+            return Err(RuntimeError::new(
+                "TypeError: too many positional arguments",
+            ));
+        }
+
+        let mut remaining_keywords: Vec<(Value, Value)> = Vec::new();
+        for (name, value) in kwargs {
+            if consumed_keywords.contains_key(&name) {
+                continue;
+            }
+            remaining_keywords.push((Value::Str(name), value));
+        }
+        if let Some(parameter_name) = var_keyword_parameter {
+            bound_entries.push((
+                Value::Str(parameter_name),
+                self.heap.alloc_dict(remaining_keywords),
+            ));
+        } else if let Some((Value::Str(name), _)) = remaining_keywords.first() {
+            return Err(RuntimeError::new(format!(
+                "TypeError: got an unexpected keyword argument '{name}'"
+            )));
+        }
+
+        let arguments_value = self.heap.alloc_dict(bound_entries);
+        if let Some(bound_class) = bound_arguments_class {
+            let bound_instance = match self.heap.alloc_instance(InstanceObject::new(bound_class)) {
+                Value::Instance(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Instance(instance_data) = &mut *bound_instance.kind_mut() {
+                instance_data
+                    .attrs
+                    .insert("arguments".to_string(), arguments_value);
+                instance_data
+                    .attrs
+                    .insert("signature".to_string(), Value::Instance(instance));
+            }
+            return Ok(Value::Instance(bound_instance));
+        }
+        Ok(arguments_value)
+    }
+
     pub(super) fn builtin_inspect_isfunction(
         &mut self,
         args: Vec<Value>,

@@ -3099,6 +3099,8 @@ pub enum BuiltinFunction {
     InspectSignatureStr,
     InspectSignatureRepr,
     InspectSignatureReplace,
+    InspectSignatureBind,
+    InspectSignatureBindPartial,
     InspectParameterInit,
     InspectParameterReplace,
     InspectGetModule,
@@ -6169,6 +6171,8 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectSignatureStr
             | BuiltinFunction::InspectSignatureRepr
             | BuiltinFunction::InspectSignatureReplace
+            | BuiltinFunction::InspectSignatureBind
+            | BuiltinFunction::InspectSignatureBindPartial
             | BuiltinFunction::InspectParameterInit
             | BuiltinFunction::InspectParameterReplace
             | BuiltinFunction::InspectGetModule

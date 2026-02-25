@@ -5199,6 +5199,13 @@ impl Vm {
             Value::Class(class) => class,
             _ => unreachable!(),
         };
+        let inspect_bound_arguments_class = match self
+            .heap
+            .alloc_class(ClassObject::new("BoundArguments".to_string(), Vec::new()))
+        {
+            Value::Class(class) => class,
+            _ => unreachable!(),
+        };
         if let Object::Class(class_data) = &mut *inspect_signature_class.kind_mut() {
             class_data
                 .attrs
@@ -5221,6 +5228,14 @@ impl Vm {
             class_data.attrs.insert(
                 "replace".to_string(),
                 Value::Builtin(BuiltinFunction::InspectSignatureReplace),
+            );
+            class_data.attrs.insert(
+                "bind".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignatureBind),
+            );
+            class_data.attrs.insert(
+                "bind_partial".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignatureBindPartial),
             );
         }
         if let Object::Class(class_data) = &mut *inspect_parameter_class.kind_mut() {
@@ -5253,6 +5268,11 @@ impl Vm {
             class_data
                 .attrs
                 .insert("VAR_KEYWORD".to_string(), Value::Int(4));
+        }
+        if let Object::Class(class_data) = &mut *inspect_bound_arguments_class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("inspect".to_string()));
         }
         self.install_builtin_module(
             "inspect",
@@ -5297,6 +5317,10 @@ impl Vm {
                 ("_empty", inspect_sentinel.clone()),
                 ("Signature", Value::Class(inspect_signature_class)),
                 ("Parameter", Value::Class(inspect_parameter_class)),
+                (
+                    "BoundArguments",
+                    Value::Class(inspect_bound_arguments_class),
+                ),
                 ("CO_VARARGS", Value::Int(0x04)),
                 ("CO_VARKEYWORDS", Value::Int(0x08)),
                 ("CO_GENERATOR", Value::Int(0x20)),
