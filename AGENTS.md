@@ -83,20 +83,23 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and `docs/STUB_ACCOUNTING.md` are fully closed.
 
 ## Current Snapshot (2026-02-14)
-- Full stdlib baseline checkpoint (2026-02-24):
+- Full stdlib baseline checkpoint (2026-02-25):
   - added exhaustive probe runner: `scripts/probe_stdlib_full.py`,
   - inventory source: CPython 3.14 `sys.stdlib_module_names` (`297` modules),
   - latest artifact: `perf/stdlib_full_probe_latest.json`,
   - current baseline:
-    - host-supported imports: `278/288` (out of `297` total inventory rows),
-    - comprehensive mapped test status: `PASS=29`, `FAIL=173`, `TIMEOUT=20`,
+    - host-supported imports: `246/288` (out of `297` total inventory rows),
+    - comprehensive mapped test status: `PASS=31`, `FAIL=153`, `TIMEOUT=17`,
   - latest stdlib closure deltas:
+    - `scripts/probe_stdlib_full.py` now forces resource-disabled mapped test mode (`test.support.use_resources = {}`), preventing network/resource-heavy drift in baseline runs,
+    - `hashlib` mapped lane (`test.test_hashlib`) now passes in probe mode (`82` run, `15` skipped),
+    - `hmac` mapped lane (`test.test_hmac`) now passes in probe mode (`145` run, `31` skipped),
+    - CLI stdlib-root detection now treats `PYRS_CPYTHON_LIB` as an isolated root (plus adjacent `lib-dynload` only) and no longer auto-injects host framework stdlib roots under that mode,
     - native `_scproxy` substrate added (`_get_proxy_settings`, `_get_proxies`) to unblock urllib/ssl import paths on macOS,
     - bootstrap `errno` constants expanded to CPython 3.14/macOS baseline (including `EALREADY` + `EWOULDBLOCK` alias),
     - bootstrap `inspect` now exports `isabstract`, unblocking `test_abc` import path,
     - `_ssl` bootstrap parity expanded with `Purpose` class baseline (remaining symbol families still open),
     - `_blake2` now applies full constructor parameter-block semantics (`fanout`/`depth`/`leaf_size`/`node_offset`/`node_depth`/`inner_size`/`last_node`) with CPython vector parity,
-    - CPython `test.test_hashlib` resource-disabled lane now runs green end-to-end (`82` run, `15` skipped, `0` fail/err),
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):

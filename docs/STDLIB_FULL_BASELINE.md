@@ -14,6 +14,8 @@ This is the TDD baseline: failures are expected and become the ordered fix backl
 ## Probe Script
 - Script: `scripts/probe_stdlib_full.py`
 - Artifact: `perf/stdlib_full_probe_latest.json`
+- Comprehensive test mode:
+  - runs mapped CPython `test.test_*` modules with `test.support.use_resources = {}` (resource-disabled baseline, CPython regrtest-aligned default for this probe).
 - Command:
 
 ```bash
@@ -29,32 +31,38 @@ python3 scripts/probe_stdlib_full.py \
 
 `--jobs 0` uses all CPU cores (`os.cpu_count()` workers).
 
-## Latest Baseline (2026-02-24)
+## Latest Baseline (2026-02-25)
 - Total stdlib modules (CPython inventory): `297`
 - Host-supported modules (CPython imports successfully on this machine): `288`
-- pyrs import pass on host-supported modules: `278/288`
-- Import failures on host-supported modules: `10`
+- pyrs import pass on host-supported modules: `246/288`
+- Import failures on host-supported modules: `42`
 - Modules with direct mapped CPython test modules: `236`
-- Modules eligible for comprehensive phase (`supported_on_host && import_ok && mapped_tests`): `222`
+- Modules eligible for comprehensive phase (`supported_on_host && import_ok && mapped_tests`): `201`
 - Comprehensive status on eligible modules:
-  - `PASS`: `29`
-  - `FAIL`: `173`
-  - `TIMEOUT`: `20`
-- Total probe wall time (parallel): `544.65s`
+  - `PASS`: `31`
+  - `FAIL`: `153`
+  - `TIMEOUT`: `17`
+- Total probe wall time (parallel): `463.16s`
 
 ## Host-Unsupported Modules (CPython baseline on this machine)
 `_gdbm`, `_overlapped`, `_winapi`, `_wmi`, `genericpath`, `msvcrt`, `nt`, `winreg`, `winsound`
 
 ## Import Failure Shape (pyrs on host-supported modules)
-- Error-type distribution:
-  - `ImportError`: `9`
-  - `AttributeError`: `1`
-- Remaining import failures are concentrated in unsupported/partial native modules:
-  - `_asyncio`, `_curses`, `_interpchannels`, `_interpqueues`, `_interpreters`, `_zoneinfo`
-  - forced `_elementtree` disable (tracked fallback while `pyexpat.expat_CAPI` is pending)
-  - `rlcompleter` via partial `readline` API
+- Remaining import failures are concentrated in missing/partial native extension surfaces
+  when running against the local CPython-stdlib root in isolated-path mode:
+  - extension/import clusters such as `_decimal`, `_queue`, `_zoneinfo`, `_zstd`, `_multiprocessing`,
+    codec extension variants (`_codecs_*`), plus dependent stdlib wrappers.
+- Import-path isolation note:
+  - when `PYRS_CPYTHON_LIB` is set, pyrs now limits stdlib roots to that explicit path
+    (and its adjacent `lib-dynload` if present) and no longer auto-injects host framework
+    stdlib paths; this removes cross-root contamination during baseline probes.
 
 ## Latest Closure Deltas
+- Probe runner now sets `test.support.use_resources = {}` before mapped unittest execution,
+  preventing network/resource-heavy CPython tests from running in the baseline lane by default.
+- `_hashlib`/`hmac` comprehensive lanes are now green in this probe mode:
+  - `hashlib` (`test.test_hashlib`): `PASS` (`82` run, `15` skipped),
+  - `hmac` (`test.test_hmac`): `PASS` (`145` run, `31` skipped).
 - Added native `_scproxy` bootstrap module (`_get_proxy_settings`, `_get_proxies`) so urllib/ssl import flows no longer hard-fail on missing macOS proxy extension.
 - Expanded `errno` bootstrap constants to CPython 3.14/macOS baseline (including `EALREADY`, `EWOULDBLOCK` alias) to close import blockers in ssl/network paths.
 - Added `inspect.isabstract` to bootstrap inspect surface to unblock `test_abc` import path.

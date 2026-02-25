@@ -250,6 +250,8 @@ def run_unittest_module(
 ) -> dict[str, Any]:
     source = (
         "import importlib, io, json, sys, unittest\n"
+        "from test import support as _pyrs_test_support\n"
+        "_pyrs_test_support.use_resources = {}\n"
         f"name = {test_module!r}\n"
         "stream = io.StringIO()\n"
         "try:\n"
@@ -274,7 +276,6 @@ def run_unittest_module(
         "    'runner_output': stream.getvalue()[-1200:],\n"
         "}\n"
         "print(json.dumps(payload))\n"
-        "sys.exit(0 if payload['ok'] else 1)\n"
     )
     proc = run_process(
         [str(pyrs_bin), "-S", "-c", source],
