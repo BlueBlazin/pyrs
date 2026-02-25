@@ -89,7 +89,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - latest artifact: `perf/stdlib_full_probe_latest.json`,
   - current baseline:
     - host-supported imports: `278/288` (out of `297` total inventory rows),
-    - comprehensive mapped test status: `PASS=33`, `FAIL=172`, `TIMEOUT=17`,
+    - comprehensive mapped test status: `PASS=35`, `FAIL=170`, `TIMEOUT=17`,
   - latest stdlib closure deltas:
     - `scripts/probe_stdlib_full.py` now forces resource-disabled mapped test mode (`test.support.use_resources = {}`), preventing network/resource-heavy drift in baseline runs,
     - `_PyArg_UnpackKeywords` compatibility path was aligned to CPython argument-binding semantics for mixed positional/keyword calls,
@@ -98,6 +98,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `hmac` mapped lane (`test.test_hmac`) now passes in probe mode (`145` run, `3` skipped),
     - bootstrap `inspect.Signature` now exports `bind`/`bind_partial` and `inspect.BoundArguments` for autospec-compatible signature binding,
     - CLI stdlib-root detection now treats `PYRS_CPYTHON_LIB` as an isolated root, with host `lib-dynload` fallback only when the isolated root lacks its own `lib-dynload`,
+    - `src/vm/capi_variadics.c` now provides weak fallback symbols for lightweight test-target links, avoiding unresolved C-API symbols in non-VM-linked binaries,
+    - `_thread` now exports `_local` and VM thread identity objects are stable per ident, closing `_threading_local.local` stack-overflow behavior on attribute access/cycle-collection paths,
     - native `_scproxy` substrate added (`_get_proxy_settings`, `_get_proxies`) to unblock urllib/ssl import paths on macOS,
     - bootstrap `errno` constants expanded to CPython 3.14/macOS baseline (including `EALREADY` + `EWOULDBLOCK` alias),
     - bootstrap `inspect` now exports `isabstract`, unblocking `test_abc` import path,

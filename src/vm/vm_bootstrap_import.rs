@@ -7142,6 +7142,13 @@ impl Vm {
             Value::Class(obj) => obj,
             _ => unreachable!(),
         };
+        if let Some(thread_module) = self.modules.get("_thread").cloned()
+            && let Object::Module(module_data) = &mut *thread_module.kind_mut()
+        {
+            module_data
+                .globals
+                .insert("_local".to_string(), Value::Class(thread_local_class.clone()));
+        }
         self.install_builtin_module(
             "threading",
             &[

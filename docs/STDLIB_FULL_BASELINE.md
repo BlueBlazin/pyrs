@@ -36,13 +36,13 @@ python3 scripts/probe_stdlib_full.py \
 - Host-supported modules (CPython imports successfully on this machine): `288`
 - pyrs import pass on host-supported modules: `278/288`
 - Import failures on host-supported modules: `10`
-- Modules with direct mapped CPython test modules: `236`
-- Modules eligible for comprehensive phase (`supported_on_host && import_ok && mapped_tests`): `226`
+- Modules with direct mapped CPython test modules: `235`
+- Modules eligible for comprehensive phase (`supported_on_host && import_ok && mapped_tests`): `222`
 - Comprehensive status on eligible modules:
-  - `PASS`: `33`
-  - `FAIL`: `172`
+  - `PASS`: `35`
+  - `FAIL`: `170`
   - `TIMEOUT`: `17`
-- Total probe wall time (parallel): `509.27s`
+- Total probe wall time (parallel): `516.44s`
 
 ## Host-Unsupported Modules (CPython baseline on this machine)
 `_gdbm`, `_overlapped`, `_winapi`, `_wmi`, `genericpath`, `msvcrt`, `nt`, `winreg`, `winsound`
@@ -72,6 +72,12 @@ python3 scripts/probe_stdlib_full.py \
 - `_hashlib`/`hmac` comprehensive lanes are now green in this probe mode:
   - `hashlib` (`test.test_hashlib`): `PASS` (`82` run, `15` skipped),
   - `hmac` (`test.test_hmac`): `PASS` (`145` run, `3` skipped).
+- `capi_variadics` now exports weak fallback C-API stubs used only when Rust-side strong symbols
+  are not linked into lightweight test binaries; this closes linker failures in
+  `tests/cli_site_startup.rs` while preserving runtime semantics in normal VM builds.
+- `_thread` bootstrap now exports `_local` and thread identity objects are stable per ident
+  (instead of allocating a fresh pseudo-thread object per call), closing `_threading_local.local`
+  stack-overflow behavior in cycle-collection/attribute-access paths.
 - Added native `_scproxy` bootstrap module (`_get_proxy_settings`, `_get_proxies`) so urllib/ssl import flows no longer hard-fail on missing macOS proxy extension.
 - Expanded `errno` bootstrap constants to CPython 3.14/macOS baseline (including `EALREADY`, `EWOULDBLOCK` alias) to close import blockers in ssl/network paths.
 - Added `inspect.isabstract` to bootstrap inspect surface to unblock `test_abc` import path.

@@ -260,7 +260,7 @@ fn cli_pyrs_cpython_lib_isolation_skips_host_framework_stdlib_paths() {
     let script = root.join("main.py");
     fs::write(
         &script,
-        "import sys\nassert not any('/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14' in p for p in sys.path), sys.path\n",
+        "import os, sys\nforbidden = os.path.normpath('/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14')\npaths = [os.path.normpath(p) for p in sys.path]\nassert forbidden not in paths, paths\n",
     )
     .expect("write script");
 

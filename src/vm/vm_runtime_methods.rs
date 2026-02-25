@@ -45,24 +45,46 @@ impl Vm {
     }
 
     pub(super) fn thread_info_dict(&mut self, name: &str) -> Result<Value, RuntimeError> {
-        let ident = self.builtin_threading_get_ident(Vec::new(), HashMap::new())?;
-        let info = match self
-            .heap
-            .alloc_module(ModuleObject::new("__thread_info__".to_string()))
-        {
-            Value::Module(module) => module,
-            _ => unreachable!(),
+        let ident = self.current_thread_ident_value();
+        let info = if let Some(existing) = self.thread_info_objects.get(&ident).cloned() {
+            existing
+        } else {
+            let thread_class = self
+                .modules
+                .get("threading")
+                .and_then(|module| match &*module.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("Thread") {
+                        Some(Value::Class(class_ref)) => Some(class_ref.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .unwrap_or_else(|| {
+                    match self
+                        .heap
+                        .alloc_class(ClassObject::new("Thread".to_string(), Vec::new()))
+                    {
+                        Value::Class(class_ref) => class_ref,
+                        _ => unreachable!(),
+                    }
+                });
+            let info = match self.heap.alloc_instance(InstanceObject::new(thread_class)) {
+                Value::Instance(instance) => instance,
+                _ => unreachable!(),
+            };
+            self.thread_info_objects.insert(ident, info.clone());
+            info
         };
-        if let Object::Module(module_data) = &mut *info.kind_mut() {
-            module_data
-                .globals
+        if let Object::Instance(instance_data) = &mut *info.kind_mut() {
+            instance_data
+                .attrs
                 .insert("name".to_string(), Value::Str(name.to_string()));
-            module_data.globals.insert("ident".to_string(), ident);
-            module_data
-                .globals
+            instance_data.attrs.insert("ident".to_string(), Value::Int(ident));
+            instance_data
+                .attrs
                 .insert("daemon".to_string(), Value::Bool(false));
         }
-        Ok(Value::Module(info))
+        Ok(Value::Instance(info))
     }
 
     pub(super) fn range_object_parts(&self, obj: &ObjRef) -> Option<(BigInt, BigInt, BigInt)> {

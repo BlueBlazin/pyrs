@@ -31,8 +31,6 @@ typedef void (*PyOS_sighandler_t)(int);
 
 extern void *pyrs_capi_tuple_pack_from_array(Py_ssize_t n, void *const *items);
 extern void pyrs_capi_set_error_message(const char *message);
-extern void *pyrs_capi_pyerr_format_fallback(void *exception, const char *format);
-extern void *pyrs_capi_pyerr_formatv_fallback(void *exception, const char *format, void *vargs);
 extern void pyrs_capi_sys_write_stdout(const char *text);
 extern void pyrs_capi_sys_write_stderr(const char *text);
 extern int pyrs_capi_sys_audit_noargs(const char *event);
@@ -118,6 +116,67 @@ extern void PyErr_WriteUnraisable(void *object);
 extern void Py_IncRef(void *object);
 extern void Py_DecRef(void *object);
 extern char _Py_NoneStruct;
+
+// Some lightweight test binaries don't pull every Rust-exported C-API symbol
+// into the final link. Provide weak fallbacks so capi_variadics can still link;
+// strong Rust exports override these when present.
+__attribute__((weak)) void pyrs_capi_set_error_message(const char *message)
+{
+    (void)message;
+}
+
+__attribute__((weak)) void *pyrs_capi_pyerr_format_fallback(void *exception, const char *format)
+{
+    (void)exception;
+    if (format != NULL) {
+        pyrs_capi_set_error_message(format);
+    } else {
+        pyrs_capi_set_error_message("error");
+    }
+    return NULL;
+}
+
+__attribute__((weak)) void *pyrs_capi_pyerr_formatv_fallback(void *exception, const char *format, void *vargs)
+{
+    (void)vargs;
+    return pyrs_capi_pyerr_format_fallback(exception, format);
+}
+
+__attribute__((weak)) void *PyObject_Str(void *object)
+{
+    (void)object;
+    return NULL;
+}
+
+__attribute__((weak)) void *PyObject_Repr(void *object)
+{
+    (void)object;
+    return NULL;
+}
+
+__attribute__((weak)) void *PyObject_ASCII(void *object)
+{
+    (void)object;
+    return NULL;
+}
+
+__attribute__((weak)) const char *PyUnicode_AsUTF8(void *object)
+{
+    (void)object;
+    return NULL;
+}
+
+__attribute__((weak)) void *PyUnicode_FromWideChar(const wchar_t *value, Py_ssize_t len)
+{
+    (void)value;
+    (void)len;
+    return NULL;
+}
+
+__attribute__((weak)) void Py_DecRef(void *object)
+{
+    (void)object;
+}
 extern char PyDict_Type;
 extern char PyTuple_Type;
 extern char PyUnicode_Type;

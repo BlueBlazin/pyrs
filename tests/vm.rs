@@ -14702,6 +14702,40 @@ fn threading_local_baseline_type_is_available() {
 }
 
 #[test]
+fn thread_module_exports_local_type() {
+    let source = "import _thread\nok = hasattr(_thread, '_local')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn threading_local_cycle_collection_baseline_does_not_overflow_stack() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import _threading_local, weakref, gc
+class X:
+    pass
+x = X()
+x.local = _threading_local.local()
+x.local.x = x
+wr = weakref.ref(x)
+del x
+gc.collect()
+ok = (wr() is None)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.add_module_path(lib);
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn dataclasses_core_helpers_work() {
     let Some(lib) = cpython_lib_path() else {
         return;
