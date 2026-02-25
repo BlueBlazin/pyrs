@@ -221,16 +221,38 @@ for _name in ("sitecustomize", "usercustomize"):
 }
 
 #[test]
-fn cli_adds_lib_dynload_path_when_detectable() {
-    let dynload = PathBuf::from(
-        "/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14/lib-dynload",
-    );
-    if !dynload.is_dir() {
-        eprintln!("skipping dynload startup-path test: host lib-dynload not present");
-        return;
-    }
-
+fn cli_adds_local_lib_dynload_path_when_present_under_pyrs_cpython_lib() {
     let root = temp_root("cli_dynload_path");
+    let stdlib = root.join("Lib");
+    let local_dynload = stdlib.join("lib-dynload");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::create_dir_all(&local_dynload).expect("create local dynload");
+    let local_dynload_normalized =
+        fs::canonicalize(&local_dynload).unwrap_or_else(|_| local_dynload.clone());
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let script = root.join("main.py");
+    fs::write(
+        &script,
+        &format!(
+            "import os, sys\nexpected = os.path.normpath({:?})\nassert any(os.path.normpath(p) == expected for p in sys.path), sys.path\n",
+            local_dynload_normalized.to_string_lossy()
+        ),
+    )
+    .expect("write script");
+
+    let script_arg = script.to_string_lossy();
+    let (code, _stdout, stderr) = run_pyrs(
+        &root,
+        &[script_arg.as_ref()],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+}
+
+#[test]
+fn cli_pyrs_cpython_lib_isolation_skips_host_framework_stdlib_paths() {
+    let root = temp_root("cli_stdlib_isolation");
     let stdlib = root.join("Lib");
     fs::create_dir_all(&stdlib).expect("create stdlib");
     fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
@@ -238,7 +260,7 @@ fn cli_adds_lib_dynload_path_when_detectable() {
     let script = root.join("main.py");
     fs::write(
         &script,
-        "import sys\nassert any(p.endswith('/lib-dynload') for p in sys.path)\n",
+        "import sys\nassert not any('/Library/Frameworks/Python.framework/Versions/3.14/lib/python3.14' in p for p in sys.path), sys.path\n",
     )
     .expect("write script");
 

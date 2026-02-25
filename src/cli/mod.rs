@@ -688,6 +688,10 @@ fn detect_cpython_stdlib_paths() -> (Vec<PathBuf>, bool) {
         if let Some(root) = register_stdlib_root(&mut out, &mut seen, PathBuf::from(path)) {
             register_dynload_for_root(&mut out, &mut seen, &root);
         }
+        // When PYRS_CPYTHON_LIB is set, keep sys.path isolated to that stdlib root
+        // (plus its adjacent lib-dynload if present) instead of mixing in host
+        // framework stdlib paths. This avoids cross-root semantic drift in tests.
+        return (out, strict_site_import);
     }
     if let Ok(home) = env::var("PYTHONHOME") {
         if let Some(root) = register_stdlib_root(
