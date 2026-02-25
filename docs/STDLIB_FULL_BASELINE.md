@@ -57,6 +57,16 @@ python3 scripts/probe_stdlib_full.py \
     its own `lib-dynload` directory.
 
 ## Latest Closure Deltas
+- VM call argument-binding parity was tightened for positional-only parameters:
+  - keyword names matching positional-only params are now routed into `**kwargs` when a
+    var-keyword slot exists (CPython behavior),
+  - this closes a root semantic mismatch hit by stdlib `functools._partial_new`
+    (`partialmethod(..., func=...)` no longer fails at argument binding stage).
+- Descriptor-wrapper parity improved for stdlib `functools` bring-up:
+  - `classmethod`/`staticmethod` wrappers now expose `__get__` descriptor behavior through
+    native wrapper methods, unblocking `test.test_functools` import path closure.
+  - read-only method attribute assignment now raises `AttributeError` (not `RuntimeError`)
+    for non-writable method attributes like `__self__`, matching CPython exception typing.
 - Probe runner now sets `test.support.use_resources = {}` before mapped unittest execution,
   preventing network/resource-heavy CPython tests from running in the baseline lane by default.
 - `_PyArg_UnpackKeywords` was rewritten to follow CPython semantics for mixed positional/keyword

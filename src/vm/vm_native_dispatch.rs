@@ -5104,6 +5104,45 @@ impl Vm {
                     BoundMethod::new(receiver, bound_receiver),
                 )))
             }
+            NativeMethodKind::ClassMethodDescriptorGet => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
+                }
+                let obj = args.remove(0);
+                let owner_hint = args.first().cloned().unwrap_or(Value::None);
+                let descriptor = Value::Module(receiver.clone());
+                let Some(unwrapped) = self.unwrap_classmethod_attr(&descriptor) else {
+                    return Err(RuntimeError::new("invalid classmethod descriptor"));
+                };
+
+                let owner_class = match owner_hint {
+                    Value::Class(class_ref) => Some(class_ref),
+                    Value::None => self.class_of_value(&obj),
+                    other => self.class_of_value(&other),
+                };
+                let Some(owner_class) = owner_class else {
+                    return Ok(NativeCallResult::Value(unwrapped));
+                };
+
+                let bound = match unwrapped {
+                    Value::Function(function) => {
+                        self.heap.alloc_bound_method(BoundMethod::new(function, owner_class))
+                    }
+                    Value::Builtin(builtin) => self.alloc_builtin_bound_method(builtin, owner_class),
+                    other => other,
+                };
+                Ok(NativeCallResult::Value(bound))
+            }
+            NativeMethodKind::StaticMethodDescriptorGet => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
+                }
+                let descriptor = Value::Module(receiver);
+                let Some(unwrapped) = self.unwrap_staticmethod_attr(&descriptor) else {
+                    return Err(RuntimeError::new("invalid staticmethod descriptor"));
+                };
+                Ok(NativeCallResult::Value(unwrapped))
+            }
             NativeMethodKind::FunctionAnnotate => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(

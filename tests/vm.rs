@@ -2097,6 +2097,17 @@ fn executes_kwargs_definition() {
 }
 
 #[test]
+fn executes_posonly_keyword_name_routed_to_varkw() {
+    let source = "def f(a, /, **kw):\n    return kw['a']\nx = f(1, a=2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("x"), Some(Value::Int(2)));
+}
+
+#[test]
 fn executes_varargs_and_kwargs_definition() {
     let source = "def collect(a, *rest, **kw):\n    return len(rest) + kw['b'] + a\nx = collect(1, 2, 3, b=4)\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -14414,6 +14425,25 @@ fn inherited_builtin_attrs_on_user_classes_do_not_bind_instance_receiver() {
 #[test]
 fn builtin_type_descriptor_attrs_exist_for_reduction_paths() {
     let source = "out = []\nlist.append(out, 1)\nok = (out == [1] and int.__add__(1, 2) == 3)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn classmethod_and_staticmethod_wrappers_expose_get_descriptor_behavior() {
+    let source = r#"def f(cls):
+    return cls.__name__
+cm = classmethod(f)
+sm = staticmethod(lambda x: x + 1)
+class C:
+    pass
+bound_cm = cm.__get__(None, C)
+bound_sm = sm.__get__(C(), C)
+ok = (hasattr(cm, "__get__") and hasattr(sm, "__get__") and bound_cm() == "C" and bound_sm(2) == 3)
+"#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");
     let mut vm = Vm::new();

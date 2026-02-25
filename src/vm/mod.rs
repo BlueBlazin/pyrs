@@ -8911,6 +8911,16 @@ fn bind_arguments(
     let mut kwonly_values: HashMap<String, Value> = HashMap::new();
     for (name, value) in kwargs.drain() {
         if func.code.posonly_params.iter().any(|param| param == &name) {
+            if func.code.kwarg.is_some() {
+                if extra_kwargs.contains_key(&name) {
+                    return Err(RuntimeError::type_error(format!(
+                        "{}() got multiple values for argument '{}'",
+                        func.code.name, name
+                    )));
+                }
+                extra_kwargs.insert(name, value);
+                continue;
+            }
             if std::env::var_os("PYRS_TRACE_BIND_ARGS").is_some() {
                 eprintln!(
                     "[bind-args] fn={} unexpected-posonly-keyword={}",

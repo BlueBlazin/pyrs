@@ -340,6 +340,8 @@ pub enum NativeMethodKind {
     BoundMethodReduceEx,
     ComplexReduceEx,
     FunctionDescriptorGet,
+    ClassMethodDescriptorGet,
+    StaticMethodDescriptorGet,
     FunctionAnnotate,
     ClassRegister,
     PropertyGet,
@@ -7863,6 +7865,12 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::FunctionDescriptorGet => {
                         "<bound method function.__get__>".to_string()
+                    }
+                    NativeMethodKind::ClassMethodDescriptorGet => {
+                        "<bound method classmethod.__get__>".to_string()
+                    }
+                    NativeMethodKind::StaticMethodDescriptorGet => {
+                        "<bound method staticmethod.__get__>".to_string()
                     }
                     NativeMethodKind::FunctionAnnotate => {
                         "<bound method function.__annotate__>".to_string()

@@ -1426,7 +1426,7 @@ impl Vm {
         value: Value,
     ) -> Result<(), RuntimeError> {
         if !Self::builtin_attr_is_overridable(attr_name) {
-            return Err(RuntimeError::new(format!(
+            return Err(RuntimeError::attribute_error(format!(
                 "builtin has no writable attribute '{}'",
                 attr_name
             )));
@@ -1444,7 +1444,7 @@ impl Vm {
         attr_name: &str,
     ) -> Result<(), RuntimeError> {
         if !Self::builtin_attr_is_overridable(attr_name) {
-            return Err(RuntimeError::new(format!(
+            return Err(RuntimeError::attribute_error(format!(
                 "builtin has no deletable attribute '{}'",
                 attr_name
             )));
@@ -2738,7 +2738,7 @@ impl Vm {
             "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
             | "__type_params__" => {}
             _ => {
-                return Err(RuntimeError::new(format!(
+                return Err(RuntimeError::attribute_error(format!(
                     "method has no writable attribute '{}'",
                     attr_name
                 )));
@@ -6104,6 +6104,18 @@ impl Vm {
         {
             return Ok(self.alloc_native_bound_method(
                 NativeMethodKind::DescriptorReduceTypeError,
+                module.clone(),
+            ));
+        }
+        if module_name == "__classmethod__" && attr_name == "__get__" {
+            return Ok(self.alloc_native_bound_method(
+                NativeMethodKind::ClassMethodDescriptorGet,
+                module.clone(),
+            ));
+        }
+        if module_name == "__staticmethod__" && attr_name == "__get__" {
+            return Ok(self.alloc_native_bound_method(
+                NativeMethodKind::StaticMethodDescriptorGet,
                 module.clone(),
             ));
         }

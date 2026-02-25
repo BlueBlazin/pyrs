@@ -93,6 +93,9 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - latest stdlib closure deltas:
     - `scripts/probe_stdlib_full.py` now forces resource-disabled mapped test mode (`test.support.use_resources = {}`), preventing network/resource-heavy drift in baseline runs,
     - `_PyArg_UnpackKeywords` compatibility path was aligned to CPython argument-binding semantics for mixed positional/keyword calls,
+    - Python-function argument binding now matches CPython positional-only behavior for `**kwargs`:
+      - keyword names matching positional-only parameters are accepted into var-keyword mappings when `**kwargs` exists,
+      - this unblocks stdlib `functools._partial_new(..., func=...)` binding parity paths,
     - `PyErr_Format` fallback now routes through `PyErr_SetObject`, preserving typed exceptions in `PyErr_Occurred` instead of leaking `SystemError: NULL result without error`,
     - `hashlib` mapped lane (`test.test_hashlib`) now passes in probe mode (`82` run, `15` skipped),
     - `hmac` mapped lane (`test.test_hmac`) now passes in probe mode (`145` run, `3` skipped),
@@ -113,6 +116,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - bootstrap `inspect` now exports `isabstract`, unblocking `test_abc` import path,
     - `_ssl` bootstrap parity expanded with `Purpose` class baseline (remaining symbol families still open),
     - `_blake2` now applies full constructor parameter-block semantics (`fanout`/`depth`/`leaf_size`/`node_offset`/`node_depth`/`inner_size`/`last_node`) with CPython vector parity,
+    - descriptor-wrapper parity now includes `__get__` behavior for classmethod/staticmethod wrappers, closing the stdlib `functools` import blocker in `partialmethod(classmethod(...))` paths,
+    - non-writable method-attribute assignment now raises `AttributeError` (CPython parity) instead of `RuntimeError` for read-only method attributes like `__self__`,
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):
