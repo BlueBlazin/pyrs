@@ -17383,3 +17383,120 @@ ok = hasattr(threading, "_register_atexit")
     vm.execute(&code).expect("execution should succeed");
     assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
 }
+
+#[test]
+fn function_annotate_defaults_to_none_when_no_annotate_func_exists() {
+    let source = r#"def f(x):
+    return x
+ok = (f.__annotate__ is None and f.__annotations__ == {})
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn instance_class_assignment_matches_slot_layout_rules() {
+    let source = r#"class A:
+    __slots__ = ("x", "__weakref__")
+
+class B:
+    __slots__ = ("x", "__weakref__")
+
+class C:
+    __slots__ = ("y", "__weakref__")
+
+a = A()
+a.x = 7
+a.__class__ = B
+compatible_ok = (type(a) is B and a.x == 7)
+
+layout_msg_ok = False
+try:
+    a.__class__ = C
+except TypeError as exc:
+    layout_msg_ok = "object layout differs" in str(exc)
+
+type_msg_ok = False
+try:
+    a.__class__ = 42
+except TypeError as exc:
+    type_msg_ok = "__class__ must be set to a class" in str(exc)
+
+ok = compatible_ok and layout_msg_ok and type_msg_ok
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn annotationlib_forwardref_uses_stringifier_transmogrify_path() {
+    let Some(lib) = cpython_lib_path() else {
+        return;
+    };
+    let source = r#"import importlib
+import unittest
+
+module = importlib.import_module("test.test_functools")
+suite = unittest.defaultTestLoader.loadTestsFromName(
+    "TestLRUPy.test_get_annotations_with_forwardref",
+    module,
+)
+result = unittest.TextTestRunner(verbosity=0, failfast=True).run(suite)
+ok = result.wasSuccessful()
+"#
+    .to_string();
+    run_with_large_stack("annotationlib-forwardref-transmogrify", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.add_module_path(lib);
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn dict_equality_honors_reflected_eq_when_primary_returns_notimplemented() {
+    let source = r#"class Left:
+    def __eq__(self, other):
+        return NotImplemented
+
+class Right:
+    def __eq__(self, other):
+        return True
+
+ok = ({'x': Left()} == {'x': Right()})
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn function_type_preserves_custom_globals_mapping_lookup() {
+    let source = r#"class Globals(dict):
+    def __missing__(self, key):
+        if key == "sentinel":
+            return 99
+        raise KeyError(key)
+
+def template():
+    return sentinel
+
+fn = type(template)(template.__code__, Globals({"__builtins__": __builtins__}))
+ok = (fn() == 99)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}

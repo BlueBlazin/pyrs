@@ -11,6 +11,9 @@ use super::{
 use crate::runtime::FunctionObject;
 
 impl Vm {
+    pub(super) const FUNCTION_GLOBALS_MAPPING_KEY: &'static str =
+        "__pyrs_function_globals_mapping__";
+
     pub(super) fn builtin_operator_add(
         &mut self,
         args: Vec<Value>,
@@ -4006,11 +4009,11 @@ impl Vm {
                 )));
             }
         };
-        let globals_dict = match args.remove(0) {
-            Value::Dict(dict) => dict,
+        let (globals_dict, globals_mapping) = match args.remove(0) {
+            Value::Dict(dict) => (dict, None),
             Value::Instance(instance) => {
                 if let Some(dict) = self.instance_backing_dict(&instance) {
-                    dict
+                    (dict, Some(Value::Instance(instance)))
                 } else {
                     return Err(RuntimeError::type_error(format!(
                         "function() argument 'globals' must be dict, not {}",
@@ -4213,6 +4216,11 @@ impl Vm {
                 module_data
                     .globals
                     .insert("__builtins__".to_string(), Value::Module(builtins.clone()));
+            }
+            if let Some(mapping) = globals_mapping {
+                module_data
+                    .globals
+                    .insert(Self::FUNCTION_GLOBALS_MAPPING_KEY.to_string(), mapping);
             }
         }
 

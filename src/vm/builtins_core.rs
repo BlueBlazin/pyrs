@@ -9093,7 +9093,7 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_str_backing(&left, &right) {
             return Ok(Value::Bool(result));
         }
-        if let Some(result) = self.compare_eq_via_dict_backing(&left, &right) {
+        if let Some(result) = self.compare_eq_via_dict_backing(&left, &right)? {
             return Ok(Value::Bool(result));
         }
         if let Some(result) = self.compare_eq_via_set_backing(&left, &right) {
@@ -9153,7 +9153,7 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_str_backing(&left, &right) {
             return Ok(Value::Bool(!result));
         }
-        if let Some(result) = self.compare_eq_via_dict_backing(&left, &right) {
+        if let Some(result) = self.compare_eq_via_dict_backing(&left, &right)? {
             return Ok(Value::Bool(!result));
         }
         if let Some(result) = self.compare_eq_via_set_backing(&left, &right) {
@@ -9279,7 +9279,11 @@ impl Vm {
         Some(left_text == right_text)
     }
 
-    pub(super) fn compare_eq_via_dict_backing(&self, left: &Value, right: &Value) -> Option<bool> {
+    pub(super) fn compare_eq_via_dict_backing(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
         let dict_like = |value: &Value| -> Option<ObjRef> {
             match value {
                 Value::Dict(dict) => Some(dict.clone()),
@@ -9287,9 +9291,48 @@ impl Vm {
                 _ => None,
             }
         };
-        let left_dict = dict_like(left)?;
-        let right_dict = dict_like(right)?;
-        Some(Value::Dict(left_dict) == Value::Dict(right_dict))
+        let Some(left_dict) = dict_like(left) else {
+            return Ok(None);
+        };
+        let Some(right_dict) = dict_like(right) else {
+            return Ok(None);
+        };
+        if left_dict.id() == right_dict.id() {
+            return Ok(Some(true));
+        }
+        let (left_entries, right_entries) = match (&*left_dict.kind(), &*right_dict.kind()) {
+            (Object::Dict(left_entries), Object::Dict(right_entries)) => {
+                (left_entries.to_vec(), right_entries.to_vec())
+            }
+            _ => return Ok(Some(false)),
+        };
+        if left_entries.len() != right_entries.len() {
+            return Ok(Some(false));
+        }
+        let mut matched_right = vec![false; right_entries.len()];
+        for (left_key, left_value) in &left_entries {
+            let mut found = None;
+            for (index, (right_key, _)) in right_entries.iter().enumerate() {
+                if matched_right[index] {
+                    continue;
+                }
+                let keys_equal = self.compare_eq_runtime(left_key.clone(), right_key.clone())?;
+                if self.truthy_from_value(&keys_equal)? {
+                    found = Some(index);
+                    break;
+                }
+            }
+            let Some(index) = found else {
+                return Ok(Some(false));
+            };
+            let right_value = &right_entries[index].1;
+            let values_equal = self.compare_eq_runtime(left_value.clone(), right_value.clone())?;
+            if !self.truthy_from_value(&values_equal)? {
+                return Ok(Some(false));
+            }
+            matched_right[index] = true;
+        }
+        Ok(Some(true))
     }
 
     pub(super) fn compare_eq_via_set_backing(&self, left: &Value, right: &Value) -> Option<bool> {

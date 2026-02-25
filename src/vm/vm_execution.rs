@@ -10150,39 +10150,64 @@ impl Vm {
 
     #[inline]
     fn resolve_load_global_value(
-        &self,
+        &mut self,
         name_idx: usize,
     ) -> Result<(Value, bool, u64, u64), RuntimeError> {
-        let frame = self.frames.last().expect("frame exists");
-        let name = frame
-            .code
-            .names
-            .get(name_idx)
-            .ok_or_else(|| RuntimeError::new("name index out of range"))?;
-        let value = if let Object::Module(module_data) = &*frame.function_globals.kind() {
-            module_data.globals.get(name).cloned()
-        } else {
-            None
+        let (name, mut value, globals_mapping) = {
+            let frame = self.frames.last().expect("frame exists");
+            let name = frame
+                .code
+                .names
+                .get(name_idx)
+                .ok_or_else(|| RuntimeError::new("name index out of range"))?
+                .clone();
+            let (value, mapping) =
+                if let Object::Module(module_data) = &*frame.function_globals.kind() {
+                    (
+                        module_data.globals.get(&name).cloned(),
+                        module_data
+                            .globals
+                            .get(Vm::FUNCTION_GLOBALS_MAPPING_KEY)
+                            .cloned(),
+                    )
+                } else {
+                    (None, None)
+                };
+            (name, value, mapping)
         };
+        if value.is_none()
+            && let Some(mapping) = globals_mapping.as_ref()
+        {
+            match self.getitem_value(mapping.clone(), Value::Str(name.clone())) {
+                Ok(found) => value = Some(found),
+                Err(err)
+                    if runtime_error_matches_exception(&err, "KeyError")
+                        || runtime_error_matches_exception(&err, "AttributeError") => {}
+                Err(err) => return Err(err),
+            }
+        }
         let value = value.or_else(|| {
+            let frame = self.frames.last().expect("frame exists");
             if let Some(fallback) = &frame.locals_fallback
-                && let Some(value) = fallback.get(name)
+                && let Some(value) = fallback.get(&name)
             {
                 return Some(value.clone());
             }
             if let Some(fallback) = &frame.globals_fallback
                 && let Object::Module(module_data) = &*fallback.kind()
             {
-                return module_data.globals.get(name).cloned();
+                return module_data.globals.get(&name).cloned();
             }
             None
         });
         let value = value
-            .or_else(|| self.builtins.get(name).cloned())
+            .or_else(|| self.builtins.get(&name).cloned())
             .ok_or_else(|| RuntimeError::new(format!("name '{name}' is not defined")))?;
+        let frame = self.frames.last().expect("frame exists");
         let cacheable = frame.locals_fallback.is_none()
             && frame.globals_fallback.is_none()
-            && frame.function_globals_version != 0;
+            && frame.function_globals_version != 0
+            && globals_mapping.is_none();
         Ok((
             value,
             cacheable,

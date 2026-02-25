@@ -2334,11 +2334,7 @@ impl Vm {
         if let Some(annotate_callable) = annotate_callable
             && self.is_callable_value(&annotate_callable)
         {
-            match self.call_internal(
-                annotate_callable,
-                vec![Value::Int(1)],
-                HashMap::new(),
-            )? {
+            match self.call_internal(annotate_callable, vec![Value::Int(1)], HashMap::new())? {
                 InternalCallOutcome::Value(Value::Dict(dict)) => {
                     let mut func_ref = func.kind_mut();
                     let Object::Function(func_data) = &mut *func_ref else {
@@ -2531,21 +2527,7 @@ impl Vm {
             "__func__" => Ok(Value::Function(func.clone())),
             "__get__" => Ok(self
                 .alloc_native_bound_method(NativeMethodKind::FunctionDescriptorGet, func.clone())),
-            "__annotate__" => {
-                let receiver = match self
-                    .heap
-                    .alloc_module(ModuleObject::new("__function_annotate__".to_string()))
-                {
-                    Value::Module(obj) => obj,
-                    _ => unreachable!(),
-                };
-                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
-                    module_data
-                        .globals
-                        .insert("function".to_string(), Value::Function(func.clone()));
-                }
-                Ok(self.alloc_native_bound_method(NativeMethodKind::FunctionAnnotate, receiver))
-            }
+            "__annotate__" => Ok(Value::None),
             "__defaults__" => {
                 let defaults = {
                     let func_ref = func.kind();
@@ -6339,6 +6321,45 @@ impl Vm {
         )
     }
 
+    fn class_assignment_layout_signature(class_ref: &ObjRef) -> Option<(Vec<String>, bool)> {
+        let Object::Class(_) = &*class_ref.kind() else {
+            return None;
+        };
+        let slot_layout = collect_slot_names(class_ref);
+        let mut effective_slots = slot_layout.clone().unwrap_or_default();
+        if slot_layout.is_none() {
+            for candidate in class_attr_walk(class_ref).into_iter().skip(1) {
+                if let Object::Class(class_data) = &*candidate.kind()
+                    && let Some(slots) = &class_data.slots
+                {
+                    for slot in slots {
+                        if !effective_slots.iter().any(|existing| existing == slot) {
+                            effective_slots.push(slot.clone());
+                        }
+                    }
+                }
+            }
+        }
+        let has_dynamic_dict = match &slot_layout {
+            Some(allowed_slots) => {
+                allowed_slots.iter().any(|name| name == "__dict__")
+                    || class_inherits_dynamic_instance_dict(class_ref)
+            }
+            None => true,
+        };
+        Some((effective_slots, has_dynamic_dict))
+    }
+
+    fn class_assignment_layout_compatible(old_class: &ObjRef, new_class: &ObjRef) -> bool {
+        let Some(old_layout) = Self::class_assignment_layout_signature(old_class) else {
+            return false;
+        };
+        let Some(new_layout) = Self::class_assignment_layout_signature(new_class) else {
+            return false;
+        };
+        old_layout == new_layout
+    }
+
     fn validate_cpickle_unpickler_memo_assignment(value: &Value) -> Result<(), RuntimeError> {
         let Value::Dict(dict_obj) = value else {
             return Err(RuntimeError::new(
@@ -6404,6 +6425,36 @@ impl Vm {
         }
         if attr_name == "memo" && Self::class_is_cpickle_type(&class_ref, "Unpickler") {
             Self::validate_cpickle_unpickler_memo_assignment(&value)?;
+        }
+
+        if attr_name == "__class__" {
+            let Value::Class(new_class) = value else {
+                return Err(RuntimeError::type_error(format!(
+                    "__class__ must be set to a class, not '{}' object",
+                    self.value_type_name_for_error(&value)
+                )));
+            };
+            if class_ref.id() == new_class.id() {
+                return Ok(AttrMutationOutcome::Done);
+            }
+            if !Self::class_assignment_layout_compatible(&class_ref, &new_class) {
+                let old_name = match &*class_ref.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "object".to_string(),
+                };
+                let new_name = match &*new_class.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "object".to_string(),
+                };
+                return Err(RuntimeError::type_error(format!(
+                    "__class__ assignment: '{}' object layout differs from '{}'",
+                    new_name, old_name
+                )));
+            }
+            if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                instance_data.class = new_class;
+            }
+            return Ok(AttrMutationOutcome::Done);
         }
 
         if let Some(descriptor) = class_attr_lookup(&class_ref, attr_name) {
