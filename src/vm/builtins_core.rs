@@ -5746,6 +5746,7 @@ impl Vm {
                 namespace,
                 base_classes,
                 Some(metaclass),
+                None,
             )?;
             if let Value::Class(class_ref) = &class_value
                 && self.call_init_subclass_hook(class_ref, &kwargs)?
@@ -8183,6 +8184,9 @@ impl Vm {
         left: &Value,
         right: &Value,
     ) -> Result<Ordering, RuntimeError> {
+        if let Some(ordering) = self.compare_cmp_to_key_wrappers(left, right)? {
+            return Ok(ordering);
+        }
         match compare_order(left.clone(), right.clone()) {
             Ok(ordering) => Ok(ordering),
             Err(_) => {
@@ -8321,29 +8325,41 @@ impl Vm {
                 }
             }
         }
+        let mut saw_order_method = false;
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__lt__", right.clone())?
-            && result
         {
-            return Ok(Some(Ordering::Less));
+            saw_order_method = true;
+            if result {
+                return Ok(Some(Ordering::Less));
+            }
         }
         if let Some(result) =
             self.call_compare_method_bool(left.clone(), "__gt__", right.clone())?
-            && result
         {
-            return Ok(Some(Ordering::Greater));
+            saw_order_method = true;
+            if result {
+                return Ok(Some(Ordering::Greater));
+            }
         }
         if let Some(result) =
             self.call_compare_method_bool(right.clone(), "__gt__", left.clone())?
-            && result
         {
-            return Ok(Some(Ordering::Less));
+            saw_order_method = true;
+            if result {
+                return Ok(Some(Ordering::Less));
+            }
         }
         if let Some(result) =
             self.call_compare_method_bool(right.clone(), "__lt__", left.clone())?
-            && result
         {
-            return Ok(Some(Ordering::Greater));
+            saw_order_method = true;
+            if result {
+                return Ok(Some(Ordering::Greater));
+            }
+        }
+        if saw_order_method {
+            return Ok(Some(Ordering::Equal));
         }
         Ok(None)
     }
@@ -9049,6 +9065,9 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
+            return Ok(Value::Bool(ordering == Ordering::Equal));
+        }
         const PY_EQ: i32 = 2;
         let left_proxy_class = matches!(left, Value::Class(_))
             && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
@@ -9106,6 +9125,9 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        if let Some(ordering) = self.compare_cmp_to_key_wrappers(&left, &right)? {
+            return Ok(Value::Bool(ordering != Ordering::Equal));
+        }
         const PY_NE: i32 = 3;
         let left_proxy_class = matches!(left, Value::Class(_))
             && Self::cpython_proxy_raw_ptr_from_value(&left).is_some();
@@ -9409,6 +9431,16 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        if let Some(result) =
+            self.call_compare_method_value(left.clone(), "__le__", right.clone())?
+        {
+            return Ok(result);
+        }
+        if let Some(result) =
+            self.call_compare_method_value(right.clone(), "__ge__", left.clone())?
+        {
+            return Ok(result);
+        }
         match compare_le(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)
@@ -9451,6 +9483,16 @@ impl Vm {
         left: Value,
         right: Value,
     ) -> Result<Value, RuntimeError> {
+        if let Some(result) =
+            self.call_compare_method_value(left.clone(), "__ge__", right.clone())?
+        {
+            return Ok(result);
+        }
+        if let Some(result) =
+            self.call_compare_method_value(right.clone(), "__le__", left.clone())?
+        {
+            return Ok(result);
+        }
         match compare_ge(left.clone(), right.clone()) {
             Ok(value) => Ok(value),
             Err(err)

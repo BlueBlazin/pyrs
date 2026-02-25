@@ -79,7 +79,9 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("name".to_string(), Value::Str(name.to_string()));
-            instance_data.attrs.insert("ident".to_string(), Value::Int(ident));
+            instance_data
+                .attrs
+                .insert("ident".to_string(), Value::Int(ident));
             instance_data
                 .attrs
                 .insert("daemon".to_string(), Value::Bool(false));

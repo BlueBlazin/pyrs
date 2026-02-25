@@ -6,7 +6,7 @@ use super::{
     ExceptionObject, FLOAT_BACKING_STORAGE_ATTR, FROZENSET_BACKING_STORAGE_ATTR, Frame, HashMap,
     INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome,
     IteratorKind, LIST_BACKING_STORAGE_ATTR, ModuleObject, NativeCallResult, NativeMethodKind,
-    ObjRef, Object, PY_TPFLAGS_HEAPTYPE, Rc, RuntimeError, SET_BACKING_STORAGE_ATTR,
+    ObjRef, Object, Opcode, PY_TPFLAGS_HEAPTYPE, Rc, RuntimeError, SET_BACKING_STORAGE_ATTR,
     STR_BACKING_STORAGE_ATTR, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, apply_bindings,
     bind_arguments, bytes_like_source_is_readonly, class_attr_lookup, class_attr_lookup_direct,
     class_attr_walk, class_inherits_dynamic_instance_dict, class_name_for_instance,
@@ -152,10 +152,34 @@ fn memoryview_contiguity(
 }
 
 fn function_docstring_from_code(code: &CodeObject) -> Option<Value> {
-    match code.constants.first() {
-        Some(Value::Str(doc)) => Some(Value::Str(doc.clone())),
-        _ => None,
+    if let Some(Value::Str(doc)) = code.constants.first() {
+        return Some(Value::Str(doc.clone()));
     }
+    let mut index = 0usize;
+    while index < code.instructions.len() {
+        match code.instructions[index].opcode {
+            Opcode::Nop | Opcode::MakeCell => {
+                index += 1;
+            }
+            Opcode::LoadConst => {
+                let Some(const_index) = code.instructions[index].arg.map(|idx| idx as usize) else {
+                    return None;
+                };
+                let Some(Value::Str(doc)) = code.constants.get(const_index) else {
+                    return None;
+                };
+                let next_index = index + 1;
+                if next_index < code.instructions.len()
+                    && matches!(code.instructions[next_index].opcode, Opcode::PopTop)
+                {
+                    return Some(Value::Str(doc.clone()));
+                }
+                return None;
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 impl Vm {
@@ -4582,7 +4606,7 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::ObjectNew),
                 ));
             }
-            self.heap.alloc_dict(entries)
+            self.heap.alloc_readonly_dict(entries)
         } else if attr_name == "register" {
             return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
                 NativeMethodKind::ClassRegister,
@@ -5576,8 +5600,7 @@ impl Vm {
             {
                 if let Some(Value::Dict(dict_obj)) =
                     instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-                    && let Some(attr) =
-                        dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
+                    && let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
                 {
                     return Ok(AttrAccessOutcome::Value(attr));
                 }
@@ -5587,8 +5610,7 @@ impl Vm {
                 }
                 if let Some(Value::Dict(dict_obj)) =
                     instance_data.attrs.get(INSTANCE_DICT_STORAGE_ATTR)
-                    && let Some(attr) =
-                        dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
+                    && let Some(attr) = dict_get_value(dict_obj, &Value::Str(attr_name.to_string()))
                 {
                     return Ok(AttrAccessOutcome::Value(attr));
                 }

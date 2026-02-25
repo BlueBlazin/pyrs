@@ -64,6 +64,11 @@ pub(crate) fn dict_set_value_checked(
     value: Value,
 ) -> Result<(), RuntimeError> {
     ensure_hashable(&key)?;
+    if dict_is_readonly(dict) {
+        return Err(RuntimeError::type_error(
+            "'mappingproxy' object does not support item assignment",
+        ));
+    }
     dict_set_value(dict, key, value);
     Ok(())
 }
@@ -98,6 +103,11 @@ fn is_hashable(value: &Value) -> bool {
         },
         _ => true,
     }
+}
+
+fn dict_is_readonly(dict: &ObjRef) -> bool {
+    let dict_kind = dict.kind();
+    matches!(&*dict_kind, Object::Dict(entries) if entries.is_readonly())
 }
 
 fn value_type_name(value: &Value) -> &'static str {

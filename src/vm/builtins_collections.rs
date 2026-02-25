@@ -1382,6 +1382,7 @@ impl Vm {
             HashMap::new(),
             vec![enum_base],
             enum_metaclass,
+            None,
         )?;
         let class_ref = match &class_value {
             Value::Class(class) => class.clone(),
@@ -1597,13 +1598,18 @@ impl Vm {
         if !self.is_callable_value(&func) {
             return Err(RuntimeError::new("cached_property() expects callable"));
         }
-        let attr_name = match &func {
-            Value::Function(func_ref) => match &*func_ref.kind() {
-                Object::Function(func_data) => Some(func_data.code.name.clone()),
-                _ => None,
-            },
-            _ => None,
-        };
+        let doc = self
+            .builtin_getattr(
+                vec![func.clone(), Value::Str("__doc__".to_string())],
+                HashMap::new(),
+            )
+            .unwrap_or(Value::None);
+        let module = self
+            .builtin_getattr(
+                vec![func.clone(), Value::Str("__module__".to_string())],
+                HashMap::new(),
+            )
+            .unwrap_or(Value::None);
         let class = match self
             .heap
             .alloc_class(ClassObject::new("cached_property".to_string(), Vec::new()))
@@ -1616,11 +1622,9 @@ impl Vm {
             .attrs
             .insert("__pyrs_cached_property__".to_string(), Value::Bool(true));
         instance.attrs.insert("func".to_string(), func);
-        instance.attrs.insert(
-            "attrname".to_string(),
-            attr_name.map(Value::Str).unwrap_or(Value::None),
-        );
-        instance.attrs.insert("__doc__".to_string(), Value::None);
+        instance.attrs.insert("attrname".to_string(), Value::None);
+        instance.attrs.insert("__doc__".to_string(), doc);
+        instance.attrs.insert("__module__".to_string(), module);
         Ok(self.heap.alloc_instance(instance))
     }
 
@@ -2714,13 +2718,12 @@ impl Vm {
                 "signature() expects one callable argument",
             ));
         }
-        for name in [
-            "follow_wrapped",
-            "globals",
-            "locals",
-            "eval_str",
-            "annotation_format",
-        ] {
+        let follow_wrapped = kwargs
+            .remove("follow_wrapped")
+            .map(|value| self.truthy_from_value(&value))
+            .transpose()?
+            .unwrap_or(true);
+        for name in ["globals", "locals", "eval_str", "annotation_format"] {
             kwargs.remove(name);
         }
         if !kwargs.is_empty() {
@@ -2729,7 +2732,50 @@ impl Vm {
             ));
         }
 
-        let callable = args.remove(0);
+        let mut callable = args.remove(0);
+        if follow_wrapped {
+            let mut visited = std::collections::HashSet::new();
+            let value_identity = |value: &Value| -> Option<u64> {
+                match value {
+                    Value::List(obj)
+                    | Value::Tuple(obj)
+                    | Value::Dict(obj)
+                    | Value::DictKeys(obj)
+                    | Value::Set(obj)
+                    | Value::FrozenSet(obj)
+                    | Value::Bytes(obj)
+                    | Value::ByteArray(obj)
+                    | Value::MemoryView(obj)
+                    | Value::Iterator(obj)
+                    | Value::Generator(obj)
+                    | Value::Module(obj)
+                    | Value::Class(obj)
+                    | Value::Instance(obj)
+                    | Value::Super(obj)
+                    | Value::Function(obj)
+                    | Value::BoundMethod(obj)
+                    | Value::Cell(obj) => Some(obj.id()),
+                    _ => None,
+                }
+            };
+            for _ in 0..64 {
+                let Some(identity) = value_identity(&callable) else {
+                    break;
+                };
+                if !visited.insert(identity) {
+                    break;
+                }
+                let wrapped = match self.builtin_getattr(
+                    vec![callable.clone(), Value::Str("__wrapped__".to_string())],
+                    HashMap::new(),
+                ) {
+                    Ok(value) => value,
+                    Err(err) if is_missing_attribute_error(&err) => break,
+                    Err(err) => return Err(err),
+                };
+                callable = wrapped;
+            }
+        }
         let signature_class = self
             .modules
             .get("inspect")
@@ -2828,93 +2874,120 @@ impl Vm {
                 )
             };
 
-        match callable {
-            Value::Function(func) => {
-                let (
-                    posonly_params,
-                    positional_params,
-                    vararg,
-                    kwarg,
-                    kwonly_params,
-                    defaults,
-                    kwonly_defaults,
-                    annotations,
-                ) = {
-                    let function_ref = func.kind();
-                    let function = match &*function_ref {
-                        Object::Function(function) => function,
-                        _ => unreachable!(),
-                    };
-                    (
-                        function.code.posonly_params.clone(),
-                        function.code.params.clone(),
-                        function.code.vararg.clone(),
-                        function.code.kwarg.clone(),
-                        function.code.kwonly_params.clone(),
-                        function.defaults.clone(),
-                        function.kwonly_defaults.clone(),
-                        function.annotations.clone(),
-                    )
+        let mut populate_from_function = |func: ObjRef,
+                                          skip_first: bool|
+         -> Result<(), RuntimeError> {
+            let (
+                posonly_params,
+                positional_params,
+                vararg,
+                kwarg,
+                kwonly_params,
+                defaults,
+                kwonly_defaults,
+                annotations,
+            ) = {
+                let function_ref = func.kind();
+                let function = match &*function_ref {
+                    Object::Function(function) => function,
+                    _ => unreachable!(),
                 };
-                let posonly_len = posonly_params.len();
-                let positional_len = posonly_len + positional_params.len();
-                let default_start = positional_len.saturating_sub(defaults.len());
+                (
+                    function.code.posonly_params.clone(),
+                    function.code.params.clone(),
+                    function.code.vararg.clone(),
+                    function.code.kwarg.clone(),
+                    function.code.kwonly_params.clone(),
+                    function.defaults.clone(),
+                    function.kwonly_defaults.clone(),
+                    function.annotations.clone(),
+                )
+            };
+            let posonly_len = posonly_params.len();
+            let positional_len = posonly_len + positional_params.len();
+            let default_start = positional_len.saturating_sub(defaults.len());
+            let skip = usize::from(skip_first);
+            let mut rendered_posonly = 0usize;
 
-                for (idx, name) in posonly_params.iter().enumerate() {
-                    let default = if idx >= default_start {
-                        Some(defaults[idx - default_start].clone())
-                    } else {
-                        None
-                    };
-                    let (rendered, entry) = make_param(name.clone(), "POSITIONAL_ONLY", default);
-                    parts.push(rendered);
-                    params.push(entry);
+            for (idx, name) in posonly_params.iter().enumerate() {
+                if idx < skip {
+                    continue;
                 }
-                if posonly_len > 0 {
-                    parts.push("/".to_string());
-                }
+                let default = if idx >= default_start {
+                    Some(defaults[idx - default_start].clone())
+                } else {
+                    None
+                };
+                let (rendered, entry) = make_param(name.clone(), "POSITIONAL_ONLY", default);
+                parts.push(rendered);
+                params.push(entry);
+                rendered_posonly = rendered_posonly.saturating_add(1);
+            }
+            if rendered_posonly > 0 {
+                parts.push("/".to_string());
+            }
 
-                for (idx, name) in positional_params.iter().enumerate() {
-                    let param_idx = posonly_len + idx;
-                    let default = if param_idx >= default_start {
-                        Some(defaults[param_idx - default_start].clone())
-                    } else {
-                        None
-                    };
-                    let (rendered, entry) =
-                        make_param(name.clone(), "POSITIONAL_OR_KEYWORD", default);
-                    parts.push(rendered);
-                    params.push(entry);
+            for (idx, name) in positional_params.iter().enumerate() {
+                let param_idx = posonly_len + idx;
+                if param_idx < skip {
+                    continue;
                 }
+                let default = if param_idx >= default_start {
+                    Some(defaults[param_idx - default_start].clone())
+                } else {
+                    None
+                };
+                let (rendered, entry) = make_param(name.clone(), "POSITIONAL_OR_KEYWORD", default);
+                parts.push(rendered);
+                params.push(entry);
+            }
 
-                if let Some(vararg) = &vararg {
-                    let (rendered, entry) = make_param(vararg.clone(), "VAR_POSITIONAL", None);
-                    parts.push(format!("*{rendered}"));
-                    params.push(entry);
-                } else if !kwonly_params.is_empty() {
-                    parts.push("*".to_string());
-                }
+            if let Some(vararg) = &vararg {
+                let (rendered, entry) = make_param(vararg.clone(), "VAR_POSITIONAL", None);
+                parts.push(format!("*{rendered}"));
+                params.push(entry);
+            } else if !kwonly_params.is_empty() {
+                parts.push("*".to_string());
+            }
 
-                for name in &kwonly_params {
-                    let default = kwonly_defaults.get(name).cloned();
-                    let (rendered, entry) = make_param(name.clone(), "KEYWORD_ONLY", default);
-                    parts.push(rendered);
-                    params.push(entry);
-                }
+            for name in &kwonly_params {
+                let default = kwonly_defaults.get(name).cloned();
+                let (rendered, entry) = make_param(name.clone(), "KEYWORD_ONLY", default);
+                parts.push(rendered);
+                params.push(entry);
+            }
 
-                if let Some(kwarg) = &kwarg {
-                    let (rendered, entry) = make_param(kwarg.clone(), "VAR_KEYWORD", None);
-                    parts.push(format!("**{rendered}"));
-                    params.push(entry);
-                }
+            if let Some(kwarg) = &kwarg {
+                let (rendered, entry) = make_param(kwarg.clone(), "VAR_KEYWORD", None);
+                parts.push(format!("**{rendered}"));
+                params.push(entry);
+            }
 
-                if let Some(annotations) = &annotations
-                    && let Object::Dict(entries) = &*annotations.kind()
-                    && let Some((_, value)) = entries
-                        .iter()
-                        .find(|(key, _)| matches!(key, Value::Str(name) if name == "return"))
-                {
-                    return_annotation = value.clone();
+            if let Some(annotations) = &annotations
+                && let Object::Dict(entries) = &*annotations.kind()
+                && let Some((_, value)) = entries
+                    .iter()
+                    .find(|(key, _)| matches!(key, Value::Str(name) if name == "return"))
+            {
+                return_annotation = value.clone();
+            }
+            Ok(())
+        };
+
+        match callable {
+            Value::Function(func) => populate_from_function(func, false)?,
+            Value::Class(class_ref) => {
+                if let Some(Value::Function(func)) = class_attr_lookup(&class_ref, "__init__") {
+                    populate_from_function(func, true)?;
+                } else if text_signature_override.is_none() {
+                    let (args_rendered, args_entry) =
+                        make_param("args".to_string(), "VAR_POSITIONAL", None);
+                    parts.push(format!("*{args_rendered}"));
+                    params.push(args_entry);
+                    let (kwargs_rendered, kwargs_entry) =
+                        make_param("kwargs".to_string(), "VAR_KEYWORD", None);
+                    parts.push(format!("**{kwargs_rendered}"));
+                    params.push(kwargs_entry);
                 }
             }
             _ => {

@@ -5237,6 +5237,10 @@ impl Vm {
                 "bind_partial".to_string(),
                 Value::Builtin(BuiltinFunction::InspectSignatureBindPartial),
             );
+            class_data.attrs.insert(
+                "from_callable".to_string(),
+                Value::Builtin(BuiltinFunction::InspectSignature),
+            );
         }
         if let Object::Class(class_data) = &mut *inspect_parameter_class.kind_mut() {
             class_data
@@ -7145,9 +7149,10 @@ impl Vm {
         if let Some(thread_module) = self.modules.get("_thread").cloned()
             && let Object::Module(module_data) = &mut *thread_module.kind_mut()
         {
-            module_data
-                .globals
-                .insert("_local".to_string(), Value::Class(thread_local_class.clone()));
+            module_data.globals.insert(
+                "_local".to_string(),
+                Value::Class(thread_local_class.clone()),
+            );
         }
         self.install_builtin_module(
             "threading",
@@ -7911,6 +7916,7 @@ impl Vm {
             abc_meta_attrs,
             vec![type_class],
             self.default_type_metaclass(),
+            None,
         )? {
             Value::Class(class) => class,
             _ => return Err(RuntimeError::new("failed to create abc.ABCMeta")),
@@ -7923,6 +7929,7 @@ impl Vm {
             abc_attrs,
             vec![object_class],
             Some(abc_meta.clone()),
+            None,
         )?;
 
         self.install_builtin_module(
@@ -9639,7 +9646,9 @@ impl Vm {
                 && let Some(thread_module) = self.modules.get("_thread").cloned()
                 && let Object::Module(module_data) = &mut *thread_module.kind_mut()
             {
-                module_data.globals.insert("_local".to_string(), local_class);
+                module_data
+                    .globals
+                    .insert("_local".to_string(), local_class);
             }
         }
     }

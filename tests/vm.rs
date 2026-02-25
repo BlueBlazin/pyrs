@@ -1525,6 +1525,17 @@ fn inspect_signature_bind_validates_and_returns_bound_arguments() {
 }
 
 #[test]
+fn inspect_signature_from_callable_follows_wrapped_lru_cache_function() {
+    let source = "import functools\nimport inspect\n\ndef orig(a, /, b, c=True):\n    return a + b\nwrapped = functools.lru_cache(1)(orig)\nsig = inspect.Signature.from_callable(wrapped)\nok = (str(sig) == '(a, /, b, c=True)')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn hmac_keyword_digest_paths_do_not_raise_systemerror() {
     let source = "try:\n    import _hmac\nexcept ImportError:\n    ok = True\nelse:\n    ok = (_hmac.compute_digest(b'k', b'm', digest='md5') == _hmac.compute_digest(b'k', b'm', 'md5'))\n    try:\n        _hmac.compute_digest(b'k', b'm', digest='unknown')\n    except BaseException as exc:\n        ok = ok and (type(exc).__name__ != 'SystemError')\n    else:\n        ok = False\n    try:\n        _hmac.new(b'k', b'm', digestmod='unknown')\n    except BaseException as exc:\n        ok = ok and (type(exc).__name__ != 'SystemError')\n    else:\n        ok = False\n";
     let module = parser::parse_module(source).expect("parse should succeed");
@@ -11107,6 +11118,30 @@ class C:
         return 1
 desc = C.value
 ok = (hasattr(desc, '__get__') and desc.attrname == 'value')
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn functools_cached_property_on_metaclass_rejects_class_dict_assignment() {
+    let source = r#"import functools
+class MyMeta(type):
+    @functools.cached_property
+    def prop(self):
+        return True
+
+class MyClass(metaclass=MyMeta):
+    pass
+
+ok = False
+try:
+    MyClass.prop
+except TypeError as exc:
+    ok = "does not support item assignment" in str(exc)
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");
     let code = compiler::compile_module(&module).expect("compile should succeed");

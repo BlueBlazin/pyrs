@@ -8611,8 +8611,13 @@ impl Vm {
 
         if !uses_plain_type {
             let Some(meta) = effective_metaclass else {
-                let class_value =
-                    self.build_default_class_value(name, attrs, default_bases, resolved_metaclass)?;
+                let class_value = self.build_default_class_value(
+                    name,
+                    attrs,
+                    default_bases,
+                    resolved_metaclass,
+                    Some(&namespace_value),
+                )?;
                 if let Value::Class(class_ref) = &class_value
                     && self.call_init_subclass_hook(class_ref, &class_keywords)?
                 {
@@ -8680,8 +8685,13 @@ impl Vm {
             };
         }
 
-        let class_value =
-            self.build_default_class_value(name, attrs, default_bases, resolved_metaclass)?;
+        let class_value = self.build_default_class_value(
+            name,
+            attrs,
+            default_bases,
+            resolved_metaclass,
+            Some(&namespace_value),
+        )?;
         if let Value::Class(class_ref) = &class_value {
             if self.call_init_subclass_hook(class_ref, &class_keywords)? {
                 return Ok(ClassBuildOutcome::ExceptionHandled);
@@ -8806,6 +8816,7 @@ impl Vm {
         attrs: HashMap<String, Value>,
         bases: Vec<ObjRef>,
         metaclass: Option<ObjRef>,
+        namespace: Option<&Value>,
     ) -> Result<Value, RuntimeError> {
         let mut attrs = attrs;
         let class_cell = attrs.remove("__classcell__");
@@ -8923,7 +8934,7 @@ impl Vm {
                     .attrs
                     .insert("__mro__".to_string(), self.heap.alloc_tuple(mro_values));
             }
-            self.call_class_set_name_hooks(class_ref)?;
+            self.call_class_set_name_hooks(class_ref, namespace)?;
             self.record_exception_parent_for_class(class_ref);
         }
         Ok(class_value)
@@ -8932,14 +8943,28 @@ impl Vm {
     pub(super) fn call_class_set_name_hooks(
         &mut self,
         class_ref: &ObjRef,
+        namespace: Option<&Value>,
     ) -> Result<(), RuntimeError> {
-        let attrs = match &*class_ref.kind() {
-            Object::Class(class_data) => class_data
-                .attrs
+        let attrs = if let Some(namespace) = namespace
+            && let Some(dict_obj) = self.class_namespace_backing_dict(namespace)
+            && let Object::Dict(entries) = &*dict_obj.kind()
+        {
+            entries
                 .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect::<Vec<_>>(),
-            _ => return Ok(()),
+                .filter_map(|(key, value)| match key {
+                    Value::Str(name) => Some((name.clone(), value.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            match &*class_ref.kind() {
+                Object::Class(class_data) => class_data
+                    .attrs
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect::<Vec<_>>(),
+                _ => return Ok(()),
+            }
         };
         for (name, value) in attrs {
             let set_name = match self.call_internal_preserving_caller(
@@ -12811,10 +12836,20 @@ impl Vm {
         attr_name: &str,
     ) -> Option<Value> {
         let (func, attr_name_value, doc) = self.cached_property_descriptor_parts(instance)?;
+        let module_name = if let Object::Instance(instance_data) = &*instance.kind() {
+            instance_data
+                .attrs
+                .get("__module__")
+                .cloned()
+                .unwrap_or(Value::None)
+        } else {
+            Value::None
+        };
         match attr_name {
             "func" => Some(func),
             "attrname" => Some(attr_name_value.map(Value::Str).unwrap_or(Value::None)),
             "__doc__" => Some(doc),
+            "__module__" => Some(module_name),
             "__isabstractmethod__" => Some(Value::Bool(false)),
             "__get__" => {
                 Some(self.alloc_native_bound_method(
@@ -12822,6 +12857,10 @@ impl Vm {
                     instance.clone(),
                 ))
             }
+            "__set_name__" => Some(self.alloc_native_bound_method(
+                NativeMethodKind::CachedPropertySetName,
+                instance.clone(),
+            )),
             _ => None,
         }
     }

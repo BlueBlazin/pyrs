@@ -1,13 +1,13 @@
 use std::cell::Cell;
 
 use super::{
-    AttrMutationOutcome, BigInt, Block, BoundMethod, BuiltinFunction, CodeObject,
-    FormatterFieldKey, Frame, GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome,
-    HashMap, InstanceObject, Instruction, InternalCallOutcome, IteratorKind, IteratorObject,
-    ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
-    PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
-    bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
-    decode_text_bytes, dedup_hashable_values, dict_get_value, dict_remove_value, dict_set_value,
+    BigInt, Block, BoundMethod, BuiltinFunction, CodeObject, FormatterFieldKey, Frame,
+    GeneratorObject, GeneratorResumeKind, GeneratorResumeOutcome, HashMap, InstanceObject,
+    Instruction, InternalCallOutcome, IteratorKind, IteratorObject, ModuleObject, NativeCallResult,
+    NativeMethodKind, ObjRef, Object, Opcode, Ordering, PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc,
+    ReMode, RePatternValue, RuntimeError, Value, Vm, bigint_to_fixed_bytes, bytes_like_from_value,
+    call_builtin_with_kwargs, class_attr_lookup, class_name_for_instance, decode_text_bytes,
+    dedup_hashable_values, dict_get_value, dict_remove_value, dict_set_value,
     dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
     find_bytes_subslice, is_truthy, memoryview_bounds, memoryview_decode_tolist,
     memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
@@ -5125,10 +5125,12 @@ impl Vm {
                 };
 
                 let bound = match unwrapped {
-                    Value::Function(function) => {
-                        self.heap.alloc_bound_method(BoundMethod::new(function, owner_class))
+                    Value::Function(function) => self
+                        .heap
+                        .alloc_bound_method(BoundMethod::new(function, owner_class)),
+                    Value::Builtin(builtin) => {
+                        self.alloc_builtin_bound_method(builtin, owner_class)
                     }
-                    Value::Builtin(builtin) => self.alloc_builtin_bound_method(builtin, owner_class),
                     other => other,
                 };
                 Ok(NativeCallResult::Value(bound))
@@ -5634,20 +5636,36 @@ impl Vm {
                 Err(RuntimeError::type_error("property receiver is invalid"))
             }
             NativeMethodKind::CachedPropertyGet => {
-                if args.len() != 2 {
-                    return Err(RuntimeError::new("__get__() expects 2 arguments"));
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new("__get__() expects 1-2 arguments"));
                 }
                 let obj = args.first().cloned().expect("checked len");
+                let cache_is_class_dict = matches!(obj, Value::Class(_));
                 if matches!(obj, Value::None) {
                     return Ok(NativeCallResult::Value(Value::Instance(receiver)));
                 }
-                let instance = match obj {
-                    Value::Instance(instance) => instance,
-                    _ => {
-                        return Err(RuntimeError::new(
-                            "cached_property.__get__ expects an instance",
-                        ));
+                let type_name = match &obj {
+                    Value::Instance(instance) => {
+                        class_name_for_instance(instance).unwrap_or_else(|| "object".to_string())
                     }
+                    Value::Class(class_ref) => match &*class_ref.kind() {
+                        Object::Class(class_data) => class_data
+                            .metaclass
+                            .as_ref()
+                            .and_then(|meta| match &*meta.kind() {
+                                Object::Class(meta_data) => Some(meta_data.name.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| "type".to_string()),
+                        _ => "type".to_string(),
+                    },
+                    _ => self
+                        .class_of_value(&obj)
+                        .and_then(|class| match &*class.kind() {
+                            Object::Class(class_data) => Some(class_data.name.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "object".to_string()),
                 };
                 let Some((func, attr_name, _doc)) =
                     self.cached_property_descriptor_parts(&receiver)
@@ -5655,28 +5673,81 @@ impl Vm {
                     return Err(RuntimeError::new("cached_property receiver is invalid"));
                 };
                 let Some(attr_name) = attr_name else {
-                    return Err(RuntimeError::new("cached_property is missing attrname"));
+                    return Err(RuntimeError::type_error(
+                        "Cannot use cached_property instance without calling __set_name__ on it.",
+                    ));
                 };
-                if let Object::Instance(instance_data) = &*instance.kind()
-                    && let Some(existing) = instance_data.attrs.get(&attr_name).cloned()
-                {
+                let cache = match self.builtin_getattr(
+                    vec![obj.clone(), Value::Str("__dict__".to_string())],
+                    HashMap::new(),
+                ) {
+                    Ok(Value::Dict(dict)) => dict,
+                    Ok(_) | Err(_) if matches!(obj, Value::Class(_)) => {
+                        return Err(RuntimeError::type_error(format!(
+                            "The '__dict__' attribute on '{}' instance does not support item assignment for caching '{}' property.",
+                            type_name, attr_name
+                        )));
+                    }
+                    Ok(_) => {
+                        return Err(RuntimeError::type_error(format!(
+                            "The '__dict__' attribute on '{}' instance does not support item assignment for caching '{}' property.",
+                            type_name, attr_name
+                        )));
+                    }
+                    Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+                        return Err(RuntimeError::type_error(format!(
+                            "No '__dict__' attribute on '{}' instance to cache '{}' property.",
+                            type_name, attr_name
+                        )));
+                    }
+                    Err(err) => return Err(err),
+                };
+                if let Some(existing) = dict_get_value(&cache, &Value::Str(attr_name.clone())) {
                     return Ok(NativeCallResult::Value(existing));
                 }
-                let value = match self.call_internal(
-                    func,
-                    vec![Value::Instance(instance.clone())],
-                    HashMap::new(),
-                )? {
+                let value = match self.call_internal(func, vec![obj], HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
                         return Ok(NativeCallResult::PropagatedException);
                     }
                 };
-                match self.store_attr_instance_direct(&instance, &attr_name, value.clone())? {
-                    AttrMutationOutcome::Done => Ok(NativeCallResult::Value(value)),
-                    AttrMutationOutcome::ExceptionHandled => {
-                        Ok(NativeCallResult::PropagatedException)
-                    }
+                if cache_is_class_dict {
+                    return Err(RuntimeError::type_error(format!(
+                        "The '__dict__' attribute on '{}' instance does not support item assignment for caching '{}' property.",
+                        type_name, attr_name
+                    )));
+                }
+                dict_set_value_checked(&cache, Value::Str(attr_name), value.clone())?;
+                Ok(NativeCallResult::Value(value))
+            }
+            NativeMethodKind::CachedPropertySetName => {
+                if args.len() != 2 {
+                    return Err(RuntimeError::new("__set_name__() expects 2 arguments"));
+                }
+                let name = match args.get(1).cloned() {
+                    Some(Value::Str(name)) => name,
+                    _ => return Err(RuntimeError::type_error("__set_name__() name must be str")),
+                };
+                let Some((_func, existing_attr_name, _doc)) =
+                    self.cached_property_descriptor_parts(&receiver)
+                else {
+                    return Err(RuntimeError::new("cached_property receiver is invalid"));
+                };
+                if let Some(existing) = existing_attr_name
+                    && existing != name
+                {
+                    return Err(RuntimeError::type_error(format!(
+                        "Cannot assign the same cached_property to two different names ('{}' and '{}').",
+                        existing, name
+                    )));
+                }
+                if let Object::Instance(instance_data) = &mut *receiver.kind_mut() {
+                    instance_data
+                        .attrs
+                        .insert("attrname".to_string(), Value::Str(name));
+                    Ok(NativeCallResult::Value(Value::None))
+                } else {
+                    Err(RuntimeError::new("cached_property receiver is invalid"))
                 }
             }
             NativeMethodKind::OperatorItemGetterCall => {

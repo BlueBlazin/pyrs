@@ -352,6 +352,7 @@ pub enum NativeMethodKind {
     PropertySetter,
     PropertyDeleter,
     CachedPropertyGet,
+    CachedPropertySetName,
     OperatorItemGetterCall,
     OperatorAttrGetterCall,
     OperatorMethodCallerCall,
@@ -649,12 +650,21 @@ impl IndexBucket {
 #[derive(Debug, Clone)]
 pub struct DictObject {
     backend: DictBackend,
+    readonly: bool,
 }
 
 impl DictObject {
     pub fn new(entries: Vec<(Value, Value)>) -> Self {
         Self {
             backend: DictBackend::new(entries),
+            readonly: false,
+        }
+    }
+
+    pub fn new_readonly(entries: Vec<(Value, Value)>) -> Self {
+        Self {
+            backend: DictBackend::new(entries),
+            readonly: true,
         }
     }
 
@@ -723,6 +733,10 @@ impl DictObject {
 
     pub fn remove_key_with_hash(&mut self, key: &Value, hash: u64) -> Option<(Value, Value)> {
         self.backend.remove_key_with_hash(key, hash)
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        self.readonly
     }
 }
 
@@ -1325,6 +1339,10 @@ impl Heap {
 
     pub fn alloc_dict(&self, values: Vec<(Value, Value)>) -> Value {
         Value::Dict(self.alloc(Object::Dict(DictObject::new(values))))
+    }
+
+    pub fn alloc_readonly_dict(&self, values: Vec<(Value, Value)>) -> Value {
+        Value::Dict(self.alloc(Object::Dict(DictObject::new_readonly(values))))
     }
 
     pub fn alloc_dict_keys_view(&self, dict: ObjRef) -> Value {
@@ -7904,6 +7922,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::CachedPropertyGet => {
                         "<bound method cached_property.__get__>".to_string()
+                    }
+                    NativeMethodKind::CachedPropertySetName => {
+                        "<bound method cached_property.__set_name__>".to_string()
                     }
                     NativeMethodKind::OperatorItemGetterCall => {
                         "<bound method operator.itemgetter-call>".to_string()

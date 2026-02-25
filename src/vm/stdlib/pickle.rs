@@ -1,9 +1,8 @@
 use super::super::{
     AttrMutationOutcome, BYTES_BACKING_STORAGE_ATTR, BuiltinFunction, HashMap,
     INSTANCE_DICT_STORAGE_ATTR, InternalCallOutcome, IteratorKind, IteratorObject,
-    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm,
-    class_name_for_instance, is_truthy, runtime_error_matches_exception, value_from_bigint,
-    value_to_int,
+    NativeMethodKind, ObjRef, Object, RuntimeError, Value, Vm, class_name_for_instance, is_truthy,
+    runtime_error_matches_exception, value_from_bigint, value_to_int,
 };
 use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -2813,31 +2812,31 @@ impl Vm {
         };
         let mut apply_state_dict =
             |instance: &ObjRef, state: &ObjRef| -> Result<(), RuntimeError> {
-            let entries: Vec<(Value, Value)> = match &*state.kind() {
-                Object::Dict(entries) => entries.iter().cloned().collect(),
-                _ => return Err(RuntimeError::new("state dictionary must be a dict object")),
-            };
-            if matches!(&*instance.kind(), Object::Instance(_)) {
-                for (key, value) in entries {
-                    let Value::Str(name) = key else {
-                        return Err(RuntimeError::new("state dictionary keys must be strings"));
-                    };
-                    match self.store_attr_instance_direct(instance, &name, value)? {
-                        AttrMutationOutcome::Done => {}
-                        AttrMutationOutcome::ExceptionHandled => {
-                            return Err(RuntimeError::new(
-                                "state assignment failed for instance attribute",
-                            ));
+                let entries: Vec<(Value, Value)> = match &*state.kind() {
+                    Object::Dict(entries) => entries.iter().cloned().collect(),
+                    _ => return Err(RuntimeError::new("state dictionary must be a dict object")),
+                };
+                if matches!(&*instance.kind(), Object::Instance(_)) {
+                    for (key, value) in entries {
+                        let Value::Str(name) = key else {
+                            return Err(RuntimeError::new("state dictionary keys must be strings"));
+                        };
+                        match self.store_attr_instance_direct(instance, &name, value)? {
+                            AttrMutationOutcome::Done => {}
+                            AttrMutationOutcome::ExceptionHandled => {
+                                return Err(RuntimeError::new(
+                                    "state assignment failed for instance attribute",
+                                ));
+                            }
                         }
                     }
+                    Ok(())
+                } else {
+                    Err(RuntimeError::new(
+                        "object.__setstate__() requires an instance receiver",
+                    ))
                 }
-                Ok(())
-            } else {
-                Err(RuntimeError::new(
-                    "object.__setstate__() requires an instance receiver",
-                ))
-            }
-        };
+            };
 
         match &args[1] {
             Value::None => Ok(Value::None),
