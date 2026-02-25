@@ -14873,6 +14873,26 @@ fn os_terminal_size_helpers_are_available() {
 }
 
 #[test]
+fn os_terminal_size_is_unpackable_and_tuple_like() {
+    let source = "import os\nv = os.get_terminal_size()\na, b = v\nok = (isinstance(v, os.terminal_size) and isinstance(v, tuple) and a == v.columns and b == v.lines and len(v) == 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn str_center_padding_matches_cpython() {
+    let source = "a = 'x'.center(4, '-')\nb = 'x'.center(5, '-')\nok = (a == '-x--' and b == '--x--')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn colorize_decolor_strips_ansi_sequences() {
     let source =
         "import _colorize\ns = _colorize.decolor('\\x1b[31mhello\\x1b[0m')\nok = (s == 'hello')\n";

@@ -307,6 +307,7 @@ pub enum NativeMethodKind {
     StrRStrip,
     StrStrip,
     StrLJust,
+    StrCenter,
     StrExpandTabs,
     CodeReplace,
     CodeCoPositions,
@@ -7871,6 +7872,7 @@ pub fn format_value(value: &Value) -> String {
                     NativeMethodKind::StrRStrip => "<bound method str.rstrip>".to_string(),
                     NativeMethodKind::StrStrip => "<bound method str.strip>".to_string(),
                     NativeMethodKind::StrLJust => "<bound method str.ljust>".to_string(),
+                    NativeMethodKind::StrCenter => "<bound method str.center>".to_string(),
                     NativeMethodKind::StrExpandTabs => "<bound method str.expandtabs>".to_string(),
                     NativeMethodKind::CodeReplace => "<bound method code.replace>".to_string(),
                     NativeMethodKind::CodeCoPositions => {

@@ -416,32 +416,75 @@ impl Vm {
         Ok(Value::None)
     }
 
-    pub(super) fn make_os_terminal_size(&self, columns: i64, lines: i64) -> Value {
-        let module = match self
-            .heap
-            .alloc_module(ModuleObject::new("__os_terminal_size__".to_string()))
-        {
-            Value::Module(obj) => obj,
-            _ => unreachable!(),
-        };
-        if let Object::Module(module_data) = &mut *module.kind_mut() {
-            module_data
-                .globals
+    fn os_terminal_size_class(&self) -> Option<ObjRef> {
+        self.modules
+            .get("os")
+            .and_then(|module| match &*module.kind() {
+                Object::Module(module_data) => module_data.globals.get("terminal_size").cloned(),
+                _ => None,
+            })
+            .and_then(|value| match value {
+                Value::Class(class) => Some(class),
+                _ => None,
+            })
+    }
+
+    pub(super) fn make_os_terminal_size(
+        &mut self,
+        columns: i64,
+        lines: i64,
+    ) -> Result<Value, RuntimeError> {
+        let terminal_size_class = self
+            .os_terminal_size_class()
+            .ok_or_else(|| RuntimeError::new("os.terminal_size missing"))?;
+        let instance = self.alloc_instance_for_class(&terminal_size_class);
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
                 .insert("columns".to_string(), Value::Int(columns));
-            module_data
-                .globals
+            instance_data
+                .attrs
                 .insert("lines".to_string(), Value::Int(lines));
+            instance_data.attrs.insert(
+                TUPLE_BACKING_STORAGE_ATTR.to_string(),
+                self.heap
+                    .alloc_tuple(vec![Value::Int(columns), Value::Int(lines)]),
+            );
+        } else {
+            return Err(RuntimeError::new(
+                "os.terminal_size instance construction failed",
+            ));
         }
-        Value::Module(module)
+        Ok(Value::Instance(instance))
     }
 
     pub(super) fn builtin_os_terminal_size(
         &mut self,
-        args: Vec<Value>,
+        mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("terminal_size() expects one argument"));
+        if !kwargs.is_empty() {
+            return Err(RuntimeError::new(
+                "terminal_size.__new__() does not accept keyword arguments",
+            ));
+        }
+        if args.is_empty() {
+            return Err(RuntimeError::new(
+                "terminal_size.__new__() requires class receiver",
+            ));
+        }
+        let terminal_size_class = match args.remove(0) {
+            Value::Class(class) => class,
+            _ => {
+                return Err(RuntimeError::new(
+                    "terminal_size.__new__() requires class receiver",
+                ));
+            }
+        };
+        if args.len() != 1 {
+            return Err(RuntimeError::new(
+                "terminal_size() expects one argument",
+            ));
         }
         let values = match &args[0] {
             Value::Tuple(obj) => match &*obj.kind() {
@@ -473,7 +516,25 @@ impl Vm {
         }
         let columns = value_to_int(values[0].clone())?;
         let lines = value_to_int(values[1].clone())?;
-        Ok(self.make_os_terminal_size(columns, lines))
+        let instance = self.alloc_instance_for_class(&terminal_size_class);
+        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+            instance_data
+                .attrs
+                .insert("columns".to_string(), Value::Int(columns));
+            instance_data
+                .attrs
+                .insert("lines".to_string(), Value::Int(lines));
+            instance_data.attrs.insert(
+                TUPLE_BACKING_STORAGE_ATTR.to_string(),
+                self.heap
+                    .alloc_tuple(vec![Value::Int(columns), Value::Int(lines)]),
+            );
+        } else {
+            return Err(RuntimeError::new(
+                "terminal_size() instance construction failed",
+            ));
+        }
+        Ok(Value::Instance(instance))
     }
 
     pub(super) fn builtin_os_get_terminal_size(
@@ -489,7 +550,7 @@ impl Vm {
         if let Some(fd) = args.first() {
             let _ = value_to_int(fd.clone())?;
         }
-        Ok(self.make_os_terminal_size(80, 24))
+        self.make_os_terminal_size(80, 24)
     }
 
     pub(super) fn alloc_open_fd(&mut self, file: fs::File) -> i64 {

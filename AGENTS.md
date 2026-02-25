@@ -123,6 +123,8 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - namedtuple instance construction now always materializes tuple backing storage, restoring tuple-equality parity for `cache_info()`/`_CacheInfo`-style call sites,
     - special-method dispatch now falls back to calling non-descriptor class attributes with the receiver prepended (for example `unittest.mock.Mock`-assigned `__mul__`/`__hash__` magic methods now participate in operator/hash dispatch),
     - C-API dict runtime paths now use VM runtime hash/eq semantics (`PyDict_GetItem/SetItem/Contains/Pop/DelItem/Merge` + mapping slots), removing static-hash lookup drift for Python-level key semantics in extension-driven dict operations,
+    - `os.terminal_size` is now a tuple-backed class (not a module placeholder), with `__new__` + tuple storage + `columns`/`lines` attrs, restoring unpackability/tuple semantics in stdlib call sites (`padding, _ = shutil.get_terminal_size()`),
+    - `str.center` native method is now implemented with CPython-compatible padding split and single-character fill validation, unblocking stdlib diagnostics paths that center banner text,
     - dict key semantics now route through VM runtime hash/eq for Python-facing operations (`getitem`/`setitem`/`delitem`/`get`/`setdefault`/`pop`/`update`/membership),
       with hash-bucket-first lookup and full-entry fallback scans to preserve correctness when dicts contain mixed legacy/static-hash and runtime-hash entries,
     - runtime tuple/frozenset hashing now memoizes per-object hash values (bounded cache) so repeated lookups over the same immutable key no longer re-invoke element `__hash__` methods,

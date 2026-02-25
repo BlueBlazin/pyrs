@@ -1779,6 +1779,7 @@ impl Vm {
             "rstrip" => NativeMethodKind::StrRStrip,
             "strip" => NativeMethodKind::StrStrip,
             "ljust" => NativeMethodKind::StrLJust,
+            "center" => NativeMethodKind::StrCenter,
             "expandtabs" => NativeMethodKind::StrExpandTabs,
             _ => {
                 return Err(RuntimeError::attribute_error(format!(

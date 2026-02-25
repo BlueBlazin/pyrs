@@ -4402,6 +4402,61 @@ impl Vm {
                 }
                 Ok(NativeCallResult::Value(Value::Str(out)))
             }
+            NativeMethodKind::StrCenter => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(RuntimeError::new(
+                        "center() expects width and optional fillchar",
+                    ));
+                }
+                let width = value_to_int(args[0].clone())?;
+                let fillchar = if args.len() == 2 {
+                    match &args[1] {
+                        Value::Str(text) => {
+                            let mut chars = text.chars();
+                            let Some(ch) = chars.next() else {
+                                return Err(RuntimeError::new(
+                                    "The fill character must be exactly one character long",
+                                ));
+                            };
+                            if chars.next().is_some() {
+                                return Err(RuntimeError::new(
+                                    "The fill character must be exactly one character long",
+                                ));
+                            }
+                            ch
+                        }
+                        _ => return Err(RuntimeError::new("center() fillchar must be str")),
+                    }
+                } else {
+                    ' '
+                };
+                let text = match &*receiver.kind() {
+                    Object::Module(module_data) => match module_data.globals.get("value") {
+                        Some(Value::Str(value)) => value.clone(),
+                        _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                    },
+                    _ => return Err(RuntimeError::type_error("str receiver is invalid")),
+                };
+                let text_len = text.chars().count() as i64;
+                if width <= text_len {
+                    return Ok(NativeCallResult::Value(Value::Str(text)));
+                }
+                let total_pad =
+                    usize::try_from(width - text_len).map_err(|_| RuntimeError::new("center() width is too large"))?;
+                let left_pad = total_pad / 2;
+                let right_pad = total_pad - left_pad;
+                let mut out = String::with_capacity(
+                    text.len() + (left_pad + right_pad) * fillchar.len_utf8(),
+                );
+                for _ in 0..left_pad {
+                    out.push(fillchar);
+                }
+                out.push_str(&text);
+                for _ in 0..right_pad {
+                    out.push(fillchar);
+                }
+                Ok(NativeCallResult::Value(Value::Str(out)))
+            }
             NativeMethodKind::StrRStrip => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new("rstrip() expects at most one argument"));

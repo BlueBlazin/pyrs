@@ -112,6 +112,11 @@ python3 scripts/probe_stdlib_full.py \
   - Python-facing dict operations now route through VM runtime hash/equality paths (instead of static container hashing only),
   - tuple/frozenset runtime hash values are memoized per immutable object (bounded cache),
   - extension-facing `PyDict_*` and dict mapping-slot paths now use the same runtime key semantics to avoid static/runtime hash drift.
+- `os.terminal_size` parity fix:
+  - switched from module-placeholder return objects to tuple-backed `os.terminal_size` instances,
+  - `columns`/`lines` attrs and tuple protocol are both present (`padding, _ = shutil.get_terminal_size()` now works).
+- `str.center` parity fix:
+  - added native `str.center(width, fillchar=' ')` with CPython-style odd-padding split and one-character fill validation.
 
 ## Notes on Comprehensive Mapping
 - Mapping is systematic and programmatic:

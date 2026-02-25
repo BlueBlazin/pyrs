@@ -900,6 +900,34 @@ impl Vm {
             Vec::new(),
         );
         let os_stat_result_class = self.alloc_tuple_backed_builtin_class("stat_result");
+        let os_terminal_size_class = self.alloc_tuple_backed_builtin_class("terminal_size");
+        if let Value::Class(class_obj) = &os_terminal_size_class
+            && let Object::Class(class_data) = &mut *class_obj.kind_mut()
+        {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("os".to_string()));
+            class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::OsTerminalSize),
+            );
+            class_data.attrs.insert(
+                "_fields".to_string(),
+                self.heap.alloc_tuple(vec![
+                    Value::Str("columns".to_string()),
+                    Value::Str("lines".to_string()),
+                ]),
+            );
+            class_data
+                .attrs
+                .insert("n_fields".to_string(), Value::Int(2));
+            class_data
+                .attrs
+                .insert("n_sequence_fields".to_string(), Value::Int(2));
+            class_data
+                .attrs
+                .insert("n_unnamed_fields".to_string(), Value::Int(0));
+        }
         self.install_builtin_module(
             "os",
             &[
@@ -1022,10 +1050,7 @@ impl Vm {
                 ("SEEK_SET", Value::Int(0)),
                 ("SEEK_CUR", Value::Int(1)),
                 ("SEEK_END", Value::Int(2)),
-                (
-                    "terminal_size",
-                    Value::Builtin(BuiltinFunction::OsTerminalSize),
-                ),
+                ("terminal_size", os_terminal_size_class),
                 ("supports_dir_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_fd", self.heap.alloc_set(Vec::new())),
                 ("supports_follow_symlinks", self.heap.alloc_set(Vec::new())),
