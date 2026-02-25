@@ -14904,6 +14904,36 @@ fn bytes_split_supports_separator_and_bytearray_receiver() {
 }
 
 #[test]
+fn callable_instance_dispatch_matches_explicit_dunder_call_path() {
+    run_with_large_stack(
+        "callable_instance_dispatch_matches_explicit_dunder_call_path",
+        || {
+            let source = "import sys\nsys.path=['.local/Python-3.14.3/Lib']\nfrom email.headerregistry import HeaderRegistry\nh = HeaderRegistry()\na = h('Content-Type', 'text/plain; charset=\"utf-8\"')\nb = HeaderRegistry.__call__(h, 'Content-Type', 'text/plain; charset=\"utf-8\"')\nok = (str(a) == str(b) == 'text/plain; charset=\"utf-8\"')\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
+}
+
+#[test]
+fn email_message_set_content_smoke_does_not_overflow_stack() {
+    run_with_large_stack(
+        "email_message_set_content_smoke_does_not_overflow_stack",
+        || {
+            let source = "import sys\nsys.path=['.local/Python-3.14.3/Lib']\nfrom email.message import EmailMessage\nm = EmailMessage()\nm['Subject'] = 'x'\nm.set_content('y')\nok = ('Content-Type' in m and 'MIME-Version' in m)\n";
+            let module = parser::parse_module(source).expect("parse should succeed");
+            let code = compiler::compile_module(&module).expect("compile should succeed");
+            let mut vm = Vm::new();
+            vm.execute(&code).expect("execution should succeed");
+            assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+        },
+    );
+}
+
+#[test]
 fn colorize_decolor_strips_ansi_sequences() {
     let source =
         "import _colorize\ns = _colorize.decolor('\\x1b[31mhello\\x1b[0m')\nok = (s == 'hello')\n";

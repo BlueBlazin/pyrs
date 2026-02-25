@@ -10601,10 +10601,30 @@ impl Vm {
                 self.finalize_builtin_opcode_call(caller_depth, caller_ip, call_result)?;
             }
             Value::Instance(instance) => {
-                match self.call_internal(Value::Instance(instance), args, HashMap::new())? {
-                    InternalCallOutcome::Value(value) => self.push_value(value),
-                    InternalCallOutcome::CallerExceptionHandled => {}
+                let receiver = Value::Instance(instance.clone());
+                if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
+                    match self.call_internal(receiver, args, HashMap::new())? {
+                        InternalCallOutcome::Value(value) => self.push_value(value),
+                        InternalCallOutcome::CallerExceptionHandled => {}
+                    }
+                    return Ok(());
                 }
+                match self.load_attr_instance(&instance, "__call__") {
+                    Ok(AttrAccessOutcome::Value(call_target)) => {
+                        self.dispatch_call_no_kwargs(call_target, args)?;
+                        return Ok(());
+                    }
+                    Ok(AttrAccessOutcome::ExceptionHandled) => return Ok(()),
+                    Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {}
+                    Err(err) => return Err(err),
+                }
+                if let Some(call_target) =
+                    self.lookup_bound_special_method(&receiver, "__call__")?
+                {
+                    self.dispatch_call_no_kwargs(call_target, args)?;
+                    return Ok(());
+                }
+                return Err(RuntimeError::type_error("attempted to call non-function"));
             }
             Value::ExceptionType(name) => {
                 let value = self.instantiate_exception_type(&name, &args, &HashMap::new())?;

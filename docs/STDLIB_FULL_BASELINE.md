@@ -79,6 +79,12 @@ python3 scripts/probe_stdlib_full.py \
     `unicodedata` and `unicodedata.ucd_3_2_0`.
   - known residual: surrogate-codepoint fidelity is still constrained by current
     UTF-8 `str` storage representation (tracked via stdlib-failure lane evidence).
+- callable-instance opcode dispatch was aligned with normal bound-method call paths:
+  - `dispatch_call_no_kwargs` now resolves instance `__call__` through standard
+    attribute semantics first and re-dispatches through the same robust call path
+    used by explicit `obj.__call__(...)`,
+  - this closes the `email` `HeaderRegistry`/`EmailMessage.set_content` stack-overflow
+    regression seen in the extended stdlib smoke lane.
 - VM call argument-binding parity was tightened for positional-only parameters:
   - keyword names matching positional-only params are now routed into `**kwargs` when a
     var-keyword slot exists (CPython behavior),

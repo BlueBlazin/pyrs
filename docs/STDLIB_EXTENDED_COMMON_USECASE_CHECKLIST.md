@@ -49,8 +49,8 @@ Important scope note:
 | `http` | DONE | PASS | PASS | - |
 | `hashlib` | DONE | PASS | PASS | - |
 | `dataclasses` | DONE | PASS | PASS | - |
-| `statistics` | DONE | PASS | PASS* | targeted `statistics.mean([1,2,3,4])` smoke is green (artifact refresh pending) |
-| `decimal` | DONE | PASS | PASS* | targeted pure-stdlib smoke is green after import binding parity + pure `decimal` preference (artifact refresh pending) |
+| `statistics` | DONE | PASS | PASS | - |
+| `decimal` | DONE | PASS | PASS | - |
 | `fractions` | DONE | PASS | PASS | - |
 | `pprint` | DONE | PASS | PASS | - |
 | `copy` | DONE | PASS | PASS | - |
@@ -63,8 +63,8 @@ Important scope note:
 | `concurrent.futures` | DONE | PASS | PASS | fixed iterator protocol parity (`itertools.count.__iter__`/`__next__`) and semaphore bound semantics in threadpool shutdown path |
 | `socket` | DONE | PASS | PASS | - |
 | `ssl` | DONE | PASS | PASS | `_ssl` baseline landed and a native `ssl` bootstrap module now provides import/common context surfaces while namedtuple+super enum bootstrap gap remains tracked in object-model backlog |
-| `email` | DONE | PASS | PASS* | `EmailMessage` header/content fold + `as_string()` smoke is green (artifact refresh pending) |
-| `smtplib` | DONE | PASS* | PASS* | targeted import + common constructor smoke is green; runtime still logs missing `hashlib` algorithms (`sha1`/`sha3`/`blake*`/`shake*`) |
+| `email` | DONE | PASS | PASS | - |
+| `smtplib` | DONE | PASS | PASS | - |
 | `imaplib` | DONE | PASS | PASS | targeted `Time2Internaldate(0)` smoke now green after `datetime.datetime.fromtimestamp` + `%z` baseline |
 | `ftplib` | DONE | PASS | PASS | - |
 | `xml` | DONE | PASS | PASS | native runtime `pyexpat` baseline is active; `_elementtree` is currently forced unavailable so `ElementTree` runs via CPython pure-Python fallback until `expat_CAPI` is implemented |

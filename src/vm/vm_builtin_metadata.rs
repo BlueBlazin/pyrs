@@ -3563,50 +3563,14 @@ impl Vm {
                 match &*method_data.function.kind() {
                     Object::Function(_) => {
                         let depth_before = self.frames.len();
-                        if kwargs.is_empty() {
-                            let mut args = args;
-                            match args.len() {
-                                0 => self.push_bound_method_call_zero_args_from_obj(&method)?,
-                                1 => {
-                                    let arg0 = args.pop().expect("len checked");
-                                    self.push_bound_method_call_one_arg_from_obj(&method, arg0)?
-                                }
-                                2 => {
-                                    let arg1 = args.pop().expect("len checked");
-                                    let arg0 = args.pop().expect("len checked");
-                                    self.push_bound_method_call_two_args_from_obj(
-                                        &method, arg0, arg1,
-                                    )?
-                                }
-                                3 => {
-                                    let arg2 = args.pop().expect("len checked");
-                                    let arg1 = args.pop().expect("len checked");
-                                    let arg0 = args.pop().expect("len checked");
-                                    self.push_bound_method_call_three_args_from_obj(
-                                        &method, arg0, arg1, arg2,
-                                    )?
-                                }
-                                _ => {
-                                    let mut bound_args = Vec::with_capacity(args.len() + 1);
-                                    bound_args.push(self.receiver_value(&method_data.receiver)?);
-                                    bound_args.extend(args);
-                                    self.push_function_call_from_obj(
-                                        &method_data.function,
-                                        bound_args,
-                                        HashMap::new(),
-                                    )?;
-                                }
-                            }
-                        } else {
-                            let mut bound_args = Vec::with_capacity(args.len() + 1);
-                            bound_args.push(self.receiver_value(&method_data.receiver)?);
-                            bound_args.extend(args);
-                            self.push_function_call_from_obj(
-                                &method_data.function,
-                                bound_args,
-                                kwargs,
-                            )?;
-                        }
+                        let mut bound_args = Vec::with_capacity(args.len() + 1);
+                        bound_args.push(self.receiver_value(&method_data.receiver)?);
+                        bound_args.extend(args);
+                        self.push_function_call_from_obj(
+                            &method_data.function,
+                            bound_args,
+                            kwargs,
+                        )?;
                         self.frames.len() > depth_before
                     }
                     Object::NativeMethod(native) => {
@@ -3729,6 +3693,16 @@ impl Vm {
                 if Self::cpython_proxy_raw_ptr_from_value(&receiver).is_some() {
                     let value = self.call_cpython_proxy_object(&receiver, args, kwargs)?;
                     return Ok(InternalCallOutcome::Value(value));
+                }
+                match self.load_attr_instance(&instance, "__call__") {
+                    Ok(AttrAccessOutcome::Value(call_target)) => {
+                        return self.call_internal(call_target, args, kwargs);
+                    }
+                    Ok(AttrAccessOutcome::ExceptionHandled) => {
+                        return Ok(InternalCallOutcome::CallerExceptionHandled);
+                    }
+                    Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {}
+                    Err(err) => return Err(err),
                 }
                 if let Some(call_target) =
                     self.lookup_bound_special_method(&receiver, "__call__")?
