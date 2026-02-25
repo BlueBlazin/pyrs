@@ -183,6 +183,7 @@ def capture(cb):
 err_str = capture(lambda: _md5.md5("abc"))
 err_conflict = capture(lambda: _md5.md5(data=b"a", string=b"b"))
 err_keyword = capture(lambda: _md5.md5(foo=1))
+err_blake2_keyword_precedes_conflict = capture(lambda: __import__("_blake2").blake2b(data=b"a", string=b"b", foo=1))
 obj = _md5.md5()
 err_update = capture(lambda: obj.update("abc"))
 "#,
@@ -204,6 +205,12 @@ err_update = capture(lambda: obj.update("abc"))
         vm.get_global("err_keyword"),
         Some(Value::Str(
             "TypeError:md5() got an unexpected keyword argument 'foo'".to_string()
+        ))
+    );
+    assert_eq!(
+        vm.get_global("err_blake2_keyword_precedes_conflict"),
+        Some(Value::Str(
+            "TypeError:blake2b() got an unexpected keyword argument 'foo'".to_string()
         ))
     );
     assert_eq!(
@@ -302,6 +309,167 @@ fromhex_ok = bytes.fromhex("00 ff").hex()
     assert_eq!(
         vm.get_global("fromhex_ok"),
         Some(Value::Str("00ff".to_string()))
+    );
+}
+
+#[test]
+fn native_hashlib_exposes_constructors_mapping_for_clinic_signature_paths() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _hashlib
+has_constructors = hasattr(_hashlib, "_constructors")
+contains_sha256 = "sha256" in _hashlib._constructors
+md5_entry = _hashlib._constructors.get(_hashlib.openssl_md5)
+"#,
+    );
+
+    assert_eq!(vm.get_global("has_constructors"), Some(Value::Bool(true)));
+    // CPython stores callable keys in _constructors; string-membership is false.
+    assert_eq!(vm.get_global("contains_sha256"), Some(Value::Bool(false)));
+    assert_eq!(
+        vm.get_global("md5_entry"),
+        Some(Value::Str("md5".to_string()))
+    );
+}
+
+#[test]
+fn native_shake_digest_rejects_very_large_lengths() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _sha3
+def capture(cb):
+    try:
+        cb()
+    except Exception as exc:
+        return f"{type(exc).__name__}:{exc}"
+    return "ok"
+h = _sha3.shake_128(b"abc")
+err_digest = capture(lambda: h.digest(2**29))
+err_hexdigest = capture(lambda: h.hexdigest(2**29))
+"#,
+    );
+
+    assert_eq!(
+        vm.get_global("err_digest"),
+        Some(Value::Str("ValueError:length is too large".to_string()))
+    );
+    assert_eq!(
+        vm.get_global("err_hexdigest"),
+        Some(Value::Str("ValueError:length is too large".to_string()))
+    );
+}
+
+#[test]
+fn native_sha3_objects_expose_capacity_rate_and_suffix_metadata() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _sha3
+s = _sha3.sha3_224()
+k = _sha3.shake_128()
+s_cap = s._capacity_bits
+s_rate = s._rate_bits
+s_suffix = s._suffix.hex()
+k_cap = k._capacity_bits
+k_rate = k._rate_bits
+k_suffix = k._suffix.hex()
+"#,
+    );
+
+    assert_eq!(vm.get_global("s_cap"), Some(Value::Int(448)));
+    assert_eq!(vm.get_global("s_rate"), Some(Value::Int(1152)));
+    assert_eq!(
+        vm.get_global("s_suffix"),
+        Some(Value::Str("06".to_string()))
+    );
+    assert_eq!(vm.get_global("k_cap"), Some(Value::Int(256)));
+    assert_eq!(vm.get_global("k_rate"), Some(Value::Int(1344)));
+    assert_eq!(
+        vm.get_global("k_suffix"),
+        Some(Value::Str("1f".to_string()))
+    );
+}
+
+#[test]
+fn native_hash_types_are_immutable() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _md5
+def capture(cb):
+    try:
+        cb()
+    except Exception as exc:
+        return f"{type(exc).__name__}:{exc}"
+    return "ok"
+t = type(_md5.md5())
+err = capture(lambda: setattr(t, "value", False))
+"#,
+    );
+
+    assert_eq!(
+        vm.get_global("err"),
+        Some(Value::Str(
+            "TypeError:cannot set attribute 'value' of immutable type 'md5'".to_string()
+        ))
+    );
+}
+
+#[test]
+fn native_pbkdf2_hmac_accepts_explicit_dklen_none() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _hashlib
+out = _hashlib.pbkdf2_hmac(hash_name="sha1", password=b"password", salt=b"salt", iterations=1, dklen=None)
+hex_out = out.hex()
+size = len(out)
+"#,
+    );
+
+    assert_eq!(vm.get_global("size"), Some(Value::Int(20)));
+    assert_eq!(
+        vm.get_global("hex_out"),
+        Some(Value::Str(
+            "0c60c80f961f0e71f3a9b524af6012062fe037a6".to_string()
+        ))
+    );
+}
+
+#[test]
+fn native_scrypt_rejects_invalid_maxmem_values() {
+    let mut vm = Vm::new();
+    run_script(
+        &mut vm,
+        r#"
+import _hashlib
+def capture(cb):
+    try:
+        cb()
+    except Exception as exc:
+        return f"{type(exc).__name__}:{exc}"
+    return "ok"
+err_neg = capture(lambda: _hashlib.scrypt(b"password", salt=b"salt", n=2, r=8, p=1, maxmem=-1))
+err_none = capture(lambda: _hashlib.scrypt(b"password", salt=b"salt", n=2, r=8, p=1, maxmem=None))
+"#,
+    );
+
+    assert_eq!(
+        vm.get_global("err_neg"),
+        Some(Value::Str(
+            "ValueError:maxmem must be positive and smaller than 2147483647".to_string()
+        ))
+    );
+    assert_eq!(
+        vm.get_global("err_none"),
+        Some(Value::Str("TypeError:unsupported operand type".to_string()))
     );
 }
 

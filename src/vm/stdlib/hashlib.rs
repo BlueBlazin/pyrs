@@ -632,6 +632,9 @@ impl HashState {
                         "TypeError: digest() missing required argument 'length' (pos 1)",
                     )
                 })?;
+                if requested >= (1 << 29) {
+                    return Err(RuntimeError::value_error("length is too large"));
+                }
                 let mut out = vec![0u8; requested];
                 let mut reader = state.clone().finalize_xof();
                 reader.read(&mut out);
@@ -643,6 +646,9 @@ impl HashState {
                         "TypeError: digest() missing required argument 'length' (pos 1)",
                     )
                 })?;
+                if requested >= (1 << 29) {
+                    return Err(RuntimeError::value_error("length is too large"));
+                }
                 let mut out = vec![0u8; requested];
                 let mut reader = state.clone().finalize_xof();
                 reader.read(&mut out);
@@ -874,6 +880,26 @@ impl Vm {
             instance_data
                 .attrs
                 .insert("block_size".to_string(), Value::Int(kind.block_size()));
+            let sha3_extra = match kind {
+                HashKind::Sha3_224 => Some((448, 1152, vec![0x06])),
+                HashKind::Sha3_256 => Some((512, 1088, vec![0x06])),
+                HashKind::Sha3_384 => Some((768, 832, vec![0x06])),
+                HashKind::Sha3_512 => Some((1024, 576, vec![0x06])),
+                HashKind::Shake128 => Some((256, 1344, vec![0x1f])),
+                HashKind::Shake256 => Some((512, 1088, vec![0x1f])),
+                _ => None,
+            };
+            if let Some((capacity_bits, rate_bits, suffix)) = sha3_extra {
+                instance_data
+                    .attrs
+                    .insert("_capacity_bits".to_string(), Value::Int(capacity_bits));
+                instance_data
+                    .attrs
+                    .insert("_rate_bits".to_string(), Value::Int(rate_bits));
+                instance_data
+                    .attrs
+                    .insert("_suffix".to_string(), self.heap.alloc_bytes(suffix));
+            }
         }
     }
 
@@ -968,18 +994,6 @@ impl Vm {
         if let Some(value) = kwargs.remove("usedforsecurity") {
             let _ = is_truthy(&value);
         }
-        if payload_arg.is_some() && string_arg.is_some() {
-            return Err(RuntimeError::new(
-                "TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.",
-            ));
-        }
-        if payload_arg.is_none() {
-            payload_arg = string_arg;
-        }
-        let payload = match payload_arg {
-            Some(value) => Some(self.hash_payload_from_value(value)?),
-            None => None,
-        };
 
         let digest_size = match kwargs.remove("digest_size") {
             Some(value) => {
@@ -1089,6 +1103,19 @@ impl Vm {
                 "TypeError: {constructor_name}() got an unexpected keyword argument '{unexpected}'"
             )));
         }
+
+        if payload_arg.is_some() && string_arg.is_some() {
+            return Err(RuntimeError::new(
+                "TypeError: 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.",
+            ));
+        }
+        if payload_arg.is_none() {
+            payload_arg = string_arg;
+        }
+        let payload = match payload_arg {
+            Some(value) => Some(self.hash_payload_from_value(value)?),
+            None => None,
+        };
 
         Ok(Blake2ConstructorOptions {
             payload,
@@ -1495,16 +1522,17 @@ impl Vm {
                 "ValueError: iteration value must be greater than 0.",
             ));
         }
-        let out_len = if let Some(value) = dklen {
-            let len = value_to_int(value)?;
-            if len <= 0 {
-                return Err(RuntimeError::new(
-                    "ValueError: key length must be greater than 0.",
-                ));
+        let out_len = match dklen {
+            None | Some(Value::None) => kind.digest_size() as usize,
+            Some(value) => {
+                let len = value_to_int(value)?;
+                if len <= 0 {
+                    return Err(RuntimeError::new(
+                        "ValueError: key length must be greater than 0.",
+                    ));
+                }
+                len as usize
             }
-            len as usize
-        } else {
-            kind.digest_size() as usize
         };
         let mut out = vec![0u8; out_len];
         match kind {
@@ -1580,7 +1608,7 @@ impl Vm {
             .remove("p")
             .ok_or_else(|| RuntimeError::new("TypeError: scrypt() missing required keyword 'p'"))
             .and_then(value_to_int)?;
-        let _maxmem = kwargs
+        let maxmem = kwargs
             .remove("maxmem")
             .map(value_to_int)
             .transpose()?
@@ -1603,6 +1631,11 @@ impl Vm {
         if r <= 0 || p <= 0 {
             return Err(RuntimeError::new(
                 "ValueError: r and p must be positive integers.",
+            ));
+        }
+        if !(0..=i32::MAX as i64).contains(&maxmem) {
+            return Err(RuntimeError::new(
+                "ValueError: maxmem must be positive and smaller than 2147483647",
             ));
         }
         if dklen <= 0 {

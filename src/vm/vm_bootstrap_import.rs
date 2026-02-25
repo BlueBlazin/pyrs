@@ -1888,6 +1888,9 @@ impl Vm {
                     "__module__".to_string(),
                     Value::Str(module_name.to_string()),
                 );
+                class_data
+                    .attrs
+                    .insert("__flags__".to_string(), Value::Int(0));
                 class_data.attrs.insert(
                     "__pyrs_disallow_instantiation__".to_string(),
                     Value::Bool(true),
@@ -2098,6 +2101,59 @@ impl Vm {
                         Value::Str("sha3_512".to_string()),
                         Value::Str("shake_128".to_string()),
                         Value::Str("shake_256".to_string()),
+                    ]),
+                ),
+                (
+                    "_constructors",
+                    self.heap.alloc_dict(vec![
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibMd5),
+                            Value::Str("md5".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha1),
+                            Value::Str("sha1".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha224),
+                            Value::Str("sha224".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha256),
+                            Value::Str("sha256".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha384),
+                            Value::Str("sha384".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha512),
+                            Value::Str("sha512".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha3_224),
+                            Value::Str("sha3_224".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha3_256),
+                            Value::Str("sha3_256".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha3_384),
+                            Value::Str("sha3_384".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibSha3_512),
+                            Value::Str("sha3_512".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibShake128),
+                            Value::Str("shake_128".to_string()),
+                        ),
+                        (
+                            Value::Builtin(BuiltinFunction::HashlibShake256),
+                            Value::Str("shake_256".to_string()),
+                        ),
                     ]),
                 ),
                 (
