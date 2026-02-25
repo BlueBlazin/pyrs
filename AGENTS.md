@@ -89,7 +89,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - latest artifact: `perf/stdlib_full_probe_latest.json`,
   - current baseline:
     - host-supported imports: `278/288` (out of `297` total inventory rows),
-    - comprehensive mapped test status: `PASS=35`, `FAIL=170`, `TIMEOUT=17`,
+    - comprehensive mapped test status: `PASS=35`, `FAIL=169`, `TIMEOUT=18`,
   - latest stdlib closure deltas:
     - `scripts/probe_stdlib_full.py` now forces resource-disabled mapped test mode (`test.support.use_resources = {}`), preventing network/resource-heavy drift in baseline runs,
     - `_PyArg_UnpackKeywords` compatibility path was aligned to CPython argument-binding semantics for mixed positional/keyword calls,
@@ -122,6 +122,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - `sys.getswitchinterval()` / `sys.setswitchinterval()` are now implemented with CPython-style validation (`> 0.0`),
     - namedtuple instance construction now always materializes tuple backing storage, restoring tuple-equality parity for `cache_info()`/`_CacheInfo`-style call sites,
     - special-method dispatch now falls back to calling non-descriptor class attributes with the receiver prepended (for example `unittest.mock.Mock`-assigned `__mul__`/`__hash__` magic methods now participate in operator/hash dispatch),
+    - C-API dict runtime paths now use VM runtime hash/eq semantics (`PyDict_GetItem/SetItem/Contains/Pop/DelItem/Merge` + mapping slots), removing static-hash lookup drift for Python-level key semantics in extension-driven dict operations,
     - dict key semantics now route through VM runtime hash/eq for Python-facing operations (`getitem`/`setitem`/`delitem`/`get`/`setdefault`/`pop`/`update`/membership),
       with hash-bucket-first lookup and full-entry fallback scans to preserve correctness when dicts contain mixed legacy/static-hash and runtime-hash entries,
     - runtime tuple/frozenset hashing now memoizes per-object hash values (bounded cache) so repeated lookups over the same immutable key no longer re-invoke element `__hash__` methods,

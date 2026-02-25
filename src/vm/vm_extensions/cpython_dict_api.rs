@@ -11,8 +11,7 @@ use super::{
     c_name_to_string, cpython_call_builtin, cpython_debug_compare_value,
     cpython_is_reduce_probe_name, cpython_new_ptr_for_value, cpython_safe_object_type_name,
     cpython_set_error, cpython_trace_numpy_reduce_enabled, cpython_value_debug_tag,
-    cpython_value_from_ptr, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value_checked, with_active_cpython_context_mut,
+    cpython_value_from_ptr, with_active_cpython_context_mut,
 };
 
 fn cpython_dict_set_key_error_for_value(context: &mut ModuleCapiContext, key: Value) {
@@ -61,6 +60,12 @@ unsafe extern "C" fn cpython_dict_mp_subscript_slot(
             context.set_error("dict mp_subscript expected dict object");
             return std::ptr::null_mut();
         };
+        if context.vm.is_null() {
+            context.set_error("dict mp_subscript missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
         let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
             if trace_slot {
                 let key_type =
@@ -80,14 +85,9 @@ unsafe extern "C" fn cpython_dict_mp_subscript_slot(
                 cpython_debug_compare_value(&key_value)
             );
         }
-        match dict_contains_key_checked(&dict_obj, &key_value) {
-            Ok(true) => dict_get_value(&dict_obj, &key_value)
-                .map(|value| context.alloc_cpython_ptr_for_value(value))
-                .unwrap_or_else(|| {
-                    cpython_dict_set_key_error_for_value(context, key_value);
-                    std::ptr::null_mut()
-                }),
-            Ok(false) => {
+        match vm.dict_get_value_runtime(&dict_obj, &key_value) {
+            Ok(Some(value)) => context.alloc_cpython_ptr_for_value(value),
+            Ok(None) => {
                 cpython_dict_set_key_error_for_value(context, key_value);
                 std::ptr::null_mut()
             }
@@ -134,6 +134,12 @@ unsafe extern "C" fn cpython_dict_mp_ass_subscript_slot(
             context.set_error("dict mp_ass_subscript expected dict object");
             return -1;
         };
+        if context.vm.is_null() {
+            context.set_error("dict mp_ass_subscript missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
         let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
             if trace_slot {
                 let key_type =
@@ -147,8 +153,8 @@ unsafe extern "C" fn cpython_dict_mp_ass_subscript_slot(
             return -1;
         };
         if value.is_null() {
-            match dict_remove_value(&dict_obj, &key_value) {
-                Some(_) => {
+            match vm.dict_remove_value_runtime(&dict_obj, &key_value) {
+                Ok(Some(_)) => {
                     if let Some(module_obj) = module_target
                         && let Value::Str(name) = &key_value
                         && let Object::Module(module_data) = &mut *module_obj.kind_mut()
@@ -157,8 +163,12 @@ unsafe extern "C" fn cpython_dict_mp_ass_subscript_slot(
                     }
                     0
                 }
-                None => {
+                Ok(None) => {
                     cpython_dict_set_key_error_for_value(context, key_value);
+                    -1
+                }
+                Err(err) => {
+                    context.set_error(err.message);
                     -1
                 }
             }
@@ -167,7 +177,7 @@ unsafe extern "C" fn cpython_dict_mp_ass_subscript_slot(
                 context.set_error("dict mp_ass_subscript received unknown value pointer");
                 return -1;
             };
-            match dict_set_value_checked(&dict_obj, key_value.clone(), value_obj.clone()) {
+            match vm.dict_set_value_checked_runtime(&dict_obj, key_value.clone(), value_obj.clone()) {
                 Ok(()) => {
                     if let Some(module_obj) = module_target
                         && let Value::Str(name) = key_value
@@ -284,6 +294,12 @@ pub unsafe extern "C" fn PyDict_SetItem(
         if let Some(target) = context.cpython_value_from_ptr(dict)
             && let Value::Dict(dict_obj) = target
         {
+            if context.vm.is_null() {
+                context.set_error("PyDict_SetItem missing VM context");
+                return -1;
+            }
+            // SAFETY: VM pointer is valid for context lifetime.
+            let vm = unsafe { &mut *context.vm };
             let module_trace = module_target
                 .as_ref()
                 .and_then(|module_obj| match &*module_obj.kind() {
@@ -328,7 +344,7 @@ pub unsafe extern "C" fn PyDict_SetItem(
                     cpython_value_debug_tag(&item_value)
                 );
             }
-            return match dict_set_value_checked(&dict_obj, key_value.clone(), item_value.clone()) {
+            return match vm.dict_set_value_checked_runtime(&dict_obj, key_value.clone(), item_value.clone()) {
                 Ok(()) => {
                     if let Some(module_obj) = module_target
                         && let Value::Str(name) = key_value
@@ -446,11 +462,17 @@ pub unsafe extern "C" fn PyDict_SetDefault(
             context.set_error("PyDict_SetDefault expected dict object");
             return std::ptr::null_mut();
         };
+        if context.vm.is_null() {
+            context.set_error("PyDict_SetDefault missing VM context");
+            return std::ptr::null_mut();
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
         let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
             context.set_error("PyDict_SetDefault received unknown key pointer");
             return std::ptr::null_mut();
         };
-        if let Some(existing) = dict_get_value(&dict_obj, &key_value) {
+        if let Ok(Some(existing)) = vm.dict_get_value_runtime(&dict_obj, &key_value) {
             return context.alloc_cpython_ptr_for_value(existing);
         }
         let Some(default_item) = context.cpython_value_from_ptr_or_proxy(default_value) else {
@@ -474,7 +496,7 @@ pub unsafe extern "C" fn PyDict_SetDefault(
             context.set_error("PyDict_SetDefault received unknown default pointer");
             return std::ptr::null_mut();
         };
-        if let Err(err) = dict_set_value_checked(&dict_obj, key_value.clone(), default_item.clone())
+        if let Err(err) = vm.dict_set_value_checked_runtime(&dict_obj, key_value.clone(), default_item.clone())
         {
             context.set_error(err.message);
             return std::ptr::null_mut();
@@ -516,11 +538,17 @@ pub unsafe extern "C" fn PyDict_SetDefaultRef(
             context.set_error("PyDict_SetDefaultRef expected dict object");
             return -1;
         };
+        if context.vm.is_null() {
+            context.set_error("PyDict_SetDefaultRef missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
         let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
             context.set_error("PyDict_SetDefaultRef received unknown key pointer");
             return -1;
         };
-        if let Some(existing) = dict_get_value(&dict_obj, &key_value) {
+        if let Ok(Some(existing)) = vm.dict_get_value_runtime(&dict_obj, &key_value) {
             if !result.is_null() {
                 // SAFETY: caller provided writable output pointer.
                 unsafe {
@@ -551,7 +579,7 @@ pub unsafe extern "C" fn PyDict_SetDefaultRef(
             context.set_error("PyDict_SetDefaultRef received unknown default pointer");
             return -1;
         };
-        if let Err(err) = dict_set_value_checked(&dict_obj, key_value.clone(), default_item.clone())
+        if let Err(err) = vm.dict_set_value_checked_runtime(&dict_obj, key_value.clone(), default_item.clone())
         {
             context.set_error(err.message);
             return -1;
@@ -593,6 +621,14 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
 
         if let Some(target) = context.cpython_value_from_ptr(dict) {
             if let Value::Dict(dict_obj) = target {
+                if context.vm.is_null() {
+                    context.current_error = saved_current_error;
+                    context.last_error = saved_last_error.clone();
+                    context.first_error = saved_first_error.clone();
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: VM pointer is valid for context lifetime.
+                let vm = unsafe { &mut *context.vm };
                 let module_trace = module_target
                     .as_ref()
                     .and_then(|module_obj| match &*module_obj.kind() {
@@ -643,7 +679,16 @@ pub unsafe extern "C" fn PyDict_GetItem(dict: *mut c_void, key: *mut c_void) -> 
                         cpython_debug_compare_value(&key_value)
                     );
                 }
-                let Some(value) = dict_get_value(&dict_obj, &key_value) else {
+                let value = match vm.dict_get_value_runtime(&dict_obj, &key_value) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        context.current_error = saved_current_error;
+                        context.last_error = saved_last_error.clone();
+                        context.first_error = saved_first_error.clone();
+                        return std::ptr::null_mut();
+                    }
+                };
+                let Some(value) = value else {
                     if trace_typedict_lookup {
                         eprintln!(
                             "[numpy-typedict] miss key={}",
@@ -800,14 +845,18 @@ pub unsafe extern "C" fn _PyDict_GetItem_KnownHash(
                 unsafe { PyErr_BadInternalCall() };
                 return std::ptr::null_mut();
             };
+            if context.vm.is_null() {
+                context.set_error("_PyDict_GetItem_KnownHash missing VM context");
+                return std::ptr::null_mut();
+            }
+            // SAFETY: VM pointer is valid for context lifetime.
+            let vm = unsafe { &mut *context.vm };
             let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
                 return std::ptr::null_mut();
             };
-            match dict_contains_key_checked(&dict_obj, &key_value) {
-                Ok(false) => std::ptr::null_mut(),
-                Ok(true) => dict_get_value(&dict_obj, &key_value)
-                    .map(|value| context.alloc_cpython_ptr_for_value(value))
-                    .unwrap_or(std::ptr::null_mut()),
+            match vm.dict_get_value_runtime(&dict_obj, &key_value) {
+                Ok(None) => std::ptr::null_mut(),
+                Ok(Some(value)) => context.alloc_cpython_ptr_for_value(value),
                 Err(err) => {
                     context.set_error(err.message);
                     std::ptr::null_mut()
@@ -834,11 +883,17 @@ pub unsafe extern "C" fn PyDict_Contains(dict: *mut c_void, key: *mut c_void) ->
             context.set_error("PyDict_Contains expected dict object");
             return -1;
         };
+        if context.vm.is_null() {
+            context.set_error("PyDict_Contains missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
         let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
             context.set_error("PyDict_Contains received unknown key pointer");
             return -1;
         };
-        match dict_contains_key_checked(&dict_obj, &key_value) {
+        match vm.dict_contains_key_checked_runtime(&dict_obj, &key_value) {
             Ok(true) => 1,
             Ok(false) => 0,
             Err(err) => {
@@ -1009,11 +1064,24 @@ pub unsafe extern "C" fn PyDict_Pop(
             context.set_error("PyDict_Pop expected dict object");
             return -1;
         };
+        if context.vm.is_null() {
+            context.set_error("PyDict_Pop missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
         let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
             context.set_error("PyDict_Pop received unknown key pointer");
             return -1;
         };
-        let Some(popped) = dict_remove_value(&dict_obj, &key_value) else {
+        let popped = match vm.dict_remove_value_runtime(&dict_obj, &key_value) {
+            Ok(popped) => popped,
+            Err(err) => {
+                context.set_error(err.message);
+                return -1;
+            }
+        };
+        let Some(popped) = popped else {
             return 0;
         };
         if let Some(module_obj) = module_target
@@ -1096,6 +1164,12 @@ pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> 
                 context.set_error("PyDict_DelItem expected dict object");
                 return -1;
             };
+            if context.vm.is_null() {
+                context.set_error("PyDict_DelItem missing VM context");
+                return -1;
+            }
+            // SAFETY: VM pointer is valid for context lifetime.
+            let vm = unsafe { &mut *context.vm };
             let Some(key_value) = context.cpython_value_from_ptr_or_proxy(key) else {
                 context.set_error("PyDict_DelItem received unknown key pointer");
                 return -1;
@@ -1106,7 +1180,14 @@ pub unsafe extern "C" fn PyDict_DelItem(dict: *mut c_void, key: *mut c_void) -> 
             {
                 eprintln!("[numpy-reduce] PyDict_DelItem dict={:p} key={}", dict, name);
             }
-            if dict_remove_value(&dict_obj, &key_value).is_some() {
+            let removed = match vm.dict_remove_value_runtime(&dict_obj, &key_value) {
+                Ok(removed) => removed,
+                Err(err) => {
+                    context.set_error(err.message);
+                    return -1;
+                }
+            };
+            if removed.is_some() {
                 if let Some(module_obj) = module_target
                     && let Value::Str(name) = &key_value
                     && let Object::Module(module_data) = &mut *module_obj.kind_mut()
@@ -1312,6 +1393,12 @@ pub unsafe extern "C" fn PyDict_Merge(
             context.set_error("PyDict_Merge expected target dict");
             return -1;
         };
+        if context.vm.is_null() {
+            context.set_error("PyDict_Merge missing VM context");
+            return -1;
+        }
+        // SAFETY: VM pointer is valid for context lifetime.
+        let vm = unsafe { &mut *context.vm };
         let Value::Dict(source_obj) = source else {
             context.set_error("PyDict_Merge expected source dict");
             return -1;
@@ -1326,7 +1413,7 @@ pub unsafe extern "C" fn PyDict_Merge(
         let replace_existing = override_existing != 0;
         for (key, value) in source_entries {
             if !replace_existing {
-                let should_skip = match dict_contains_key_checked(&dict_obj, &key) {
+                let should_skip = match vm.dict_contains_key_checked_runtime(&dict_obj, &key) {
                     Ok(contains) => contains,
                     Err(err) => {
                         context.set_error(err.message);
@@ -1342,7 +1429,7 @@ pub unsafe extern "C" fn PyDict_Merge(
                 _ => None,
             };
             let module_value = value.clone();
-            if let Err(err) = dict_set_value_checked(&dict_obj, key, value) {
+            if let Err(err) = vm.dict_set_value_checked_runtime(&dict_obj, key, value) {
                 context.set_error(err.message);
                 return -1;
             }

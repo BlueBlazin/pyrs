@@ -40,9 +40,9 @@ python3 scripts/probe_stdlib_full.py \
 - Modules eligible for comprehensive phase (`supported_on_host && import_ok && mapped_tests`): `222`
 - Comprehensive status on eligible modules:
   - `PASS`: `35`
-  - `FAIL`: `170`
-  - `TIMEOUT`: `17`
-- Total probe wall time (parallel): `516.44s`
+  - `FAIL`: `169`
+  - `TIMEOUT`: `18`
+- Total probe wall time (parallel): `542.97s`
 
 ## Host-Unsupported Modules (CPython baseline on this machine)
 `_gdbm`, `_overlapped`, `_winapi`, `_wmi`, `genericpath`, `msvcrt`, `nt`, `winreg`, `winsound`
@@ -108,6 +108,10 @@ python3 scripts/probe_stdlib_full.py \
 - Expanded `errno` bootstrap constants to CPython 3.14/macOS baseline (including `EALREADY`, `EWOULDBLOCK` alias) to close import blockers in ssl/network paths.
 - Added `inspect.isabstract` to bootstrap inspect surface to unblock `test_abc` import path.
 - `CALL_FUNCTION_EX` pyc bound-method regression and xml fallback regressions remain covered in `tests/vm.rs`.
+- Dict runtime key semantics were hardened for CPython parity:
+  - Python-facing dict operations now route through VM runtime hash/equality paths (instead of static container hashing only),
+  - tuple/frozenset runtime hash values are memoized per immutable object (bounded cache),
+  - extension-facing `PyDict_*` and dict mapping-slot paths now use the same runtime key semantics to avoid static/runtime hash drift.
 
 ## Notes on Comprehensive Mapping
 - Mapping is systematic and programmatic:
