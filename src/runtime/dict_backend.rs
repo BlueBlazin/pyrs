@@ -76,6 +76,10 @@ impl DictBackend {
         &self.entries[index]
     }
 
+    pub(super) fn set_value_at(&mut self, index: usize, value: Value) {
+        self.entries[index].1 = value;
+    }
+
     pub(super) fn into_entries(self) -> Vec<(Value, Value)> {
         self.entries
     }
@@ -88,6 +92,44 @@ impl DictBackend {
     pub(super) fn find_with_hash(&self, key: &Value, hash: u64) -> Option<&Value> {
         let index = self.find_index_with_hash(key, hash)?;
         Some(&self.entries[index].1)
+    }
+
+    pub(super) fn candidate_indices_for_hash(&self, hash: u64) -> Vec<usize> {
+        if self.entries.is_empty() {
+            return Vec::new();
+        }
+        if self.slots.is_empty() {
+            return self
+                .entries
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (key, _))| {
+                    (value_lookup_hash(key) == Some(hash)).then_some(index)
+                })
+                .collect();
+        }
+        let mask = self.slots.len() - 1;
+        let mut slot = (hash as usize) & mask;
+        let mut perturb = hash as usize;
+        let mut candidates = Vec::new();
+        // CPython probing may need extra rounds while perturb collapses to zero.
+        for _ in 0..(self.slots.len() + MAX_PERTURB_ROUNDS) {
+            match self.slots[slot] {
+                DictSlot::Empty => break,
+                DictSlot::Dummy => {}
+                DictSlot::Occupied {
+                    hash: slot_hash,
+                    entry,
+                } => {
+                    if slot_hash == hash {
+                        candidates.push(entry);
+                    }
+                }
+            }
+            slot = ((slot * 5).wrapping_add(perturb).wrapping_add(1)) & mask;
+            perturb >>= PERTURB_SHIFT;
+        }
+        candidates
     }
 
     pub(super) fn contains_key(&self, key: &Value) -> bool {
@@ -109,7 +151,10 @@ impl DictBackend {
             self.used = self.entries.len();
             return;
         };
+        self.insert_with_hash(key, value, hash);
+    }
 
+    pub(super) fn insert_with_hash(&mut self, key: Value, value: Value, hash: u64) {
         if self.slots.is_empty() {
             self.resize_slots(MIN_TABLE_SIZE);
         }

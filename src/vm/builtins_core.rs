@@ -32,6 +32,8 @@ use crate::ast::{
     TypeParamKind as AstTypeParamKind, UnaryOp as AstUnaryOp,
 };
 use crate::runtime::value_lookup_hash;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 impl Vm {
     fn exception_str_value(&self, exception: &ExceptionObject) -> String {
@@ -816,10 +818,22 @@ impl Vm {
             return Err(RuntimeError::type_error("hash() expects one argument"));
         }
         let target = args.remove(0);
-        let hash_value = match target {
+        let hash_value = self.hash_value_runtime(&target)?;
+        Ok(Value::Int(hash_value))
+    }
+
+    pub(super) fn hash_value_runtime(&mut self, value: &Value) -> Result<i64, RuntimeError> {
+        let hash = self.hash_value_runtime_u64(value)?;
+        let result = hash as i64;
+        Ok(if result == -1 { -2 } else { result })
+    }
+
+    fn hash_value_runtime_u64(&mut self, value: &Value) -> Result<u64, RuntimeError> {
+        const HASH_CACHE_LIMIT: usize = 65_536;
+        match value {
             Value::Instance(_) | Value::Class(_) | Value::Super(_) => {
                 let Some(hash_value) = self.call_special_method_with_fallback(
-                    &target,
+                    value,
                     "__hash__",
                     Vec::new(),
                     "hash special method raised",
@@ -827,24 +841,71 @@ impl Vm {
                 else {
                     return Err(RuntimeError::type_error(format!(
                         "unhashable type: '{}'",
-                        self.value_type_name_for_error(&target)
+                        self.value_type_name_for_error(value)
                     )));
                 };
-                let result = value_to_int(hash_value)?;
-                if result == -1 { -2 } else { result }
+                let hash_value = value_to_int(hash_value)?;
+                Ok(hash_value as u64)
             }
-            _ => {
-                let Some(hash_bits) = value_lookup_hash(&target) else {
-                    return Err(RuntimeError::type_error(format!(
-                        "unhashable type: '{}'",
-                        self.value_type_name_for_error(&target)
-                    )));
+            Value::Tuple(tuple) => {
+                if let Some(cached) = self.hash_cache.get(&tuple.id()) {
+                    return Ok(*cached);
+                }
+                let values = match &*tuple.kind() {
+                    Object::Tuple(values) => values.clone(),
+                    _ => {
+                        return Err(RuntimeError::type_error(format!(
+                            "unhashable type: '{}'",
+                            self.value_type_name_for_error(value)
+                        )));
+                    }
                 };
-                let result = hash_bits as i64;
-                if result == -1 { -2 } else { result }
+                let mut hasher = DefaultHasher::new();
+                4u8.hash(&mut hasher);
+                for item in values {
+                    self.hash_value_runtime_u64(&item)?.hash(&mut hasher);
+                }
+                let hash = hasher.finish();
+                if self.hash_cache.len() >= HASH_CACHE_LIMIT {
+                    self.hash_cache.clear();
+                }
+                self.hash_cache.insert(tuple.id(), hash);
+                Ok(hash)
             }
-        };
-        Ok(Value::Int(hash_value))
+            Value::FrozenSet(set) => {
+                if let Some(cached) = self.hash_cache.get(&set.id()) {
+                    return Ok(*cached);
+                }
+                let values = match &*set.kind() {
+                    Object::FrozenSet(values) => values.clone(),
+                    _ => {
+                        return Err(RuntimeError::type_error(format!(
+                            "unhashable type: '{}'",
+                            self.value_type_name_for_error(value)
+                        )));
+                    }
+                };
+                let mut hasher = DefaultHasher::new();
+                5u8.hash(&mut hasher);
+                let mut folded: u64 = 0;
+                for item in values {
+                    folded ^= self.hash_value_runtime_u64(&item)?;
+                }
+                folded.hash(&mut hasher);
+                let hash = hasher.finish();
+                if self.hash_cache.len() >= HASH_CACHE_LIMIT {
+                    self.hash_cache.clear();
+                }
+                self.hash_cache.insert(set.id(), hash);
+                Ok(hash)
+            }
+            _ => value_lookup_hash(value).ok_or_else(|| {
+                RuntimeError::type_error(format!(
+                    "unhashable type: '{}'",
+                    self.value_type_name_for_error(value)
+                ))
+            }),
+        }
     }
 
     pub(super) fn builtin_breakpoint(
@@ -8589,6 +8650,14 @@ impl Vm {
         needle: Value,
         container: Value,
     ) -> Result<bool, RuntimeError> {
+        if let Value::Dict(dict) = &container {
+            return self.dict_contains_key_checked_runtime(dict, &needle);
+        }
+        if let Value::Instance(instance) = &container
+            && let Some(backing_dict) = self.instance_backing_dict(instance)
+        {
+            return self.dict_contains_key_checked_runtime(&backing_dict, &needle);
+        }
         match compare_in(&needle, &container) {
             Ok(found) => Ok(found),
             Err(err) if runtime_error_matches_exception(&err, "TypeError") => {

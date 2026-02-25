@@ -2,15 +2,147 @@ use super::{
     AttrAccessOutcome, BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome,
     HashMap, InstanceObject, InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind,
     ObjRef, Object, Ordering, RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup,
-    dict_get_value, dict_set_value_checked, ensure_hashable, format_repr, memoryview_bounds,
-    memoryview_decode_element, memoryview_element_offset, memoryview_format_for_view,
-    memoryview_layout_1d, memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts,
-    module_globals_version, runtime_error_matches_exception, slice_bounds_for_step_one,
-    slice_indices, value_from_bigint, value_to_bytes_payload, value_to_int, with_bytes_like_source,
+    format_repr, memoryview_bounds, memoryview_decode_element, memoryview_element_offset,
+    memoryview_format_for_view, memoryview_layout_1d, memoryview_logical_nbytes,
+    memoryview_shape_and_strides_from_parts, module_globals_version,
+    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices, value_from_bigint,
+    value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
 use crate::runtime::SliceValue;
 
 impl Vm {
+    pub(super) fn dict_get_value_runtime(
+        &mut self,
+        dict: &ObjRef,
+        key: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some((_index, _matched_key, value, _hash)) =
+            self.dict_lookup_entry_runtime(dict, key)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(value))
+    }
+
+    pub(super) fn dict_contains_key_checked_runtime(
+        &mut self,
+        dict: &ObjRef,
+        key: &Value,
+    ) -> Result<bool, RuntimeError> {
+        Ok(self.dict_lookup_entry_runtime(dict, key)?.is_some())
+    }
+
+    pub(super) fn dict_set_value_checked_runtime(
+        &mut self,
+        dict: &ObjRef,
+        key: Value,
+        value: Value,
+    ) -> Result<(), RuntimeError> {
+        let hash = self.hash_value_runtime(&key)? as u64;
+        let readonly = {
+            let dict_kind = dict.kind();
+            match &*dict_kind {
+                Object::Dict(entries) => entries.is_readonly(),
+                _ => {
+                    return Err(RuntimeError::type_error(
+                        "unsupported operand type for mapping assignment",
+                    ));
+                }
+            }
+        };
+        if readonly {
+            return Err(RuntimeError::type_error(
+                "'mappingproxy' object does not support item assignment",
+            ));
+        }
+
+        if let Some((index, matched_key, _matched_value, _)) =
+            self.dict_lookup_entry_runtime(dict, &key)?
+        {
+            let mut dict_kind = dict.kind_mut();
+            let Object::Dict(entries) = &mut *dict_kind else {
+                return Err(RuntimeError::type_error(
+                    "unsupported operand type for mapping assignment",
+                ));
+            };
+            if let Some((stored_key, _)) = entries.entry_at(index)
+                && stored_key == matched_key
+            {
+                entries.set_value_at(index, value);
+                return Ok(());
+            }
+        }
+
+        let mut dict_kind = dict.kind_mut();
+        let Object::Dict(entries) = &mut *dict_kind else {
+            return Err(RuntimeError::type_error(
+                "unsupported operand type for mapping assignment",
+            ));
+        };
+        entries.insert_with_hash(key, value, hash);
+        Ok(())
+    }
+
+    pub(super) fn dict_remove_value_runtime(
+        &mut self,
+        dict: &ObjRef,
+        key: &Value,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let Some((index, matched_key, _value, _hash)) =
+            self.dict_lookup_entry_runtime(dict, key)?
+        else {
+            return Ok(None);
+        };
+        let mut dict_kind = dict.kind_mut();
+        let Object::Dict(entries) = &mut *dict_kind else {
+            return Ok(None);
+        };
+        let Some((stored_key, _)) = entries.entry_at(index) else {
+            return Ok(None);
+        };
+        if stored_key != matched_key {
+            return Ok(None);
+        }
+        let (_, removed_value) = entries.remove(index);
+        Ok(Some(removed_value))
+    }
+
+    fn dict_lookup_entry_runtime(
+        &mut self,
+        dict: &ObjRef,
+        key: &Value,
+    ) -> Result<Option<(usize, Value, Value, u64)>, RuntimeError> {
+        let hash = self.hash_value_runtime(key)? as u64;
+        let (candidates, all_entries) = {
+            let dict_kind = dict.kind();
+            let Object::Dict(entries) = &*dict_kind else {
+                return Ok(None);
+            };
+            (
+                entries.candidate_entries_with_hash(hash),
+                entries.to_vec().into_iter().enumerate().collect::<Vec<_>>(),
+            )
+        };
+        let mut tested_indices = Vec::with_capacity(candidates.len());
+        for (index, candidate_key, candidate_value) in candidates {
+            let equals = self.compare_eq_runtime(candidate_key.clone(), key.clone())?;
+            if self.truthy_from_value(&equals)? {
+                return Ok(Some((index, candidate_key, candidate_value, hash)));
+            }
+            tested_indices.push(index);
+        }
+        for (index, (candidate_key, candidate_value)) in all_entries {
+            if tested_indices.contains(&index) {
+                continue;
+            }
+            let equals = self.compare_eq_runtime(candidate_key.clone(), key.clone())?;
+            if self.truthy_from_value(&equals)? {
+                return Ok(Some((index, candidate_key, candidate_value, hash)));
+            }
+        }
+        Ok(None)
+    }
+
     pub(super) fn builtin_warnings_filters_mutated(
         &mut self,
         args: Vec<Value>,
@@ -168,8 +300,7 @@ impl Vm {
                 if is_exact_builtin_dict {
                     return self.getitem_value(Value::Dict(backing_dict), index);
                 }
-                ensure_hashable(&index)?;
-                if let Some(value) = dict_get_value(&backing_dict, &index) {
+                if let Some(value) = self.dict_get_value_runtime(&backing_dict, &index)? {
                     return Ok(value);
                 }
                 let receiver_value = Value::Instance(instance.clone());
@@ -568,8 +699,7 @@ impl Vm {
                     Ok(Value::Str(chars[index_int as usize].to_string()))
                 }
                 Value::Dict(obj) => {
-                    ensure_hashable(&index)?;
-                    let existing = dict_get_value(&obj, &index);
+                    let existing = self.dict_get_value_runtime(&obj, &index)?;
                     if let Some(value) = existing {
                         return Ok(value);
                     }
@@ -588,7 +718,7 @@ impl Vm {
                                 return Err(RuntimeError::new("default factory raised"));
                             }
                         };
-                        dict_set_value_checked(&obj, index, generated.clone())?;
+                        self.dict_set_value_checked_runtime(&obj, index, generated.clone())?;
                         Ok(generated)
                     } else {
                         Err(RuntimeError::key_error("key not found"))

@@ -715,6 +715,25 @@ impl DictObject {
         self.backend.find_with_hash(key, hash)
     }
 
+    pub fn candidate_entries_with_hash(&self, hash: u64) -> Vec<(usize, Value, Value)> {
+        self.backend
+            .candidate_indices_for_hash(hash)
+            .into_iter()
+            .map(|index| {
+                let (key, value) = self.backend.entry_at(index);
+                (index, key.clone(), value.clone())
+            })
+            .collect()
+    }
+
+    pub fn entry_at(&self, index: usize) -> Option<(Value, Value)> {
+        if index >= self.len() {
+            return None;
+        }
+        let (key, value) = self.backend.entry_at(index);
+        Some((key.clone(), value.clone()))
+    }
+
     pub fn contains_key(&self, key: &Value) -> bool {
         self.backend.contains_key(key)
     }
@@ -725,6 +744,18 @@ impl DictObject {
 
     pub fn insert(&mut self, key: Value, value: Value) {
         self.backend.insert(key, value);
+    }
+
+    pub fn insert_with_hash(&mut self, key: Value, value: Value, hash: u64) {
+        self.backend.insert_with_hash(key, value, hash);
+    }
+
+    pub fn set_value_at(&mut self, index: usize, value: Value) -> bool {
+        if index >= self.len() {
+            return false;
+        }
+        self.backend.set_value_at(index, value);
+        true
     }
 
     pub fn remove_key(&mut self, key: &Value) -> Option<(Value, Value)> {

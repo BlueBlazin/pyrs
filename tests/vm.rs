@@ -11049,6 +11049,68 @@ ok = (add1(1) == 2 and add1(2) == 3)
 }
 
 #[test]
+fn dict_tuple_key_hash_is_cached_across_multiple_operations() {
+    let source = r#"class Key:
+    def __init__(self):
+        self.hash_calls = 0
+    def __hash__(self):
+        self.hash_calls += 1
+        return 7
+    def __eq__(self, other):
+        return self is other
+
+key = Key()
+tuple_key = (key,)
+d = {}
+d.get(tuple_key)
+d[tuple_key] = 1
+d.get(tuple_key)
+ok = (key.hash_calls == 1)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn dict_lookup_uses_runtime_hash_and_equality_for_instance_keys() {
+    let source = r#"class Key:
+    def __init__(self, value):
+        self.value = value
+        self.hash_calls = 0
+        self.eq_calls = 0
+    def __hash__(self):
+        self.hash_calls += 1
+        return hash(self.value)
+    def __eq__(self, other):
+        self.eq_calls += 1
+        return isinstance(other, Key) and self.value == other.value
+
+left = Key(1)
+right = Key(1)
+d = {left: "first"}
+hit = d.get(right)
+contains = right in d
+d[right] = "second"
+ok = (
+    hit == "first"
+    and contains
+    and d[left] == "second"
+    and left.hash_calls >= 1
+    and right.hash_calls >= 1
+    and (left.eq_calls + right.eq_calls) >= 1
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn functools_wraps_preserves_function_dict_metadata() {
     let source = "import functools\n\ndef base(x):\n    return x + 1\nbase.client_skip = lambda f: f\n\n@functools.wraps(base)\ndef wrapper(x):\n    return base(x)\n\nok = (hasattr(wrapper, 'client_skip') and wrapper.client_skip is base.client_skip and wrapper.__wrapped__ is base and wrapper.__name__ == 'base')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

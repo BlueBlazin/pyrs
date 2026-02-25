@@ -3913,53 +3913,48 @@ impl Vm {
                             init_args.push(Value::Instance(instance.clone()));
                             init_args.extend(args);
                             let bindings = match bind_arguments(
-                                &func_data,
-                                &self.heap,
-                                init_args,
-                                kwargs,
-                                None,
+                                &func_data, &self.heap, init_args, kwargs, None,
                             ) {
-                                    Ok(bindings) => bindings,
-                                    Err(err) => {
-                                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
-                                            && err.message.contains("argument count mismatch")
-                                        {
-                                            let stack = self
-                                                .frames
-                                                .iter()
-                                                .rev()
-                                                .take(12)
-                                                .map(|frame| {
-                                                    format!(
-                                                        "{}@{}:{}",
-                                                        frame.code.name,
-                                                        frame.code.filename,
-                                                        frame
-                                                            .code
-                                                            .locations
-                                                            .get(frame.last_ip)
-                                                            .map(|loc| loc.line)
-                                                            .unwrap_or(0)
-                                                    )
-                                                })
-                                                .collect::<Vec<_>>()
-                                                .join(" <- ");
+                                Ok(bindings) => bindings,
+                                Err(err) => {
+                                    if std::env::var_os("PYRS_TRACE_BIND_ARGS_STACK").is_some()
+                                        && err.message.contains("argument count mismatch")
+                                    {
+                                        let stack = self
+                                            .frames
+                                            .iter()
+                                            .rev()
+                                            .take(12)
+                                            .map(|frame| {
+                                                format!(
+                                                    "{}@{}:{}",
+                                                    frame.code.name,
+                                                    frame.code.filename,
+                                                    frame
+                                                        .code
+                                                        .locations
+                                                        .get(frame.last_ip)
+                                                        .map(|loc| loc.line)
+                                                        .unwrap_or(0)
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join(" <- ");
+                                        eprintln!(
+                                            "[bind-args-stack] failing_fn={} file={} stack={}",
+                                            func_data.code.name, func_data.code.filename, stack
+                                        );
+                                        if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some() {
                                             eprintln!(
-                                                "[bind-args-stack] failing_fn={} file={} stack={}",
-                                                func_data.code.name, func_data.code.filename, stack
+                                                "[bind-args-bt] failing_fn={} bt={}",
+                                                func_data.code.name,
+                                                std::backtrace::Backtrace::force_capture()
                                             );
-                                            if std::env::var_os("PYRS_TRACE_BIND_ARGS_BT").is_some()
-                                            {
-                                                eprintln!(
-                                                    "[bind-args-bt] failing_fn={} bt={}",
-                                                    func_data.code.name,
-                                                    std::backtrace::Backtrace::force_capture()
-                                                );
-                                            }
                                         }
-                                        return Err(err);
                                     }
-                                };
+                                    return Err(err);
+                                }
+                            };
                             let cells =
                                 self.build_cells(&func_data.code, func_data.closure.clone());
                             let mut frame = Frame::new(

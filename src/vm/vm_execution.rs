@@ -12,16 +12,15 @@ use super::{
     OneArgCallSiteCacheEntry, Opcode, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE,
     QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame,
     Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
-    class_attr_lookup, class_attr_lookup_direct, decode_call_counts, deref_name,
-    dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value,
-    dict_set_value_checked, ensure_hashable, exception_message_from_call_args, floor_div_values,
-    format_repr, format_value, is_comprehension_code, is_import_error_family, is_os_error_family,
-    is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
-    memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
-    mod_values, module_globals_version, pos_value, pow_values, rshift_values,
-    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
-    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
-    value_to_int, value_to_optional_index,
+    class_attr_lookup, class_attr_lookup_direct, decode_call_counts, deref_name, dict_get_value,
+    dict_remove_value, dict_set_value, dict_set_value_checked, ensure_hashable,
+    exception_message_from_call_args, floor_div_values, format_repr, format_value,
+    is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
+    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
+    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
+    module_globals_version, pos_value, pow_values, rshift_values, runtime_error_matches_exception,
+    slice_bounds_for_step_one, slice_indices, slot_names_from_value, source_path_from_cache_path,
+    value_from_bigint, value_from_object_ref, value_to_int, value_to_optional_index,
 };
 use crate::bytecode::Location;
 use crate::runtime::{ExceptionTracebackFrame, SliceValue};
@@ -389,7 +388,7 @@ impl Vm {
         let dict = self.stack_dict_target_for_merge(oparg, opname)?;
         let incoming = self.mapping_entries_for_update(update, reject_duplicates)?;
         for (key, value) in incoming {
-            if reject_duplicates && dict_contains_key_checked(&dict, &key)? {
+            if reject_duplicates && self.dict_contains_key_checked_runtime(&dict, &key)? {
                 let key_text = match &key {
                     Value::Str(name) => name.clone(),
                     _ => format_value(&key),
@@ -398,7 +397,7 @@ impl Vm {
                     "got multiple values for keyword argument '{key_text}'"
                 )));
             }
-            dict_set_value_checked(&dict, key, value)?;
+            self.dict_set_value_checked_runtime(&dict, key, value)?;
         }
         Ok(())
     }
@@ -3285,11 +3284,17 @@ impl Vm {
                 for _ in 0..count {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
-                    ensure_hashable(&key)?;
                     values.push((key, value));
                 }
                 values.reverse();
-                self.push_value(self.heap.alloc_dict(values));
+                let dict = match self.heap.alloc_dict(Vec::new()) {
+                    Value::Dict(dict) => dict,
+                    _ => unreachable!("heap.alloc_dict must return dict value"),
+                };
+                for (key, value) in values {
+                    self.dict_set_value_checked_runtime(&dict, key, value)?;
+                }
+                self.push_value(Value::Dict(dict));
             }
             Opcode::UnpackSequence | Opcode::UnpackSequenceCpython => {
                 let cpython_unpack = matches!(instr.opcode, Opcode::UnpackSequenceCpython);
@@ -3565,7 +3570,7 @@ impl Vm {
                 let dict = self.pop_value()?;
                 match dict {
                     Value::Dict(obj) => {
-                        dict_set_value_checked(&obj, key, value)?;
+                        self.dict_set_value_checked_runtime(&obj, key, value)?;
                         self.push_value(Value::Dict(obj));
                     }
                     _ => return Err(RuntimeError::new("dict set expects dict")),
@@ -3579,7 +3584,7 @@ impl Vm {
                 let value = self.pop_value()?;
                 let key = self.pop_value()?;
                 let dict = self.stack_dict_target_for_merge(oparg, "MAP_ADD")?;
-                dict_set_value_checked(&dict, key, value)?;
+                self.dict_set_value_checked_runtime(&dict, key, value)?;
             }
             Opcode::DictUpdate => {
                 let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
@@ -3883,7 +3888,7 @@ impl Vm {
                                 self.push_value(target_value);
                             } else if let Some(backing_dict) = self.instance_backing_dict(&instance)
                             {
-                                dict_set_value_checked(&backing_dict, index, value)?;
+                                self.dict_set_value_checked_runtime(&backing_dict, index, value)?;
                                 self.push_value(Value::Instance(instance));
                             } else {
                                 if self.trace_flags.store_subscript {
@@ -4107,7 +4112,7 @@ impl Vm {
                         (Value::Dict(obj), index) => {
                             let sync_key = index.clone();
                             let sync_value = value.clone();
-                            dict_set_value_checked(&obj, index, value)?;
+                            self.dict_set_value_checked_runtime(&obj, index, value)?;
                             self.sync_module_global_from_locals_dict_write(
                                 &obj,
                                 &sync_key,
@@ -4456,8 +4461,10 @@ impl Vm {
                                 }
                             } else if let Some(backing_dict) = self.instance_backing_dict(&instance)
                             {
-                                ensure_hashable(&index)?;
-                                if dict_remove_value(&backing_dict, &index).is_none() {
+                                if self
+                                    .dict_remove_value_runtime(&backing_dict, &index)?
+                                    .is_none()
+                                {
                                     return Err(RuntimeError::key_error("key not found"));
                                 }
                             } else {
@@ -4472,8 +4479,7 @@ impl Vm {
                         index => match target {
                             Value::Dict(obj) => {
                                 let sync_key = index.clone();
-                                ensure_hashable(&index)?;
-                                if dict_remove_value(&obj, &index).is_none() {
+                                if self.dict_remove_value_runtime(&obj, &index)?.is_none() {
                                     return Err(RuntimeError::key_error("key not found"));
                                 }
                                 self.sync_module_global_from_locals_dict_write(
@@ -6888,7 +6894,7 @@ impl Vm {
                 let mut missing_key = false;
                 for key in key_values {
                     let value = match &subject {
-                        Value::Dict(dict_obj) => dict_get_value(dict_obj, &key),
+                        Value::Dict(dict_obj) => self.dict_get_value_runtime(dict_obj, &key)?,
                         _ => match self.getitem_value(subject.clone(), key.clone()) {
                             Ok(value) => Some(value),
                             Err(err) if runtime_error_matches_exception(&err, "KeyError") => None,
@@ -9144,7 +9150,7 @@ impl Vm {
     }
 
     pub(super) fn class_mro_entries(&self, class: &ObjRef) -> Vec<ObjRef> {
-        fn seen_insert_class(vm: &Vm, class: &ObjRef, seen: &mut HashSet<u64>) -> bool {
+        fn seen_insert_class(class: &ObjRef, seen: &mut HashSet<u64>) -> bool {
             if !seen.insert(class.id()) {
                 return false;
             }
@@ -9157,7 +9163,7 @@ impl Vm {
             true
         }
 
-        fn seen_contains_class(vm: &Vm, class: &ObjRef, seen: &HashSet<u64>) -> bool {
+        fn seen_contains_class(class: &ObjRef, seen: &HashSet<u64>) -> bool {
             if seen.contains(&class.id()) {
                 return true;
             }
@@ -9171,7 +9177,6 @@ impl Vm {
         }
 
         fn collect_mro_entries(
-            vm: &Vm,
             class: &ObjRef,
             seen: &mut HashSet<u64>,
             depth: usize,
@@ -9193,18 +9198,18 @@ impl Vm {
             if !class_data.mro.is_empty() {
                 let mut entries = Vec::new();
                 for entry in &class_data.mro {
-                    if !seen_contains_class(vm, entry, seen) && seen_insert_class(vm, entry, seen) {
+                    if !seen_contains_class(entry, seen) && seen_insert_class(entry, seen) {
                         entries.push(entry.clone());
                     }
                 }
                 return entries;
             }
-            if !seen_insert_class(vm, class, seen) {
+            if !seen_insert_class(class, seen) {
                 return Vec::new();
             }
             let mut entries = vec![class.clone()];
             for base in &class_data.bases {
-                for candidate in collect_mro_entries(vm, base, seen, depth.saturating_add(1)) {
+                for candidate in collect_mro_entries(base, seen, depth.saturating_add(1)) {
                     let duplicate = entries.iter().any(|entry| {
                         entry.id() == candidate.id()
                             || (Vm::cpython_proxy_raw_ptr_from_value(&Value::Class(entry.clone()))
@@ -9222,7 +9227,7 @@ impl Vm {
         }
 
         let mut seen: HashSet<u64> = HashSet::new();
-        let mut entries = collect_mro_entries(self, class, &mut seen, 0);
+        let mut entries = collect_mro_entries(class, &mut seen, 0);
         if let Some(object_idx) = entries.iter().position(|entry| {
             matches!(&*entry.kind(), Object::Class(class_data) if class_data.name == "object")
         })

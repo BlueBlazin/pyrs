@@ -672,11 +672,15 @@ impl Vm {
                         };
                         if other.id() == dict_receiver.id() {
                             for (key, value) in entries.to_vec() {
-                                dict_set_value_checked(&dict_receiver, key, value)?;
+                                self.dict_set_value_checked_runtime(&dict_receiver, key, value)?;
                             }
                         } else {
                             for (key, value) in entries.iter() {
-                                dict_set_value_checked(&dict_receiver, key.clone(), value.clone())?;
+                                self.dict_set_value_checked_runtime(
+                                    &dict_receiver,
+                                    key.clone(),
+                                    value.clone(),
+                                )?;
                             }
                         }
                     } else {
@@ -736,12 +740,12 @@ impl Vm {
                             }
                         }
                         for (key, value) in incoming {
-                            dict_set_value_checked(&dict_receiver, key, value)?;
+                            self.dict_set_value_checked_runtime(&dict_receiver, key, value)?;
                         }
                     }
                 }
                 for (name, value) in kwargs.drain() {
-                    dict_set_value_checked(&dict_receiver, Value::Str(name), value)?;
+                    self.dict_set_value_checked_runtime(&dict_receiver, Value::Str(name), value)?;
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -776,12 +780,11 @@ impl Vm {
                     return Err(RuntimeError::new("dict.setdefault() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
-                ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
-                if let Some(value) = dict_get_value(&dict_receiver, &key) {
+                if let Some(value) = self.dict_get_value_runtime(&dict_receiver, &key)? {
                     return Ok(NativeCallResult::Value(value));
                 }
-                dict_set_value(&dict_receiver, key, default.clone());
+                self.dict_set_value_checked_runtime(&dict_receiver, key, default.clone())?;
                 Ok(NativeCallResult::Value(default))
             }
             NativeMethodKind::DictGet => {
@@ -813,9 +816,8 @@ impl Vm {
                     return Err(RuntimeError::new("dict.get() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
-                ensure_hashable(&key)?;
                 let default = args.get(1).cloned().unwrap_or(Value::None);
-                if let Some(value) = dict_get_value(&dict_receiver, &key) {
+                if let Some(value) = self.dict_get_value_runtime(&dict_receiver, &key)? {
                     return Ok(NativeCallResult::Value(value));
                 }
                 Ok(NativeCallResult::Value(default))
@@ -1014,8 +1016,7 @@ impl Vm {
                         ));
                     }
                 };
-                ensure_hashable(&key)?;
-                if let Some(value) = dict_get_value(&dict_receiver, &key) {
+                if let Some(value) = self.dict_get_value_runtime(&dict_receiver, &key)? {
                     return Ok(NativeCallResult::Value(value));
                 }
                 if let Some(owner) = missing_owner
@@ -1103,8 +1104,7 @@ impl Vm {
                         ));
                     }
                 };
-                ensure_hashable(&key)?;
-                dict_set_value_checked(&dict_receiver, key, value)?;
+                self.dict_set_value_checked_runtime(&dict_receiver, key, value)?;
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::DictDelItem => {
@@ -1168,8 +1168,10 @@ impl Vm {
                         ));
                     }
                 };
-                ensure_hashable(&key)?;
-                if dict_remove_value(&dict_receiver, &key).is_none() {
+                if self
+                    .dict_remove_value_runtime(&dict_receiver, &key)?
+                    .is_none()
+                {
                     return Err(RuntimeError::key_error("key not found"));
                 }
                 Ok(NativeCallResult::Value(Value::None))
@@ -1203,9 +1205,8 @@ impl Vm {
                     return Err(RuntimeError::new("dict.pop() expects 1-2 arguments"));
                 }
                 let key = args.first().cloned().expect("checked len");
-                ensure_hashable(&key)?;
                 let default = args.get(1).cloned();
-                if let Some(value) = dict_remove_value(&dict_receiver, &key) {
+                if let Some(value) = self.dict_remove_value_runtime(&dict_receiver, &key)? {
                     return Ok(NativeCallResult::Value(value));
                 }
                 if let Some(default) = default {
