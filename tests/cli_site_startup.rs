@@ -122,6 +122,26 @@ fn cli_no_site_flag_skips_startup_site_import() {
 }
 
 #[test]
+fn cli_accepts_cpython_compat_flag_prefixes_before_script_path() {
+    let root = temp_root("cli_flag_prefixes");
+    let stdlib = root.join("Lib");
+    fs::create_dir_all(&stdlib).expect("create stdlib");
+    fs::write(stdlib.join("site.py"), "started = True\n").expect("write site.py");
+
+    let script = root.join("main.py");
+    fs::write(&script, "print('ok')\n").expect("write script");
+
+    let script_arg = script.to_string_lossy();
+    let (code, stdout, stderr) = run_pyrs(
+        &root,
+        &["-I", "-u", script_arg.as_ref()],
+        &[("PYRS_CPYTHON_LIB", stdlib.as_path())],
+    );
+    assert_eq!(code, 0, "stderr:\n{stderr}");
+    assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
 fn cli_script_sets_sys_argv_without_executable_prefix() {
     let root = temp_root("cli_sys_argv_script");
     let stdlib = root.join("Lib");

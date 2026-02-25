@@ -621,10 +621,14 @@ impl Vm {
         let mut seconds = timestamp.floor() as i64;
         let mut microsecond = ((timestamp - seconds as f64) * 1_000_000.0).round() as i64;
         if microsecond >= 1_000_000 {
-            seconds += 1;
+            seconds = seconds
+                .checked_add(1)
+                .ok_or_else(|| RuntimeError::overflow_error("timestamp out of range"))?;
             microsecond -= 1_000_000;
         } else if microsecond < 0 {
-            seconds -= 1;
+            seconds = seconds
+                .checked_sub(1)
+                .ok_or_else(|| RuntimeError::overflow_error("timestamp out of range"))?;
             microsecond += 1_000_000;
         }
         let tz_offset = tz
@@ -632,7 +636,10 @@ impl Vm {
             .map(|value| self.datetime_timezone_offset_seconds(value))
             .transpose()?
             .unwrap_or(0);
-        let parts = split_unix_timestamp(seconds + tz_offset);
+        let adjusted_seconds = seconds
+            .checked_add(tz_offset)
+            .ok_or_else(|| RuntimeError::overflow_error("timestamp out of range"))?;
+        let parts = split_unix_timestamp(adjusted_seconds);
         self.datetime_instance_from_parts(
             class,
             parts.year as i64,

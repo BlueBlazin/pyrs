@@ -31,7 +31,7 @@ python3 scripts/probe_stdlib_full.py \
 
 `--jobs 0` uses all CPU cores (`os.cpu_count()` workers).
 
-## Latest Baseline (2026-02-25)
+## Latest Baseline (2026-02-26)
 - Total stdlib modules (CPython inventory): `297`
 - Host-supported modules (CPython imports successfully on this machine): `288`
 - pyrs import pass on host-supported modules: `278/288`
@@ -39,10 +39,10 @@ python3 scripts/probe_stdlib_full.py \
 - Modules with direct mapped CPython test modules: `235`
 - Modules eligible for comprehensive phase (`supported_on_host && import_ok && mapped_tests`): `222`
 - Comprehensive status on eligible modules:
-  - `PASS`: `35`
-  - `FAIL`: `169`
-  - `TIMEOUT`: `18`
-- Total probe wall time (parallel): `542.97s`
+  - `PASS`: `33`
+  - `FAIL`: `166`
+  - `TIMEOUT`: `23`
+- Total probe wall time (parallel): `584.16s`
 
 ## Host-Unsupported Modules (CPython baseline on this machine)
 `_gdbm`, `_overlapped`, `_winapi`, `_wmi`, `genericpath`, `msvcrt`, `nt`, `winreg`, `winsound`
@@ -57,6 +57,36 @@ python3 scripts/probe_stdlib_full.py \
     its own `lib-dynload` directory.
 
 ## Latest Closure Deltas
+- parser lambda-parameter grammar now matches CPython:
+  - lambda parameter annotations are no longer accepted in parser internals,
+  - this fixes unparenthesized tuple+lambda iterable syntax in `for` statements
+    used by stdlib `test/_test_atexit.py` (for example `for x in f, lambda y: y:`).
+- bootstrap `inspect.isfunction` parity fix:
+  - `inspect.isfunction()` now returns true only for Python function objects,
+  - bound methods and builtin/extension callables no longer misreport as functions,
+    fixing doctest discovery paths that inspect `__globals__` (for example statistics/enum lanes).
+- datetime import layering is now CPython-shaped under `PYRS_CPYTHON_LIB`:
+  - native substrate is exposed as `_datetime`,
+  - pure stdlib `datetime.py` is imported as `datetime` when available,
+  - a builtin `datetime` fallback alias is materialized only when pure stdlib
+    `datetime` is unavailable (non-stdlib roots / minimal runtime contexts).
+- extension import safety gate:
+  - `_interpreters` / `_interpchannels` are treated as unavailable extension
+    imports instead of attempting to load incompatible host `lib-dynload` binaries,
+    preventing hard import errors in stdlib paths that expect optional
+    `ModuleNotFoundError` behavior.
+- CLI compatibility flags:
+  - startup parser now accepts CPython-compatible no-op prefixes used by stdlib
+    subprocess harnesses (`-I`, `-u`, `-E`, `-B`) so these are not misparsed as script paths.
+- import cache coherence:
+  - removing a module from `sys.modules` now invalidates the VM module cache for
+    non-initializing modules (including builtins),
+  - re-import now materializes a fresh module object (with dedicated fallback
+    reinstall path for `atexit`), matching CPython identity semantics.
+- datetime timestamp safety:
+  - `datetime.fromtimestamp` path now uses checked integer arithmetic for second/microsecond
+    normalization and timezone offset adjustment,
+  - overflow paths now raise `OverflowError` instead of panicking on integer underflow/overflow.
 - CLI `sys.argv` shape now matches CPython startup mode semantics:
   - script execution now sets `sys.argv` to `[script_path, ...script_args]`
     (without executable prefix),

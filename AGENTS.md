@@ -89,7 +89,7 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
   - latest artifact: `perf/stdlib_full_probe_latest.json`,
   - current baseline:
     - host-supported imports: `278/288` (out of `297` total inventory rows),
-    - comprehensive mapped test status: `PASS=35`, `FAIL=169`, `TIMEOUT=18`,
+    - comprehensive mapped test status: `PASS=33`, `FAIL=166`, `TIMEOUT=23`,
   - latest stdlib closure deltas:
     - `scripts/probe_stdlib_full.py` now forces resource-disabled mapped test mode (`test.support.use_resources = {}`), preventing network/resource-heavy drift in baseline runs,
     - `_PyArg_UnpackKeywords` compatibility path was aligned to CPython argument-binding semantics for mixed positional/keyword calls,
@@ -138,6 +138,13 @@ Milestone 13 closes only when P0 blockers in `docs/PRODUCTION_READINESS.md` and 
     - runtime tuple/frozenset hashing now memoizes per-object hash values (bounded cache) so repeated lookups over the same immutable key no longer re-invoke element `__hash__` methods,
     - CPython language harness allowlist was tightened by removing stale `test/test_functools.py` (`runtime-functools-partial`) after parity closure,
     - known remaining `functools` blocker: `TestLRUPy.test_lru_cache_threaded2` still mismatches because `threading.Thread.start()` currently executes through synthetic-thread semantics (no true concurrent contention behavior yet),
+    - parser lambda-parameter handling now follows CPython (lambda parameters cannot carry annotations), fixing iterable-tuple lambda syntax in stdlib `test/_test_atexit.py` (`for action in f, lambda x: x:`),
+    - `inspect.isfunction` now returns true only for Python function objects (bound methods and builtin/extension callables no longer misreport as functions), fixing doctest `__globals__` probing paths,
+    - bootstrap datetime layering now loads native substrate as `_datetime` while allowing pure stdlib `datetime.py` to own `datetime` when available; builtin alias fallback is now import-time only,
+    - extension resolver now treats `_interpreters` and `_interpchannels` as unsupported imports (ModuleNotFound) instead of attempting incompatible host `lib-dynload` loads,
+    - CLI startup now accepts CPython-compatible no-op flags used by stdlib subprocess harnesses (`-I`, `-u`, `-E`, `-B`) rather than misparsing them as script paths,
+    - module-cache coherence now invalidates non-initializing cache entries when `sys.modules[name]` is removed; builtin `atexit` has a dedicated fallback reinstall path for fresh-object reimports,
+    - `datetime.fromtimestamp` now uses checked arithmetic and raises `OverflowError` for out-of-range normalization paths instead of panicking on integer overflow/underflow,
   - canonical tracker doc: `docs/STDLIB_FULL_BASELINE.md`,
   - execution mode: parallel workers enabled by default (`--jobs 0` -> `os.cpu_count()`).
 - Source-language parity checkpoint (2026-02-23, latest):

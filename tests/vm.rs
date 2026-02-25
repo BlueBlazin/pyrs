@@ -6185,6 +6185,22 @@ ok = (dt.strftime('%Y-%m-%d %H:%M:%S %z') == '1970-01-01 00:00:00 +0000' and shi
 }
 
 #[test]
+fn datetime_fromtimestamp_extreme_negative_raises_overflowerror() {
+    let source = r#"import datetime
+ok = False
+try:
+    datetime.datetime.fromtimestamp(-1e308)
+except OverflowError:
+    ok = True
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn datetime_fromisocalendar_supports_date_and_datetime_classes() {
     let source = "import datetime\n\
 d = datetime.date.fromisocalendar(2024, 1, 1)\n\
@@ -8125,6 +8141,28 @@ ok = (first == 11 and second == 29)\n"
     let _ = std::fs::remove_dir(&temp_dir_a);
     let _ = std::fs::remove_dir(&temp_dir_b);
     let _ = std::fs::remove_dir(&temp_root);
+}
+
+#[test]
+fn deleting_builtin_from_sys_modules_forces_fresh_reimport() {
+    let source = "import importlib\n\
+import sys\n\
+import atexit as first\n\
+del sys.modules['atexit']\n\
+second = importlib.import_module('atexit')\n\
+ok = (first is not second)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn parser_accepts_for_iterable_tuple_with_lambda_tail() {
+    let source = "for action in object(), lambda o: o:\n    pass\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let _code = compiler::compile_module(&module).expect("compile should succeed");
 }
 
 #[test]
@@ -16202,6 +16240,34 @@ ok = (
     and inspect.isroutine(sample)
     and inspect.iscode(sample.__code__)
     and inspect.unwrap(sample) is sample
+)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn inspect_isfunction_excludes_bound_and_builtin_methods() {
+    let source = r#"import inspect
+
+class C:
+    def method(self):
+        return 1
+
+def sample():
+    return 1
+
+bound = C().method
+list_bound = [].append
+ok = (
+    inspect.isfunction(sample)
+    and not inspect.isfunction(bound)
+    and inspect.ismethod(bound)
+    and not inspect.isfunction(list_bound)
+    and type(list_bound).__name__ == "builtin_function_or_method"
 )
 "#;
     let module = parser::parse_module(source).expect("parse should succeed");

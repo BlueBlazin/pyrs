@@ -3556,9 +3556,9 @@ impl Vm {
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
-        unary_predicate(args, kwargs, |value| {
-            matches!(value, Value::Function(_) | Value::BoundMethod(_))
-        })
+        // CPython inspect.isfunction() is true for user-defined function objects only.
+        // Bound methods must return false here (they are covered by inspect.ismethod()).
+        unary_predicate(args, kwargs, |value| matches!(value, Value::Function(_)))
     }
 
     pub(super) fn builtin_inspect_ismethod(

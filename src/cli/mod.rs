@@ -37,6 +37,11 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
                     return 2;
                 }
             }
+            // Compatibility no-ops accepted by CPython command-lines used in stdlib tests.
+            // We consume them so they are not misparsed as script filenames.
+            "-I" | "-u" | "-E" | "-B" => {
+                args.next();
+            }
             "-S" | "--no-site" => {
                 import_site = false;
                 args.next();

@@ -4032,23 +4032,9 @@ impl Parser {
         &mut self,
         pos: usize,
     ) -> Result<(Option<Box<Expr>>, usize), ParseError> {
-        if !matches!(self.token_at(pos).kind, TokenKind::Colon) {
-            return Ok((None, pos));
-        }
-        let (expr, next) = self.parse_expr_at(pos + 1)?;
-        let next_kind = &self.token_at(next).kind;
-        let allowed = matches!(
-            next_kind,
-            TokenKind::Equal
-                | TokenKind::Slash
-                | TokenKind::Star
-                | TokenKind::DoubleStar
-                | TokenKind::Colon
-        );
-        if !allowed {
-            return Ok((None, pos));
-        }
-        Ok((Some(Box::new(expr)), next))
+        // CPython does not allow parameter annotations in lambda parameter lists.
+        // Keep ':' reserved for separating lambda parameters from the body.
+        Ok((None, pos))
     }
 
     fn parse_block_suite(&mut self, pos: usize) -> Result<(Vec<Stmt>, usize), ParseError> {

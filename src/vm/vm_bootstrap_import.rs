@@ -16,6 +16,12 @@ use crate::extensions::{
 };
 
 const PYRS_MODULE_INITIALIZING_FLAG: &str = "__pyrs_module_initializing__";
+const UNSUPPORTED_EXTENSION_IMPORT_MODULES: &[&str] = &[
+    // CPython runtime-internal interpreter modules cannot be loaded safely
+    // from host lib-dynload binaries in pyrs; treat them as unavailable.
+    "_interpreters",
+    "_interpchannels",
+];
 
 impl Vm {
     fn alloc_tuple_backed_builtin_class(&mut self, name: &str) -> Value {
@@ -6926,7 +6932,7 @@ impl Vm {
                 .insert("utc".to_string(), Value::Instance(timezone_utc.clone()));
         }
         self.install_builtin_module(
-            "datetime",
+            "_datetime",
             &[
                 ("now", BuiltinFunction::DateTimeNow),
                 ("today", BuiltinFunction::DateToday),
@@ -6939,9 +6945,10 @@ impl Vm {
                 ("tzinfo", Value::Class(tzinfo_class)),
                 ("timezone", Value::Class(timezone_class)),
                 ("UTC", Value::Instance(timezone_utc)),
+                ("MINYEAR", Value::Int(1)),
+                ("MAXYEAR", Value::Int(9999)),
             ],
         );
-        self.install_module_alias_from_existing("_datetime", "datetime");
         let uuid_class = match self
             .heap
             .alloc_class(ClassObject::new("UUID".to_string(), Vec::new()))
@@ -8053,6 +8060,29 @@ impl Vm {
         Ok(())
     }
 
+    fn install_datetime_fallback_module(&mut self) {
+        if self.modules.contains_key("datetime") {
+            return;
+        }
+        self.install_module_alias_from_existing("datetime", "_datetime");
+    }
+
+    fn install_atexit_fallback_module(&mut self) {
+        if self.modules.contains_key("atexit") {
+            return;
+        }
+        self.install_builtin_module(
+            "atexit",
+            &[
+                ("register", BuiltinFunction::AtexitRegister),
+                ("unregister", BuiltinFunction::AtexitUnregister),
+                ("_run_exitfuncs", BuiltinFunction::AtexitRunExitFuncs),
+                ("_clear", BuiltinFunction::AtexitClear),
+            ],
+            Vec::new(),
+        );
+    }
+
     fn install_builtin_import_fallback(&mut self, name: &str) -> Result<bool, RuntimeError> {
         match name {
             "abc" => {
@@ -8070,6 +8100,14 @@ impl Vm {
             "socket" => {
                 self.install_socket_fallback_module()?;
                 Ok(true)
+            }
+            "datetime" => {
+                self.install_datetime_fallback_module();
+                Ok(self.modules.contains_key("datetime"))
+            }
+            "atexit" => {
+                self.install_atexit_fallback_module();
+                Ok(self.modules.contains_key("atexit"))
             }
             _ => Ok(false),
         }
@@ -8492,6 +8530,9 @@ impl Vm {
             return Some(cached.clone());
         }
         let rel_name = module_name.replace('.', "/");
+        let skip_extension_resolution = UNSUPPORTED_EXTENSION_IMPORT_MODULES
+            .iter()
+            .any(|name| *name == module_name);
         let candidate = root.join(format!("{rel_name}.py"));
         let pyc_candidate = cached_module_path(root, &rel_name);
         let direct_pyc = root.join(format!("{rel_name}.pyc"));
@@ -8566,7 +8607,9 @@ impl Vm {
                 },
             ));
         }
-        if let Some(library_candidate) = find_shared_library_for_module(root, &rel_name) {
+        if !skip_extension_resolution
+            && let Some(library_candidate) = find_shared_library_for_module(root, &rel_name)
+        {
             return Some(self.cache_module_source_positive(
                 &cache_key,
                 ModuleSourceInfo {
@@ -8580,7 +8623,7 @@ impl Vm {
             ));
         }
         let extension_manifest = root.join(format!("{rel_name}{PYRS_EXTENSION_MANIFEST_SUFFIX}"));
-        if self.cached_path_is_file(&extension_manifest) {
+        if !skip_extension_resolution && self.cached_path_is_file(&extension_manifest) {
             return Some(self.cache_module_source_positive(
                 &cache_key,
                 ModuleSourceInfo {
@@ -8670,7 +8713,9 @@ impl Vm {
                 },
             ));
         }
-        if let Some(library_candidate) = find_shared_library_for_package(&package_dir) {
+        if !skip_extension_resolution
+            && let Some(library_candidate) = find_shared_library_for_package(&package_dir)
+        {
             return Some(self.cache_module_source_positive(
                 &cache_key,
                 ModuleSourceInfo {
@@ -8685,7 +8730,7 @@ impl Vm {
         }
         let package_extension_manifest =
             package_dir.join(format!("__init__{PYRS_EXTENSION_MANIFEST_SUFFIX}"));
-        if self.cached_path_is_file(&package_extension_manifest) {
+        if !skip_extension_resolution && self.cached_path_is_file(&package_extension_manifest) {
             return Some(self.cache_module_source_positive(
                 &cache_key,
                 ModuleSourceInfo {
@@ -9108,17 +9153,11 @@ impl Vm {
             }
         }
         if !present_in_sys_modules {
-            let keep_cached_builtin = if let Some(module) = self.modules.get(name).cloned() {
-                Self::module_loader_name(&module).as_deref() == Some(BUILTIN_MODULE_LOADER)
-                    && !self.should_prefer_filesystem_module(name, &module)
-            } else {
-                false
-            };
             let keep_cached_initializing = self
                 .modules
                 .get(name)
                 .is_some_and(Self::module_is_initializing);
-            if !keep_cached_builtin && !keep_cached_initializing {
+            if !keep_cached_initializing {
                 self.modules.remove(name);
             }
         }
