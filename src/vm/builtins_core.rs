@@ -7255,6 +7255,7 @@ impl Vm {
             builtin,
             BuiltinFunction::Type
                 | BuiltinFunction::TypesMethodType
+                | BuiltinFunction::TypesModuleType
                 | BuiltinFunction::Bool
                 | BuiltinFunction::Int
                 | BuiltinFunction::Float
@@ -7410,6 +7411,18 @@ impl Vm {
                 Value::Cell(_) => self
                     .types_module_or_private_class("CellType")
                     .map(Value::Class),
+                Value::Module(module) => match &*module.kind() {
+                    Object::Module(module_data) if module_data.name == "__staticmethod__" => {
+                        Some(Value::Builtin(BuiltinFunction::StaticMethod))
+                    }
+                    Object::Module(module_data) if module_data.name == "__classmethod__" => {
+                        Some(Value::Builtin(BuiltinFunction::ClassMethod))
+                    }
+                    _ => self
+                        .types_module_or_private_class("ModuleType")
+                        .map(Value::Class)
+                        .or(Some(Value::Builtin(BuiltinFunction::TypesModuleType))),
+                },
                 Value::None => Some(Value::Class(
                     self.types_module_or_private_class("NoneType")
                         .unwrap_or_else(|| self.fallback_none_type_class()),
