@@ -55,6 +55,28 @@ Latest local snapshot (`2026-02-11`):
 Requirements:
 - Rust toolchain (`cargo`)
 
+Install (beta channels, ordered by recommended path):
+
+```bash
+# rolling nightly from master
+cargo install --git https://github.com/BlueBlazin/pyrs --branch master --locked
+
+# reproducible tagged beta
+cargo install --git https://github.com/BlueBlazin/pyrs --tag v0.1.0-beta.1 --locked
+```
+
+Alternative distribution channels:
+
+```bash
+# Homebrew (tap)
+brew install blueblazin/tap/pyrs
+
+# Docker (nightly tag from GHCR)
+docker run --rm -it ghcr.io/blueblazin/pyrs:nightly pyrs -V
+```
+
+Direct binary downloads are published on GitHub Releases when tags are cut.
+
 Build:
 
 ```bash
