@@ -7890,6 +7890,15 @@ fn format_type_expr_value(value: &Value) -> String {
             .unwrap_or_else(|| format_value(value)),
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
+                if let Object::Class(class_data) = &*instance_data.class.kind()
+                    && class_data.name == "ellipsis"
+                    && matches!(
+                        class_data.attrs.get("__module__"),
+                        Some(Value::Str(module_name)) if module_name == "builtins"
+                    )
+                {
+                    return "...".to_string();
+                }
                 if let Some(rendered) = typing_type_param_display_name(instance_data) {
                     return rendered;
                 }
