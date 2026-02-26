@@ -6071,7 +6071,31 @@ impl Vm {
                     }
                 };
                 let rendered = match kind {
-                    "TypeVar" | "ParamSpec" => format!("~{name}"),
+                    "TypeVar" => {
+                        let receiver_kind = receiver.kind();
+                        let Object::Instance(instance_data) = &*receiver_kind else {
+                            return Err(RuntimeError::new(
+                                "type parameter repr receiver is invalid",
+                            ));
+                        };
+                        let covariant = matches!(
+                            instance_data.attrs.get("__covariant__"),
+                            Some(Value::Bool(true))
+                        );
+                        let contravariant = matches!(
+                            instance_data.attrs.get("__contravariant__"),
+                            Some(Value::Bool(true))
+                        );
+                        let prefix = if covariant {
+                            "+"
+                        } else if contravariant {
+                            "-"
+                        } else {
+                            "~"
+                        };
+                        format!("{prefix}{name}")
+                    }
+                    "ParamSpec" => format!("~{name}"),
                     "TypeVarTuple" => name,
                     _ => return Err(RuntimeError::new("type parameter repr receiver is invalid")),
                 };
@@ -10802,8 +10826,30 @@ impl Vm {
             | BuiltinFunction::TypingParamSpec
             | BuiltinFunction::TypingTypeVarTuple
             | BuiltinFunction::TypingTypeAliasType => {
+                let mut args = args;
                 let mut kwargs = kwargs;
-                kwargs.clear();
+                let helper_name = match builtin {
+                    BuiltinFunction::TypingTypeVar => "TypeVar",
+                    BuiltinFunction::TypingParamSpec => "ParamSpec",
+                    BuiltinFunction::TypingTypeVarTuple => "TypeVarTuple",
+                    BuiltinFunction::TypingTypeAliasType => "TypeAliasType",
+                    _ => unreachable!(),
+                };
+                if let Some(name_kw) = kwargs.remove("name") {
+                    if !args.is_empty() {
+                        return Err(RuntimeError::type_error(format!(
+                            "{helper_name}() got multiple values for argument 'name'"
+                        )));
+                    }
+                    args.push(name_kw);
+                }
+                let typevar_constraints = if matches!(builtin, BuiltinFunction::TypingTypeVar)
+                    && args.len() > 1
+                {
+                    Some(args[1..].to_vec())
+                } else {
+                    None
+                };
                 let marker = builtin.call(&self.heap, args)?;
                 let current_module_name =
                     self.frames
@@ -10812,19 +10858,81 @@ impl Vm {
                             Object::Module(module_data) => Some(module_data.name.clone()),
                             _ => None,
                         });
-                if let Some(module_name) = current_module_name
-                    && let Value::Instance(instance) = &marker
+                if let Value::Instance(instance) = &marker
                     && let Object::Instance(instance_data) = &mut *instance.kind_mut()
                 {
-                    instance_data
-                        .attrs
-                        .insert("__module__".to_string(), Value::Str(module_name));
+                    if let Some(module_name) = current_module_name {
+                        instance_data
+                            .attrs
+                            .insert("__module__".to_string(), Value::Str(module_name));
+                    }
                     if !instance_data.attrs.contains_key("__default__") {
                         let default_marker = self.typing_no_default_marker().unwrap_or(Value::None);
                         instance_data
                             .attrs
                             .insert("__default__".to_string(), default_marker);
                     }
+                    if matches!(builtin, BuiltinFunction::TypingTypeVar) {
+                        if let Some(constraints) = typevar_constraints {
+                            instance_data
+                                .attrs
+                                .insert("__constraints__".to_string(), self.heap.alloc_tuple(constraints));
+                        }
+                        if let Some(bound) = kwargs.remove("bound") {
+                            instance_data.attrs.insert("__bound__".to_string(), bound);
+                        }
+                        let mut pop_bool_kw = |name: &str| -> Result<bool, RuntimeError> {
+                            match kwargs.remove(name) {
+                                Some(Value::Bool(flag)) => Ok(flag),
+                                Some(_) => Err(RuntimeError::type_error(format!(
+                                    "TypeVar() argument '{name}' must be a bool"
+                                ))),
+                                None => Ok(false),
+                            }
+                        };
+                        let covariant = pop_bool_kw("covariant")?;
+                        let contravariant = pop_bool_kw("contravariant")?;
+                        let infer_variance = pop_bool_kw("infer_variance")?;
+                        if covariant && contravariant {
+                            return Err(RuntimeError::value_error(
+                                "Bivariant types are not supported.",
+                            ));
+                        }
+                        if infer_variance && (covariant || contravariant) {
+                            return Err(RuntimeError::value_error(
+                                "Variance cannot be specified with infer_variance.",
+                            ));
+                        }
+                        instance_data
+                            .attrs
+                            .insert("__covariant__".to_string(), Value::Bool(covariant));
+                        instance_data
+                            .attrs
+                            .insert("__contravariant__".to_string(), Value::Bool(contravariant));
+                        instance_data
+                            .attrs
+                            .insert("__infer_variance__".to_string(), Value::Bool(infer_variance));
+                    } else {
+                        instance_data
+                            .attrs
+                            .insert("__covariant__".to_string(), Value::Bool(false));
+                        instance_data
+                            .attrs
+                            .insert("__contravariant__".to_string(), Value::Bool(false));
+                        instance_data
+                            .attrs
+                            .insert("__infer_variance__".to_string(), Value::Bool(false));
+                    }
+                    if let Some(default_value) = kwargs.remove("default") {
+                        instance_data
+                            .attrs
+                            .insert("__default__".to_string(), default_value);
+                    }
+                }
+                if let Some(unexpected) = kwargs.keys().next().cloned() {
+                    return Err(RuntimeError::type_error(format!(
+                        "{helper_name}() got an unexpected keyword argument '{unexpected}'"
+                    )));
                 }
                 Ok(marker)
             }

@@ -7943,7 +7943,25 @@ fn typing_type_param_display_name(instance_data: &InstanceObject) -> Option<Stri
         _ => return None,
     };
     match class_data.name.as_str() {
-        "TypeVar" | "ParamSpec" => Some(format!("~{name}")),
+        "TypeVar" => {
+            let covariant = matches!(
+                instance_data.attrs.get("__covariant__"),
+                Some(Value::Bool(true))
+            );
+            let contravariant = matches!(
+                instance_data.attrs.get("__contravariant__"),
+                Some(Value::Bool(true))
+            );
+            let prefix = if covariant {
+                "+"
+            } else if contravariant {
+                "-"
+            } else {
+                "~"
+            };
+            Some(format!("{prefix}{name}"))
+        }
+        "ParamSpec" => Some(format!("~{name}")),
         "TypeVarTuple" => Some(format!("*{name}")),
         _ => None,
     }
