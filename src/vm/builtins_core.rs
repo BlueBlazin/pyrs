@@ -707,7 +707,46 @@ impl Vm {
         if let Value::Exception(exception) = &value {
             return Ok(Value::Str(self.exception_repr_value(exception)));
         }
-        if matches!(&value, Value::Instance(_) | Value::Class(_) | Value::Exception(_)) {
+        if matches!(&value, Value::Class(_)) {
+            if let Some(repr_method) = self.lookup_bound_special_method(&value, "__repr__")? {
+                let is_recursive_builtin_repr = match &repr_method {
+                    Value::BoundMethod(bound) => match &*bound.kind() {
+                        Object::BoundMethod(bound_data) => match &*bound_data.function.kind() {
+                            Object::NativeMethod(native) => matches!(
+                                native.kind,
+                                NativeMethodKind::Builtin(BuiltinFunction::Repr)
+                            ),
+                            _ => false,
+                        },
+                        _ => false,
+                    },
+                    Value::Builtin(BuiltinFunction::Repr) => true,
+                    _ => false,
+                };
+                if !is_recursive_builtin_repr {
+                    let class_id = match &value {
+                        Value::Class(class_ref) => class_ref.id(),
+                        _ => unreachable!(),
+                    };
+                    if self.repr_in_progress.contains(&class_id) {
+                        return Ok(Value::Str(format_repr(&value)));
+                    }
+                    self.repr_in_progress.push(class_id);
+                    let repr_outcome = self.call_internal(repr_method, Vec::new(), HashMap::new());
+                    self.repr_in_progress.pop();
+                    match repr_outcome? {
+                        InternalCallOutcome::Value(Value::Str(text)) => return Ok(Value::Str(text)),
+                        InternalCallOutcome::Value(_) => {
+                            return Err(RuntimeError::type_error("__repr__ returned non-string"));
+                        }
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(self.runtime_error_from_active_exception("repr() failed"));
+                        }
+                    }
+                }
+            }
+        }
+        if matches!(&value, Value::Instance(_) | Value::Exception(_)) {
             match self.builtin_getattr(
                 vec![value.clone(), Value::Str("__repr__".to_string())],
                 HashMap::new(),
@@ -14196,10 +14235,11 @@ impl Vm {
     ) -> bool {
         match builtin {
             BuiltinFunction::Type => {
-                matches!(
-                    value,
-                    Value::Class(_) | Value::ExceptionType(_) | Value::Builtin(_)
-                )
+                match value {
+                    Value::Class(_) | Value::ExceptionType(_) => true,
+                    Value::Builtin(builtin) => self.builtin_is_type_object(*builtin),
+                    _ => false,
+                }
             }
             BuiltinFunction::Bool => matches!(value, Value::Bool(_)),
             BuiltinFunction::Int => {

@@ -1032,7 +1032,8 @@ impl Vm {
                 Value::Class(class) => {
                     if self.is_union_type_class(&class) || self.is_typing_union_class(&class) {
                         let members = self.subscript_items_from_index(index);
-                        return self.build_union_value_from_members_with_forward(members, true);
+                        return self
+                            .build_union_value_from_members_with_forward_lenient(members, true);
                     }
                     let class_value = Value::Class(class.clone());
                     if let Some(class_getitem) = class_attr_lookup(&class, "__class_getitem__")
@@ -1958,11 +1959,12 @@ impl Vm {
         &mut self,
         value: Value,
         allow_forward_ref_strings: bool,
+        strict_operands: bool,
         out: &mut Vec<Value>,
     ) -> Result<(), RuntimeError> {
         if let Some(items) = self.union_args_from_value(&value) {
             for item in items {
-                self.collect_union_member(item, allow_forward_ref_strings, out)?;
+                self.collect_union_member(item, allow_forward_ref_strings, strict_operands, out)?;
             }
             return Ok(());
         }
@@ -1975,7 +1977,7 @@ impl Vm {
             other => other,
         };
 
-        if !self.union_operand_value_with_forward(&normalized, allow_forward_ref_strings) {
+        if strict_operands && !self.union_operand_value_with_forward(&normalized, allow_forward_ref_strings) {
             return Err(RuntimeError::type_error("unsupported operand type for |"));
         }
 
@@ -2035,9 +2037,29 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         let mut flat_members = Vec::new();
         for member in members {
-            self.collect_union_member(member, allow_forward_ref_strings, &mut flat_members)?;
+            self.collect_union_member(member, allow_forward_ref_strings, true, &mut flat_members)?;
         }
 
+        self.build_union_value_from_flat_members(flat_members)
+    }
+
+    fn build_union_value_from_members_with_forward_lenient(
+        &mut self,
+        members: Vec<Value>,
+        allow_forward_ref_strings: bool,
+    ) -> Result<Value, RuntimeError> {
+        let mut flat_members = Vec::new();
+        for member in members {
+            self.collect_union_member(member, allow_forward_ref_strings, false, &mut flat_members)?;
+        }
+
+        self.build_union_value_from_flat_members(flat_members)
+    }
+
+    fn build_union_value_from_flat_members(
+        &mut self,
+        mut flat_members: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         if flat_members.len() == 1 {
             return Ok(flat_members.remove(0));
         }
