@@ -673,6 +673,12 @@ impl Vm {
                 self.alloc_native_bound_method(NativeMethodKind::StrEndsWith, endswith),
             ));
         }
+        if builtin == BuiltinFunction::Float {
+            entries.push((
+                Value::Str("__trunc__".to_string()),
+                Value::Builtin(BuiltinFunction::Int),
+            ));
+        }
         if builtin == BuiltinFunction::Dict {
             entries.push((
                 Value::Str("fromkeys".to_string()),
@@ -1392,6 +1398,9 @@ impl Vm {
                     Value::Builtin(BuiltinFunction::Str),
                     BuiltinFunction::StrMakeTrans,
                 )),
+            "__trunc__" if builtin == BuiltinFunction::Float => {
+                Ok(Value::Builtin(BuiltinFunction::Int))
+            }
             "count" if builtin == BuiltinFunction::Tuple => {
                 let receiver = match self
                     .heap
@@ -1858,6 +1867,9 @@ impl Vm {
                 NativeMethodKind::StrEndsWith
             };
             return Some(self.alloc_native_bound_method(kind, receiver));
+        }
+        if self.class_has_builtin_float_base(class) && attr_name == "__trunc__" {
+            return Some(Value::Builtin(BuiltinFunction::Int));
         }
         None
     }
@@ -5548,6 +5560,7 @@ impl Vm {
                 "__contains__",
                 "__reversed__",
                 "__call__",
+                "__trunc__",
                 "read",
                 "write",
                 "startswith",
