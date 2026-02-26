@@ -6588,7 +6588,7 @@ impl Vm {
                     return Err(RuntimeError::type_error("property receiver is invalid"));
                 };
                 if matches!(fget, Value::None) {
-                    return Err(RuntimeError::new("unreadable attribute"));
+                    return Err(RuntimeError::attribute_error("unreadable attribute"));
                 }
                 match self.call_internal(fget, vec![obj], HashMap::new())? {
                     InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
@@ -6607,7 +6607,7 @@ impl Vm {
                     return Err(RuntimeError::type_error("property receiver is invalid"));
                 };
                 if matches!(fset, Value::None) {
-                    return Err(RuntimeError::new("can't set attribute"));
+                    return Err(RuntimeError::attribute_error("can't set attribute"));
                 }
                 match self.call_internal(fset, vec![obj, value], HashMap::new())? {
                     InternalCallOutcome::Value(_) => Ok(NativeCallResult::Value(Value::None)),
@@ -6625,7 +6625,7 @@ impl Vm {
                     return Err(RuntimeError::type_error("property receiver is invalid"));
                 };
                 if matches!(fdel, Value::None) {
-                    return Err(RuntimeError::new("can't delete attribute"));
+                    return Err(RuntimeError::attribute_error("can't delete attribute"));
                 }
                 match self.call_internal(fdel, vec![obj], HashMap::new())? {
                     InternalCallOutcome::Value(_) => Ok(NativeCallResult::Value(Value::None)),

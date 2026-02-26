@@ -15254,6 +15254,29 @@ impl Vm {
                 AttrMutationOutcome::ExceptionHandled => return Ok(Value::None),
             },
             Value::Class(class) => {
+                let metaclass_descriptor = self
+                    .class_of_value(&Value::Class(class.clone()))
+                    .and_then(|metaclass| class_attr_lookup(&metaclass, &name));
+                if let Some(descriptor) = metaclass_descriptor {
+                    let (_getter, setter, _deleter) = self.descriptor_hooks(&descriptor)?;
+                    if let Some(setter) = setter {
+                        match self.call_internal(
+                            setter,
+                            vec![Value::Class(class.clone()), value.clone()],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(_) => return Ok(Value::None),
+                            InternalCallOutcome::CallerExceptionHandled => return Ok(Value::None),
+                        }
+                    }
+                    if let Value::Instance(descriptor_instance) = &descriptor
+                        && let Object::Instance(instance_data) = &*descriptor_instance.kind()
+                        && let Object::Class(class_data) = &*instance_data.class.kind()
+                        && class_data.name == "property"
+                    {
+                        return Err(RuntimeError::attribute_error("readonly attribute"));
+                    }
+                }
                 let (flags, class_name) = match &*class.kind() {
                     Object::Class(class_data) => (
                         class_data
