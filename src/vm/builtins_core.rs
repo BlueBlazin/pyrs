@@ -8756,7 +8756,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if args.is_empty() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "object.__new__() expects a class argument",
             ));
         }
@@ -8767,7 +8767,7 @@ impl Vm {
                 self.class_from_base_value(Value::Builtin(builtin))?
             }
             _ => {
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "object.__new__(X): X is not a type object",
                 ));
             }
@@ -8940,7 +8940,7 @@ impl Vm {
             return Ok(Value::Instance(instance));
         }
         if !kwargs.is_empty() || !args.is_empty() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "object.__new__() takes exactly one argument",
             ));
         }
