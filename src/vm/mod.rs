@@ -10837,6 +10837,19 @@ fn slot_names_from_value(value: Option<Value>) -> Option<Vec<String>> {
                 return None;
             }
         }
+        Value::Dict(obj) => {
+            if let Object::Dict(entries) = &*obj.kind() {
+                for (key, _) in entries {
+                    if let Value::Str(name) = key {
+                        slots.push(name.clone());
+                    } else {
+                        return None;
+                    }
+                }
+            } else {
+                return None;
+            }
+        }
         _ => return None,
     }
     Some(slots)
@@ -10876,7 +10889,15 @@ fn class_inherits_dynamic_instance_dict(class: &ObjRef) -> bool {
                 }
             }
             None => {
-                if class_data.name != "object" {
+                let user_class = matches!(
+                    class_data.attrs.get("__pyrs_user_class__"),
+                    Some(Value::Bool(true))
+                );
+                let cpython_proxy = matches!(
+                    class_data.attrs.get("__pyrs_cpython_proxy_marker__"),
+                    Some(Value::Bool(true))
+                );
+                if user_class || cpython_proxy {
                     return true;
                 }
             }
