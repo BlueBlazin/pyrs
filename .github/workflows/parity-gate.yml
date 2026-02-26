@@ -92,6 +92,30 @@ jobs:
           path: perf/capi_noop_inventory.json
           if-no-files-found: ignore
 
+  install-smoke:
+    needs: integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install pyrs from local path
+        run: cargo install --path . --locked --root /tmp/pyrs-install-smoke
+
+      - name: Verify installed CLI version
+        run: /tmp/pyrs-install-smoke/bin/pyrs --version
+
+      - name: Verify installed CLI execution
+        run: /tmp/pyrs-install-smoke/bin/pyrs -c "print(40 + 2)"
+
   full-test-suite:
     needs: integrity
     runs-on: ubuntu-latest
