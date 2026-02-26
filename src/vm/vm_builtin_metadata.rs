@@ -5203,6 +5203,25 @@ impl Vm {
             ),
             _ => ("<class>".to_string(), None, false),
         };
+        if attr_name != "__getattribute__"
+            && let Some(meta) = class_metaclass.clone()
+            && let Some(meta_getattribute) = class_attr_lookup(&meta, "__getattribute__")
+            && !matches!(
+                meta_getattribute,
+                Value::Builtin(BuiltinFunction::ObjectGetAttribute)
+            )
+            && let Some(callable) =
+                self.bind_descriptor_method(meta_getattribute, &Value::Class(class.clone()))?
+        {
+            return match self.call_internal_preserving_caller(
+                callable,
+                vec![Value::Str(attr_name.to_string())],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => Ok(AttrAccessOutcome::Value(value)),
+                InternalCallOutcome::CallerExceptionHandled => Ok(AttrAccessOutcome::ExceptionHandled),
+            };
+        }
         if is_cpython_proxy_class
             && attr_name == "__flags__"
             && let Some(proxy_flags) = self.cpython_proxy_type_flags(class)

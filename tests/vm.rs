@@ -1500,6 +1500,40 @@ fn typing_namedtuple_non_generic_subscript_is_generic_alias() {
 }
 
 #[test]
+fn class_set_name_failure_note_matches_namedtuple_shape() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nfrom typing import NamedTuple\nclass CustomException(BaseException):\n    pass\nclass Annoying:\n    def __set_name__(self, owner, name):\n        raise CustomException\nannoying = Annoying()\nnormal_notes = None\nnamedtuple_notes = None\ntry:\n    class NormalClass:\n        attr = annoying\nexcept CustomException as exc:\n    normal_notes = exc.__notes__\ntry:\n    class NamedTupleClass(NamedTuple):\n        attr = annoying\nexcept CustomException as exc:\n    namedtuple_notes = exc.__notes__\nexpected = \"Error calling __set_name__ on 'Annoying' instance 'attr' in 'NormalClass'\"\nok = (isinstance(normal_notes, list) and isinstance(namedtuple_notes, list) and len(normal_notes) == 1 and len(namedtuple_notes) == 1 and normal_notes[0] == expected and namedtuple_notes[0] == expected.replace('NormalClass', 'NamedTupleClass'))\n"
+    );
+    run_with_large_stack("vm-class-set-name-failure-note", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn typing_namedtuple_set_name_lookup_propagates_custom_exception() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nfrom typing import NamedTuple\nclass CustomException(Exception):\n    pass\nclass Meta(type):\n    def __getattribute__(self, attr):\n        if attr == '__set_name__':\n            raise CustomException\n        return object.__getattribute__(self, attr)\nclass VeryAnnoying(metaclass=Meta):\n    pass\nvery_annoying = VeryAnnoying()\nok = False\ntry:\n    class Foo(NamedTuple):\n        attr = very_annoying\nexcept CustomException:\n    ok = True\n"
+    );
+    run_with_large_stack("vm-typing-namedtuple-set-name-lookup", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn python_function_too_many_positional_arguments_has_cpython_message_shape() {
     let source = "msg = ''\ntry:\n    def f(a, b=1):\n        pass\n    f(1, 2, 3)\nexcept TypeError as exc:\n    msg = str(exc)\nok = (msg == 'f() takes from 1 to 2 positional arguments but 3 were given')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

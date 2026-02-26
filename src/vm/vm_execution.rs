@@ -10325,18 +10325,113 @@ impl Vm {
             };
             match self.call_internal_preserving_caller(
                 set_name,
-                vec![Value::Class(class_ref.clone()), Value::Str(name)],
+                vec![Value::Class(class_ref.clone()), Value::Str(name.clone())],
                 HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(_) => {}
-                InternalCallOutcome::CallerExceptionHandled => {
+            ) {
+                Ok(InternalCallOutcome::Value(_)) => {}
+                Ok(InternalCallOutcome::CallerExceptionHandled) => {
+                    self.add_set_name_failure_note_to_active_exception(class_ref, &name, &value);
                     return Err(self.runtime_error_from_active_exception(
                         "__set_name__ during class creation failed",
                     ));
                 }
+                Err(mut err) => {
+                    self.add_set_name_failure_note_to_runtime_error(
+                        class_ref, &name, &value, &mut err,
+                    );
+                    return Err(err);
+                }
             }
         }
         Ok(())
+    }
+
+    fn set_name_failure_note(&self, class_ref: &ObjRef, attr_name: &str, descriptor: &Value) -> String {
+        let class_name = match &*class_ref.kind() {
+            Object::Class(class_data) => class_data.name.clone(),
+            _ => "<class>".to_string(),
+        };
+        let descriptor_type = self.value_type_name_for_error(descriptor);
+        let attr_repr = format_repr(&Value::Str(attr_name.to_string()));
+        format!(
+            "Error calling __set_name__ on '{}' instance {} in '{}'",
+            descriptor_type, attr_repr, class_name
+        )
+    }
+
+    fn add_set_name_failure_note_to_active_exception(
+        &mut self,
+        class_ref: &ObjRef,
+        attr_name: &str,
+        descriptor: &Value,
+    ) {
+        let note = self.set_name_failure_note(class_ref, attr_name, descriptor);
+        let note_value = Value::Str(note.clone());
+        let default_notes_list = self.heap.alloc_list(vec![note_value.clone()]);
+        let Some(exception) = self.frames.iter_mut().rev().find_map(|frame| {
+            match frame.active_exception.as_mut() {
+                Some(Value::Exception(exception)) => Some(exception),
+                _ => None,
+            }
+        }) else {
+            return;
+        };
+        let mut note_applied = false;
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            match attrs.get_mut("__notes__") {
+                Some(Value::List(notes_obj)) => {
+                    if let Object::List(notes) = &mut *notes_obj.kind_mut() {
+                        notes.push(note_value);
+                        note_applied = true;
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    attrs.insert("__notes__".to_string(), default_notes_list);
+                    note_applied = true;
+                }
+            }
+        }
+        if note_applied {
+            exception.notes.push(note);
+        }
+    }
+
+    fn add_set_name_failure_note_to_runtime_error(
+        &mut self,
+        class_ref: &ObjRef,
+        attr_name: &str,
+        descriptor: &Value,
+        err: &mut RuntimeError,
+    ) {
+        let Some(exception) = err.exception.as_mut() else {
+            self.add_set_name_failure_note_to_active_exception(class_ref, attr_name, descriptor);
+            return;
+        };
+        let note = self.set_name_failure_note(class_ref, attr_name, descriptor);
+        let note_value = Value::Str(note.clone());
+        let default_notes_list = self.heap.alloc_list(vec![note_value.clone()]);
+        let mut note_applied = false;
+        {
+            let mut attrs = exception.attrs.borrow_mut();
+            match attrs.get_mut("__notes__") {
+                Some(Value::List(notes_obj)) => {
+                    if let Object::List(notes) = &mut *notes_obj.kind_mut() {
+                        notes.push(note_value);
+                        note_applied = true;
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    attrs.insert("__notes__".to_string(), default_notes_list);
+                    note_applied = true;
+                }
+            }
+        }
+        if note_applied {
+            exception.notes.push(note);
+        }
     }
 
     pub(super) fn attach_owner_class_to_attrs(&mut self, class_ref: &ObjRef) {
