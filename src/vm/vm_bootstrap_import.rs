@@ -5674,7 +5674,7 @@ impl Vm {
                 ("isframe", BuiltinFunction::InspectIsFrame),
                 ("iscode", BuiltinFunction::InspectIsCode),
                 ("unwrap", BuiltinFunction::InspectUnwrap),
-                ("getattr_static", BuiltinFunction::GetAttr),
+                ("getattr_static", BuiltinFunction::InspectGetAttrStatic),
                 ("isclass", BuiltinFunction::InspectIsClass),
                 ("ismodule", BuiltinFunction::InspectIsModule),
                 ("isgenerator", BuiltinFunction::InspectIsGenerator),

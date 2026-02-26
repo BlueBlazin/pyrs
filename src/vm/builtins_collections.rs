@@ -4031,6 +4031,85 @@ impl Vm {
         })
     }
 
+    pub(super) fn builtin_inspect_getattr_static(
+        &self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() < 2 || args.len() > 3 {
+            return Err(RuntimeError::new(
+                "getattr_static() expects object, attribute, and optional default",
+            ));
+        }
+        let target = args.remove(0);
+        let name = match args.remove(0) {
+            Value::Str(name) => name,
+            _ => return Err(RuntimeError::type_error("attribute name must be string")),
+        };
+        let default = args.pop();
+        match target {
+            Value::Class(class_ref) => {
+                if let Some(value) = class_attr_lookup(&class_ref, &name) {
+                    return Ok(value);
+                }
+                if let Some(default) = default {
+                    return Ok(default);
+                }
+                let class_name = match &*class_ref.kind() {
+                    Object::Class(class_data) => class_data.name.clone(),
+                    _ => "type".to_string(),
+                };
+                Err(RuntimeError::attribute_error(format!(
+                    "type object '{}' has no attribute '{}'",
+                    class_name, name
+                )))
+            }
+            Value::Instance(instance) => {
+                let class_name =
+                    class_name_for_instance(&instance).unwrap_or_else(|| "object".to_string());
+                if let Object::Instance(instance_data) = &*instance.kind() {
+                    if let Some(value) = instance_data.attrs.get(&name).cloned() {
+                        return Ok(value);
+                    }
+                    if let Some(value) = class_attr_lookup(&instance_data.class, &name) {
+                        return Ok(value);
+                    }
+                }
+                if let Some(default) = default {
+                    return Ok(default);
+                }
+                Err(RuntimeError::attribute_error(format!(
+                    "'{}' object has no attribute '{}'",
+                    class_name, name
+                )))
+            }
+            Value::Module(module) => {
+                if let Object::Module(module_data) = &*module.kind()
+                    && let Some(value) = module_data.globals.get(&name).cloned()
+                {
+                    return Ok(value);
+                }
+                if let Some(default) = default {
+                    return Ok(default);
+                }
+                Err(RuntimeError::attribute_error(format!(
+                    "module has no attribute '{}'",
+                    name
+                )))
+            }
+            other => {
+                if let Some(default) = default {
+                    return Ok(default);
+                }
+                Err(RuntimeError::attribute_error(format!(
+                    "'{}' object has no attribute '{}'",
+                    self.value_type_name_for_error(&other),
+                    name
+                )))
+            }
+        }
+    }
+
     pub(super) fn builtin_inspect_static_getmro(
         &self,
         args: Vec<Value>,

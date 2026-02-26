@@ -3246,6 +3246,7 @@ pub enum BuiltinFunction {
     InspectIsFrame,
     InspectIsCode,
     InspectUnwrap,
+    InspectGetAttrStatic,
     InspectSignature,
     InspectSignatureInit,
     InspectSignatureStr,
@@ -6455,6 +6456,7 @@ impl BuiltinFunction {
             | BuiltinFunction::InspectIsFrame
             | BuiltinFunction::InspectIsCode
             | BuiltinFunction::InspectUnwrap
+            | BuiltinFunction::InspectGetAttrStatic
             | BuiltinFunction::InspectSignature
             | BuiltinFunction::InspectSignatureInit
             | BuiltinFunction::InspectSignatureStr

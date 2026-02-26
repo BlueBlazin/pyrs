@@ -10326,6 +10326,9 @@ impl Vm {
             BuiltinFunction::InspectIsFrame => self.builtin_inspect_isframe(args, kwargs),
             BuiltinFunction::InspectIsCode => self.builtin_inspect_iscode(args, kwargs),
             BuiltinFunction::InspectUnwrap => self.builtin_inspect_unwrap(args, kwargs),
+            BuiltinFunction::InspectGetAttrStatic => {
+                self.builtin_inspect_getattr_static(args, kwargs)
+            }
             BuiltinFunction::InspectIsClass => self.builtin_inspect_isclass(args, kwargs),
             BuiltinFunction::InspectIsModule => self.builtin_inspect_ismodule(args, kwargs),
             BuiltinFunction::InspectIsGenerator => self.builtin_inspect_isgenerator(args, kwargs),
