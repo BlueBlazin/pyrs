@@ -5885,6 +5885,21 @@ impl Vm {
                     }
                     _ => false,
                 };
+                let is_collections_callable_alias = match &*instance_data.class.kind() {
+                    Object::Class(class_data) => {
+                        if class_data.name != "_CallableGenericAlias" {
+                            false
+                        } else {
+                            matches!(
+                                class_data.attrs.get("__module__"),
+                                Some(Value::Str(module_name))
+                                    if module_name == "collections.abc"
+                                        || module_name == "_collections_abc"
+                            )
+                        }
+                    }
+                    _ => false,
+                };
                 if is_typing_annotated_alias {
                     let metadata_values = match instance_data.attrs.get("__metadata__") {
                         Some(Value::Tuple(metadata_obj)) => match &*metadata_obj.kind() {
@@ -5925,6 +5940,59 @@ impl Vm {
                 let args_value = match args_value {
                     Value::Tuple(_) => args_value,
                     other => self.heap.alloc_tuple(vec![other]),
+                };
+                let args_value = if is_collections_callable_alias {
+                    let flattened = match &args_value {
+                        Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                            Object::Tuple(items) => items.clone(),
+                            _ => Vec::new(),
+                        },
+                        _ => Vec::new(),
+                    };
+                    let first_is_param_expr = flattened.first().is_some_and(|first| {
+                        if matches!(first, Value::List(_)) {
+                            return true;
+                        }
+                        if self
+                            .builtins
+                            .get("Ellipsis")
+                            .is_some_and(|ellipsis| ellipsis == first)
+                        {
+                            return true;
+                        }
+                        if self.typing_param_kind_name(first) == Some("ParamSpec") {
+                            return true;
+                        }
+                        let Value::Instance(instance) = first else {
+                            return false;
+                        };
+                        let instance_kind = instance.kind();
+                        let Object::Instance(instance_data) = &*instance_kind else {
+                            return false;
+                        };
+                        let class_kind = instance_data.class.kind();
+                        let Object::Class(class_data) = &*class_kind else {
+                            return false;
+                        };
+                        class_data.name == "_ConcatenateGenericAlias"
+                            && matches!(
+                                class_data.attrs.get("__module__"),
+                                Some(Value::Str(module_name))
+                                    if module_name == "typing" || module_name == "_typing"
+                            )
+                    });
+                    if flattened.len() == 2 && first_is_param_expr {
+                        args_value
+                    } else if let Some(result) = flattened.last().cloned() {
+                        let call_args = self
+                            .heap
+                            .alloc_list(flattened[..flattened.len().saturating_sub(1)].to_vec());
+                        self.heap.alloc_tuple(vec![call_args, result])
+                    } else {
+                        args_value
+                    }
+                } else {
+                    args_value
                 };
                 let ctor = Value::Class(instance_data.class.clone());
                 let ctor_args = self.heap.alloc_tuple(vec![origin, args_value]);

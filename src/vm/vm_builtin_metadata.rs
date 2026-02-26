@@ -6463,7 +6463,8 @@ impl Vm {
             }
         }
 
-        let reduce_attr = attr_name == "__reduce_ex__" || attr_name == "__reduce__";
+        let reduce_ex_attr = attr_name == "__reduce_ex__";
+        let reduce_attr = reduce_ex_attr || attr_name == "__reduce__";
         let is_type_parameter_instance =
             self.is_type_parameter_value(&Value::Instance(instance.clone()));
         let is_generic_alias_instance = self
@@ -6497,7 +6498,7 @@ impl Vm {
                 instance.clone(),
             )));
         }
-        if reduce_attr && is_generic_alias_instance {
+        if reduce_ex_attr && is_generic_alias_instance {
             return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
                 NativeMethodKind::GenericAliasReduceEx,
                 instance.clone(),
