@@ -240,6 +240,7 @@ pub struct CodeObject {
     pub is_coroutine: bool,
     pub is_iterable_coroutine: bool,
     pub is_async_generator: bool,
+    pub future_annotations_import: bool,
     pub exception_handlers: Vec<ExceptionHandler>,
 }
 
@@ -278,6 +279,7 @@ impl CodeObject {
             is_coroutine: false,
             is_iterable_coroutine: false,
             is_async_generator: false,
+            future_annotations_import: false,
             exception_handlers: Vec::new(),
         }
     }

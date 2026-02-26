@@ -646,13 +646,9 @@ fn string_percent_format(format: &str, right: Value) -> Result<String, RuntimeEr
                 precision = if precision_text.is_empty() {
                     Some(0)
                 } else {
-                    Some(
-                        precision_text
-                            .parse::<usize>()
-                            .map_err(|_| {
-                                RuntimeError::value_error("invalid precision in format string")
-                            })?,
-                    )
+                    Some(precision_text.parse::<usize>().map_err(|_| {
+                        RuntimeError::value_error("invalid precision in format string")
+                    })?)
                 };
             }
         }

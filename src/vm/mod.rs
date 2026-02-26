@@ -1923,7 +1923,9 @@ impl Vm {
     #[inline]
     fn clone_active_exception_for_call(value: &Value) -> Value {
         match value {
-            Value::Exception(exception) => Value::Exception(Self::clone_exception_for_active_frame(exception)),
+            Value::Exception(exception) => {
+                Value::Exception(Self::clone_exception_for_active_frame(exception))
+            }
             _ => value.clone(),
         }
     }
@@ -3542,7 +3544,8 @@ impl Vm {
             return Ok(default_encoding);
         }
 
-        if let Some(encoding) = self.detect_python_source_cookie_encoding(first, bom_found, filename)?
+        if let Some(encoding) =
+            self.detect_python_source_cookie_encoding(first, bom_found, filename)?
         {
             self.check_python_source_line_decoding(first, &encoding, filename)?;
             return Ok(encoding);
@@ -3662,10 +3665,14 @@ impl Vm {
             }
         };
         let Value::Tuple(tuple_obj) = decoded else {
-            return Err(RuntimeError::new("TypeError: decode codec must return a tuple"));
+            return Err(RuntimeError::new(
+                "TypeError: decode codec must return a tuple",
+            ));
         };
         let Object::Tuple(items) = &*tuple_obj.kind() else {
-            return Err(RuntimeError::new("TypeError: decode codec must return a tuple"));
+            return Err(RuntimeError::new(
+                "TypeError: decode codec must return a tuple",
+            ));
         };
         let Some(first) = items.first() else {
             return Err(RuntimeError::new(
@@ -8691,10 +8698,8 @@ fn python_source_normalize_cookie_name(name: &str) -> String {
     if lowered == "utf-8" || lowered.starts_with("utf-8-") {
         return "utf-8".to_string();
     }
-    if matches!(
-        lowered.as_str(),
-        "latin-1" | "iso-8859-1" | "iso-latin-1"
-    ) || lowered.starts_with("latin-1-")
+    if matches!(lowered.as_str(), "latin-1" | "iso-8859-1" | "iso-latin-1")
+        || lowered.starts_with("latin-1-")
         || lowered.starts_with("iso-8859-1-")
         || lowered.starts_with("iso-latin-1-")
     {
@@ -8751,7 +8756,9 @@ fn python_source_unknown_encoding_error(filename: Option<&str>, encoding: &str) 
 
 fn python_source_encoding_problem_error(filename: Option<&str>) -> RuntimeError {
     match filename {
-        Some(path) => RuntimeError::new(format!("SyntaxError: encoding problem for '{path}': utf-8")),
+        Some(path) => {
+            RuntimeError::new(format!("SyntaxError: encoding problem for '{path}': utf-8"))
+        }
         None => RuntimeError::new("SyntaxError: encoding problem: utf-8"),
     }
 }
@@ -10143,7 +10150,12 @@ fn bind_arguments(
         ));
     }
 
-    for (idx, slot) in bound.iter_mut().enumerate().take(total_positional).skip(required) {
+    for (idx, slot) in bound
+        .iter_mut()
+        .enumerate()
+        .take(total_positional)
+        .skip(required)
+    {
         if slot.is_none() {
             let default_index = idx - required;
             *slot = Some(func.defaults[default_index].clone());

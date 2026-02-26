@@ -4,9 +4,9 @@ use super::{
     SIGNAL_SIGINT, SocketAddr, SystemTime, TimeParts, ToSocketAddrs, UNIX_EPOCH, Value, Vm,
     apply_uuid_variant, apply_uuid_version, bytes_like_from_value, day_of_year, days_from_civil,
     dict_get_value, format_strftime, format_uuid_hex, format_uuid_hyphenated, is_truthy,
-    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp, uuid_hash_mix_bytes,
-    uuid_node_from_hostname, uuid_random_bytes, uuid_timestamp_100ns_since_gregorian,
-    value_to_f64, value_to_int,
+    parse_uuid_like_string, runtime_error_matches_exception, split_unix_timestamp,
+    uuid_hash_mix_bytes, uuid_node_from_hostname, uuid_random_bytes,
+    uuid_timestamp_100ns_since_gregorian, value_to_f64, value_to_int,
 };
 
 const DATETIME_MIN_YEAR: i64 = 1;
@@ -60,7 +60,11 @@ impl Vm {
         if open == 0 {
             return None;
         }
-        Some(start.saturating_add(segment.chars().count()).saturating_add(1))
+        Some(
+            start
+                .saturating_add(segment.chars().count())
+                .saturating_add(1),
+        )
     }
 
     fn warnings_normalize_active_exception_traceback(&mut self) {
@@ -136,10 +140,8 @@ impl Vm {
                 frame.end_column = inferred_end;
             }
         }
-        err.message = self.format_traceback(
-            &[],
-            &Value::Exception(Box::new((**exception).clone())),
-        );
+        err.message =
+            self.format_traceback(&[], &Value::Exception(Box::new((**exception).clone())));
     }
 
     pub(super) fn builtin_threading_excepthook(
@@ -4525,7 +4527,9 @@ impl Vm {
                 .get("__pyrs_warning_onceregistry_fallback__")
                 .cloned()
             {
-                module_data.globals.insert("onceregistry".to_string(), saved);
+                module_data
+                    .globals
+                    .insert("onceregistry".to_string(), saved);
                 return;
             }
             if let Some(onceregistry) = fallback_from_builtin {
@@ -4560,7 +4564,8 @@ impl Vm {
             && let Value::Function(function_obj) = filterwarnings_callable
             && let Object::Function(function_data) = &*function_obj.kind()
         {
-            self.load_attr_module(&function_data.module, "_showwarnmsg").ok()
+            self.load_attr_module(&function_data.module, "_showwarnmsg")
+                .ok()
         } else {
             None
         };
@@ -4662,8 +4667,7 @@ impl Vm {
                 }
             }
         })();
-        self.warnings_bless_my_loader_depth =
-            self.warnings_bless_my_loader_depth.saturating_sub(1);
+        self.warnings_bless_my_loader_depth = self.warnings_bless_my_loader_depth.saturating_sub(1);
         bless_result
     }
 

@@ -13,14 +13,14 @@ use super::{
     QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame,
     Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
     class_attr_lookup, class_attr_lookup_direct, decode_call_counts, deref_name, dict_get_value,
-    dict_remove_value, dict_set_value, dict_set_value_checked,
-    exception_message_from_call_args, floor_div_values, format_repr, format_value,
-    is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
-    memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
-    memoryview_format_for_view, memoryview_layout_1d_from_parts, mod_values,
-    module_globals_version, pos_value, pow_values, rshift_values, runtime_error_matches_exception,
-    slice_bounds_for_step_one, slice_indices, slot_names_from_value, source_path_from_cache_path,
-    value_from_bigint, value_from_object_ref, value_to_int, value_to_optional_index,
+    dict_remove_value, dict_set_value, dict_set_value_checked, exception_message_from_call_args,
+    floor_div_values, format_repr, format_value, is_comprehension_code, is_import_error_family,
+    is_os_error_family, is_truthy, lshift_values, memoryview_bounds, memoryview_element_offset,
+    memoryview_encode_element, memoryview_format_for_view, memoryview_layout_1d_from_parts,
+    mod_values, module_globals_version, pos_value, pow_values, rshift_values,
+    runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices,
+    slot_names_from_value, source_path_from_cache_path, value_from_bigint, value_from_object_ref,
+    value_to_int, value_to_optional_index,
 };
 use crate::bytecode::Location;
 use crate::runtime::{ExceptionTracebackFrame, SliceValue};
@@ -2440,7 +2440,8 @@ impl Vm {
                                 }
                             }
                             if let Value::Instance(descriptor_instance) = &descriptor
-                                && let Object::Instance(instance_data) = &*descriptor_instance.kind()
+                                && let Object::Instance(instance_data) =
+                                    &*descriptor_instance.kind()
                                 && let Object::Class(class_data) = &*instance_data.class.kind()
                                 && class_data.name == "property"
                             {
@@ -2450,13 +2451,12 @@ impl Vm {
                         if !handled_by_descriptor {
                             let (flags, class_name) = match &*class.kind() {
                                 Object::Class(class_data) => (
-                                    class_data
-                                        .attrs
-                                        .get("__flags__")
-                                        .and_then(|value| match value {
+                                    class_data.attrs.get("__flags__").and_then(
+                                        |value| match value {
                                             Value::Int(flags) => Some(*flags),
                                             _ => None,
-                                        }),
+                                        },
+                                    ),
                                     class_data.name.clone(),
                                 ),
                                 _ => (None, "type".to_string()),
@@ -2566,7 +2566,8 @@ impl Vm {
                                 }
                             }
                             if let Value::Instance(descriptor_instance) = &descriptor
-                                && let Object::Instance(instance_data) = &*descriptor_instance.kind()
+                                && let Object::Instance(instance_data) =
+                                    &*descriptor_instance.kind()
                                 && let Object::Class(class_data) = &*instance_data.class.kind()
                                 && class_data.name == "property"
                             {
@@ -2576,13 +2577,12 @@ impl Vm {
                         if !handled_by_descriptor {
                             let (flags, class_name) = match &*class.kind() {
                                 Object::Class(class_data) => (
-                                    class_data
-                                        .attrs
-                                        .get("__flags__")
-                                        .and_then(|value| match value {
+                                    class_data.attrs.get("__flags__").and_then(
+                                        |value| match value {
                                             Value::Int(flags) => Some(*flags),
                                             _ => None,
-                                        }),
+                                        },
+                                    ),
                                     class_data.name.clone(),
                                 ),
                                 _ => (None, "type".to_string()),
@@ -4991,12 +4991,10 @@ impl Vm {
                             return None;
                         }
                         let mut outer_qualname = frame.code.name.clone();
-                        let owner_value = Self::frame_trace(frame)
-                            .local_values
-                            .into_iter()
-                            .find_map(|(name, value)| {
-                                (name == "self" || name == "cls").then_some(value)
-                            });
+                        let owner_value =
+                            Self::frame_trace(frame).local_values.into_iter().find_map(
+                                |(name, value)| (name == "self" || name == "cls").then_some(value),
+                            );
                         if let Some(owner) = owner_value {
                             match owner {
                                 Value::Instance(instance) => {
@@ -8600,10 +8598,10 @@ impl Vm {
                         .extend(instance_data.attrs.clone());
                 }
                 if let Object::Instance(instance_data) = &*instance.kind() {
-                    exception
-                        .attrs
-                        .borrow_mut()
-                        .insert("__class__".to_string(), Value::Class(instance_data.class.clone()));
+                    exception.attrs.borrow_mut().insert(
+                        "__class__".to_string(),
+                        Value::Class(instance_data.class.clone()),
+                    );
                 }
                 if !exception.attrs.borrow().contains_key("args") {
                     let args = if let Some(message) = &exception.message {
@@ -8617,28 +8615,29 @@ impl Vm {
                         .insert("args".to_string(), args);
                 }
                 if self.exception_inherits(class_name.as_str(), "BaseExceptionGroup") {
-                    let (group_message, members_source) = {
-                        let attrs = exception.attrs.borrow();
-                        let group_message = match attrs.get("args") {
-                            Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
-                                Object::Tuple(items) if !items.is_empty() => {
-                                    Some(format_value(&items[0]))
-                                }
-                                _ => None,
-                            },
-                            _ => None,
-                        };
-                        let members_source = attrs.get("exceptions").cloned().or_else(|| {
-                            match attrs.get("args") {
+                    let (group_message, members_source) =
+                        {
+                            let attrs = exception.attrs.borrow();
+                            let group_message = match attrs.get("args") {
                                 Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
-                                    Object::Tuple(items) => items.get(1).cloned(),
+                                    Object::Tuple(items) if !items.is_empty() => {
+                                        Some(format_value(&items[0]))
+                                    }
                                     _ => None,
                                 },
                                 _ => None,
-                            }
-                        });
-                        (group_message, members_source)
-                    };
+                            };
+                            let members_source = attrs.get("exceptions").cloned().or_else(|| {
+                                match attrs.get("args") {
+                                    Some(Value::Tuple(tuple_obj)) => match &*tuple_obj.kind() {
+                                        Object::Tuple(items) => items.get(1).cloned(),
+                                        _ => None,
+                                    },
+                                    _ => None,
+                                }
+                            });
+                            (group_message, members_source)
+                        };
                     if let Some(group_message) = group_message {
                         exception.message = Some(group_message);
                     }
@@ -9865,11 +9864,7 @@ impl Vm {
                 class_keywords.len()
             );
         }
-        match self.call_internal(
-            init_subclass,
-            init_subclass_args,
-            class_keywords.clone(),
-        )? {
+        match self.call_internal(init_subclass, init_subclass_args, class_keywords.clone())? {
             InternalCallOutcome::Value(_) => Ok(false),
             InternalCallOutcome::CallerExceptionHandled => Ok(true),
         }
@@ -14196,7 +14191,9 @@ fn render_traceback_caret_line(
             && open > 0
         {
             let call_head = open;
-            let call_tail = end_exclusive.saturating_sub(start).saturating_sub(call_head);
+            let call_tail = end_exclusive
+                .saturating_sub(start)
+                .saturating_sub(call_head);
             return Some(format!(
                 "{}{}{}",
                 " ".repeat(start),

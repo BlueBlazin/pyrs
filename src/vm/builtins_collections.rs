@@ -2518,11 +2518,7 @@ impl Vm {
             };
             let next = add_values(current, Value::Int(1), &self.heap)?;
             if let Some(bound_setitem) = &bound_setitem {
-                match self.call_internal(
-                    bound_setitem.clone(),
-                    vec![item, next],
-                    HashMap::new(),
-                )? {
+                match self.call_internal(bound_setitem.clone(), vec![item, next], HashMap::new())? {
                     InternalCallOutcome::Value(_) => {}
                     InternalCallOutcome::CallerExceptionHandled => {
                         return Err(self.runtime_error_from_active_exception(
@@ -2918,12 +2914,11 @@ impl Vm {
                 let has_default = default.is_some();
                 let default_value = default.unwrap_or_else(|| parameter_empty.clone());
                 let rendered = if has_default {
-                    let default_text = match self
-                        .builtin_repr(vec![default_value.clone()], HashMap::new())
-                    {
-                        Ok(Value::Str(text)) => text,
-                        _ => format_repr(&default_value),
-                    };
+                    let default_text =
+                        match self.builtin_repr(vec![default_value.clone()], HashMap::new()) {
+                            Ok(Value::Str(text)) => text,
+                            _ => format_repr(&default_value),
+                        };
                     format!("{name}={default_text}")
                 } else {
                     name.clone()
@@ -3379,9 +3374,7 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new(
-                "Signature.__eq__() expects one argument",
-            ));
+            return Err(RuntimeError::new("Signature.__eq__() expects one argument"));
         }
         let left = self.receiver_from_value(&args[0])?;
         let Value::Instance(right) = &args[1] else {
@@ -3729,7 +3722,9 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 1 {
-            return Err(RuntimeError::new("markcoroutinefunction() expects one argument"));
+            return Err(RuntimeError::new(
+                "markcoroutinefunction() expects one argument",
+            ));
         }
         let mut target = args.remove(0);
         let bound_function = if let Value::BoundMethod(method) = &target {

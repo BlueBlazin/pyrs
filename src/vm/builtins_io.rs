@@ -4466,16 +4466,13 @@ impl Vm {
         } else {
             vec![Value::Str(text.to_string()), Value::Str(errors.to_string())]
         };
-        let encoded = match self.call_internal_preserving_caller(
-            encode,
-            encode_args,
-            HashMap::new(),
-        )? {
-            InternalCallOutcome::Value(value) => value,
-            InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception("encode() failed"));
-            }
-        };
+        let encoded =
+            match self.call_internal_preserving_caller(encode, encode_args, HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("encode() failed"));
+                }
+            };
         if encode_is_builtin {
             return bytes_like_from_value(encoded)
                 .map_err(|_| RuntimeError::type_error("encoder should return a bytes object"));
@@ -4513,16 +4510,13 @@ impl Vm {
                 Value::Str(errors.to_string()),
             ]
         };
-        let decoded = match self.call_internal_preserving_caller(
-            decode,
-            decode_args,
-            HashMap::new(),
-        )? {
-            InternalCallOutcome::Value(value) => value,
-            InternalCallOutcome::CallerExceptionHandled => {
-                return Err(self.runtime_error_from_active_exception("decode() failed"));
-            }
-        };
+        let decoded =
+            match self.call_internal_preserving_caller(decode, decode_args, HashMap::new())? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception("decode() failed"));
+                }
+            };
         if decode_is_builtin {
             return match decoded {
                 Value::Str(text) => Ok(text),
@@ -5952,10 +5946,11 @@ impl Vm {
         if !has_direct_fd && !has_raw_fd {
             return;
         }
-        let file_text = match self.builtin_repr(vec![Value::Instance(receiver.clone())], HashMap::new()) {
-            Ok(Value::Str(text)) => text,
-            _ => format_value(&Value::Instance(receiver.clone())),
-        };
+        let file_text =
+            match self.builtin_repr(vec![Value::Instance(receiver.clone())], HashMap::new()) {
+                Ok(Value::Str(text)) => text,
+                _ => format_value(&Value::Instance(receiver.clone())),
+            };
         let warnings_module = if let Some(module) = self.modules.get("warnings").cloned() {
             Some(module)
         } else if self.is_finalizing {

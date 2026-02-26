@@ -2719,10 +2719,7 @@ impl Parser {
                 let (value, next) = self.parse_expr_at(pos)?;
                 let next_pos = next;
                 if self.is_comprehension_start(next_pos) {
-                    return Err(self.error_at(
-                        pos,
-                        "Generator expression must be parenthesized",
-                    ));
+                    return Err(self.error_at(pos, "Generator expression must be parenthesized"));
                 }
                 args.push(CallArg::Keyword { name, value });
                 pos = next_pos;
@@ -2731,17 +2728,15 @@ impl Parser {
                 let mut next_pos = next;
                 if self.is_comprehension_start(next_pos) {
                     if !args.is_empty() {
-                        return Err(self.error_at(
-                            pos,
-                            "Generator expression must be parenthesized",
-                        ));
+                        return Err(
+                            self.error_at(pos, "Generator expression must be parenthesized")
+                        );
                     }
                     let (clauses, after) = self.parse_comp_clauses(next_pos)?;
                     if !matches!(self.token_at(after).kind, TokenKind::RParen) {
-                        return Err(self.error_at(
-                            pos,
-                            "Generator expression must be parenthesized",
-                        ));
+                        return Err(
+                            self.error_at(pos, "Generator expression must be parenthesized")
+                        );
                     }
                     let span = expr.span;
                     expr = Expr {

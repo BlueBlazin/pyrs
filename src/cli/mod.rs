@@ -92,11 +92,7 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
     warnoptions = sanitize_warning_options(warnoptions);
 
     match args.next() {
-        None => match repl::run_repl(
-            import_site,
-            warnoptions.clone(),
-            startup_tracemalloc_limit,
-        ) {
+        None => match repl::run_repl(import_site, warnoptions.clone(), startup_tracemalloc_limit) {
             Ok(status) => status,
             Err(err) => {
                 eprintln!("error: {err}");
@@ -162,18 +158,18 @@ pub fn run_with_args_vec(arguments: Vec<String>) -> i32 {
         },
         Some(path) => {
             let script_args = args.collect::<Vec<_>>();
-                match run_file(
-                    &path,
-                    script_args,
-                    import_site,
-                    traceback_caret_enabled,
-                    warnoptions,
-                    startup_tracemalloc_limit,
-                ) {
-                    Ok(status) => status,
-                    Err(err) => {
-                        eprintln!("{}", error_style::format_error_for_stderr(&err));
-                        2
+            match run_file(
+                &path,
+                script_args,
+                import_site,
+                traceback_caret_enabled,
+                warnoptions,
+                startup_tracemalloc_limit,
+            ) {
+                Ok(status) => status,
+                Err(err) => {
+                    eprintln!("{}", error_style::format_error_for_stderr(&err));
+                    2
                 }
             }
         }
@@ -337,12 +333,7 @@ fn run_command(
     startup_tracemalloc_limit: Option<usize>,
 ) -> Result<i32, String> {
     let mut vm = Vm::new();
-    configure_vm_for_command(
-        &mut vm,
-        import_site,
-        traceback_caret_enabled,
-        &warnoptions,
-    )?;
+    configure_vm_for_command(&mut vm, import_site, traceback_caret_enabled, &warnoptions)?;
     if let Some(limit) = startup_tracemalloc_limit {
         vm.start_tracemalloc(limit);
     }

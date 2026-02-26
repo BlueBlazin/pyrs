@@ -527,9 +527,11 @@ impl Vm {
                 .saturating_add(1);
         }
         let source_filename = source_path.to_string_lossy().to_string();
-        let source = self.read_python_source_file(&source_filename).map_err(|err| {
-            RuntimeError::new(format!("failed to read module '{name}': {}", err.message))
-        })?;
+        let source = self
+            .read_python_source_file(&source_filename)
+            .map_err(|err| {
+                RuntimeError::new(format!("failed to read module '{name}': {}", err.message))
+            })?;
         self.cache_source_text(&source_filename, &source);
 
         let module_ast = parser::parse_module(&source).map_err(|err| {
@@ -9009,15 +9011,10 @@ impl Vm {
                 }
                 _ => {
                     if trace {
-                        let in_sys_modules = self
-                            .sys_dict_obj("modules")
-                            .is_some_and(|modules| {
-                                dict_get_value(
-                                    &modules,
-                                    &Value::Str("importlib.machinery".to_string()),
-                                )
+                        let in_sys_modules = self.sys_dict_obj("modules").is_some_and(|modules| {
+                            dict_get_value(&modules, &Value::Str("importlib.machinery".to_string()))
                                 .is_some()
-                            });
+                        });
                         eprintln!(
                             "[file-finder] importlib.machinery missing for root {} (present_in_sys_modules={})",
                             root.to_string_lossy(),
@@ -9083,7 +9080,10 @@ impl Vm {
             load_attr(self, &module_value, "SourcelessFileLoader"),
             load_attr(self, &module_value, "BYTECODE_SUFFIXES"),
         ) {
-            args.push(self.heap.alloc_tuple(vec![sourceless_loader, bytecode_suffixes]));
+            args.push(
+                self.heap
+                    .alloc_tuple(vec![sourceless_loader, bytecode_suffixes]),
+            );
         }
         match self.call_internal(file_finder, args, HashMap::new()) {
             Ok(InternalCallOutcome::Value(importer)) => {
@@ -9132,9 +9132,10 @@ impl Vm {
                 "find_spec".to_string(),
                 Value::Builtin(BuiltinFunction::ImportlibFileFinderFindSpec),
             );
-            class_data
-                .attrs
-                .insert("invalidate_caches".to_string(), Value::Builtin(BuiltinFunction::NoOp));
+            class_data.attrs.insert(
+                "invalidate_caches".to_string(),
+                Value::Builtin(BuiltinFunction::NoOp),
+            );
         }
         let importer = match self.heap.alloc_instance(InstanceObject::new(class)) {
             Value::Instance(instance) => instance,
@@ -9609,9 +9610,11 @@ impl Vm {
         );
         let loader_value = match &spec_value {
             Value::Module(spec_obj) => match &*spec_obj.kind() {
-                Object::Module(module_data) => {
-                    module_data.globals.get("loader").cloned().unwrap_or(Value::None)
-                }
+                Object::Module(module_data) => module_data
+                    .globals
+                    .get("loader")
+                    .cloned()
+                    .unwrap_or(Value::None),
                 _ => Value::None,
             },
             Value::Dict(spec_obj) => match &*spec_obj.kind() {

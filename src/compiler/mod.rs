@@ -2865,6 +2865,7 @@ struct Compiler {
     current_span: Span,
     cell_index: HashMap<String, u32>,
     future_annotations: bool,
+    future_annotations_import: bool,
 }
 
 struct LoopContext {
@@ -2900,10 +2901,12 @@ impl Compiler {
             current_span: Span::unknown(),
             cell_index,
             future_annotations: false,
+            future_annotations_import: false,
         }
     }
 
     fn finish(mut self) -> CodeObject {
+        self.code.future_annotations_import = self.future_annotations_import;
         self.emit(Opcode::LoadConst, Some(0));
         self.emit(Opcode::ReturnValue, None);
         self.code.rebuild_layout_indexes();
@@ -2911,13 +2914,15 @@ impl Compiler {
     }
 
     fn finish_expression(mut self) -> CodeObject {
+        self.code.future_annotations_import = self.future_annotations_import;
         self.emit(Opcode::ReturnValue, None);
         self.code.rebuild_layout_indexes();
         self.code
     }
 
     fn compile_module(&mut self, module: &Module) -> Result<(), CompileError> {
-        let _future_annotations_import = self.validate_future_imports(&module.body)?;
+        let future_annotations_import = self.validate_future_imports(&module.body)?;
+        self.future_annotations_import = future_annotations_import;
         // CPython 3.14 defaults to lazy annotation semantics. Keep `__future__`
         // validation for syntax/error parity, but compile annotations in deferred form.
         self.future_annotations = true;
@@ -3939,6 +3944,7 @@ impl Compiler {
         )?;
         let mut compiler = Compiler::new(name, &self.code.filename, scope);
         compiler.future_annotations = self.future_annotations;
+        compiler.future_annotations_import = self.future_annotations_import;
         compiler.code.first_line = definition_span.line.max(1);
         compiler.code.posonly_params = posonly_params
             .iter()
@@ -4155,7 +4161,7 @@ impl Compiler {
         body: &[Stmt],
         store_target: bool,
     ) -> Result<(), CompileError> {
-        let drop_annotations = !type_params.is_empty();
+        let drop_annotations = !type_params.is_empty() && !self.future_annotations;
         let func_code = self.compile_function(
             name,
             is_async,
@@ -4362,6 +4368,7 @@ impl Compiler {
         let scope = ScopeInfo::for_class(body, &self.scope)?;
         let mut compiler = Compiler::new(&format!("<class {name}>"), &self.code.filename, scope);
         compiler.future_annotations = self.future_annotations;
+        compiler.future_annotations_import = self.future_annotations_import;
         compiler.code.first_line = self.current_span.line.max(1);
         if body_has_ann_assign(body) {
             compiler.init_annotations()?;

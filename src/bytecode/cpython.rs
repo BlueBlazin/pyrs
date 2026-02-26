@@ -7,6 +7,8 @@ use crate::bytecode::pyc::{PycHeader, parse_pyc_header, write_pyc_header};
 use crate::bytecode::{CodeObject, ExceptionHandler, Instruction, Opcode};
 use crate::runtime::{BigInt, Heap, SliceValue, Value};
 
+const CO_FUTURE_ANNOTATIONS: i32 = 0x1000000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpythonError {
     pub message: String,
@@ -169,6 +171,7 @@ impl<'a> Translator<'a> {
         result.is_coroutine = (self.code.flags & 0x80) != 0;
         result.is_iterable_coroutine = (self.code.flags & 0x100) != 0;
         result.is_async_generator = (self.code.flags & 0x200) != 0;
+        result.future_annotations_import = (self.code.flags & CO_FUTURE_ANNOTATIONS) != 0;
         self.populate_params(&mut result)?;
 
         let instructions = self.translate_instructions()?;

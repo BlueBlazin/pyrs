@@ -1433,9 +1433,10 @@ impl Heap {
             class_data
                 .attrs
                 .insert("__name__".to_string(), Value::Str("ellipsis".to_string()));
-            class_data
-                .attrs
-                .insert("__qualname__".to_string(), Value::Str("ellipsis".to_string()));
+            class_data.attrs.insert(
+                "__qualname__".to_string(),
+                Value::Str("ellipsis".to_string()),
+            );
         }
         let instance = match self.alloc_instance(InstanceObject::new(class.clone())) {
             Value::Instance(instance) => instance,
@@ -3560,12 +3561,9 @@ thread_local! {
 
 fn typing_typeparam_class(heap: &Heap, kind_name: &'static str) -> ObjRef {
     let heap_key = heap as *const Heap as usize;
-    if let Some(existing) = TYPING_TYPEPARAM_CLASS_CACHE.with(|cache| {
-        cache
-            .borrow()
-            .get(&(heap_key, kind_name))
-            .cloned()
-    }) {
+    if let Some(existing) = TYPING_TYPEPARAM_CLASS_CACHE
+        .with(|cache| cache.borrow().get(&(heap_key, kind_name)).cloned())
+    {
         return existing;
     }
 
@@ -5401,7 +5399,9 @@ impl BuiltinFunction {
                     instance_data
                         .attrs
                         .insert("__module__".to_string(), Value::Str("typing".to_string()));
-                    instance_data.attrs.insert("__bound__".to_string(), Value::None);
+                    instance_data
+                        .attrs
+                        .insert("__bound__".to_string(), Value::None);
                     instance_data
                         .attrs
                         .insert("__constraints__".to_string(), heap.alloc_tuple(Vec::new()));
@@ -6005,9 +6005,7 @@ impl BuiltinFunction {
             | BuiltinFunction::TraceMallocResetPeak
             | BuiltinFunction::TraceMallocClearTraces => {
                 if !args.is_empty() {
-                    return Err(RuntimeError::new(
-                        "tracemalloc helper expects no arguments",
-                    ));
+                    return Err(RuntimeError::new("tracemalloc helper expects no arguments"));
                 }
                 Ok(Value::None)
             }
@@ -7981,7 +7979,11 @@ fn typing_special_form_display_name(instance_data: &InstanceObject) -> Option<St
     }
     if !matches!(
         class_data.name.as_str(),
-        "_SpecialForm" | "_SpecialGenericAlias" | "_DeprecatedGenericAlias" | "_TupleType" | "_CallableType"
+        "_SpecialForm"
+            | "_SpecialGenericAlias"
+            | "_DeprecatedGenericAlias"
+            | "_TupleType"
+            | "_CallableType"
     ) {
         return None;
     }
@@ -8023,7 +8025,10 @@ fn format_generic_alias_type_expr_from_instance(instance_data: &InstanceObject) 
             .join(", ");
         format!("{origin_text}[{arg_text}]")
     };
-    let is_unpacked = matches!(instance_data.attrs.get("__unpacked__"), Some(Value::Bool(true)));
+    let is_unpacked = matches!(
+        instance_data.attrs.get("__unpacked__"),
+        Some(Value::Bool(true))
+    );
     if is_unpacked {
         Some(format!("*{rendered}"))
     } else {

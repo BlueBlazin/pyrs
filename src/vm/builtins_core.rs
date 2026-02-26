@@ -3,25 +3,25 @@ use super::{
     BuiltinFunction, COMPLEX_BACKING_STORAGE_ATTR, ClassBuildOutcome, ClassObject, CodeObject,
     CompiledCodeMode, DICT_BACKING_STORAGE_ATTR, ExceptionObject, FLOAT_BACKING_STORAGE_ATTR,
     FROZENSET_BACKING_STORAGE_ATTR, Frame, GeneratorResumeKind, GeneratorResumeOutcome, HashMap,
-    INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, InstanceObject,
-    InternalCallOutcome, IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR,
-    MAPPING_PROXY_STORAGE_ATTR, MONITORING_EVENT_BRANCH, MONITORING_EVENT_BRANCH_LEFT,
-    MONITORING_EVENT_BRANCH_RIGHT, MONITORING_EVENT_C_RAISE, MONITORING_EVENT_C_RETURN,
-    MONITORING_EVENT_CALL, MONITORING_EVENT_SET_MAX, MONITORING_LOCAL_EVENT_SET_MAX,
-    MONITORING_MAX_USER_TOOL_ID, ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef,
-    Object, Ordering, PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE, Rc, RuntimeError,
-    SET_BACKING_STORAGE_ATTR, STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR,
-    Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
-    call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge,
-    compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
-    dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
-    encode_text_bytes, format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
-    is_import_error_family, is_missing_attribute_error, is_os_error_family,
-    is_runtime_type_name_marker, matmul_values, mul_values, neg_value, normalize_codec_encoding,
-    normalize_codec_errors, or_values, ordering_from_cmp_value, parse_hex_float_literal, parser,
-    pos_value, round_float_with_ndigits, runtime_error_matches_exception, sub_values,
-    value_from_bigint, value_from_object_ref, value_to_bigint, value_to_f64, value_to_int,
-    weakref_target_id, weakref_target_object, with_bytes_like_source, xor_values,
+    INSTANCE_DICT_STORAGE_ATTR, INT_BACKING_STORAGE_ATTR, InstanceObject, InternalCallOutcome,
+    IteratorKind, IteratorObject, LIST_BACKING_STORAGE_ATTR, MAPPING_PROXY_STORAGE_ATTR,
+    MONITORING_EVENT_BRANCH, MONITORING_EVENT_BRANCH_LEFT, MONITORING_EVENT_BRANCH_RIGHT,
+    MONITORING_EVENT_C_RAISE, MONITORING_EVENT_C_RETURN, MONITORING_EVENT_CALL,
+    MONITORING_EVENT_SET_MAX, MONITORING_LOCAL_EVENT_SET_MAX, MONITORING_MAX_USER_TOOL_ID,
+    ModuleObject, NativeMethodKind, NativeMethodObject, ObjRef, Object, Ordering,
+    PY_TPFLAGS_HEAPTYPE, PY_TPFLAGS_IMMUTABLETYPE, Rc, RuntimeError, SET_BACKING_STORAGE_ATTR,
+    STR_BACKING_STORAGE_ATTR, SuperObject, TUPLE_BACKING_STORAGE_ATTR, Value, Vm, Write,
+    add_values, bigint_from_bytes, bytes_like_from_value, call_builtin_with_kwargs,
+    class_attr_lookup, class_attr_walk, compare_ge, compare_gt, compare_in, compare_le, compare_lt,
+    compare_order, compiler, decode_text_bytes, dict_remove_value, dict_set_value,
+    dict_set_value_checked, div_values, encode_text_bytes, format_float_hex, format_repr,
+    format_value, frame_cell_value, invert_value, is_import_error_family,
+    is_missing_attribute_error, is_os_error_family, is_runtime_type_name_marker, matmul_values,
+    mul_values, neg_value, normalize_codec_encoding, normalize_codec_errors, or_values,
+    ordering_from_cmp_value, parse_hex_float_literal, parser, pos_value, round_float_with_ndigits,
+    runtime_error_matches_exception, sub_values, value_from_bigint, value_from_object_ref,
+    value_to_bigint, value_to_f64, value_to_int, weakref_target_id, weakref_target_object,
+    with_bytes_like_source, xor_values,
 };
 use crate::ast::{
     AssignTarget, AugOp as AstAugOp, BinaryOp as AstBinaryOp, BoolOp as AstBoolOp, CallArg,
@@ -735,7 +735,9 @@ impl Vm {
                     let repr_outcome = self.call_internal(repr_method, Vec::new(), HashMap::new());
                     self.repr_in_progress.pop();
                     match repr_outcome? {
-                        InternalCallOutcome::Value(Value::Str(text)) => return Ok(Value::Str(text)),
+                        InternalCallOutcome::Value(Value::Str(text)) => {
+                            return Ok(Value::Str(text));
+                        }
                         InternalCallOutcome::Value(_) => {
                             return Err(RuntimeError::type_error("__repr__ returned non-string"));
                         }
@@ -786,12 +788,18 @@ impl Vm {
                             self.repr_in_progress.pop();
                         }
                         match repr_outcome? {
-                            InternalCallOutcome::Value(Value::Str(text)) => return Ok(Value::Str(text)),
+                            InternalCallOutcome::Value(Value::Str(text)) => {
+                                return Ok(Value::Str(text));
+                            }
                             InternalCallOutcome::Value(_) => {
-                                return Err(RuntimeError::type_error("__repr__ returned non-string"));
+                                return Err(RuntimeError::type_error(
+                                    "__repr__ returned non-string",
+                                ));
                             }
                             InternalCallOutcome::CallerExceptionHandled => {
-                                return Err(self.runtime_error_from_active_exception("repr() failed"));
+                                return Err(
+                                    self.runtime_error_from_active_exception("repr() failed")
+                                );
                             }
                         }
                     }
@@ -2686,9 +2694,7 @@ impl Vm {
                         globals_dict_writeback = Some((dict, module.clone()));
                         globals_module = module;
                     } else {
-                        return Err(RuntimeError::new(
-                            "eval() globals must be a dict or module",
-                        ));
+                        return Err(RuntimeError::new("eval() globals must be a dict or module"));
                     }
                 }
                 _ => {
@@ -2742,7 +2748,9 @@ impl Vm {
                                     Ok(value) => {
                                         namespace.insert(name.clone(), value);
                                     }
-                                    Err(err) if runtime_error_matches_exception(&err, "KeyError") => {
+                                    Err(err)
+                                        if runtime_error_matches_exception(&err, "KeyError") =>
+                                    {
                                         self.clear_active_exception();
                                     }
                                     Err(err) => return Err(err),
@@ -3427,9 +3435,11 @@ impl Vm {
             )
         };
 
-        let globals_dict = if let Some(module_frame_index) = self.frames.iter().rposition(|entry| {
-            entry.is_module && entry.module.id() == globals_source.id()
-        }) {
+        let globals_dict = if let Some(module_frame_index) = self
+            .frames
+            .iter()
+            .rposition(|entry| entry.is_module && entry.module.id() == globals_source.id())
+        {
             Value::Dict(self.ensure_frame_module_locals_dict(module_frame_index))
         } else if let Object::Module(module_data) = &mut *globals_source.kind_mut() {
             if let Some(mapping) = module_data
@@ -3471,9 +3481,7 @@ impl Vm {
             module_data
                 .globals
                 .insert("f_builtins".to_string(), builtins_dict);
-            module_data
-                .globals
-                .insert("f_code".to_string(), f_code);
+            module_data.globals.insert("f_code".to_string(), f_code);
             module_data
                 .globals
                 .insert("f_lineno".to_string(), Value::Int(lineno as i64));
@@ -3604,7 +3612,8 @@ impl Vm {
                     if let Some(cached) = exception.attrs.borrow().get("__traceback__").cloned() {
                         cached
                     } else {
-                        let traceback = self.traceback_value_from_frames(&exception.traceback_frames);
+                        let traceback =
+                            self.traceback_value_from_frames(&exception.traceback_frames);
                         exception
                             .attrs
                             .borrow_mut()
@@ -8152,9 +8161,15 @@ impl Vm {
 
     fn abc_type_identity_eq(left: &Value, right: &Value) -> bool {
         match (left, right) {
-            (Value::Class(left_class), Value::Class(right_class)) => left_class.id() == right_class.id(),
-            (Value::Builtin(left_builtin), Value::Builtin(right_builtin)) => left_builtin == right_builtin,
-            (Value::ExceptionType(left_name), Value::ExceptionType(right_name)) => left_name == right_name,
+            (Value::Class(left_class), Value::Class(right_class)) => {
+                left_class.id() == right_class.id()
+            }
+            (Value::Builtin(left_builtin), Value::Builtin(right_builtin)) => {
+                left_builtin == right_builtin
+            }
+            (Value::ExceptionType(left_name), Value::ExceptionType(right_name)) => {
+                left_name == right_name
+            }
             (Value::Str(left_name), Value::Str(right_name)) => {
                 is_runtime_type_name_marker(left_name)
                     && is_runtime_type_name_marker(right_name)
@@ -8250,7 +8265,11 @@ impl Vm {
         names
     }
 
-    fn abc_class_ref_arg<'a>(&self, value: &'a Value, name: &str) -> Result<&'a ObjRef, RuntimeError> {
+    fn abc_class_ref_arg<'a>(
+        &self,
+        value: &'a Value,
+        name: &str,
+    ) -> Result<&'a ObjRef, RuntimeError> {
         match value {
             Value::Class(class) => Ok(class),
             _ => Err(RuntimeError::type_error(format!("{name} must be a class"))),
@@ -8303,30 +8322,30 @@ impl Vm {
                 Err(err) => return Err(err),
             };
             if let Some(subclasshook) = subclasshook {
-            let hook_result = match self.call_internal(
-                subclasshook,
-                vec![subclass.clone()],
-                HashMap::new(),
-            )? {
-                InternalCallOutcome::Value(value) => value,
-                InternalCallOutcome::CallerExceptionHandled => {
-                    return Err(
-                        self.runtime_error_from_active_exception("_abc_subclasscheck failed")
-                    );
+                let hook_result = match self.call_internal(
+                    subclasshook,
+                    vec![subclass.clone()],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(
+                            self.runtime_error_from_active_exception("_abc_subclasscheck failed")
+                        );
+                    }
+                };
+                if !self.is_not_implemented_singleton(&hook_result) {
+                    let accepted = self.truthy_from_value(&hook_result)?;
+                    if accepted {
+                        let cache = self.abc_cache.entry(cls_id).or_default();
+                        Self::abc_vec_insert_unique(cache, subclass.clone());
+                    } else {
+                        let negative_cache = self.abc_negative_cache.entry(cls_id).or_default();
+                        Self::abc_vec_insert_unique(negative_cache, subclass.clone());
+                    }
+                    return Ok(accepted);
                 }
-            };
-            if !self.is_not_implemented_singleton(&hook_result) {
-                let accepted = self.truthy_from_value(&hook_result)?;
-                if accepted {
-                    let cache = self.abc_cache.entry(cls_id).or_default();
-                    Self::abc_vec_insert_unique(cache, subclass.clone());
-                } else {
-                    let negative_cache = self.abc_negative_cache.entry(cls_id).or_default();
-                    Self::abc_vec_insert_unique(negative_cache, subclass.clone());
-                }
-                return Ok(accepted);
             }
-        }
         }
 
         if !subclass_is_marker && self.class_value_is_subclass_of_without_custom(subclass, cls)? {
@@ -8492,12 +8511,16 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("_abc_instancecheck() expects two arguments"));
+            return Err(RuntimeError::new(
+                "_abc_instancecheck() expects two arguments",
+            ));
         }
         let cls = args.remove(0);
         let instance = args.remove(0);
         let subclass = self.call_builtin(BuiltinFunction::Type, vec![instance], HashMap::new())?;
-        Ok(Value::Bool(self.abc_subclasscheck_internal(&cls, &subclass)?))
+        Ok(Value::Bool(
+            self.abc_subclasscheck_internal(&cls, &subclass)?,
+        ))
     }
 
     pub(super) fn builtin_abc_subclasscheck(
@@ -8506,11 +8529,15 @@ impl Vm {
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
         if !kwargs.is_empty() || args.len() != 2 {
-            return Err(RuntimeError::new("_abc_subclasscheck() expects two arguments"));
+            return Err(RuntimeError::new(
+                "_abc_subclasscheck() expects two arguments",
+            ));
         }
         let cls = args.remove(0);
         let subclass = args.remove(0);
-        Ok(Value::Bool(self.abc_subclasscheck_internal(&cls, &subclass)?))
+        Ok(Value::Bool(
+            self.abc_subclasscheck_internal(&cls, &subclass)?,
+        ))
     }
 
     pub(super) fn builtin_abc_get_dump(
@@ -9138,22 +9165,21 @@ impl Vm {
                         "BaseException.__init__() takes no keyword arguments",
                     ));
                 }
-                let group_members_tuple = if self
-                    .exception_inherits(exception_name.as_str(), "BaseExceptionGroup")
-                {
-                    let members_source = args
-                        .get(1)
-                        .cloned()
-                        .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()));
-                    let members = self.exception_members_from_value(&members_source)?;
-                    let member_values = members
-                        .into_iter()
-                        .map(|member| Value::Exception(Box::new(member)))
-                        .collect::<Vec<_>>();
-                    Some(self.heap.alloc_tuple(member_values))
-                } else {
-                    None
-                };
+                let group_members_tuple =
+                    if self.exception_inherits(exception_name.as_str(), "BaseExceptionGroup") {
+                        let members_source = args
+                            .get(1)
+                            .cloned()
+                            .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()));
+                        let members = self.exception_members_from_value(&members_source)?;
+                        let member_values = members
+                            .into_iter()
+                            .map(|member| Value::Exception(Box::new(member)))
+                            .collect::<Vec<_>>();
+                        Some(self.heap.alloc_tuple(member_values))
+                    } else {
+                        None
+                    };
                 if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
                     let is_stop_iteration = {
                         let class_kind = instance_data.class.kind();
@@ -9273,17 +9299,16 @@ impl Vm {
                         "BaseException.__init__() takes no keyword arguments",
                     ));
                 }
-                let group_members = if self
-                    .exception_inherits(exception.name.as_str(), "BaseExceptionGroup")
-                {
-                    let members_source = args
-                        .get(1)
-                        .cloned()
-                        .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()));
-                    Some(self.exception_members_from_value(&members_source)?)
-                } else {
-                    None
-                };
+                let group_members =
+                    if self.exception_inherits(exception.name.as_str(), "BaseExceptionGroup") {
+                        let members_source = args
+                            .get(1)
+                            .cloned()
+                            .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()));
+                        Some(self.exception_members_from_value(&members_source)?)
+                    } else {
+                        None
+                    };
                 let mut attrs = exception.attrs.borrow_mut();
                 attrs.insert("args".to_string(), self.heap.alloc_tuple(args.clone()));
                 attrs
@@ -9348,7 +9373,10 @@ impl Vm {
                         .cloned()
                         .map(|member| Value::Exception(Box::new(member)))
                         .collect::<Vec<_>>();
-                    attrs.insert("exceptions".to_string(), self.heap.alloc_tuple(member_values));
+                    attrs.insert(
+                        "exceptions".to_string(),
+                        self.heap.alloc_tuple(member_values),
+                    );
                     exception.exceptions = group_members;
                     exception.message = args.first().map(format_value);
                 }
@@ -10912,7 +10940,10 @@ impl Vm {
             fill = chars[0];
             align = Some(chars[1]);
             index = 2;
-        } else if chars.first().is_some_and(|ch| matches!(ch, '<' | '>' | '^' | '=')) {
+        } else if chars
+            .first()
+            .is_some_and(|ch| matches!(ch, '<' | '>' | '^' | '='))
+        {
             align = chars.first().copied();
             index = 1;
         }
@@ -10957,9 +10988,7 @@ impl Vm {
         } else {
             None
         };
-        if index != chars.len()
-            || matches!(ty, Some(ch) if ch != 's')
-            || matches!(align, Some('='))
+        if index != chars.len() || matches!(ty, Some(ch) if ch != 's') || matches!(align, Some('='))
         {
             return Err(RuntimeError::value_error(format!(
                 "unsupported format string passed to str.__format__: '{spec}'"
@@ -12565,11 +12594,10 @@ impl Vm {
                 Some(flag) => self.truthy_from_value(&flag)?,
                 None => false,
             };
-            let right_unpacked =
-                match self.optional_getattr_value(right.clone(), "__unpacked__")? {
-                    Some(flag) => self.truthy_from_value(&flag)?,
-                    None => false,
-                };
+            let right_unpacked = match self.optional_getattr_value(right.clone(), "__unpacked__")? {
+                Some(flag) => self.truthy_from_value(&flag)?,
+                None => false,
+            };
             if left_unpacked != right_unpacked {
                 return Ok(Some(false));
             }
@@ -12855,23 +12883,52 @@ impl Vm {
     }
 
     pub(super) fn compare_eq_via_set_backing(&self, left: &Value, right: &Value) -> Option<bool> {
-        let set_like = |value: &Value| -> Option<Value> {
+        let set_like_values = |value: &Value| -> Option<Vec<Value>> {
             match value {
-                Value::Set(set) => Some(Value::Set(set.clone())),
-                Value::FrozenSet(set) => Some(Value::FrozenSet(set.clone())),
+                Value::Set(set) => match &*set.kind() {
+                    Object::Set(values) => Some(values.to_vec()),
+                    _ => None,
+                },
+                Value::FrozenSet(set) => match &*set.kind() {
+                    Object::FrozenSet(values) => Some(values.to_vec()),
+                    _ => None,
+                },
+                Value::DictKeys(keys_view) => match &*keys_view.kind() {
+                    Object::DictKeysView(view) => match &*view.dict.kind() {
+                        Object::Dict(entries) => {
+                            Some(entries.iter().map(|(key, _)| key.clone()).collect())
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                },
                 Value::Instance(instance) => {
                     if let Some(set) = self.instance_backing_set(instance) {
-                        return Some(Value::Set(set));
+                        return match &*set.kind() {
+                            Object::Set(values) => Some(values.to_vec()),
+                            _ => None,
+                        };
                     }
-                    self.instance_backing_frozenset(instance)
-                        .map(Value::FrozenSet)
+                    self.instance_backing_frozenset(instance).and_then(
+                        |frozenset| match &*frozenset.kind() {
+                            Object::FrozenSet(values) => Some(values.to_vec()),
+                            _ => None,
+                        },
+                    )
                 }
                 _ => None,
             }
         };
-        let left_set = set_like(left)?;
-        let right_set = set_like(right)?;
-        Some(left_set == right_set)
+        let left_values = set_like_values(left)?;
+        let right_values = set_like_values(right)?;
+        if left_values.len() != right_values.len() {
+            return Some(false);
+        }
+        Some(left_values.iter().all(|left_item| {
+            right_values
+                .iter()
+                .any(|right_item| right_item == left_item)
+        }))
     }
 
     pub(super) fn compare_eq_via_tuple_backing(
@@ -14234,13 +14291,11 @@ impl Vm {
         builtin: BuiltinFunction,
     ) -> bool {
         match builtin {
-            BuiltinFunction::Type => {
-                match value {
-                    Value::Class(_) | Value::ExceptionType(_) => true,
-                    Value::Builtin(builtin) => self.builtin_is_type_object(*builtin),
-                    _ => false,
-                }
-            }
+            BuiltinFunction::Type => match value {
+                Value::Class(_) | Value::ExceptionType(_) => true,
+                Value::Builtin(builtin) => self.builtin_is_type_object(*builtin),
+                _ => false,
+            },
             BuiltinFunction::Bool => matches!(value, Value::Bool(_)),
             BuiltinFunction::Int => {
                 matches!(value, Value::Int(_) | Value::BigInt(_) | Value::Bool(_))

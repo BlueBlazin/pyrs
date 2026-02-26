@@ -2523,14 +2523,18 @@ impl Vm {
         &mut self,
         func: &ObjRef,
     ) -> Result<ObjRef, RuntimeError> {
-        let (existing_annotations, function_dict) = {
+        let (existing_annotations, function_dict, future_annotations_import) = {
             let func_ref = func.kind();
             let Object::Function(func_data) = &*func_ref else {
                 return Err(RuntimeError::attribute_error(
                     "attribute access unsupported type",
                 ));
             };
-            (func_data.annotations.clone(), func_data.dict.clone())
+            (
+                func_data.annotations.clone(),
+                func_data.dict.clone(),
+                func_data.code.future_annotations_import,
+            )
         };
         let annotations_need_resolution = existing_annotations
             .as_ref()
@@ -2544,6 +2548,11 @@ impl Vm {
                 }
             })
             .unwrap_or(false);
+        if let Some(obj) = existing_annotations.clone()
+            && (!annotations_need_resolution || future_annotations_import)
+        {
+            return Ok(obj);
+        }
 
         let annotate_from_dict = function_dict
             .as_ref()
@@ -2570,7 +2579,12 @@ impl Vm {
                     func_data.annotations = Some(dict.clone());
                     return Ok(dict);
                 }
-                InternalCallOutcome::Value(_) => {}
+                InternalCallOutcome::Value(other) => {
+                    return Err(RuntimeError::type_error(format!(
+                        "__annotate__ returned non-dict of type '{}'",
+                        self.value_type_name_for_error(&other)
+                    )));
+                }
                 InternalCallOutcome::CallerExceptionHandled => {
                     return Err(
                         self.runtime_error_from_active_exception("function.__annotate__ failed")
@@ -3937,9 +3951,7 @@ impl Vm {
         kwargs_order: Option<Vec<String>>,
     ) -> Result<Value, RuntimeError> {
         match builtin {
-            BuiltinFunction::Dict => {
-                self.builtin_dict_with_order(args, kwargs, kwargs_order)
-            }
+            BuiltinFunction::Dict => self.builtin_dict_with_order(args, kwargs, kwargs_order),
             BuiltinFunction::CollectionsOrderedDict => {
                 self.builtin_collections_ordereddict_with_order(args, kwargs, kwargs_order)
             }
@@ -4321,57 +4333,58 @@ impl Vm {
                             .unwrap_staticmethod_attr(&raw_new_callable)
                             .unwrap_or(raw_new_callable);
                         if !matches!(new_callable, Value::Builtin(BuiltinFunction::ObjectNew)) {
-                        if trace_class_call {
-                            eprintln!(
-                                "[class-call] __new__ class={} callable_type={} callable_repr={}",
-                                class_name,
-                                self.value_type_name_for_error(&new_callable),
-                                format_repr(&new_callable)
+                            if trace_class_call {
+                                eprintln!(
+                                    "[class-call] __new__ class={} callable_type={} callable_repr={}",
+                                    class_name,
+                                    self.value_type_name_for_error(&new_callable),
+                                    format_repr(&new_callable)
+                                );
+                            }
+                            used_custom_new = true;
+                            let prepend_class_arg = !matches!(new_callable, Value::BoundMethod(_));
+                            let mut new_args = Vec::with_capacity(
+                                args.len() + if prepend_class_arg { 1 } else { 0 },
                             );
-                        }
-                        used_custom_new = true;
-                        let prepend_class_arg = !matches!(new_callable, Value::BoundMethod(_));
-                        let mut new_args =
-                            Vec::with_capacity(args.len() + if prepend_class_arg { 1 } else { 0 });
-                        if prepend_class_arg {
-                            new_args.push(class_value.clone());
-                        }
-                        new_args.extend(args.clone());
-                        match self.call_internal_with_kwarg_order(
-                            new_callable,
-                            new_args,
-                            kwargs.clone(),
-                            kwargs_order.clone(),
-                        )? {
-                            InternalCallOutcome::Value(value) => {
-                                if !self.value_is_instance_of(&value, &class_value)? {
-                                    if trace_class_call {
-                                        eprintln!(
-                                            "[class-call] __new__ non-instance class={} value_type={} value_repr={}",
-                                            class_name,
-                                            self.value_type_name_for_error(&value),
-                                            format_repr(&value)
-                                        );
+                            if prepend_class_arg {
+                                new_args.push(class_value.clone());
+                            }
+                            new_args.extend(args.clone());
+                            match self.call_internal_with_kwarg_order(
+                                new_callable,
+                                new_args,
+                                kwargs.clone(),
+                                kwargs_order.clone(),
+                            )? {
+                                InternalCallOutcome::Value(value) => {
+                                    if !self.value_is_instance_of(&value, &class_value)? {
+                                        if trace_class_call {
+                                            eprintln!(
+                                                "[class-call] __new__ non-instance class={} value_type={} value_repr={}",
+                                                class_name,
+                                                self.value_type_name_for_error(&value),
+                                                format_repr(&value)
+                                            );
+                                        }
+                                        return Ok(InternalCallOutcome::Value(value));
                                     }
-                                    return Ok(InternalCallOutcome::Value(value));
+                                    let Value::Instance(created_instance) = value else {
+                                        if trace_class_call {
+                                            eprintln!(
+                                                "[class-call] __new__ non-instance-variant class={} value_type={}",
+                                                class_name,
+                                                self.value_type_name_for_error(&value)
+                                            );
+                                        }
+                                        return Ok(InternalCallOutcome::Value(value));
+                                    };
+                                    instance = created_instance;
                                 }
-                                let Value::Instance(created_instance) = value else {
-                                    if trace_class_call {
-                                        eprintln!(
-                                            "[class-call] __new__ non-instance-variant class={} value_type={}",
-                                            class_name,
-                                            self.value_type_name_for_error(&value)
-                                        );
-                                    }
-                                    return Ok(InternalCallOutcome::Value(value));
-                                };
-                                instance = created_instance;
-                            }
-                            InternalCallOutcome::CallerExceptionHandled => {
-                                return Ok(InternalCallOutcome::CallerExceptionHandled);
+                                InternalCallOutcome::CallerExceptionHandled => {
+                                    return Ok(InternalCallOutcome::CallerExceptionHandled);
+                                }
                             }
                         }
-                    }
                     }
                     let mut init = class_attr_lookup(&class, "__init__");
                     if matches!(init, Some(Value::Builtin(BuiltinFunction::ObjectInit)))
@@ -5992,6 +6005,59 @@ impl Vm {
         }
     }
 
+    fn alloc_paramspec_attr_instance(
+        &mut self,
+        origin: &ObjRef,
+        preferred_module: Option<&str>,
+        attr_name: &str,
+    ) -> Option<Value> {
+        let class_name = match attr_name {
+            "args" => "ParamSpecArgs",
+            "kwargs" => "ParamSpecKwargs",
+            _ => return None,
+        };
+
+        let mut module_names: Vec<String> = Vec::new();
+        if let Some(module_name) = preferred_module {
+            module_names.push(module_name.to_string());
+        }
+        if !module_names.iter().any(|name| name == "typing") {
+            module_names.push("typing".to_string());
+        }
+        if !module_names.iter().any(|name| name == "_typing") {
+            module_names.push("_typing".to_string());
+        }
+
+        for module_name in module_names {
+            let Some(module_ref) = self.modules.get(module_name.as_str()).cloned() else {
+                continue;
+            };
+            let class_ref = {
+                let module_kind = module_ref.kind();
+                let Object::Module(module_data) = &*module_kind else {
+                    continue;
+                };
+                match module_data.globals.get(class_name) {
+                    Some(Value::Class(class_ref)) => class_ref.clone(),
+                    _ => continue,
+                }
+            };
+            let Value::Instance(attr_obj) =
+                self.heap.alloc_instance(InstanceObject::new(class_ref))
+            else {
+                continue;
+            };
+            if let Object::Instance(attr_data) = &mut *attr_obj.kind_mut() {
+                attr_data
+                    .attrs
+                    .insert("__origin__".to_string(), Value::Instance(origin.clone()));
+            }
+            return Some(Value::Instance(attr_obj));
+        }
+
+        None
+    }
+
     pub(super) fn instance_dict_entries(instance_data: &InstanceObject) -> Vec<(Value, Value)> {
         instance_data
             .attrs
@@ -6490,6 +6556,31 @@ impl Vm {
                     NativeMethodKind::TypeParamReduceEx,
                     instance.clone(),
                 )));
+            }
+            if attr_name == "args" || attr_name == "kwargs" {
+                let preferred_module = match &*class_ref.kind() {
+                    Object::Class(class_data)
+                        if class_data.name == "ParamSpec"
+                            && matches!(
+                                class_data.attrs.get("__module__"),
+                                Some(Value::Str(module_name))
+                                    if module_name == "typing" || module_name == "_typing"
+                            ) =>
+                    {
+                        match class_data.attrs.get("__module__") {
+                            Some(Value::Str(module_name)) => Some(module_name.clone()),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(value) = self.alloc_paramspec_attr_instance(
+                    instance,
+                    preferred_module.as_deref(),
+                    attr_name,
+                ) {
+                    return Ok(AttrAccessOutcome::Value(value));
+                }
             }
         }
         if is_types_generic_alias_instance && attr_name == "__mro_entries__" {

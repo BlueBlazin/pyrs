@@ -7,14 +7,14 @@ use super::{
     ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
     PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
-    class_name_for_instance, decode_text_bytes, dict_get_value,
-    dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes, ensure_hashable,
-    exception_is_named, find_bytes_subslice, format_value, is_truthy, memoryview_bounds,
-    memoryview_decode_tolist, memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
-    normalize_codec_encoding, normalize_codec_errors, parse_memoryview_cast_format,
-    parse_string_formatter, py_rsplit_whitespace, py_split_whitespace, py_splitlines,
-    re_pattern_from_compiled_module, runtime_error_matches_exception, split_formatter_field_name,
-    value_from_bigint, value_to_bigint, value_to_int, with_bytes_like_source,
+    class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
+    dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
+    find_bytes_subslice, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
+    memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
+    normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
+    py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
+    runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
+    value_to_bigint, value_to_int, with_bytes_like_source,
 };
 
 unsafe extern "C" {
@@ -2056,7 +2056,8 @@ impl Vm {
                 }
                 let start_idx = start as usize;
                 let end_idx = end as usize;
-                let mut byte_offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+                let mut byte_offsets: Vec<usize> =
+                    text.char_indices().map(|(idx, _)| idx).collect();
                 byte_offsets.push(text.len());
                 if start_idx > char_len || end_idx > char_len {
                     return Ok(NativeCallResult::Value(Value::Bool(false)));
@@ -4555,7 +4556,8 @@ impl Vm {
                 }
                 let start_idx = start as usize;
                 let end_idx = end as usize;
-                let mut byte_offsets: Vec<usize> = text.char_indices().map(|(idx, _)| idx).collect();
+                let mut byte_offsets: Vec<usize> =
+                    text.char_indices().map(|(idx, _)| idx).collect();
                 byte_offsets.push(text.len());
                 if start_idx > char_len || end_idx > char_len {
                     return Ok(NativeCallResult::Value(Value::Int(-1)));
@@ -5678,7 +5680,7 @@ impl Vm {
                 else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
-                let (annotations, function_module, annotation_locals) = {
+                let (annotations, function_module, annotation_locals, future_annotations_import) = {
                     let mut function_ref = function_obj.kind_mut();
                     let Object::Function(func_data) = &mut *function_ref else {
                         return Err(RuntimeError::new("function annotate receiver is invalid"));
@@ -5707,7 +5709,12 @@ impl Vm {
                             Value::Dict(dict) => Some(dict),
                             _ => None,
                         });
-                    (annotations, module, locals)
+                    (
+                        annotations,
+                        module,
+                        locals,
+                        func_data.code.future_annotations_import,
+                    )
                 };
 
                 let mut resolved_entries = Vec::new();
@@ -5716,21 +5723,30 @@ impl Vm {
                         let Value::Str(name) = key else {
                             continue;
                         };
-                        let resolved_value = match (format, value) {
-                            (4, Value::Str(text)) => Value::Str(text.clone()),
-                            (4, other) => self.builtin_repr(vec![other.clone()], HashMap::new())?,
-                            (1, Value::Str(text)) => self.function_annotation_eval_value(
-                                text,
-                                &function_module,
-                                annotation_locals.as_ref(),
-                            )?,
-                            (2 | 3, Value::Str(text)) => self.function_annotation_eval_forward_ref(
-                                text,
-                                &function_module,
-                                annotation_locals.as_ref(),
-                                Value::Function(function_obj.clone()),
-                            )?,
-                            (_, other) => other.clone(),
+                        let resolved_value = match format {
+                            1 | 2 => match value {
+                                Value::Str(text) if !future_annotations_import => self
+                                    .function_annotation_eval_value(
+                                        text,
+                                        &function_module,
+                                        annotation_locals.as_ref(),
+                                    )?,
+                                other => other.clone(),
+                            },
+                            3 => match value {
+                                Value::Str(text) => self.function_annotation_eval_forward_ref(
+                                    text,
+                                    &function_module,
+                                    annotation_locals.as_ref(),
+                                    Value::Function(function_obj.clone()),
+                                )?,
+                                other => other.clone(),
+                            },
+                            4 => match value {
+                                Value::Str(text) => Value::Str(text.clone()),
+                                other => self.builtin_repr(vec![other.clone()], HashMap::new())?,
+                            },
+                            _ => unreachable!(),
                         };
                         resolved_entries.push((Value::Str(name.clone()), resolved_value));
                     }
@@ -5946,12 +5962,10 @@ impl Vm {
                     annotated_args.extend(metadata_values);
                     let params = self.heap.alloc_tuple(annotated_args);
                     let ctor_args = self.heap.alloc_tuple(vec![annotated, params]);
-                    return Ok(NativeCallResult::Value(
-                        self.heap.alloc_tuple(vec![
-                            Value::Builtin(BuiltinFunction::OperatorGetItem),
-                            ctor_args,
-                        ]),
-                    ));
+                    return Ok(NativeCallResult::Value(self.heap.alloc_tuple(vec![
+                        Value::Builtin(BuiltinFunction::OperatorGetItem),
+                        ctor_args,
+                    ])));
                 }
                 let args_value = match args_value {
                     Value::Tuple(_) => args_value,
@@ -6057,17 +6071,12 @@ impl Vm {
                     return Err(RuntimeError::new("type parameter repr receiver is invalid"));
                 };
                 let name = match self.builtin_getattr(
-                    vec![
-                        receiver_value.clone(),
-                        Value::Str("__name__".to_string()),
-                    ],
+                    vec![receiver_value.clone(), Value::Str("__name__".to_string())],
                     HashMap::new(),
                 ) {
                     Ok(Value::Str(name)) => name,
                     _ => {
-                        return Err(RuntimeError::new(
-                            "type parameter repr receiver is invalid",
-                        ));
+                        return Err(RuntimeError::new("type parameter repr receiver is invalid"));
                     }
                 };
                 let rendered = match kind {
@@ -7294,10 +7303,7 @@ impl Vm {
             self.load_module("typing")?
         };
         self.builtin_getattr(
-            vec![
-                Value::Module(module),
-                Value::Str(helper_name.to_string()),
-            ],
+            vec![Value::Module(module), Value::Str(helper_name.to_string())],
             HashMap::new(),
         )
     }
@@ -7320,13 +7326,19 @@ impl Vm {
         match value {
             Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
                 Object::Tuple(items) => Ok(items.clone()),
-                _ => Err(RuntimeError::type_error("typing parameters must be a sequence")),
+                _ => Err(RuntimeError::type_error(
+                    "typing parameters must be a sequence",
+                )),
             },
             Value::List(list_obj) => match &*list_obj.kind() {
                 Object::List(items) => Ok(items.clone()),
-                _ => Err(RuntimeError::type_error("typing parameters must be a sequence")),
+                _ => Err(RuntimeError::type_error(
+                    "typing parameters must be a sequence",
+                )),
             },
-            _ => Err(RuntimeError::type_error("typing parameters must be a sequence")),
+            _ => Err(RuntimeError::type_error(
+                "typing parameters must be a sequence",
+            )),
         }
     }
 
@@ -7415,26 +7427,10 @@ impl Vm {
         kwargs.insert("owner".to_string(), function_owner);
         match self.call_internal(forward_ref_ctor, vec![Value::Str(name.to_string())], kwargs)? {
             InternalCallOutcome::Value(value) => Ok(value),
-            InternalCallOutcome::CallerExceptionHandled => Err(
-                self.runtime_error_from_active_exception("annotationlib.ForwardRef() failed"),
-            ),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("annotationlib.ForwardRef() failed"))
+            }
         }
-    }
-
-    fn function_annotation_eval_value(
-        &mut self,
-        text: &str,
-        function_module: &ObjRef,
-        annotation_locals: Option<&ObjRef>,
-    ) -> Result<Value, RuntimeError> {
-        let mut eval_args = vec![
-            Value::Str(text.to_string()),
-            Value::Module(function_module.clone()),
-        ];
-        if let Some(locals_dict) = annotation_locals {
-            eval_args.push(Value::Dict(locals_dict.clone()));
-        }
-        self.builtin_eval(eval_args, HashMap::new())
     }
 
     fn function_annotation_eval_forward_ref(
@@ -7475,6 +7471,22 @@ impl Vm {
         Ok(Value::Str(text.to_string()))
     }
 
+    fn function_annotation_eval_value(
+        &mut self,
+        text: &str,
+        function_module: &ObjRef,
+        annotation_locals: Option<&ObjRef>,
+    ) -> Result<Value, RuntimeError> {
+        let mut eval_args = vec![
+            Value::Str(text.to_string()),
+            Value::Module(function_module.clone()),
+        ];
+        if let Some(annotation_locals) = annotation_locals {
+            eval_args.push(Value::Dict(annotation_locals.clone()));
+        }
+        self.builtin_eval(eval_args, HashMap::new())
+    }
+
     fn builtin_typing_typeparam_has_default(
         &mut self,
         mut args: Vec<Value>,
@@ -7482,7 +7494,9 @@ impl Vm {
     ) -> Result<Value, RuntimeError> {
         kwargs.clear();
         if args.len() != 1 {
-            return Err(RuntimeError::type_error("has_default() expects one argument"));
+            return Err(RuntimeError::type_error(
+                "has_default() expects one argument",
+            ));
         }
         let type_param = args.remove(0);
         let Some(default_value) = self.typing_param_default(&type_param) else {
@@ -7623,15 +7637,14 @@ impl Vm {
                     index + 1
                 )))
             }
-            Some("ParamSpec") => {
-                self.call_typing_helper("_paramspec_prepare_subst", vec![type_param, alias, subst_args])
-            }
-            Some("TypeVarTuple") => {
-                self.call_typing_helper(
-                    "_typevartuple_prepare_subst",
-                    vec![type_param, alias, subst_args],
-                )
-            }
+            Some("ParamSpec") => self.call_typing_helper(
+                "_paramspec_prepare_subst",
+                vec![type_param, alias, subst_args],
+            ),
+            Some("TypeVarTuple") => self.call_typing_helper(
+                "_typevartuple_prepare_subst",
+                vec![type_param, alias, subst_args],
+            ),
             _ => Err(RuntimeError::type_error(
                 "__typing_prepare_subst__() receiver must be a type parameter",
             )),
@@ -10843,13 +10856,12 @@ impl Vm {
                     }
                     args.push(name_kw);
                 }
-                let typevar_constraints = if matches!(builtin, BuiltinFunction::TypingTypeVar)
-                    && args.len() > 1
-                {
-                    Some(args[1..].to_vec())
-                } else {
-                    None
-                };
+                let typevar_constraints =
+                    if matches!(builtin, BuiltinFunction::TypingTypeVar) && args.len() > 1 {
+                        Some(args[1..].to_vec())
+                    } else {
+                        None
+                    };
                 let marker = builtin.call(&self.heap, args)?;
                 let current_module_name =
                     self.frames
@@ -10874,9 +10886,10 @@ impl Vm {
                     }
                     if matches!(builtin, BuiltinFunction::TypingTypeVar) {
                         if let Some(constraints) = typevar_constraints {
-                            instance_data
-                                .attrs
-                                .insert("__constraints__".to_string(), self.heap.alloc_tuple(constraints));
+                            instance_data.attrs.insert(
+                                "__constraints__".to_string(),
+                                self.heap.alloc_tuple(constraints),
+                            );
                         }
                         if let Some(bound) = kwargs.remove("bound") {
                             instance_data.attrs.insert("__bound__".to_string(), bound);
@@ -10909,9 +10922,10 @@ impl Vm {
                         instance_data
                             .attrs
                             .insert("__contravariant__".to_string(), Value::Bool(contravariant));
-                        instance_data
-                            .attrs
-                            .insert("__infer_variance__".to_string(), Value::Bool(infer_variance));
+                        instance_data.attrs.insert(
+                            "__infer_variance__".to_string(),
+                            Value::Bool(infer_variance),
+                        );
                     } else {
                         instance_data
                             .attrs

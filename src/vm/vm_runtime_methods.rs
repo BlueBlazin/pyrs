@@ -1,10 +1,10 @@
 use super::{
     BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
     InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
-    RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup, class_name_for_instance, format_repr,
-    memoryview_bounds, memoryview_decode_element, memoryview_element_offset,
-    memoryview_format_for_view, memoryview_layout_1d, memoryview_logical_nbytes,
-    memoryview_shape_and_strides_from_parts, module_globals_version, ensure_hashable,
+    RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup, class_name_for_instance,
+    ensure_hashable, format_repr, memoryview_bounds, memoryview_decode_element,
+    memoryview_element_offset, memoryview_format_for_view, memoryview_layout_1d,
+    memoryview_logical_nbytes, memoryview_shape_and_strides_from_parts, module_globals_version,
     runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices, value_from_bigint,
     value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
@@ -1980,7 +1980,9 @@ impl Vm {
             other => other,
         };
 
-        if strict_operands && !self.union_operand_value_with_forward(&normalized, allow_forward_ref_strings) {
+        if strict_operands
+            && !self.union_operand_value_with_forward(&normalized, allow_forward_ref_strings)
+        {
             return Err(RuntimeError::type_error("unsupported operand type for |"));
         }
 
@@ -2136,11 +2138,13 @@ impl Vm {
         Ok(None)
     }
 
-    fn value_is_unpacked_typevartuple_marker(&mut self, value: &Value) -> Result<bool, RuntimeError> {
-        if let Some(flag) = self.optional_getattr_value(
-            value.clone(),
-            "__typing_is_unpacked_typevartuple__",
-        )? {
+    fn value_is_unpacked_typevartuple_marker(
+        &mut self,
+        value: &Value,
+    ) -> Result<bool, RuntimeError> {
+        if let Some(flag) =
+            self.optional_getattr_value(value.clone(), "__typing_is_unpacked_typevartuple__")?
+        {
             return self.truthy_from_value(&flag);
         }
         if let Some(flag) = self.optional_getattr_value(value.clone(), "__unpacked__")? {
@@ -2296,14 +2300,15 @@ impl Vm {
             .generic_alias_parts_from_value(&value)
             .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?;
         let origin_is_collections_callable = match &origin {
-            Value::Class(class) => Self::class_name_and_module(class)
-                .is_some_and(|(name, module)| {
+            Value::Class(class) => {
+                Self::class_name_and_module(class).is_some_and(|(name, module)| {
                     name == "Callable"
                         && matches!(
                             module.as_deref(),
                             Some("collections.abc" | "_collections_abc")
                         )
-                }),
+                })
+            }
             _ => false,
         };
         if trace {
@@ -2333,7 +2338,10 @@ impl Vm {
         let mut replacement_values =
             self.generic_alias_preprocess_subscript_args(self.subscript_items_from_index(index))?;
         if trace {
-            eprintln!("[ga-sub] replacement_len_prepared={}", replacement_values.len());
+            eprintln!(
+                "[ga-sub] replacement_len_prepared={}",
+                replacement_values.len()
+            );
         }
         for param in parameters.iter().cloned() {
             let Some(prepare) = self.optional_getattr_value(param, "__typing_prepare_subst__")?
@@ -2342,7 +2350,10 @@ impl Vm {
             };
             let prepared = match self.call_internal(
                 prepare,
-                vec![value.clone(), self.heap.alloc_tuple(replacement_values.clone())],
+                vec![
+                    value.clone(),
+                    self.heap.alloc_tuple(replacement_values.clone()),
+                ],
                 HashMap::new(),
             )? {
                 InternalCallOutcome::Value(value) => value,
@@ -2352,11 +2363,13 @@ impl Vm {
                     );
                 }
             };
-            replacement_values = Self::sequence_items_from_typing_value(&prepared).ok_or_else(|| {
-                RuntimeError::type_error("typing parameters must be a sequence")
-            })?;
+            replacement_values = Self::sequence_items_from_typing_value(&prepared)
+                .ok_or_else(|| RuntimeError::type_error("typing parameters must be a sequence"))?;
             if trace {
-                eprintln!("[ga-sub] replacement_len_after_prepare={}", replacement_values.len());
+                eprintln!(
+                    "[ga-sub] replacement_len_after_prepare={}",
+                    replacement_values.len()
+                );
             }
         }
         if parameters.len() != replacement_values.len() {
@@ -2375,7 +2388,10 @@ impl Vm {
         let mut substituted_args = Vec::with_capacity(args.len());
         for (item_idx, item) in args.into_iter().enumerate() {
             if trace {
-                eprintln!("[ga-sub] item_idx={item_idx} item_type={}", self.value_type_name_for_error(&item));
+                eprintln!(
+                    "[ga-sub] item_idx={item_idx} item_type={}",
+                    self.value_type_name_for_error(&item)
+                );
             }
             let direct_replacement =
                 self.generic_alias_substitution_lookup(&item, &substitutions)?;
@@ -2386,8 +2402,9 @@ impl Vm {
                 match self.call_internal(substfunc, vec![replacement], HashMap::new())? {
                     InternalCallOutcome::Value(value) => value,
                     InternalCallOutcome::CallerExceptionHandled => {
-                        return Err(self
-                            .runtime_error_from_active_exception("typing substitution failed"));
+                        return Err(
+                            self.runtime_error_from_active_exception("typing substitution failed")
+                        );
                     }
                 }
             } else {
@@ -2408,26 +2425,30 @@ impl Vm {
                             &substitutions,
                         )?
                     } else {
-                    let mut subargs = Vec::new();
-                    for subparam in subparams {
-                        let replacement = self
-                            .generic_alias_substitution_lookup(&subparam, &substitutions)?
-                            .unwrap_or(subparam.clone());
-                        if typing_typevartuple_param_marker(&subparam) {
-                            if let Some(items) = Self::sequence_items_from_typing_value(&replacement)
-                            {
-                                subargs.extend(items);
+                        let mut subargs = Vec::new();
+                        for subparam in subparams {
+                            let replacement = self
+                                .generic_alias_substitution_lookup(&subparam, &substitutions)?
+                                .unwrap_or(subparam.clone());
+                            if typing_typevartuple_param_marker(&subparam) {
+                                if let Some(items) =
+                                    Self::sequence_items_from_typing_value(&replacement)
+                                {
+                                    subargs.extend(items);
+                                } else {
+                                    subargs.push(replacement);
+                                }
                             } else {
                                 subargs.push(replacement);
                             }
-                        } else {
-                            subargs.push(replacement);
                         }
-                    }
-                    if trace {
-                        eprintln!("[ga-sub] item_idx={item_idx} recurse_getitem subargs_len={}", subargs.len());
-                    }
-                    self.getitem_value(item.clone(), self.heap.alloc_tuple(subargs))?
+                        if trace {
+                            eprintln!(
+                                "[ga-sub] item_idx={item_idx} recurse_getitem subargs_len={}",
+                                subargs.len()
+                            );
+                        }
+                        self.getitem_value(item.clone(), self.heap.alloc_tuple(subargs))?
                     }
                 }
             };
@@ -3528,14 +3549,12 @@ impl Vm {
                             if let Object::Instance(instance_data) = &*instance.kind()
                                 && let Object::Class(class_data) = &*instance_data.class.kind()
                             {
-                                outer_qualname =
-                                    format!("{}.{}", class_data.name, outer_qualname);
+                                outer_qualname = format!("{}.{}", class_data.name, outer_qualname);
                             }
                         }
                         Value::Class(class) => {
                             if let Object::Class(class_data) = &*class.kind() {
-                                outer_qualname =
-                                    format!("{}.{}", class_data.name, outer_qualname);
+                                outer_qualname = format!("{}.{}", class_data.name, outer_qualname);
                             }
                         }
                         _ => {}
