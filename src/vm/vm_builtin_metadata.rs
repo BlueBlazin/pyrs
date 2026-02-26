@@ -1603,6 +1603,9 @@ impl Vm {
                     Value::Builtin(builtin),
                     BuiltinFunction::TypePrepare,
                 )),
+            "__type_params__" if self.builtin_is_type_object(builtin) => {
+                Ok(self.heap.alloc_tuple(Vec::new()))
+            }
             _ => Err(RuntimeError::attribute_error(format!(
                 "builtin has no attribute '{}'",
                 attr_name
@@ -2523,17 +2526,33 @@ impl Vm {
         &mut self,
         func: &ObjRef,
     ) -> Result<ObjRef, RuntimeError> {
-        let (existing_annotations, function_dict, future_annotations_import) = {
+        let (
+            existing_annotations,
+            function_dict,
+            future_annotations_import,
+            annotations_already_resolved,
+        ) = {
             let func_ref = func.kind();
             let Object::Function(func_data) = &*func_ref else {
                 return Err(RuntimeError::attribute_error(
                     "attribute access unsupported type",
                 ));
             };
+            let annotations_already_resolved = func_data
+                .dict
+                .as_ref()
+                .and_then(|dict| {
+                    dict_get_value(
+                        dict,
+                        &Value::Str("__pyrs_annotations_resolved__".to_string()),
+                    )
+                })
+                .is_some_and(|value| matches!(value, Value::Bool(true)));
             (
                 func_data.annotations.clone(),
                 func_data.dict.clone(),
                 func_data.code.future_annotations_import,
+                annotations_already_resolved,
             )
         };
         let annotations_need_resolution = existing_annotations
@@ -2549,7 +2568,9 @@ impl Vm {
             })
             .unwrap_or(false);
         if let Some(obj) = existing_annotations.clone()
-            && (!annotations_need_resolution || future_annotations_import)
+            && (annotations_already_resolved
+                || !annotations_need_resolution
+                || future_annotations_import)
         {
             return Ok(obj);
         }
@@ -2568,15 +2589,39 @@ impl Vm {
         if (existing_annotations.is_none() || annotations_need_resolution)
             && let Some(annotate_callable) = annotate_callable
         {
-            match self.call_internal(annotate_callable, vec![Value::Int(1)], HashMap::new())? {
+            let mut annotate_format = Value::Int(1);
+            if let Some(annotationlib) = self.modules.get("annotationlib").cloned()
+                && let Ok(format_enum) = self.builtin_getattr(
+                    vec![
+                        Value::Module(annotationlib),
+                        Value::Str("Format".to_string()),
+                    ],
+                    HashMap::new(),
+                )
+                && let Ok(value_enum) = self.builtin_getattr(
+                    vec![format_enum, Value::Str("VALUE".to_string())],
+                    HashMap::new(),
+                )
+            {
+                annotate_format = value_enum;
+            }
+            match self.call_internal(annotate_callable, vec![annotate_format], HashMap::new())? {
                 InternalCallOutcome::Value(Value::Dict(dict)) => {
-                    let mut func_ref = func.kind_mut();
-                    let Object::Function(func_data) = &mut *func_ref else {
-                        return Err(RuntimeError::attribute_error(
-                            "attribute access unsupported type",
-                        ));
-                    };
-                    func_data.annotations = Some(dict.clone());
+                    {
+                        let mut func_ref = func.kind_mut();
+                        let Object::Function(func_data) = &mut *func_ref else {
+                            return Err(RuntimeError::attribute_error(
+                                "attribute access unsupported type",
+                            ));
+                        };
+                        func_data.annotations = Some(dict.clone());
+                    }
+                    let dict_obj = self.ensure_function_dict(func)?;
+                    self.dict_set_str_key(
+                        &dict_obj,
+                        "__pyrs_annotations_resolved__".to_string(),
+                        Value::Bool(true),
+                    )?;
                     return Ok(dict);
                 }
                 InternalCallOutcome::Value(other) => {
@@ -3304,13 +3349,21 @@ impl Vm {
                     Value::Dict(obj) => obj,
                     _ => return Err(RuntimeError::new("function __annotations__ must be dict")),
                 };
-                let mut func_ref = func.kind_mut();
-                let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::type_error(
-                        "attribute assignment unsupported type",
-                    ));
-                };
-                func_data.annotations = Some(annotations);
+                {
+                    let mut func_ref = func.kind_mut();
+                    let Object::Function(func_data) = &mut *func_ref else {
+                        return Err(RuntimeError::type_error(
+                            "attribute assignment unsupported type",
+                        ));
+                    };
+                    func_data.annotations = Some(annotations);
+                }
+                let dict = self.ensure_function_dict(func)?;
+                self.dict_set_str_key(
+                    &dict,
+                    "__pyrs_annotations_resolved__".to_string(),
+                    Value::Bool(true),
+                )?;
                 Ok(())
             }
             "__dict__" => {
@@ -3446,7 +3499,9 @@ impl Vm {
                     ));
                 }
                 let dict = self.ensure_function_dict(func)?;
-                self.dict_set_str_key(&dict, attr_name, value)
+                self.dict_set_str_key(&dict, attr_name, value)?;
+                self.dict_remove_str_key(&dict, "__pyrs_annotations_resolved__")?;
+                Ok(())
             }
             _ => {
                 let dict = self.ensure_function_dict(func)?;
@@ -3543,17 +3598,23 @@ impl Vm {
     ) -> Result<(), RuntimeError> {
         match attr_name {
             "__annotations__" => {
-                let mut func_ref = func.kind_mut();
-                let Object::Function(func_data) = &mut *func_ref else {
-                    return Err(RuntimeError::type_error(
-                        "attribute deletion unsupported type",
-                    ));
+                let function_dict = {
+                    let mut func_ref = func.kind_mut();
+                    let Object::Function(func_data) = &mut *func_ref else {
+                        return Err(RuntimeError::type_error(
+                            "attribute deletion unsupported type",
+                        ));
+                    };
+                    if func_data.annotations.take().is_none() {
+                        return Err(RuntimeError::new(format!(
+                            "function attribute '{}' does not exist",
+                            attr_name
+                        )));
+                    }
+                    func_data.dict.clone()
                 };
-                if func_data.annotations.take().is_none() {
-                    return Err(RuntimeError::new(format!(
-                        "function attribute '{}' does not exist",
-                        attr_name
-                    )));
+                if let Some(dict) = function_dict {
+                    self.dict_remove_str_key(&dict, "__pyrs_annotations_resolved__")?;
                 }
                 Ok(())
             }
@@ -5177,6 +5238,24 @@ impl Vm {
                 .attrs
                 .get("__module__")
                 .cloned()
+                .unwrap_or(Value::None)
+        } else if attr_name == "__annotations__" {
+            return Ok(AttrAccessOutcome::Value(self.builtin_type_annotations_get(
+                vec![Value::Class(class.clone())],
+                HashMap::new(),
+            )?));
+        } else if attr_name == "__annotate__" {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            };
+            class_data
+                .attrs
+                .get("__annotate__")
+                .cloned()
+                .or_else(|| class_data.attrs.get("__annotate_func__").cloned())
                 .unwrap_or(Value::None)
         } else if attr_name == "__type_params__" {
             let class_kind = class.kind();
@@ -7190,6 +7269,67 @@ impl Vm {
         }
         if module_name == "__array__" && attr_name == "tobytes" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Bytes, module.clone()));
+        }
+        if attr_name == "__annotations__" {
+            let module_annotate = if let Some(dict) = &active_frame_module_dict {
+                dict_get_value(dict, &Value::Str("__annotate__".to_string()))
+            } else {
+                match &*module.kind() {
+                    Object::Module(module_data) => module_data.globals.get("__annotate__").cloned(),
+                    _ => None,
+                }
+            };
+            let annotations = if let Some(annotate_callable) = module_annotate {
+                if self.is_callable_value(&annotate_callable) {
+                    let mut annotate_format = Value::Int(1);
+                    if let Some(annotationlib) = self.modules.get("annotationlib").cloned()
+                        && let Ok(format_enum) = self.builtin_getattr(
+                            vec![
+                                Value::Module(annotationlib),
+                                Value::Str("Format".to_string()),
+                            ],
+                            HashMap::new(),
+                        )
+                        && let Ok(value_enum) = self.builtin_getattr(
+                            vec![format_enum, Value::Str("VALUE".to_string())],
+                            HashMap::new(),
+                        )
+                    {
+                        annotate_format = value_enum;
+                    }
+                    match self.call_internal(
+                        annotate_callable,
+                        vec![annotate_format],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(Value::Dict(dict)) => Value::Dict(dict),
+                        InternalCallOutcome::Value(other) => {
+                            return Err(RuntimeError::type_error(format!(
+                                "__annotate__ returned non-dict of type '{}'",
+                                self.value_type_name_for_error(&other)
+                            )));
+                        }
+                        InternalCallOutcome::CallerExceptionHandled => {
+                            return Err(self
+                                .runtime_error_from_active_exception("module.__annotate__ failed"));
+                        }
+                    }
+                } else {
+                    self.heap.alloc_dict(Vec::new())
+                }
+            } else {
+                self.heap.alloc_dict(Vec::new())
+            };
+            if let Some(dict) = active_frame_module_dict.clone() {
+                self.dict_set_str_key(&dict, "__annotations__".to_string(), annotations.clone())?;
+            }
+            if let Object::Module(module_data) = &mut *module.kind_mut() {
+                module_data
+                    .globals
+                    .insert("__annotations__".to_string(), annotations.clone());
+                return Ok(annotations);
+            }
+            return Ok(annotations);
         }
         if attr_name == "__dict__" {
             if let Some(dict) = active_frame_module_dict {

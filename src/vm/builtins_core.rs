@@ -6281,16 +6281,13 @@ impl Vm {
                 target,
                 annotation,
                 value,
+                simple,
             } => {
                 let target_node = self.convert_assign_target_to_ast_expr(target)?;
                 let annotation_node = self.convert_expr_to_ast_node(annotation)?;
                 let value_node = match value {
                     Some(expr) => self.convert_expr_to_ast_node(expr)?,
                     None => Value::None,
-                };
-                let simple = match target {
-                    AssignTarget::Name(_) => 1,
-                    _ => 0,
                 };
                 self.build_ast_node(
                     "AnnAssign",
@@ -6299,7 +6296,7 @@ impl Vm {
                         ("target", target_node),
                         ("annotation", annotation_node),
                         ("value", value_node),
-                        ("simple", Value::Int(simple)),
+                        ("simple", Value::Int(if *simple { 1 } else { 0 })),
                     ],
                 )
             }
@@ -7646,10 +7643,87 @@ impl Vm {
 
         let class = match args.first() {
             Some(Value::Class(class)) => class.clone(),
+            Some(Value::Builtin(builtin)) if self.builtin_is_type_object(*builtin) => {
+                return Err(RuntimeError::attribute_error(format!(
+                    "type object '{}' has no attribute '__annotations__'",
+                    self.builtin_type_name(*builtin)
+                )));
+            }
             _ => {
                 return Err(RuntimeError::new(
                     "__annotations__ descriptor requires a type object",
                 ));
+            }
+        };
+
+        let existing_annotations = {
+            let class_ref = class.kind();
+            let Object::Class(class_data) = &*class_ref else {
+                return Err(RuntimeError::new(
+                    "__annotations__ descriptor requires a type object",
+                ));
+            };
+            class_data
+                .attrs
+                .get("__annotations__")
+                .cloned()
+                .or_else(|| class_data.attrs.get("__annotations_cache__").cloned())
+        };
+        if let Some(existing) = existing_annotations {
+            return match existing {
+                Value::Dict(dict) => Ok(Value::Dict(dict)),
+                _ => Err(RuntimeError::new("__annotations__ must be a dict")),
+            };
+        }
+
+        let annotate_callable =
+            self.optional_getattr_value(Value::Class(class.clone()), "__annotate__")?;
+        let annotations = if let Some(annotate_callable) = annotate_callable {
+            if self.is_callable_value(&annotate_callable) {
+                let mut annotate_format = Value::Int(1);
+                if let Some(annotationlib) = self.modules.get("annotationlib").cloned()
+                    && let Ok(format_enum) = self.builtin_getattr(
+                        vec![
+                            Value::Module(annotationlib),
+                            Value::Str("Format".to_string()),
+                        ],
+                        HashMap::new(),
+                    )
+                    && let Ok(value_enum) = self.builtin_getattr(
+                        vec![format_enum, Value::Str("VALUE".to_string())],
+                        HashMap::new(),
+                    )
+                {
+                    annotate_format = value_enum;
+                }
+                match self.call_internal(
+                    annotate_callable,
+                    vec![annotate_format],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(Value::Dict(dict)) => dict,
+                    InternalCallOutcome::Value(other) => {
+                        return Err(RuntimeError::type_error(format!(
+                            "__annotate__ returned non-dict of type '{}'",
+                            self.value_type_name_for_error(&other)
+                        )));
+                    }
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(
+                            self.runtime_error_from_active_exception("class.__annotate__ failed")
+                        );
+                    }
+                }
+            } else {
+                match self.heap.alloc_dict(Vec::new()) {
+                    Value::Dict(dict) => dict,
+                    _ => unreachable!(),
+                }
+            }
+        } else {
+            match self.heap.alloc_dict(Vec::new()) {
+                Value::Dict(dict) => dict,
+                _ => unreachable!(),
             }
         };
 
@@ -7659,20 +7733,8 @@ impl Vm {
                 "__annotations__ descriptor requires a type object",
             ));
         };
-
-        if let Some(existing) = class_data.attrs.get("__annotations__") {
-            return match existing {
-                Value::Dict(dict) => Ok(Value::Dict(dict.clone())),
-                _ => Err(RuntimeError::new("__annotations__ must be a dict")),
-            };
-        }
-
-        let annotations = match self.heap.alloc_dict(Vec::new()) {
-            Value::Dict(dict) => dict,
-            _ => unreachable!(),
-        };
         class_data.attrs.insert(
-            "__annotations__".to_string(),
+            "__annotations_cache__".to_string(),
             Value::Dict(annotations.clone()),
         );
         Ok(Value::Dict(annotations))
@@ -12800,23 +12862,40 @@ impl Vm {
         let int_like_value = |value: &Value| -> Option<BigInt> {
             match value {
                 Value::Instance(instance) => {
-                    let instance_is_enum = match &*instance.kind() {
-                        Object::Instance(instance_data) => self
-                            .class_mro_entries(&instance_data.class)
-                            .iter()
-                            .any(|entry| {
-                                matches!(
-                                    &*entry.kind(),
-                                    Object::Class(class_data) if class_data.name == "Enum"
-                                )
-                            }),
-                        _ => false,
+                    let (instance_is_enum, instance_has_int_base) = match &*instance.kind() {
+                        Object::Instance(instance_data) => {
+                            let is_enum = self
+                                .class_mro_entries(&instance_data.class)
+                                .iter()
+                                .any(|entry| {
+                                    matches!(
+                                        &*entry.kind(),
+                                        Object::Class(class_data) if class_data.name == "Enum"
+                                    )
+                                });
+                            (is_enum, self.class_has_builtin_int_base(&instance_data.class))
+                        }
+                        _ => (false, false),
                     };
-                    if instance_is_enum {
+                    if instance_is_enum && !instance_has_int_base {
                         return None;
                     }
-                    let backing = self.instance_backing_int(instance)?;
-                    int_like(&backing)
+                    if instance_is_enum
+                        && instance_has_int_base
+                        && let Object::Instance(instance_data) = &*instance.kind()
+                        && let Some(raw) = instance_data
+                            .attrs
+                            .get("_value_")
+                            .or_else(|| instance_data.attrs.get("value"))
+                    {
+                        if let Some(value) = int_like(raw) {
+                            return Some(value);
+                        }
+                    }
+                    if let Some(backing) = self.instance_backing_int(instance) {
+                        return int_like(&backing);
+                    }
+                    None
                 }
                 _ => int_like(value),
             }

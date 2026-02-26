@@ -1121,6 +1121,9 @@ impl Vm {
                     Err(RuntimeError::type_error("subscript unsupported type"))
                 }
                 other => {
+                    if self.is_type_alias_type_instance(&other) {
+                        return self.subscript_type_alias_instance(other, index);
+                    }
                     if self.union_args_from_value(&other).is_some()
                         && typing_alias_index_shape(&index)
                     {
@@ -1347,6 +1350,72 @@ impl Vm {
             class_data.attrs.get("__module__"),
             Some(Value::Str(module)) if matches!(module.as_str(), "typing" | "_typing")
         )
+    }
+
+    fn is_type_alias_type_instance(&self, value: &Value) -> bool {
+        let Value::Instance(instance) = value else {
+            return false;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return false;
+        };
+        let class_kind = instance_data.class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return false;
+        };
+        if class_data.name != "TypeAliasType" {
+            return false;
+        }
+        matches!(
+            class_data.attrs.get("__module__"),
+            Some(Value::Str(module)) if module == "typing" || module == "_typing"
+        )
+    }
+
+    fn subscript_type_alias_instance(
+        &mut self,
+        alias: Value,
+        index: Value,
+    ) -> Result<Value, RuntimeError> {
+        let mut alias_instance = self.alloc_generic_alias_instance(alias.clone(), index);
+        let type_params = self.optional_getattr_value(alias, "__type_params__")?;
+        let args_items = if let Value::Instance(instance) = &alias_instance {
+            let instance_kind = instance.kind();
+            match &*instance_kind {
+                Object::Instance(instance_data) => instance_data
+                    .attrs
+                    .get("__args__")
+                    .and_then(Self::tuple_items_from_value)
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        let mut parameters = Vec::new();
+        for arg in args_items {
+            if self
+                .optional_getattr_value(arg.clone(), "__typing_subst__")?
+                .is_some()
+            {
+                parameters.push(arg);
+            }
+        }
+        if let Value::Instance(instance) = &mut alias_instance
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+        {
+            instance_data.attrs.insert(
+                "__parameters__".to_string(),
+                self.heap.alloc_tuple(parameters),
+            );
+            if let Some(type_params) = type_params {
+                instance_data
+                    .attrs
+                    .insert("__type_params__".to_string(), type_params);
+            }
+        }
+        Ok(alias_instance)
     }
 
     fn union_type_class(&self) -> Option<ObjRef> {
@@ -2147,6 +2216,10 @@ impl Vm {
         {
             return self.truthy_from_value(&flag);
         }
+        Ok(false)
+    }
+
+    fn value_has_unpacked_marker(&mut self, value: &Value) -> Result<bool, RuntimeError> {
         if let Some(flag) = self.optional_getattr_value(value.clone(), "__unpacked__")? {
             return self.truthy_from_value(&flag);
         }
@@ -2344,7 +2417,8 @@ impl Vm {
             );
         }
         for param in parameters.iter().cloned() {
-            let Some(prepare) = self.optional_getattr_value(param, "__typing_prepare_subst__")?
+            let Some(prepare) =
+                self.optional_getattr_value(param.clone(), "__typing_prepare_subst__")?
             else {
                 continue;
             };
@@ -2363,8 +2437,13 @@ impl Vm {
                     );
                 }
             };
-            replacement_values = Self::sequence_items_from_typing_value(&prepared)
-                .ok_or_else(|| RuntimeError::type_error("typing parameters must be a sequence"))?;
+            if let Some(items) = Self::sequence_items_from_typing_value(&prepared) {
+                replacement_values = items;
+            } else if self.is_type_parameter_value(&param) {
+                return Err(RuntimeError::type_error(
+                    "typing parameters must be a sequence",
+                ));
+            }
             if trace {
                 eprintln!(
                     "[ga-sub] replacement_len_after_prepare={}",
@@ -2452,11 +2531,16 @@ impl Vm {
                     }
                 }
             };
-            if self.value_is_unpacked_typevartuple_marker(&item)?
-                && let Some(items) = Self::sequence_items_from_typing_value(&substituted)
-            {
-                substituted_args.extend(items);
-                continue;
+            if self.value_is_unpacked_typevartuple_marker(&item)? {
+                if let Some(items) = Self::sequence_items_from_typing_value(&substituted) {
+                    substituted_args.extend(items);
+                    continue;
+                }
+                return Err(RuntimeError::type_error(format!(
+                    "expected __typing_subst__ of {} objects to return a tuple, not {}",
+                    self.value_type_name_for_error(&item),
+                    self.value_type_name_for_error(&substituted),
+                )));
             }
             if origin_is_collections_callable
                 && let Some(items) = Self::tuple_items_from_value(&substituted)
@@ -2467,7 +2551,7 @@ impl Vm {
             substituted_args.push(substituted);
         }
         let index_value = self.heap.alloc_tuple(substituted_args);
-        let preserve_unpacked_marker = self.value_is_unpacked_typevartuple_marker(&value)?;
+        let preserve_unpacked_marker = self.value_has_unpacked_marker(&value)?;
         let result = self.alloc_generic_alias_instance(origin.clone(), index_value.clone());
         if preserve_unpacked_marker
             && let Value::Instance(instance) = &result

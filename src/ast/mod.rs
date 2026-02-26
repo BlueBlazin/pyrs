@@ -112,6 +112,7 @@ pub enum StmtKind {
         target: AssignTarget,
         annotation: Expr,
         value: Option<Expr>,
+        simple: bool,
     },
     Return {
         value: Option<Expr>,

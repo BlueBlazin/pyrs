@@ -4731,10 +4731,15 @@ impl Vm {
                     }
                 };
                 let annotation_locals = self.frames.last().and_then(|frame| {
-                    if frame.is_module {
+                    if frame.is_module && !frame.return_class {
                         return None;
                     }
                     let mut map = frame.locals.clone();
+                    if let Some(fallback_locals) = &frame.locals_fallback {
+                        for (name, value) in fallback_locals {
+                            map.entry(name.clone()).or_insert_with(|| value.clone());
+                        }
+                    }
                     for (idx, slot) in frame.fast_locals.iter().enumerate() {
                         if let Some(value) = slot
                             && let Some(name) = frame.code.names.get(idx)
@@ -5188,10 +5193,15 @@ impl Vm {
                     }
                 };
                 let annotation_locals = self.frames.last().and_then(|frame| {
-                    if frame.is_module {
+                    if frame.is_module && !frame.return_class {
                         return None;
                     }
                     let mut map = frame.locals.clone();
+                    if let Some(fallback_locals) = &frame.locals_fallback {
+                        for (name, value) in fallback_locals {
+                            map.entry(name.clone()).or_insert_with(|| value.clone());
+                        }
+                    }
                     for (idx, slot) in frame.fast_locals.iter().enumerate() {
                         if let Some(value) = slot
                             && let Some(name) = frame.code.names.get(idx)

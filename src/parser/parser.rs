@@ -278,6 +278,9 @@ impl Parser {
                     value = Some(expr);
                     next = after;
                 }
+                let simple =
+                    matches!(target_expr, AssignTarget::Name(_))
+                        && !matches!(self.token_at(start).kind, TokenKind::LParen);
                 return Ok((
                     self.make_stmt(
                         start,
@@ -285,6 +288,7 @@ impl Parser {
                             target: target_expr,
                             annotation,
                             value,
+                            simple,
                         },
                     ),
                     next,

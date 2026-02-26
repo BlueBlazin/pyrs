@@ -495,6 +495,7 @@ fn record_scope_activity_stmt(
             target,
             annotation,
             value,
+            ..
         } => {
             record_scope_activity_expr(
                 annotation,
@@ -1582,6 +1583,7 @@ fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
             target,
             annotation,
             value,
+            ..
         } => {
             collect_locals_namedexpr_target(target, locals);
             collect_locals_namedexpr_expr(annotation, locals);
@@ -1883,6 +1885,7 @@ fn collect_uses_stmt(
             target,
             annotation,
             value,
+            ..
         } => {
             collect_target_uses(target, uses, child_free, enclosing)?;
             collect_uses_expr(annotation, uses, child_free, enclosing)?;
@@ -2533,6 +2536,7 @@ fn stmt_contains_await_exprs(stmt: &Stmt) -> bool {
             target,
             annotation,
             value,
+            ..
         } => {
             assign_target_has_await(target)
                 || expr_has_await(annotation)
@@ -3018,7 +3022,8 @@ impl Compiler {
                 target,
                 annotation,
                 value,
-            } => compiler.compile_ann_assign(target, annotation, value.as_ref()),
+                simple,
+            } => compiler.compile_ann_assign(target, annotation, value.as_ref(), *simple),
             StmtKind::AugAssign { target, op, value } => {
                 compiler.compile_aug_assign(target, op, value)
             }
@@ -5224,9 +5229,10 @@ impl Compiler {
         target: &AssignTarget,
         annotation: &Expr,
         value: Option<&Expr>,
+        simple: bool,
     ) -> Result<(), CompileError> {
         match target {
-            AssignTarget::Name(name) => {
+            AssignTarget::Name(name) if simple => {
                 self.ensure_local_name("__annotations__");
                 self.emit_load_name("__annotations__")?;
                 self.emit_const(Value::Str(name.clone()));
