@@ -27,9 +27,6 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             binary_name: pyrs
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            binary_name: pyrs.exe
 
     steps:
       - name: Checkout
@@ -52,8 +49,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked --bin pyrs --target ${{ matrix.target }}
 
-      - name: Package archive (unix)
-        if: runner.os != 'Windows'
+      - name: Package archive
         id: package_unix
         run: |
           mkdir -p dist
@@ -63,22 +59,11 @@ jobs:
           tar -C dist -czf "$archive" ${{ matrix.binary_name }}
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
-      - name: Package archive (windows)
-        if: runner.os == 'Windows'
-        id: package_windows
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item "target\\${{ matrix.target }}\\release\\${{ matrix.binary_name }}" "dist\\${{ matrix.binary_name }}"
-          $archive = "pyrs-$env:GITHUB_REF_NAME-${{ matrix.target }}.zip"
-          Compress-Archive -Path "dist\\${{ matrix.binary_name }}" -DestinationPath $archive -Force
-          "archive=$archive" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          path: ${{ steps.package_unix.outputs.archive || steps.package_windows.outputs.archive }}
+          path: ${{ steps.package_unix.outputs.archive }}
           if-no-files-found: error
 
   publish-release:
