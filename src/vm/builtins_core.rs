@@ -6331,7 +6331,20 @@ impl Vm {
             } => {
                 let mut base_nodes = Vec::with_capacity(bases.len());
                 for base in bases {
-                    base_nodes.push(self.convert_expr_to_ast_node(base)?);
+                    match base {
+                        CallArg::Positional(expr) => {
+                            base_nodes.push(self.convert_expr_to_ast_node(expr)?);
+                        }
+                        CallArg::Star(expr) => {
+                            let value = self.convert_expr_to_ast_node(expr)?;
+                            let ctx = self.build_ast_context_node("Load")?;
+                            base_nodes
+                                .push(self.build_ast_node("Starred", None, vec![("value", value), ("ctx", ctx)])?);
+                        }
+                        CallArg::Keyword { .. } | CallArg::DoubleStar(_) => {
+                            return Err(RuntimeError::new("invalid class base argument"));
+                        }
+                    }
                 }
                 let mut keyword_nodes =
                     Vec::with_capacity(keywords.len() + usize::from(metaclass.is_some()));
@@ -12948,9 +12961,6 @@ impl Vm {
         for (left_arg, right_arg) in left_args.into_iter().zip(right_args.into_iter()) {
             let arg_eq = self.compare_eq_runtime(left_arg.clone(), right_arg.clone())?;
             if !self.truthy_from_value(&arg_eq)? {
-                if self.type_parameter_values_match_by_name(&left_arg, &right_arg) {
-                    continue;
-                }
                 return Ok(Some(false));
             }
         }
@@ -12983,50 +12993,6 @@ impl Vm {
             return None;
         };
         Some(items.clone())
-    }
-
-    fn type_parameter_values_match_by_name(&self, left: &Value, right: &Value) -> bool {
-        if !self.is_type_parameter_value(left) || !self.is_type_parameter_value(right) {
-            return false;
-        }
-        let param_name = |value: &Value| -> Option<String> {
-            let Value::Instance(instance) = value else {
-                return None;
-            };
-            let instance_kind = instance.kind();
-            let Object::Instance(instance_data) = &*instance_kind else {
-                return None;
-            };
-            match instance_data.attrs.get("__name__") {
-                Some(Value::Str(name)) => Some(name.clone()),
-                _ => None,
-            }
-        };
-        let class_name = |value: &Value| -> Option<String> {
-            let Value::Instance(instance) = value else {
-                return None;
-            };
-            let instance_kind = instance.kind();
-            let Object::Instance(instance_data) = &*instance_kind else {
-                return None;
-            };
-            let class_kind = instance_data.class.kind();
-            match &*class_kind {
-                Object::Class(class_data) => Some(class_data.name.clone()),
-                _ => None,
-            }
-        };
-        match (
-            class_name(left),
-            class_name(right),
-            param_name(left),
-            param_name(right),
-        ) {
-            (Some(left_class), Some(right_class), Some(left_name), Some(right_name)) => {
-                left_class == right_class && left_name == right_name
-            }
-            _ => false,
-        }
     }
 
     pub(super) fn compare_eq_via_bound_method(&self, left: &Value, right: &Value) -> Option<bool> {

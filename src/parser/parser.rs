@@ -2548,7 +2548,7 @@ impl Parser {
             let (args, next) = self.parse_call_args(pos + 1)?;
             for arg in args {
                 match arg {
-                    CallArg::Positional(expr) => bases.push(expr),
+                    CallArg::Positional(expr) => bases.push(CallArg::Positional(expr)),
                     CallArg::Keyword { name, value } => {
                         if name == "metaclass" {
                             if metaclass.is_some() {
@@ -2562,7 +2562,7 @@ impl Parser {
                             keywords.push((name, value));
                         }
                     }
-                    CallArg::Star(expr) => bases.push(expr),
+                    CallArg::Star(expr) => bases.push(CallArg::Star(expr)),
                     // Keep parsing class headers that rely on unpacked keyword args.
                     // Runtime/semantic parity for this edge case is handled separately.
                     CallArg::DoubleStar(_) => {}

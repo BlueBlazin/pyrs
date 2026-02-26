@@ -94,7 +94,7 @@ pub enum StmtKind {
     ClassDef {
         name: String,
         type_params: Vec<TypeParam>,
-        bases: Vec<Expr>,
+        bases: Vec<CallArg>,
         metaclass: Option<Expr>,
         keywords: Vec<(String, Expr)>,
         body: Vec<Stmt>,

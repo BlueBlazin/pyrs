@@ -691,8 +691,14 @@ fn record_scope_activity_stmt(
                 seen_assign.insert(name.clone(), stmt.span);
             }
             for base in bases {
+                let expr = match base {
+                    CallArg::Positional(expr)
+                    | CallArg::Star(expr)
+                    | CallArg::DoubleStar(expr) => expr,
+                    CallArg::Keyword { value, .. } => value,
+                };
                 record_scope_activity_expr(
-                    base,
+                    expr,
                     seen_use,
                     seen_assign,
                     declared_globals,
@@ -1676,7 +1682,13 @@ fn collect_locals_namedexpr_stmt(stmt: &Stmt, locals: &mut HashSet<String>) {
             ..
         } => {
             for base in bases {
-                collect_locals_namedexpr_expr(base, locals);
+                let expr = match base {
+                    CallArg::Positional(expr)
+                    | CallArg::Star(expr)
+                    | CallArg::DoubleStar(expr) => expr,
+                    CallArg::Keyword { value, .. } => value,
+                };
+                collect_locals_namedexpr_expr(expr, locals);
             }
             if let Some(metaclass) = metaclass {
                 collect_locals_namedexpr_expr(metaclass, locals);
@@ -2060,7 +2072,13 @@ fn collect_uses_stmt(
             ..
         } => {
             for base in bases {
-                collect_uses_expr(base, uses, child_free, enclosing)?;
+                let expr = match base {
+                    CallArg::Positional(expr)
+                    | CallArg::Star(expr)
+                    | CallArg::DoubleStar(expr) => expr,
+                    CallArg::Keyword { value, .. } => value,
+                };
+                collect_uses_expr(expr, uses, child_free, enclosing)?;
             }
             if let Some(meta) = metaclass {
                 collect_uses_expr(meta, uses, child_free, enclosing)?;
@@ -4276,7 +4294,7 @@ impl Compiler {
         &mut self,
         name: &str,
         type_params: &[TypeParam],
-        bases: &[Expr],
+        bases: &[CallArg],
         metaclass: Option<&Expr>,
         keywords: &[(String, Expr)],
         body: &[Stmt],
@@ -4297,18 +4315,29 @@ impl Compiler {
         } else {
             None
         };
+        self.emit(Opcode::BuildList, Some(0));
         for base in bases {
-            self.compile_expr(base)?;
+            match base {
+                CallArg::Positional(expr) => {
+                    self.compile_expr(expr)?;
+                    self.emit(Opcode::ListAppend, None);
+                }
+                CallArg::Star(expr) => {
+                    self.compile_expr(expr)?;
+                    self.emit(Opcode::ListExtend, None);
+                }
+                CallArg::Keyword { .. } | CallArg::DoubleStar(_) => {
+                    return Err(CompileError::new("invalid class base argument"));
+                }
+            }
         }
-        let mut total_bases = bases.len();
         if let Some(tuple_temp) = &type_params_tuple_temp {
             // PEP 695 classes inherit from Generic[...] in CPython, which
             // provides __class_getitem__ and drives __parameters__ init paths.
             self.emit_load_name(tuple_temp)?;
             self.emit(Opcode::CallIntrinsic1, Some(10));
-            total_bases += 1;
+            self.emit(Opcode::ListAppend, None);
         }
-        self.emit(Opcode::BuildTuple, Some(total_bases as u32));
         let name_idx = self.code.add_const(Value::Str(name.to_string()));
         self.emit(Opcode::LoadConst, Some(name_idx));
         if let Some(meta) = metaclass {

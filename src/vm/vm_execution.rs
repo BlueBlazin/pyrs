@@ -4951,6 +4951,10 @@ impl Vm {
                         Object::Tuple(values) => values.clone(),
                         _ => return Err(RuntimeError::new("class bases must be a tuple")),
                     },
+                    Value::List(obj) => match &*obj.kind() {
+                        Object::List(values) => values.clone(),
+                        _ => return Err(RuntimeError::new("class bases must be a tuple")),
+                    },
                     _ => return Err(RuntimeError::new("class bases must be a tuple")),
                 };
                 let orig_bases_tuple = self.heap.alloc_tuple(bases.clone());
