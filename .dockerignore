@@ -1,0 +1,9 @@
+.git
+.github
+.local
+.venv-ext314
+target
+perf
+docs
+tests
+__pycache__
