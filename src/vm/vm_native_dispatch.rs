@@ -5839,7 +5839,23 @@ impl Vm {
                     return Err(RuntimeError::new("GenericAlias call receiver is invalid"));
                 };
                 match self.call_internal(origin, args, kwargs)? {
-                    InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+                    InternalCallOutcome::Value(value) => {
+                        match self.builtin_setattr(
+                            vec![
+                                value.clone(),
+                                Value::Str("__orig_class__".to_string()),
+                                receiver_value,
+                            ],
+                            HashMap::new(),
+                        ) {
+                            Ok(_) => {}
+                            Err(err)
+                                if runtime_error_matches_exception(&err, "AttributeError")
+                                    || runtime_error_matches_exception(&err, "TypeError") => {}
+                            Err(err) => return Err(err),
+                        }
+                        Ok(NativeCallResult::Value(value))
+                    }
                     InternalCallOutcome::CallerExceptionHandled => {
                         Ok(NativeCallResult::PropagatedException)
                     }
