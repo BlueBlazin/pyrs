@@ -7969,21 +7969,24 @@ fn typing_special_form_display_name(instance_data: &InstanceObject) -> Option<St
 fn format_generic_alias_type_expr_from_instance(instance_data: &InstanceObject) -> Option<String> {
     let (origin, args) = generic_alias_parts_from_instance(instance_data)?;
     let origin_text = format_type_expr_value(&origin);
-    if args.is_empty() {
-        return Some(format!("{origin_text}[]"));
+    let rendered = if args.is_empty() {
+        format!("{origin_text}[]")
+    } else if args.len() == 1 {
+        format!("{origin_text}[{}]", format_type_expr_value(&args[0]))
+    } else {
+        let arg_text = args
+            .iter()
+            .map(format_type_expr_value)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{origin_text}[{arg_text}]")
+    };
+    let is_unpacked = matches!(instance_data.attrs.get("__unpacked__"), Some(Value::Bool(true)));
+    if is_unpacked {
+        Some(format!("*{rendered}"))
+    } else {
+        Some(rendered)
     }
-    if args.len() == 1 {
-        return Some(format!(
-            "{origin_text}[{}]",
-            format_type_expr_value(&args[0])
-        ));
-    }
-    let arg_text = args
-        .iter()
-        .map(format_type_expr_value)
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some(format!("{origin_text}[{arg_text}]"))
 }
 
 fn format_union_type_expr_from_instance(instance_data: &InstanceObject) -> Option<String> {

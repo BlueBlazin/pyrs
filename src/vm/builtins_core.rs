@@ -12516,6 +12516,25 @@ impl Vm {
         let Some((right_origin, right_args)) = self.generic_alias_parts_from_value(right) else {
             return Ok(Some(false));
         };
+        let left_is_types_alias = self.is_exact_types_generic_alias_value(left);
+        let right_is_types_alias = self.is_exact_types_generic_alias_value(right);
+        if left_is_types_alias != right_is_types_alias {
+            return Ok(Some(false));
+        }
+        if left_is_types_alias {
+            let left_unpacked = match self.optional_getattr_value(left.clone(), "__unpacked__")? {
+                Some(flag) => self.truthy_from_value(&flag)?,
+                None => false,
+            };
+            let right_unpacked =
+                match self.optional_getattr_value(right.clone(), "__unpacked__")? {
+                    Some(flag) => self.truthy_from_value(&flag)?,
+                    None => false,
+                };
+            if left_unpacked != right_unpacked {
+                return Ok(Some(false));
+            }
+        }
         match (
             self.annotated_alias_metadata_from_value(left),
             self.annotated_alias_metadata_from_value(right),

@@ -1477,6 +1477,17 @@ fn runtime_subscript_supports_starred_type_arg_unpacking() {
 }
 
 #[test]
+fn runtime_unpacked_builtin_generic_alias_is_distinct_from_plain_alias() {
+    let source = "class C:\n    @classmethod\n    def __class_getitem__(cls, item):\n        return item\nmarker = C[*tuple[int, ...]][0]\nplain = tuple[int, ...]\nok = (repr(marker) == '*tuple[int, ...]' and marker != plain and len({marker: 1, plain: 2}) == 2)\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn compile_parse_error_raises_syntax_error_type() {
     let source = "ok = False\ntry:\n    compile('def broken(:\\n    pass\\n', '<broken>', 'exec')\nexcept SyntaxError:\n    ok = True\n";
     let module = parser::parse_module(source).expect("parse should succeed");

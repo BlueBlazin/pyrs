@@ -2407,6 +2407,29 @@ result = {
 }
 
 #[test]
+fn differential_runtime_unpacked_builtin_generic_alias_equality_parity() {
+    if cpython_bin_or_panic().as_os_str().is_empty() {
+        return;
+    }
+    let source = r#"
+class C:
+    @classmethod
+    def __class_getitem__(cls, item):
+        return item
+marker = C[*tuple[int, ...]][0]
+plain = tuple[int, ...]
+result = {
+    "marker_repr": repr(marker),
+    "marker_eq_plain": marker == plain,
+    "dict_len": len({marker: 1, plain: 2}),
+}
+"#;
+    let py = run_cpython_json(source).expect("CPython JSON should run");
+    let ours = run_pyrs_json(source).expect("pyrs JSON should run");
+    assert_eq!(py, ours, "{}", source);
+}
+
+#[test]
 fn differential_compile_parse_error_raises_syntaxerror_parity() {
     if cpython_bin_or_panic().as_os_str().is_empty() {
         return;
