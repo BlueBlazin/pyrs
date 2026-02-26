@@ -1483,6 +1483,23 @@ fn typing_namedtuple_new_without_args_raises_typeerror() {
 }
 
 #[test]
+fn typing_namedtuple_non_generic_subscript_is_generic_alias() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nfrom typing import NamedTuple, TypeVar\nT = TypeVar('T')\nclass Group(NamedTuple):\n    key: T\n    group: list[T]\nA = Group[int]\na = A(1, [2])\nok = (type(A).__name__ == 'GenericAlias' and A.__origin__ is Group and A.__args__ == (int,) and A.__parameters__ == () and type(a) is Group and a == (1, [2]))\n"
+    );
+    run_with_large_stack("vm-typing-namedtuple-non-generic-subscript", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn python_function_too_many_positional_arguments_has_cpython_message_shape() {
     let source = "msg = ''\ntry:\n    def f(a, b=1):\n        pass\n    f(1, 2, 3)\nexcept TypeError as exc:\n    msg = str(exc)\nok = (msg == 'f() takes from 1 to 2 positional arguments but 3 were given')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

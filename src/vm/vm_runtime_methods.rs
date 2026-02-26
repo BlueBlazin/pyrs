@@ -1058,6 +1058,14 @@ impl Vm {
                                 .runtime_error_from_active_exception("subscript lookup failed")),
                         };
                     }
+                    let inherits_builtin_generic_alias_base = self.class_has_builtin_tuple_base(&class)
+                        || self.class_has_builtin_list_base(&class)
+                        || self.class_has_builtin_dict_base(&class)
+                        || self.class_has_builtin_set_base(&class)
+                        || self.class_has_builtin_frozenset_base(&class);
+                    if inherits_builtin_generic_alias_base {
+                        return Ok(self.alloc_generic_alias_instance(class_value, index));
+                    }
                     let (has_type_params, legacy_typing_generic_base, class_parameters) =
                         match &*class.kind() {
                         Object::Class(class_data) => {
