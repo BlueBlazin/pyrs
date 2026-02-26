@@ -144,3 +144,65 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  update-homebrew-tap:
+    name: update-homebrew-tap
+    runs-on: ubuntu-latest
+    needs: publish-release
+    if: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+    env:
+      HOMEBREW_TAP_REPO: BlueBlazin/homebrew-tap
+
+    steps:
+      - name: Configure git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Clone Homebrew tap repository
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" tap
+
+      - name: Compute source tarball checksum
+        run: |
+          source_url="https://github.com/BlueBlazin/pyrs/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+          curl -fsSL -o /tmp/pyrs-src.tar.gz "$source_url"
+          source_sha="$(shasum -a 256 /tmp/pyrs-src.tar.gz | awk '{print $1}')"
+          echo "HOMEBREW_SOURCE_URL=${source_url}" >> "$GITHUB_ENV"
+          echo "HOMEBREW_SOURCE_SHA=${source_sha}" >> "$GITHUB_ENV"
+
+      - name: Update Formula/pyrs.rb
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/pyrs.rb <<EOF
+          class Pyrs < Formula
+            desc "Python interpreter in Rust targeting CPython 3.14 compatibility"
+            homepage "https://github.com/BlueBlazin/pyrs"
+            url "${HOMEBREW_SOURCE_URL}"
+            sha256 "${HOMEBREW_SOURCE_SHA}"
+
+            depends_on "rust" => :build
+
+            def install
+              system "cargo", "install", *std_cargo_args(path: "."), "--locked"
+            end
+
+            test do
+              assert_match "pyrs", shell_output("#{bin}/pyrs --version")
+              assert_equal "42\n", shell_output("#{bin}/pyrs -c 'print(40 + 2)'")
+            end
+          end
+          EOF
+
+      - name: Commit and push formula update
+        run: |
+          cd tap
+          if git diff --quiet -- Formula/pyrs.rb; then
+            echo "Formula already up to date"
+            exit 0
+          fi
+          git add Formula/pyrs.rb
+          git commit -m "pyrs ${GITHUB_REF_NAME}"
+          git push origin HEAD:main
