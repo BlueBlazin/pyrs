@@ -3211,6 +3211,15 @@ impl Vm {
                                 }));
                             }
                         }
+                        if self.is_type_parameter_value(&Value::Instance(instance.clone()))
+                            && matches!(
+                                &*instance_data.class.kind(),
+                                Object::Class(class_data) if class_data.name == "ParamSpec"
+                            )
+                        {
+                            names.push("args".to_string());
+                            names.push("kwargs".to_string());
+                        }
                     }
                 }
                 Value::Dict(dict) => {
@@ -13745,6 +13754,13 @@ impl Vm {
                         "MutableMapping" => matches!(value, Value::Dict(_)),
                         "MutableSequence" => matches!(value, Value::List(_)),
                         "ByteString" => matches!(value, Value::Bytes(_) | Value::ByteArray(_)),
+                        "SupportsInt" => self.value_supports_attr_runtime(value, "__int__"),
+                        "SupportsFloat" => self.value_supports_attr_runtime(value, "__float__"),
+                        "SupportsComplex" => self.value_supports_attr_runtime(value, "__complex__"),
+                        "SupportsBytes" => self.value_supports_attr_runtime(value, "__bytes__"),
+                        "SupportsAbs" => self.value_supports_attr_runtime(value, "__abs__"),
+                        "SupportsRound" => self.value_supports_attr_runtime(value, "__round__"),
+                        "SupportsIndex" => self.value_supports_attr_runtime(value, "__index__"),
                         _ => false,
                     };
                     if marker_match {
@@ -14015,16 +14031,40 @@ impl Vm {
                 )),
             },
             Value::Class(expected) => {
+                let custom_candidate = match candidate {
+                    Value::Builtin(builtin)
+                        if matches!(
+                            builtin,
+                            BuiltinFunction::Bool
+                                | BuiltinFunction::Int
+                                | BuiltinFunction::Float
+                                | BuiltinFunction::Complex
+                                | BuiltinFunction::Str
+                                | BuiltinFunction::List
+                                | BuiltinFunction::Tuple
+                                | BuiltinFunction::Dict
+                                | BuiltinFunction::Set
+                                | BuiltinFunction::FrozenSet
+                                | BuiltinFunction::Bytes
+                                | BuiltinFunction::ByteArray
+                                | BuiltinFunction::MemoryView
+                        ) =>
+                    {
+                        Value::Class(self.class_from_base_value(Value::Builtin(*builtin))?)
+                    }
+                    Value::Builtin(_) => candidate.clone(),
+                    _ => candidate.clone(),
+                };
                 let candidate_allows_custom_subclasscheck = matches!(
-                    candidate,
+                    &custom_candidate,
                     Value::Class(_)
                         | Value::Builtin(_)
                         | Value::Exception(_)
                         | Value::ExceptionType(_)
-                ) || matches!(candidate, Value::Str(name) if is_runtime_type_name_marker(name));
+                ) || matches!(&custom_candidate, Value::Str(name) if is_runtime_type_name_marker(name));
                 if candidate_allows_custom_subclasscheck
                     && let Some(custom_result) =
-                    self.try_custom_subclasscheck(expected, candidate)?
+                    self.try_custom_subclasscheck(expected, &custom_candidate)?
                 {
                     return Ok(custom_result);
                 }
@@ -14079,7 +14119,15 @@ impl Vm {
                             return Ok(true);
                         }
                         if expected_data.name == "Sized"
-                            && class_attr_lookup(class, "__len__").is_some()
+                            && (class_attr_lookup(class, "__len__").is_some()
+                                || self.class_has_builtin_list_base(class)
+                                || self.class_has_builtin_tuple_base(class)
+                                || self.class_has_builtin_dict_base(class)
+                                || self.class_has_builtin_set_base(class)
+                                || self.class_has_builtin_frozenset_base(class)
+                                || self.class_has_builtin_str_base(class)
+                                || self.class_has_builtin_bytes_base(class)
+                                || self.class_has_builtin_bytearray_base(class))
                         {
                             return Ok(true);
                         }
@@ -14123,14 +14171,30 @@ impl Vm {
                             }
                         }
                         if expected_data.name == "Container"
-                            && class_attr_lookup(class, "__contains__").is_some()
+                            && (class_attr_lookup(class, "__contains__").is_some()
+                                || self.class_has_builtin_list_base(class)
+                                || self.class_has_builtin_tuple_base(class)
+                                || self.class_has_builtin_dict_base(class)
+                                || self.class_has_builtin_set_base(class)
+                                || self.class_has_builtin_frozenset_base(class)
+                                || self.class_has_builtin_str_base(class)
+                                || self.class_has_builtin_bytes_base(class)
+                                || self.class_has_builtin_bytearray_base(class))
                         {
                             return Ok(true);
                         }
                         if expected_data.name == "Collection"
-                            && class_attr_lookup(class, "__len__").is_some()
-                            && class_attr_lookup(class, "__iter__").is_some()
-                            && class_attr_lookup(class, "__contains__").is_some()
+                            && ((class_attr_lookup(class, "__len__").is_some()
+                                && class_attr_lookup(class, "__iter__").is_some()
+                                && class_attr_lookup(class, "__contains__").is_some())
+                                || self.class_has_builtin_list_base(class)
+                                || self.class_has_builtin_tuple_base(class)
+                                || self.class_has_builtin_dict_base(class)
+                                || self.class_has_builtin_set_base(class)
+                                || self.class_has_builtin_frozenset_base(class)
+                                || self.class_has_builtin_str_base(class)
+                                || self.class_has_builtin_bytes_base(class)
+                                || self.class_has_builtin_bytearray_base(class))
                         {
                             return Ok(true);
                         }
@@ -14163,6 +14227,56 @@ impl Vm {
                         if expected_data.name == "ByteString"
                             && (self.class_has_builtin_bytes_base(class)
                                 || self.class_has_builtin_bytearray_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "SupportsInt"
+                            && (class_attr_lookup(class, "__int__").is_some()
+                                || self.class_has_builtin_int_base(class)
+                                || self.class_has_builtin_float_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "SupportsFloat"
+                            && (class_attr_lookup(class, "__float__").is_some()
+                                || self.class_has_builtin_int_base(class)
+                                || self.class_has_builtin_float_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "SupportsComplex"
+                            && (class_attr_lookup(class, "__complex__").is_some()
+                                || self.class_has_builtin_int_base(class)
+                                || self.class_has_builtin_float_base(class)
+                                || self.class_has_builtin_complex_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "SupportsBytes"
+                            && (class_attr_lookup(class, "__bytes__").is_some()
+                                || self.class_has_builtin_bytes_base(class)
+                                || self.class_has_builtin_bytearray_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "SupportsAbs"
+                            && (class_attr_lookup(class, "__abs__").is_some()
+                                || self.class_has_builtin_int_base(class)
+                                || self.class_has_builtin_float_base(class)
+                                || self.class_has_builtin_complex_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "SupportsRound"
+                            && (class_attr_lookup(class, "__round__").is_some()
+                                || self.class_has_builtin_int_base(class)
+                                || self.class_has_builtin_float_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "SupportsIndex"
+                            && (class_attr_lookup(class, "__index__").is_some()
+                                || self.class_has_builtin_int_base(class))
                         {
                             return Ok(true);
                         }
@@ -14314,6 +14428,56 @@ impl Vm {
                         "ByteString" => matches!(
                             candidate,
                             Value::Builtin(BuiltinFunction::Bytes | BuiltinFunction::ByteArray)
+                        ),
+                        "SupportsInt" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::Int
+                                    | BuiltinFunction::Bool
+                                    | BuiltinFunction::Float
+                            )
+                        ),
+                        "SupportsFloat" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::Int
+                                    | BuiltinFunction::Bool
+                                    | BuiltinFunction::Float
+                            )
+                        ),
+                        "SupportsComplex" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::Int
+                                    | BuiltinFunction::Bool
+                                    | BuiltinFunction::Float
+                                    | BuiltinFunction::Complex
+                            )
+                        ),
+                        "SupportsBytes" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::Bytes | BuiltinFunction::ByteArray)
+                        ),
+                        "SupportsAbs" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::Int
+                                    | BuiltinFunction::Bool
+                                    | BuiltinFunction::Float
+                                    | BuiltinFunction::Complex
+                            )
+                        ),
+                        "SupportsRound" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::Int
+                                    | BuiltinFunction::Bool
+                                    | BuiltinFunction::Float
+                            )
+                        ),
+                        "SupportsIndex" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::Int | BuiltinFunction::Bool)
                         ),
                         _ => false,
                     })

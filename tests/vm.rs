@@ -1562,6 +1562,23 @@ fn typing_nodefault_singleton_semantics_match_cpython() {
 }
 
 #[test]
+fn typing_get_type_hints_respects_no_type_check_on_bound_methods() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nfrom typing import get_type_hints, no_type_check_decorator\n@no_type_check_decorator\ndef magic_decorator(func):\n    return func\n@magic_decorator\nclass C:\n    def foo(a: 'whatevers') -> {{}}:\n        pass\nok = (get_type_hints(C().foo) == {{}})\n"
+    );
+    run_with_large_stack("vm-typing-no-type-check-bound-method", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn python_function_too_many_positional_arguments_has_cpython_message_shape() {
     let source = "msg = ''\ntry:\n    def f(a, b=1):\n        pass\n    f(1, 2, 3)\nexcept TypeError as exc:\n    msg = str(exc)\nok = (msg == 'f() takes from 1 to 2 positional arguments but 3 were given')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

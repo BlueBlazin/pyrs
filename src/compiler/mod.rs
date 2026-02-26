@@ -3783,6 +3783,27 @@ impl Compiler {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            ExprKind::Dict(entries) => {
+                if entries.is_empty() {
+                    "{}".to_string()
+                } else {
+                    let rendered = entries
+                        .iter()
+                        .map(|entry| match entry {
+                            DictEntry::Pair(key, value) => format!(
+                                "{}: {}",
+                                self.annotation_expr_to_string(key),
+                                self.annotation_expr_to_string(value)
+                            ),
+                            DictEntry::Unpack(value) => {
+                                format!("**{}", self.annotation_expr_to_string(value))
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{{{rendered}}}")
+                }
+            }
             ExprKind::Call { func, args } => {
                 let rendered = args
                     .iter()

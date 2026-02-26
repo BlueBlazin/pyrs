@@ -11085,21 +11085,13 @@ impl Vm {
                         None
                     };
                 let marker = builtin.call(&self.heap, args)?;
-                let current_module_name =
-                    self.frames
-                        .last()
-                        .and_then(|frame| match &*frame.module.kind() {
-                            Object::Module(module_data) => Some(module_data.name.clone()),
-                            _ => None,
-                        });
+                let module_attr = self.typing_param_caller_module_attr();
                 if let Value::Instance(instance) = &marker
                     && let Object::Instance(instance_data) = &mut *instance.kind_mut()
                 {
-                    if let Some(module_name) = current_module_name {
-                        instance_data
-                            .attrs
-                            .insert("__module__".to_string(), Value::Str(module_name));
-                    }
+                    instance_data
+                        .attrs
+                        .insert("__module__".to_string(), module_attr);
                     if !instance_data.attrs.contains_key("__default__") {
                         let default_marker = self.typing_no_default_marker().unwrap_or(Value::None);
                         instance_data

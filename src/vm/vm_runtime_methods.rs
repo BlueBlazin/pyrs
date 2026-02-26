@@ -3843,9 +3843,50 @@ impl Vm {
     }
 
     pub(super) fn class_from_base_value(&mut self, base: Value) -> Result<ObjRef, RuntimeError> {
+        fn typing_non_base_name_from_class(class: &ObjRef) -> Option<String> {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return None;
+            };
+            let module_name = match class_data.attrs.get("__module__") {
+                Some(Value::Str(module_name)) => module_name.as_str(),
+                _ => return None,
+            };
+            if !matches!(module_name, "typing" | "_typing") {
+                return None;
+            }
+            if matches!(
+                class_data.name.as_str(),
+                "TypeVar" | "TypeVarTuple" | "ParamSpec" | "ParamSpecArgs" | "ParamSpecKwargs"
+            ) {
+                return Some(class_data.name.clone());
+            }
+            None
+        }
+
+        fn typing_non_base_name_from_instance(instance: &ObjRef) -> Option<String> {
+            let instance_kind = instance.kind();
+            let Object::Instance(instance_data) = &*instance_kind else {
+                return None;
+            };
+            typing_non_base_name_from_class(&instance_data.class)
+        }
+
         match base {
-            Value::Class(class) => Ok(class),
+            Value::Class(class) => {
+                if let Some(name) = typing_non_base_name_from_class(&class) {
+                    return Err(RuntimeError::type_error(format!(
+                        "type 'typing.{name}' is not an acceptable base type"
+                    )));
+                }
+                Ok(class)
+            }
             Value::Instance(instance) => {
+                if let Some(name) = typing_non_base_name_from_instance(&instance) {
+                    return Err(RuntimeError::type_error(format!(
+                        "Cannot subclass an instance of {name}"
+                    )));
+                }
                 // CPython-extension proxy types can flow through class creation as proxy
                 // instances when metatype detection is incomplete. Treat those as class-like
                 // bases so stdlib/native class statements do not fail at compile/runtime.
@@ -3867,6 +3908,15 @@ impl Vm {
                 Err(RuntimeError::type_error("bases must be types"))
             }
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_exception_class(&name)),
+            Value::Builtin(BuiltinFunction::TypingTypeVar) => Err(RuntimeError::type_error(
+                "type 'typing.TypeVar' is not an acceptable base type",
+            )),
+            Value::Builtin(BuiltinFunction::TypingTypeVarTuple) => Err(RuntimeError::type_error(
+                "type 'typing.TypeVarTuple' is not an acceptable base type",
+            )),
+            Value::Builtin(BuiltinFunction::TypingParamSpec) => Err(RuntimeError::type_error(
+                "type 'typing.ParamSpec' is not an acceptable base type",
+            )),
             Value::Builtin(BuiltinFunction::Type) => Ok(self
                 .default_type_metaclass()
                 .unwrap_or_else(|| self.synthetic_builtin_class("type"))),

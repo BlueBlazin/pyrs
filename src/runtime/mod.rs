@@ -50,6 +50,7 @@ pub struct FunctionObject {
     pub call_cache_epoch: u64,
     pub closure: Vec<ObjRef>,
     pub annotations: Option<ObjRef>,
+    pub defined_in_class_body: bool,
     pub owner_class: Option<ObjRef>,
     pub dict: Option<ObjRef>,
 }
@@ -62,6 +63,7 @@ impl FunctionObject {
         kwonly_defaults: HashMap<String, Value>,
         closure: Vec<ObjRef>,
         annotations: Option<ObjRef>,
+        defined_in_class_body: bool,
     ) -> Self {
         let plain_positional_call_arity = if defaults.is_empty() && kwonly_defaults.is_empty() {
             code.plain_positional_arity
@@ -77,6 +79,7 @@ impl FunctionObject {
             call_cache_epoch: 1,
             closure,
             annotations,
+            defined_in_class_body,
             owner_class: None,
             dict: None,
         }
@@ -7918,6 +7921,9 @@ fn format_type_expr_value(value: &Value) -> String {
                 if let Some(rendered) = typing_type_param_display_name(instance_data) {
                     return rendered;
                 }
+                if let Some(rendered) = typing_paramspec_attr_display_name(instance_data) {
+                    return rendered;
+                }
                 if let Some(rendered) = typing_special_form_display_name(instance_data) {
                     return rendered;
                 }
@@ -7976,6 +7982,37 @@ fn typing_type_param_display_name(instance_data: &InstanceObject) -> Option<Stri
         "TypeVarTuple" => Some(format!("*{name}")),
         _ => None,
     }
+}
+
+fn typing_paramspec_attr_display_name(instance_data: &InstanceObject) -> Option<String> {
+    let class_kind = instance_data.class.kind();
+    let Object::Class(class_data) = &*class_kind else {
+        return None;
+    };
+    let module = match class_data.attrs.get("__module__") {
+        Some(Value::Str(name)) => name.as_str(),
+        _ => return None,
+    };
+    if !matches!(module, "typing" | "_typing") {
+        return None;
+    }
+    let suffix = match class_data.name.as_str() {
+        "ParamSpecArgs" => "args",
+        "ParamSpecKwargs" => "kwargs",
+        _ => return None,
+    };
+    let Value::Instance(origin_instance) = instance_data.attrs.get("__origin__")? else {
+        return None;
+    };
+    let origin_kind = origin_instance.kind();
+    let Object::Instance(origin_data) = &*origin_kind else {
+        return None;
+    };
+    let origin_name = match origin_data.attrs.get("__name__") {
+        Some(Value::Str(name)) => name.as_str(),
+        _ => return None,
+    };
+    Some(format!("{origin_name}.{suffix}"))
 }
 
 fn typing_special_form_display_name(instance_data: &InstanceObject) -> Option<String> {
@@ -8217,6 +8254,9 @@ pub fn format_value(value: &Value) -> String {
                         return rendered;
                     }
                     if let Some(rendered) = format_generic_alias_type_expr_from_instance(instance) {
+                        return rendered;
+                    }
+                    if let Some(rendered) = typing_paramspec_attr_display_name(instance) {
                         return rendered;
                     }
                     let module = class
@@ -8813,6 +8853,9 @@ pub fn format_repr(value: &Value) -> String {
                     && let Some(Value::Str(name)) = instance_data.attrs.get("name")
                 {
                     return name.clone();
+                }
+                if let Some(rendered) = typing_paramspec_attr_display_name(instance_data) {
+                    return rendered;
                 }
                 format_value(value)
             }

@@ -4920,6 +4920,7 @@ impl Vm {
             kwonly_defaults,
             closure_values,
             None,
+            false,
         );
         Ok(self.heap.alloc_function(function))
     }

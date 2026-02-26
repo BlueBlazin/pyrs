@@ -4733,73 +4733,90 @@ impl Vm {
                         return Err(RuntimeError::new("expected defaults tuple for function"));
                     }
                 };
-                let module = {
+                let (module, defined_in_class_body) = {
                     let frame = self.frames.last().expect("frame exists");
-                    if frame.return_class && is_comprehension_code(&code) {
-                        frame.module.clone()
-                    } else {
-                        frame.function_globals.clone()
-                    }
+                    (
+                        if frame.return_class && is_comprehension_code(&code) {
+                            frame.module.clone()
+                        } else {
+                            frame.function_globals.clone()
+                        },
+                        frame.return_class,
+                    )
                 };
                 let annotation_locals = self.frames.last().and_then(|frame| {
                     if frame.is_module && !frame.return_class {
                         return None;
-                    }
-                    let mut map = frame.locals.clone();
-                    if let Some(fallback_locals) = &frame.locals_fallback {
-                        for (name, value) in fallback_locals {
-                            map.entry(name.clone()).or_insert_with(|| value.clone());
+                    } else {
+                        let mut map = frame.locals.clone();
+                        if let Some(fallback_locals) = &frame.locals_fallback {
+                            for (name, value) in fallback_locals {
+                                map.entry(name.clone()).or_insert_with(|| value.clone());
+                            }
                         }
-                    }
-                    for (idx, slot) in frame.fast_locals.iter().enumerate() {
-                        if let Some(value) = slot
-                            && let Some(name) = frame.code.names.get(idx)
-                        {
-                            map.insert(name.clone(), value.clone());
+                        for (idx, slot) in frame.fast_locals.iter().enumerate() {
+                            if let Some(value) = slot
+                                && let Some(name) = frame.code.names.get(idx)
+                            {
+                                map.insert(name.clone(), value.clone());
+                            }
                         }
-                    }
-                    for (idx, name) in frame.code.cellvars.iter().enumerate() {
-                        if !map.contains_key(name)
-                            && let Some(cell) = frame.cells.get(idx)
-                            && let Object::Cell(cell_data) = &*cell.kind()
-                        {
-                            map.insert(
-                                name.clone(),
-                                cell_data.value.clone().unwrap_or(Value::None),
-                            );
+                        for (idx, name) in frame.code.cellvars.iter().enumerate() {
+                            if !map.contains_key(name)
+                                && let Some(cell) = frame.cells.get(idx)
+                                && let Object::Cell(cell_data) = &*cell.kind()
+                            {
+                                map.insert(
+                                    name.clone(),
+                                    cell_data.value.clone().unwrap_or(Value::None),
+                                );
+                            }
                         }
-                    }
-                    let cell_offset = frame.code.cellvars.len();
-                    for (idx, name) in frame.code.freevars.iter().enumerate() {
-                        if !map.contains_key(name)
-                            && let Some(cell) = frame.cells.get(cell_offset + idx)
-                            && let Object::Cell(cell_data) = &*cell.kind()
-                        {
-                            map.insert(
-                                name.clone(),
-                                cell_data.value.clone().unwrap_or(Value::None),
-                            );
+                        let cell_offset = frame.code.cellvars.len();
+                        for (idx, name) in frame.code.freevars.iter().enumerate() {
+                            if !map.contains_key(name)
+                                && let Some(cell) = frame.cells.get(cell_offset + idx)
+                                && let Object::Cell(cell_data) = &*cell.kind()
+                            {
+                                map.insert(
+                                    name.clone(),
+                                    cell_data.value.clone().unwrap_or(Value::None),
+                                );
+                            }
                         }
+                        if map.is_empty() { None } else { Some(map) }
                     }
-                    if map.is_empty() { None } else { Some(map) }
                 });
-                let func =
-                    FunctionObject::new(code, module, defaults, kwonly_defaults, Vec::new(), None);
+                let function_qualname = self.current_frame_function_qualname(&code.name);
+                let func = FunctionObject::new(
+                    code,
+                    module,
+                    defaults,
+                    kwonly_defaults,
+                    Vec::new(),
+                    None,
+                    defined_in_class_body,
+                );
                 let func_value = self.heap.alloc_function(func);
-                if let Some(annotation_locals) = annotation_locals
-                    && let Value::Function(function_obj) = &func_value
-                {
-                    let entries = annotation_locals
-                        .into_iter()
-                        .map(|(name, value)| (Value::Str(name), value))
-                        .collect::<Vec<_>>();
-                    let annotation_locals_dict = self.heap.alloc_dict(entries);
+                if let Value::Function(function_obj) = &func_value {
                     let function_dict = self.ensure_function_dict(function_obj)?;
                     self.dict_set_str_key(
                         &function_dict,
-                        "__pyrs_annotation_locals__".to_string(),
-                        annotation_locals_dict,
+                        "__qualname__".to_string(),
+                        Value::Str(function_qualname),
                     )?;
+                    if let Some(annotation_locals) = annotation_locals {
+                        let entries = annotation_locals
+                            .into_iter()
+                            .map(|(name, value)| (Value::Str(name), value))
+                            .collect::<Vec<_>>();
+                        let annotation_locals_dict = self.heap.alloc_dict(entries);
+                        self.dict_set_str_key(
+                            &function_dict,
+                            "__pyrs_annotation_locals__".to_string(),
+                            annotation_locals_dict,
+                        )?;
+                    }
                 }
                 self.push_value(func_value);
             }
@@ -5195,73 +5212,90 @@ impl Vm {
                         return Err(RuntimeError::new("expected code object for function"));
                     }
                 };
-                let module = {
+                let (module, defined_in_class_body) = {
                     let frame = self.frames.last().expect("frame exists");
-                    if frame.return_class && is_comprehension_code(&code) {
-                        frame.module.clone()
-                    } else {
-                        frame.function_globals.clone()
-                    }
+                    (
+                        if frame.return_class && is_comprehension_code(&code) {
+                            frame.module.clone()
+                        } else {
+                            frame.function_globals.clone()
+                        },
+                        frame.return_class,
+                    )
                 };
                 let annotation_locals = self.frames.last().and_then(|frame| {
                     if frame.is_module && !frame.return_class {
                         return None;
-                    }
-                    let mut map = frame.locals.clone();
-                    if let Some(fallback_locals) = &frame.locals_fallback {
-                        for (name, value) in fallback_locals {
-                            map.entry(name.clone()).or_insert_with(|| value.clone());
+                    } else {
+                        let mut map = frame.locals.clone();
+                        if let Some(fallback_locals) = &frame.locals_fallback {
+                            for (name, value) in fallback_locals {
+                                map.entry(name.clone()).or_insert_with(|| value.clone());
+                            }
                         }
-                    }
-                    for (idx, slot) in frame.fast_locals.iter().enumerate() {
-                        if let Some(value) = slot
-                            && let Some(name) = frame.code.names.get(idx)
-                        {
-                            map.insert(name.clone(), value.clone());
+                        for (idx, slot) in frame.fast_locals.iter().enumerate() {
+                            if let Some(value) = slot
+                                && let Some(name) = frame.code.names.get(idx)
+                            {
+                                map.insert(name.clone(), value.clone());
+                            }
                         }
-                    }
-                    for (idx, name) in frame.code.cellvars.iter().enumerate() {
-                        if !map.contains_key(name)
-                            && let Some(cell) = frame.cells.get(idx)
-                            && let Object::Cell(cell_data) = &*cell.kind()
-                        {
-                            map.insert(
-                                name.clone(),
-                                cell_data.value.clone().unwrap_or(Value::None),
-                            );
+                        for (idx, name) in frame.code.cellvars.iter().enumerate() {
+                            if !map.contains_key(name)
+                                && let Some(cell) = frame.cells.get(idx)
+                                && let Object::Cell(cell_data) = &*cell.kind()
+                            {
+                                map.insert(
+                                    name.clone(),
+                                    cell_data.value.clone().unwrap_or(Value::None),
+                                );
+                            }
                         }
-                    }
-                    let cell_offset = frame.code.cellvars.len();
-                    for (idx, name) in frame.code.freevars.iter().enumerate() {
-                        if !map.contains_key(name)
-                            && let Some(cell) = frame.cells.get(cell_offset + idx)
-                            && let Object::Cell(cell_data) = &*cell.kind()
-                        {
-                            map.insert(
-                                name.clone(),
-                                cell_data.value.clone().unwrap_or(Value::None),
-                            );
+                        let cell_offset = frame.code.cellvars.len();
+                        for (idx, name) in frame.code.freevars.iter().enumerate() {
+                            if !map.contains_key(name)
+                                && let Some(cell) = frame.cells.get(cell_offset + idx)
+                                && let Object::Cell(cell_data) = &*cell.kind()
+                            {
+                                map.insert(
+                                    name.clone(),
+                                    cell_data.value.clone().unwrap_or(Value::None),
+                                );
+                            }
                         }
+                        if map.is_empty() { None } else { Some(map) }
                     }
-                    if map.is_empty() { None } else { Some(map) }
                 });
-                let func =
-                    FunctionObject::new(code, module, Vec::new(), HashMap::new(), Vec::new(), None);
+                let function_qualname = self.current_frame_function_qualname(&code.name);
+                let func = FunctionObject::new(
+                    code,
+                    module,
+                    Vec::new(),
+                    HashMap::new(),
+                    Vec::new(),
+                    None,
+                    defined_in_class_body,
+                );
                 let func_value = self.heap.alloc_function(func);
-                if let Some(annotation_locals) = annotation_locals
-                    && let Value::Function(function_obj) = &func_value
-                {
-                    let entries = annotation_locals
-                        .into_iter()
-                        .map(|(name, value)| (Value::Str(name), value))
-                        .collect::<Vec<_>>();
-                    let annotation_locals_dict = self.heap.alloc_dict(entries);
+                if let Value::Function(function_obj) = &func_value {
                     let function_dict = self.ensure_function_dict(function_obj)?;
                     self.dict_set_str_key(
                         &function_dict,
-                        "__pyrs_annotation_locals__".to_string(),
-                        annotation_locals_dict,
+                        "__qualname__".to_string(),
+                        Value::Str(function_qualname),
                     )?;
+                    if let Some(annotation_locals) = annotation_locals {
+                        let entries = annotation_locals
+                            .into_iter()
+                            .map(|(name, value)| (Value::Str(name), value))
+                            .collect::<Vec<_>>();
+                        let annotation_locals_dict = self.heap.alloc_dict(entries);
+                        self.dict_set_str_key(
+                            &function_dict,
+                            "__pyrs_annotation_locals__".to_string(),
+                            annotation_locals_dict,
+                        )?;
+                    }
                 }
                 self.push_value(func_value);
             }
@@ -9748,6 +9782,7 @@ impl Vm {
             HashMap::new(),
             Vec::new(),
             None,
+            false,
         )) {
             Value::Function(function) => function,
             _ => unreachable!(),
@@ -10435,17 +10470,80 @@ impl Vm {
     }
 
     pub(super) fn attach_owner_class_to_attrs(&mut self, class_ref: &ObjRef) {
-        let Object::Class(class_data) = &mut *class_ref.kind_mut() else {
-            return;
+        let attrs = {
+            let class_ref_borrow = class_ref.kind();
+            let Object::Class(class_data) = &*class_ref_borrow else {
+                return;
+            };
+            class_data.attrs.values().cloned().collect::<Vec<_>>()
         };
-        for value in class_data.attrs.values() {
-            self.attach_owner_class_to_value(value, class_ref);
+        for value in attrs {
+            self.attach_owner_class_to_value(&value, class_ref);
         }
+    }
+
+    fn current_frame_function_qualname(&self, function_name: &str) -> String {
+        self.frames
+            .last()
+            .and_then(|frame| {
+                if frame.return_class {
+                    let Object::Module(module_data) = &*frame.module.kind() else {
+                        return None;
+                    };
+                    let outer_qualname = module_data
+                        .globals
+                        .get("__qualname__")
+                        .and_then(|value| match value {
+                            Value::Str(name) => Some(name.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| module_data.name.clone());
+                    return Some(format!("{outer_qualname}.{function_name}"));
+                }
+                if frame.is_module {
+                    return None;
+                }
+                let mut outer_qualname = frame.code.name.clone();
+                let owner_value = Self::frame_trace(frame)
+                    .local_values
+                    .into_iter()
+                    .find_map(|(name, value)| (name == "self" || name == "cls").then_some(value));
+                if let Some(owner) = owner_value {
+                    match owner {
+                        Value::Instance(instance) => {
+                            if let Object::Instance(instance_data) = &*instance.kind()
+                                && let Object::Class(class_data) = &*instance_data.class.kind()
+                            {
+                                outer_qualname = format!("{}.{}", class_data.name, outer_qualname);
+                            }
+                        }
+                        Value::Class(class) => {
+                            if let Object::Class(class_data) = &*class.kind() {
+                                outer_qualname = format!("{}.{}", class_data.name, outer_qualname);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Some(format!("{outer_qualname}.<locals>.{function_name}"))
+            })
+            .unwrap_or_else(|| function_name.to_string())
+    }
+
+    fn function_defined_in_class_body(&self, func: &ObjRef) -> bool {
+        let Object::Function(func_data) = &*func.kind() else {
+            return false;
+        };
+        func_data.defined_in_class_body
     }
 
     pub(super) fn attach_owner_class_to_value(&mut self, value: &Value, owner: &ObjRef) {
         match value {
-            Value::Function(func) => self.set_function_owner_class(func, owner),
+            Value::Function(func) => {
+                if self.function_defined_in_class_body(func) {
+                    self.set_function_owner_class(func, owner);
+                }
+            }
             Value::Instance(instance) => {
                 if let Some((fget, fset, fdel, _doc, _explicit_name)) =
                     self.property_descriptor_parts(instance)
@@ -10467,7 +10565,9 @@ impl Vm {
                 if (module_data.name == "__classmethod__" || module_data.name == "__staticmethod__")
                     && let Some(Value::Function(func)) = module_data.globals.get("__func__")
                 {
-                    self.set_function_owner_class(func, owner);
+                    if self.function_defined_in_class_body(func) {
+                        self.set_function_owner_class(func, owner);
+                    }
                 }
             }
             _ => {}
@@ -13912,26 +14012,33 @@ impl Vm {
         matches!(value, Value::List(_) | Value::Tuple(_))
     }
 
+    pub(super) fn typing_param_caller_module_attr(&self) -> Value {
+        let module_name = self.frames.last().and_then(|frame| match &*frame.module.kind() {
+            Object::Module(module_data) => module_data.globals.get("__name__").and_then(|value| {
+                if let Value::Str(name) = value {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        });
+        module_name.map(Value::Str).unwrap_or(Value::None)
+    }
+
     fn intrinsic_make_typing_param(
         &mut self,
         builtin: BuiltinFunction,
         name: Value,
     ) -> Result<Value, RuntimeError> {
         let marker = self.call_builtin(builtin, vec![name], HashMap::new())?;
-        let current_module_name =
-            self.frames
-                .last()
-                .and_then(|frame| match &*frame.module.kind() {
-                    Object::Module(module_data) => Some(module_data.name.clone()),
-                    _ => None,
-                });
-        if let Some(module_name) = current_module_name
-            && let Value::Instance(instance) = &marker
+        let module_attr = self.typing_param_caller_module_attr();
+        if let Value::Instance(instance) = &marker
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()
         {
             instance_data
                 .attrs
-                .insert("__module__".to_string(), Value::Str(module_name));
+                .insert("__module__".to_string(), module_attr);
         }
         Ok(marker)
     }

@@ -1636,6 +1636,11 @@ impl Vm {
         value: Value,
     ) -> Result<(), RuntimeError> {
         if !Self::builtin_attr_is_overridable(attr_name) {
+            if self.builtin_is_type_object(builtin) {
+                return Err(RuntimeError::type_error(
+                    "can't set attributes of built-in/extension type",
+                ));
+            }
             return Err(RuntimeError::attribute_error(format!(
                 "builtin has no writable attribute '{}'",
                 attr_name
@@ -3039,6 +3044,8 @@ impl Vm {
                 | "__doc__"
                 | "__annotate__"
                 | "__type_params__"
+                | "__no_type_check__"
+                | "__override__"
         ) && let Some(overrides) = self.callable_attr_overrides.get(&function.id())
             && let Some(value) = overrides.get(attr_name)
         {
@@ -3102,11 +3109,17 @@ impl Vm {
             "__func__" => as_value(&function_kind, &function)
                 .ok_or_else(|| RuntimeError::attribute_error("attribute access unsupported type")),
             "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
-            | "__type_params__" | "__builtins__" | "__globals__" => {
+            | "__type_params__" | "__no_type_check__" | "__override__" | "__builtins__"
+            | "__globals__" => {
                 if let BoundFunctionKind::NativeMethod(kind) = &function_kind {
                     if matches!(
                         attr_name,
-                        "__annotate__" | "__type_params__" | "__builtins__" | "__globals__"
+                        "__annotate__"
+                            | "__type_params__"
+                            | "__no_type_check__"
+                            | "__override__"
+                            | "__builtins__"
+                            | "__globals__"
                     ) {
                         return Err(RuntimeError::attribute_error(format!(
                             "method has no attribute '{}'",
@@ -3154,7 +3167,7 @@ impl Vm {
         };
         match attr_name {
             "__name__" | "__qualname__" | "__module__" | "__doc__" | "__annotate__"
-            | "__type_params__" => {}
+            | "__type_params__" | "__override__" => {}
             _ => {
                 return Err(RuntimeError::attribute_error(format!(
                     "method has no writable attribute '{}'",
@@ -5384,6 +5397,20 @@ impl Vm {
             let mut entries = class_data
                 .attrs
                 .iter()
+                .filter(|(name, _)| {
+                    !matches!(
+                        name.as_str(),
+                        "__name__"
+                            | "__qualname__"
+                            | "__bases__"
+                            | "__mro__"
+                            | "__base__"
+                            | "__flags__"
+                            | "__classdictcell__"
+                            | "__classcell__"
+                            | "__pyrs_user_class__"
+                    )
+                })
                 .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
                 .collect::<Vec<_>>();
             let is_user_class = matches!(
@@ -7618,6 +7645,12 @@ impl Vm {
                 ));
             }
         };
+        if self.property_descriptor_parts(instance).is_some() && attr_name != "__doc__" {
+            return Err(RuntimeError::attribute_error(format!(
+                "'property' object has no attribute '{}' and no __dict__ for setting new attributes",
+                attr_name
+            )));
+        }
         let mro_class_names = class_attr_walk(&class_ref)
             .into_iter()
             .filter_map(|candidate| match &*candidate.kind() {
