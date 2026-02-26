@@ -1,3 +1,11 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
+
+#if defined(__unix__) && !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -8,12 +16,32 @@
 #include <math.h>
 #include <signal.h>
 #include <limits.h>
+#if defined(__unix__) || defined(__APPLE__)
 #include <dlfcn.h>
+#define PYRS_HAVE_DLADDR 1
+#endif
 #include <wchar.h>
 #include <sys/types.h>
 #include <time.h>
 #include <errno.h>
 #include <locale.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
+#if defined(_WIN32) && defined(_MSC_VER)
+#pragma section(".CRT$XCU", read)
+#define PYRS_CONSTRUCTOR_FUNC(func_name) \
+    static void __cdecl func_name(void); \
+    __declspec(allocate(".CRT$XCU")) void (__cdecl *func_name##_init_)(void) = func_name; \
+    static void __cdecl func_name(void)
+#else
+#define PYRS_CONSTRUCTOR_FUNC(func_name) static void __attribute__((constructor)) func_name(void)
+#endif
+
+static int pyrs_clock_gettime_monotonic(struct timespec *ts);
+static int pyrs_clock_gettime_realtime(struct timespec *ts);
 
 typedef intptr_t Py_ssize_t;
 typedef intptr_t Py_hash_t;
@@ -568,6 +596,7 @@ void *PyErr_Format(void *exception, const char *format, ...)
     va_start(ap, format);
     char *message = pyrs_format_pyerr_message(format, ap);
     va_end(ap);
+#if defined(PYRS_HAVE_DLADDR) && (defined(__GNUC__) || defined(__clang__))
     if (message != NULL &&
         getenv("PYRS_TRACE_PYERR_FORMAT_CALLER") != NULL &&
         (strstr(message, "not subscriptable") != NULL ||
@@ -609,6 +638,7 @@ void *PyErr_Format(void *exception, const char *format, ...)
             );
         }
     }
+#endif
     if (message == NULL) {
         return pyrs_capi_pyerr_format_fallback(exception, format);
     }
@@ -4330,7 +4360,7 @@ int PyTime_PerfCounterRaw(PyTime_t *result)
         return -1;
     }
     struct timespec ts;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+    if (pyrs_clock_gettime_monotonic(&ts) != 0) {
         return -1;
     }
     *result = (PyTime_t)ts.tv_sec * 1000000000LL + (PyTime_t)ts.tv_nsec;
@@ -4533,7 +4563,42 @@ int _Py_Gid_Converter(void *obj, gid_t *out)
     return 1;
 }
 
-static void __attribute__((constructor)) pyrs_init_pyctype_tables(void)
+static int pyrs_clock_gettime_monotonic(struct timespec *ts)
+{
+    if (ts == NULL) {
+        return -1;
+    }
+#if defined(_WIN32)
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER counter;
+    if (QueryPerformanceFrequency(&frequency) == 0 ||
+        QueryPerformanceCounter(&counter) == 0 ||
+        frequency.QuadPart <= 0) {
+        return -1;
+    }
+    ts->tv_sec = (time_t)(counter.QuadPart / frequency.QuadPart);
+    ts->tv_nsec = (long)((counter.QuadPart % frequency.QuadPart) * 1000000000LL / frequency.QuadPart);
+    return 0;
+#elif defined(CLOCK_MONOTONIC)
+    return clock_gettime(CLOCK_MONOTONIC, ts);
+#else
+    return timespec_get(ts, TIME_UTC) == TIME_UTC ? 0 : -1;
+#endif
+}
+
+static int pyrs_clock_gettime_realtime(struct timespec *ts)
+{
+    if (ts == NULL) {
+        return -1;
+    }
+#if defined(CLOCK_REALTIME)
+    return clock_gettime(CLOCK_REALTIME, ts);
+#else
+    return timespec_get(ts, TIME_UTC) == TIME_UTC ? 0 : -1;
+#endif
+}
+
+PYRS_CONSTRUCTOR_FUNC(pyrs_init_pyctype_tables)
 {
     for (int i = 0; i < 256; i++) {
         if (i >= 'A' && i <= 'Z') {
@@ -4549,7 +4614,7 @@ static void __attribute__((constructor)) pyrs_init_pyctype_tables(void)
     }
 
     struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+    if (pyrs_clock_gettime_realtime(&ts) == 0) {
         _Py_HashSecret.siphash.k0 = (uint64_t)ts.tv_sec ^ ((uint64_t)ts.tv_nsec << 16);
         _Py_HashSecret.siphash.k1 = ((uint64_t)ts.tv_nsec << 32) ^ (uint64_t)(uintptr_t)&_Py_HashSecret;
         _Py_HashSecret.expat.hashsalt = (Py_hash_t)(_Py_HashSecret.siphash.k0 ^ _Py_HashSecret.siphash.k1);
