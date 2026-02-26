@@ -4093,6 +4093,16 @@ impl Vm {
                 )))
             }
             other => {
+                if let Some(class_ref) = self.class_of_value(&other)
+                    && let Some(value) = class_attr_lookup(&class_ref, &name)
+                {
+                    return Ok(value);
+                }
+                if name == "__call__" && self.is_callable_value(&other) {
+                    // CPython inspect.getattr_static() exposes a non-None descriptor
+                    // for callable instances/functions even when callability is slot-based.
+                    return Ok(Value::Builtin(BuiltinFunction::TypeCall));
+                }
                 if let Some(default) = default {
                     return Ok(default);
                 }
