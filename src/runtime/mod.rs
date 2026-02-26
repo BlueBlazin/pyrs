@@ -1327,6 +1327,7 @@ pub struct Heap {
     immediate_ids: RefCell<HashMap<ImmediateKey, u64>>,
     ellipsis_class: RefCell<Option<ObjRef>>,
     ellipsis_instance: RefCell<Option<ObjRef>>,
+    empty_tuple: RefCell<Option<ObjRef>>,
     thread_lock_class: RefCell<Option<ObjRef>>,
     allocation_count: Cell<usize>,
 }
@@ -1374,6 +1375,7 @@ impl Heap {
             immediate_ids: RefCell::new(HashMap::new()),
             ellipsis_class: RefCell::new(None),
             ellipsis_instance: RefCell::new(None),
+            empty_tuple: RefCell::new(None),
             thread_lock_class: RefCell::new(None),
             allocation_count: Cell::new(0),
         }
@@ -1406,6 +1408,14 @@ impl Heap {
     }
 
     pub fn alloc_tuple(&self, values: Vec<Value>) -> Value {
+        if values.is_empty() {
+            if let Some(existing) = self.empty_tuple.borrow().as_ref().cloned() {
+                return Value::Tuple(existing);
+            }
+            let tuple = self.alloc(Object::Tuple(Vec::new()));
+            self.empty_tuple.replace(Some(tuple.clone()));
+            return Value::Tuple(tuple);
+        }
         Value::Tuple(self.alloc(Object::Tuple(values)))
     }
 
@@ -5409,9 +5419,11 @@ impl BuiltinFunction {
                     instance_data
                         .attrs
                         .insert("__name__".to_string(), Value::Str(name.clone()));
-                    instance_data
-                        .attrs
-                        .insert("__qualname__".to_string(), Value::Str(name));
+                    if matches!(self, BuiltinFunction::TypingTypeAliasType) {
+                        instance_data
+                            .attrs
+                            .insert("__qualname__".to_string(), Value::Str(name));
+                    }
                     instance_data
                         .attrs
                         .insert("__module__".to_string(), Value::Str("typing".to_string()));

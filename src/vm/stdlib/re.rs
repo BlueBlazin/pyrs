@@ -148,6 +148,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *match_obj.kind_mut() {
+            module_data.globals.insert(
+                "__class__".to_string(),
+                Value::Class(self.ensure_re_runtime_type_class("Match")),
+            );
             module_data.globals.insert("_source".to_string(), source);
             module_data
                 .globals
@@ -527,6 +531,10 @@ impl Vm {
             _ => unreachable!(),
         };
         if let Object::Module(module_data) = &mut *compiled.kind_mut() {
+            module_data.globals.insert(
+                "__class__".to_string(),
+                Value::Class(self.ensure_re_runtime_type_class("Pattern")),
+            );
             module_data
                 .globals
                 .insert("pattern".to_string(), pattern_value);

@@ -1437,70 +1437,26 @@ impl Vm {
         }
     }
 
-    pub(super) fn ensure_union_type_class(&mut self) -> ObjRef {
-        const CACHE_KEY: &str = "__types_union_type__";
-        if let Some(existing) = self.union_type_class() {
-            self.synthetic_builtin_classes
-                .insert(CACHE_KEY.to_string(), existing.clone());
-            if let Some(typing_module) = self.modules.get("typing").cloned()
-                && let Object::Module(module_data) = &mut *typing_module.kind_mut()
-            {
-                module_data
-                    .globals
-                    .insert("Union".to_string(), Value::Class(existing.clone()));
-            }
-            if let Some(private_typing_module) = self.modules.get("_typing").cloned()
-                && let Object::Module(module_data) = &mut *private_typing_module.kind_mut()
-            {
-                module_data
-                    .globals
-                    .insert("Union".to_string(), Value::Class(existing.clone()));
-            }
-            return existing;
-        }
-        if let Some(existing) = self.synthetic_builtin_classes.get(CACHE_KEY).cloned() {
-            if let Some(types_module) = self.modules.get("types").cloned()
-                && let Object::Module(module_data) = &mut *types_module.kind_mut()
-            {
-                module_data
-                    .globals
-                    .insert("UnionType".to_string(), Value::Class(existing.clone()));
-            }
-            if let Some(typing_module) = self.modules.get("typing").cloned()
-                && let Object::Module(module_data) = &mut *typing_module.kind_mut()
-            {
-                module_data
-                    .globals
-                    .insert("Union".to_string(), Value::Class(existing.clone()));
-            }
-            if let Some(private_typing_module) = self.modules.get("_typing").cloned()
-                && let Object::Module(module_data) = &mut *private_typing_module.kind_mut()
-            {
-                module_data
-                    .globals
-                    .insert("Union".to_string(), Value::Class(existing.clone()));
-            }
-            return existing;
-        }
-        let class = self.synthetic_builtin_class("UnionType");
+    fn normalize_union_type_class_identity(class: &ObjRef) {
         if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data.name = "Union".to_string();
             class_data
                 .attrs
-                .insert("__module__".to_string(), Value::Str("types".to_string()));
+                .insert("__module__".to_string(), Value::Str("typing".to_string()));
             class_data
                 .attrs
-                .insert("__name__".to_string(), Value::Str("UnionType".to_string()));
-            class_data.attrs.insert(
-                "__qualname__".to_string(),
-                Value::Str("UnionType".to_string()),
-            );
+                .insert("__name__".to_string(), Value::Str("Union".to_string()));
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str("Union".to_string()));
             class_data.attrs.insert(
                 "__pyrs_disallow_instantiation__".to_string(),
                 Value::Bool(true),
             );
         }
-        self.synthetic_builtin_classes
-            .insert(CACHE_KEY.to_string(), class.clone());
+    }
+
+    fn publish_union_type_aliases(&mut self, class: &ObjRef) {
         if let Some(types_module) = self.modules.get("types").cloned()
             && let Object::Module(module_data) = &mut *types_module.kind_mut()
         {
@@ -1522,6 +1478,27 @@ impl Vm {
                 .globals
                 .insert("Union".to_string(), Value::Class(class.clone()));
         }
+    }
+
+    pub(super) fn ensure_union_type_class(&mut self) -> ObjRef {
+        const CACHE_KEY: &str = "__types_union_type__";
+        if let Some(existing) = self.union_type_class() {
+            Self::normalize_union_type_class_identity(&existing);
+            self.synthetic_builtin_classes
+                .insert(CACHE_KEY.to_string(), existing.clone());
+            self.publish_union_type_aliases(&existing);
+            return existing;
+        }
+        if let Some(existing) = self.synthetic_builtin_classes.get(CACHE_KEY).cloned() {
+            Self::normalize_union_type_class_identity(&existing);
+            self.publish_union_type_aliases(&existing);
+            return existing;
+        }
+        let class = self.synthetic_builtin_class("Union");
+        Self::normalize_union_type_class_identity(&class);
+        self.synthetic_builtin_classes
+            .insert(CACHE_KEY.to_string(), class.clone());
+        self.publish_union_type_aliases(&class);
         class
     }
 
@@ -2128,10 +2105,16 @@ impl Vm {
 
         let unhashable_count = 0i64;
         let union_class = self.ensure_union_type_class();
-        let union = self.heap.alloc_instance(InstanceObject::new(union_class));
+        let union = self
+            .heap
+            .alloc_instance(InstanceObject::new(union_class.clone()));
         if let Value::Instance(instance) = &union
             && let Object::Instance(instance_data) = &mut *instance.kind_mut()
         {
+            instance_data.attrs.insert(
+                "__origin__".to_string(),
+                Value::Class(union_class.clone()),
+            );
             instance_data
                 .attrs
                 .insert("__args__".to_string(), self.heap.alloc_tuple(flat_members));
@@ -2139,6 +2122,15 @@ impl Vm {
                 "__parameters__".to_string(),
                 self.heap.alloc_tuple(parameters),
             );
+            instance_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("typing".to_string()));
+            instance_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str("Union".to_string()));
+            instance_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str("Union".to_string()));
             instance_data.attrs.insert(
                 "__pyrs_union_unhashable_count__".to_string(),
                 Value::Int(unhashable_count),
@@ -2875,6 +2867,9 @@ impl Vm {
                 "__delattr__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectDelAttr),
             );
+            class_data
+                .attrs
+                .insert("__dir__".to_string(), Value::Builtin(BuiltinFunction::Dir));
             class_data.attrs.insert(
                 "__getstate__".to_string(),
                 Value::Builtin(BuiltinFunction::ObjectGetState),
@@ -3574,6 +3569,10 @@ impl Vm {
                 }
             }
         }
+        let class_declared_global = self
+            .frames
+            .last()
+            .is_some_and(|frame| self.class_assignment_is_global(frame, &name));
         let class_qualname = self
             .frames
             .last()
@@ -3592,7 +3591,7 @@ impl Vm {
                         .unwrap_or_else(|| module_data.name.clone());
                     return Some(format!("{outer_qualname}.{name}"));
                 }
-                if frame.is_module {
+                if frame.is_module || class_declared_global {
                     return None;
                 }
                 let mut outer_qualname = frame.code.name.clone();
@@ -4062,16 +4061,7 @@ impl Vm {
         }
     }
 
-    pub(super) fn update_class_bases_attr(
-        &mut self,
-        class: &ObjRef,
-        bases_value: Value,
-    ) -> Result<(), RuntimeError> {
-        let base_values = self.class_base_values_from_value(&bases_value)?;
-        let mut bases = Vec::with_capacity(base_values.len());
-        for base in base_values {
-            bases.push(self.class_from_base_value(base)?);
-        }
+    pub(super) fn ensure_unique_base_classes(&self, bases: &[ObjRef]) -> Result<(), RuntimeError> {
         for (idx, base) in bases.iter().enumerate() {
             if bases.iter().skip(idx + 1).any(|other| other.id() == base.id()) {
                 let base_name = match &*base.kind() {
@@ -4084,6 +4074,20 @@ impl Vm {
                 )));
             }
         }
+        Ok(())
+    }
+
+    pub(super) fn update_class_bases_attr(
+        &mut self,
+        class: &ObjRef,
+        bases_value: Value,
+    ) -> Result<(), RuntimeError> {
+        let base_values = self.class_base_values_from_value(&bases_value)?;
+        let mut bases = Vec::with_capacity(base_values.len());
+        for base in base_values {
+            bases.push(self.class_from_base_value(base)?);
+        }
+        self.ensure_unique_base_classes(&bases)?;
         let mro = if bases.is_empty() {
             vec![class.clone()]
         } else {

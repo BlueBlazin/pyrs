@@ -44,6 +44,7 @@ unsafe extern "C" {
 thread_local! {
     static TYPE_INSTANCECHECK_BYPASS_CUSTOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static TYPE_SUBCLASSCHECK_BYPASS_CUSTOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DIR_CUSTOM_LOOKUP_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone, Copy)]
@@ -686,6 +687,70 @@ impl Vm {
                 Some(Ok(text)) => return Ok(Value::Str(text)),
                 Some(Err(_)) | None => return Ok(Value::Str(format_value(&value))),
             }
+        }
+        if let Some(union_items) = self.union_args_from_value(&value) {
+            let render_union_member = |vm: &mut Vm, item: Value| -> Result<String, RuntimeError> {
+                match item {
+                    Value::None => Ok("None".to_string()),
+                    Value::Builtin(builtin) => {
+                        let name = vm.builtin_attribute_name(builtin);
+                        if name == "NoneType" {
+                            return Ok("None".to_string());
+                        }
+                        let module_name = match vm.load_attr_builtin(builtin, "__module__") {
+                            Ok(Value::Str(module_name)) => module_name,
+                            _ => "builtins".to_string(),
+                        };
+                        if module_name == "builtins" {
+                            Ok(name)
+                        } else {
+                            Ok(format!("{module_name}.{name}"))
+                        }
+                    }
+                    Value::Class(class) => {
+                        let class_kind = class.kind();
+                        let Object::Class(class_data) = &*class_kind else {
+                            let Value::Str(text) = vm.builtin_repr(
+                                vec![Value::Class(class.clone())],
+                                HashMap::new(),
+                            )?
+                            else {
+                                return Err(RuntimeError::type_error(
+                                    "__repr__ returned non-string",
+                                ));
+                            };
+                            return Ok(text);
+                        };
+                        let module_name = match class_data.attrs.get("__module__") {
+                            Some(Value::Str(name)) => name.clone(),
+                            _ => "builtins".to_string(),
+                        };
+                        let qualname = match class_data.attrs.get("__qualname__") {
+                            Some(Value::Str(name)) => name.clone(),
+                            _ => class_data.name.clone(),
+                        };
+                        if qualname == "NoneType" {
+                            return Ok("None".to_string());
+                        }
+                        if module_name == "builtins" {
+                            Ok(qualname)
+                        } else {
+                            Ok(format!("{module_name}.{qualname}"))
+                        }
+                    }
+                    other => {
+                        let Value::Str(text) = vm.builtin_repr(vec![other], HashMap::new())? else {
+                            return Err(RuntimeError::type_error("__repr__ returned non-string"));
+                        };
+                        Ok(text)
+                    }
+                }
+            };
+            let mut rendered = Vec::with_capacity(union_items.len());
+            for item in union_items {
+                rendered.push(render_union_member(self, item)?);
+            }
+            return Ok(Value::Str(rendered.join(" | ")));
         }
         if let Value::Instance(instance) = &value
             && let Object::Instance(instance_data) = &*instance.kind()
@@ -3147,7 +3212,7 @@ impl Vm {
     }
 
     pub(super) fn builtin_dir(
-        &self,
+        &mut self,
         args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
@@ -3157,6 +3222,61 @@ impl Vm {
 
         let mut names: Vec<String> = Vec::new();
         if let Some(target) = args.first() {
+            let allow_custom_dir = DIR_CUSTOM_LOOKUP_DEPTH.with(|depth| depth.get() == 0);
+            if allow_custom_dir
+                && let Some(dir_method) = self.lookup_bound_special_method(target, "__dir__")?
+            {
+                struct DirLookupGuard;
+                impl DirLookupGuard {
+                    fn enter() -> Self {
+                        DIR_CUSTOM_LOOKUP_DEPTH.with(|depth| {
+                            depth.set(depth.get().saturating_add(1));
+                        });
+                        Self
+                    }
+                }
+                impl Drop for DirLookupGuard {
+                    fn drop(&mut self) {
+                        DIR_CUSTOM_LOOKUP_DEPTH.with(|depth| {
+                            depth.set(depth.get().saturating_sub(1));
+                        });
+                    }
+                }
+                let _guard = DirLookupGuard::enter();
+                let dir_result = match self.call_internal(dir_method, Vec::new(), HashMap::new())?
+                {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(
+                            self.runtime_error_from_active_exception("__dir__() call failed")
+                        );
+                    }
+                };
+                let dir_list = self.builtin_list(vec![dir_result], HashMap::new())?;
+                let Value::List(dir_list_obj) = dir_list else {
+                    return Err(RuntimeError::type_error(
+                        "__dir__() must return an iterable of strings",
+                    ));
+                };
+                let Object::List(dir_items) = &*dir_list_obj.kind() else {
+                    return Err(RuntimeError::type_error(
+                        "__dir__() must return an iterable of strings",
+                    ));
+                };
+                for item in dir_items {
+                    let Value::Str(name) = item else {
+                        return Err(RuntimeError::type_error(
+                            "__dir__() must return a list of strings",
+                        ));
+                    };
+                    names.push(name.clone());
+                }
+                names.sort();
+                names.dedup();
+                return Ok(self
+                    .heap
+                    .alloc_list(names.into_iter().map(Value::Str).collect::<Vec<_>>()));
+            }
             match target {
                 Value::Module(module) => {
                     if let Object::Module(module_data) = &*module.kind() {
@@ -7146,6 +7266,44 @@ impl Vm {
         class
     }
 
+    fn mark_re_runtime_type_class(&mut self, class: &ObjRef, class_name: &str) {
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("re".to_string()));
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str(class_name.to_string()));
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str(class_name.to_string()));
+            class_data
+                .attrs
+                .insert("__pyrs_disallow_subclassing__".to_string(), Value::Bool(true));
+        }
+    }
+
+    pub(super) fn ensure_re_runtime_type_class(&mut self, class_name: &str) -> ObjRef {
+        if let Some(re_module) = self.modules.get("re").cloned()
+            && let Object::Module(module_data) = &*re_module.kind()
+            && let Some(Value::Class(class)) = module_data.globals.get(class_name)
+        {
+            let class = class.clone();
+            self.mark_re_runtime_type_class(&class, class_name);
+            return class;
+        }
+        let class = self.alloc_synthetic_class(class_name);
+        self.mark_re_runtime_type_class(&class, class_name);
+        if let Some(re_module) = self.modules.get("re").cloned()
+            && let Object::Module(module_data) = &mut *re_module.kind_mut()
+        {
+            module_data
+                .globals
+                .insert(class_name.to_string(), Value::Class(class.clone()));
+        }
+        class
+    }
+
     pub(super) fn fallback_function_type_class(&mut self) -> ObjRef {
         if let Some(module) = self.modules.get("builtins").cloned()
             && let Object::Module(module_data) = &*module.kind()
@@ -7417,6 +7575,12 @@ impl Vm {
                     }
                     Object::Module(module_data) if module_data.name == "__classmethod__" => {
                         Some(Value::Builtin(BuiltinFunction::ClassMethod))
+                    }
+                    Object::Module(module_data) if module_data.name == "__re_pattern__" => {
+                        Some(Value::Class(self.ensure_re_runtime_type_class("Pattern")))
+                    }
+                    Object::Module(module_data) if module_data.name == "__re_match__" => {
+                        Some(Value::Class(self.ensure_re_runtime_type_class("Match")))
                     }
                     _ => self
                         .types_module_or_private_class("ModuleType")
@@ -9767,7 +9931,16 @@ impl Vm {
         let values = if args.is_empty() {
             Vec::new()
         } else {
-            self.collect_iterable_values(args.remove(0))?
+            match self.collect_iterable_values(args.remove(0)) {
+                Ok(values) => values,
+                Err(err)
+                    if runtime_error_matches_exception(&err, "TypeError")
+                        && err.message.contains("expected iterable") =>
+                {
+                    return Err(RuntimeError::type_error("object is not iterable"));
+                }
+                Err(err) => return Err(err),
+            }
         };
         Ok(self.heap.alloc_list(values))
     }
@@ -13795,6 +13968,20 @@ impl Vm {
                             .class_mro_entries(&instance_data.class)
                             .iter()
                             .any(|entry| entry.id() == expected.id())),
+                        _ => Ok(false),
+                    },
+                    Value::Module(module) => match &*module.kind() {
+                        Object::Module(module_data) => {
+                            if let Some(Value::Class(module_class)) =
+                                module_data.globals.get("__class__")
+                            {
+                                return Ok(self
+                                    .class_mro_entries(module_class)
+                                    .iter()
+                                    .any(|entry| entry.id() == expected.id()));
+                            }
+                            Ok(false)
+                        }
                         _ => Ok(false),
                     },
                     Value::Class(class) => {

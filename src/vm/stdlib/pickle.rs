@@ -2674,16 +2674,34 @@ impl Vm {
         let Value::Instance(instance) = value else {
             return Ok(None);
         };
+        let is_typing_alias_instance = match &*instance.kind() {
+            Object::Instance(instance_data) => match &*instance_data.class.kind() {
+                Object::Class(class_data) => {
+                    let module_name = class_data.attrs.get("__module__").and_then(|value| {
+                        if let Value::Str(module_name) = value {
+                            Some(module_name.as_str())
+                        } else {
+                            None
+                        }
+                    });
+                    matches!(module_name, Some("typing" | "_typing"))
+                        && class_data.name.contains("Alias")
+                }
+                _ => false,
+            },
+            _ => false,
+        };
         // Builtin-backed subclasses (e.g. float/tuple/dict descendants) should
         // follow object.__reduce_ex__ constructor/state rules so protocol 0/1
         // and >=2 paths stay consistent with our VM-backed payload model.
-        if self.instance_backing_int(instance).is_some()
-            || self.instance_backing_float(instance).is_some()
-            || self.instance_backing_complex(instance).is_some()
-            || self.instance_backing_str(instance).is_some()
-            || self.instance_backing_tuple(instance).is_some()
-            || self.instance_backing_list(instance).is_some()
-            || self.instance_backing_dict(instance).is_some()
+        if !is_typing_alias_instance
+            && (self.instance_backing_int(instance).is_some()
+                || self.instance_backing_float(instance).is_some()
+                || self.instance_backing_complex(instance).is_some()
+                || self.instance_backing_str(instance).is_some()
+                || self.instance_backing_tuple(instance).is_some()
+                || self.instance_backing_list(instance).is_some()
+                || self.instance_backing_dict(instance).is_some())
         {
             return Ok(None);
         }

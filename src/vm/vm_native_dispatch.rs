@@ -9,7 +9,7 @@ use super::{
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
     class_name_for_instance, decode_text_bytes, dict_get_value, dict_remove_value, dict_set_value,
     dict_set_value_checked, encode_text_bytes, ensure_hashable, exception_is_named,
-    find_bytes_subslice, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
+    find_bytes_subslice, format_repr, format_value, is_truthy, memoryview_bounds, memoryview_decode_tolist,
     memoryview_format_for_view, memoryview_shape_and_strides_from_parts, normalize_codec_encoding,
     normalize_codec_errors, parse_memoryview_cast_format, parse_string_formatter,
     py_rsplit_whitespace, py_split_whitespace, py_splitlines, re_pattern_from_compiled_module,
@@ -7729,9 +7729,6 @@ impl Vm {
         {
             return Ok(Value::Bool(false));
         }
-        if matches!(default_value, Value::None) {
-            return Ok(Value::Bool(false));
-        }
         Ok(Value::Bool(true))
     }
 
@@ -7958,6 +7955,61 @@ impl Vm {
     }
 
     pub(super) fn to_iterator_value(&mut self, source: Value) -> Result<Value, RuntimeError> {
+        let is_typing_marker_instance = |instance: &ObjRef| -> bool {
+            let instance_kind = instance.kind();
+            let Object::Instance(instance_data) = &*instance_kind else {
+                return false;
+            };
+            let class_kind = instance_data.class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return false;
+            };
+            let class_name = class_data.name.as_str();
+            if matches!(
+                class_name,
+                "GenericAlias"
+                    | "_GenericAlias"
+                    | "UnionType"
+                    | "TypeVar"
+                    | "TypeVarTuple"
+                    | "ParamSpec"
+                    | "TypeAliasType"
+                    | "ForwardRef"
+            ) {
+                return true;
+            }
+            matches!(
+                class_data.attrs.get("__module__"),
+                Some(Value::Str(module_name))
+                    if matches!(module_name.as_str(), "typing" | "_typing" | "types")
+            ) && (class_name.contains("GenericAlias")
+                || class_name.contains("SpecialForm")
+                || class_name.contains("SpecialGenericAlias")
+                || class_name.contains("LiteralGenericAlias")
+                || matches!(
+                    class_name,
+                    "Union"
+                        | "NewType"
+                        | "_SpecialForm"
+                        | "_TypedCacheSpecialForm"
+                        | "_AnyMeta"
+                        | "_TupleType"
+                        | "_TypingEllipsis"
+                        | "_CallableType"
+                        | "_CallableGenericAlias"
+                        | "_AnnotatedAlias"
+                ))
+        };
+        let is_typing_marker_class = |class: &ObjRef| -> bool {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return false;
+            };
+            matches!(
+                class_data.attrs.get("__module__"),
+                Some(Value::Str(module_name)) if matches!(module_name.as_str(), "typing" | "_typing")
+            ) && matches!(class_data.name.as_str(), "Any" | "Union")
+        };
         match source {
             Value::Iterator(obj) => {
                 let range_parts = {
@@ -8017,7 +8069,7 @@ impl Vm {
                 if let Some(iterator) = self.typing_alias_unpack_iterator(&instance) {
                     return Ok(iterator);
                 }
-                let other = Value::Instance(instance);
+                let other = Value::Instance(instance.clone());
                 if self.typing_param_kind_name(&other) == Some("TypeVarTuple") {
                     // CPython TypeVarTuple iteration compatibility yields a single
                     // `typing.Unpack[Ts]` item so starred-unpack syntax (`*Ts`)
@@ -8025,6 +8077,9 @@ impl Vm {
                     let unpack = self.typing_helper_callable("Unpack")?;
                     let unpacked = self.getitem_value(unpack, other.clone())?;
                     return self.to_iterator_value(self.heap.alloc_tuple(vec![unpacked]));
+                }
+                if is_typing_marker_instance(&instance) {
+                    return Err(RuntimeError::type_error("object is not iterable"));
                 }
                 if let Some(proxy_iter_result) = self.cpython_proxy_get_iter(&other) {
                     match proxy_iter_result {
@@ -8201,6 +8256,11 @@ impl Vm {
                 }
             }
             other => {
+                if let Value::Class(class) = &other
+                    && is_typing_marker_class(class)
+                {
+                    return Err(RuntimeError::type_error("object is not iterable"));
+                }
                 if let Value::Class(class) = &other
                     && let Some(iterator) = self.class_fallback_iterator(class)
                 {
@@ -11099,13 +11159,40 @@ impl Vm {
                             .insert("__default__".to_string(), default_marker);
                     }
                     if matches!(builtin, BuiltinFunction::TypingTypeVar) {
+                        if typevar_constraints
+                            .as_ref()
+                            .is_some_and(|constraints| constraints.len() == 1)
+                        {
+                            return Err(RuntimeError::type_error(
+                                "A single constraint is not allowed",
+                            ));
+                        }
+                        let bound_value = kwargs.remove("bound");
+                        if typevar_constraints.is_some() && bound_value.is_some() {
+                            return Err(RuntimeError::type_error(
+                                "Constraints cannot be combined with bound=...",
+                            ));
+                        }
                         if let Some(constraints) = typevar_constraints {
                             instance_data.attrs.insert(
                                 "__constraints__".to_string(),
                                 self.heap.alloc_tuple(constraints),
                             );
                         }
-                        if let Some(bound) = kwargs.remove("bound") {
+                        if let Some(bound) = bound_value {
+                            let bound_is_valid = match &bound {
+                                Value::Builtin(_) | Value::Class(_) | Value::ExceptionType(_) => {
+                                    true
+                                }
+                                Value::Instance(_) => self.union_args_from_value(&bound).is_some(),
+                                _ => false,
+                            };
+                            if !bound_is_valid {
+                                return Err(RuntimeError::type_error(format!(
+                                    "Bound must be a type. Got {}.",
+                                    format_repr(&bound)
+                                )));
+                            }
                             instance_data.attrs.insert("__bound__".to_string(), bound);
                         }
                         let mut pop_bool_kw = |name: &str| -> Result<bool, RuntimeError> {

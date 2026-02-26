@@ -209,6 +209,26 @@ impl Vm {
         None
     }
 
+    fn slot_member_descriptor_value(&mut self, owner_class: &ObjRef, slot_name: &str) -> Value {
+        let descriptor_class = self
+            .types_module_or_private_class("MemberDescriptorType")
+            .unwrap_or_else(|| self.alloc_synthetic_class("member_descriptor"));
+        let descriptor = self
+            .heap
+            .alloc_instance(InstanceObject::new(descriptor_class));
+        if let Value::Instance(descriptor_obj) = &descriptor
+            && let Object::Instance(descriptor_data) = &mut *descriptor_obj.kind_mut()
+        {
+            descriptor_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str(slot_name.to_string()));
+            descriptor_data
+                .attrs
+                .insert("__objclass__".to_string(), Value::Class(owner_class.clone()));
+        }
+        descriptor
+    }
+
     pub(super) fn builtin_type_name(&self, builtin: BuiltinFunction) -> &'static str {
         match builtin {
             BuiltinFunction::Type => "type",
@@ -639,6 +659,12 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::Iter),
             ));
         }
+        if matches!(builtin, BuiltinFunction::List | BuiltinFunction::Tuple) {
+            entries.push((
+                Value::Str("__reversed__".to_string()),
+                Value::Builtin(BuiltinFunction::Reversed),
+            ));
+        }
         if builtin == BuiltinFunction::Str {
             let startswith = match self
                 .heap
@@ -890,6 +916,19 @@ impl Vm {
             | BuiltinFunction::CodecsIncrementalDecoderReset
             | BuiltinFunction::CodecsIncrementalDecoderGetState
             | BuiltinFunction::CodecsIncrementalDecoderSetState => "codecs",
+            BuiltinFunction::TypingIdFunc => "_typing",
+            BuiltinFunction::TypingTypeVar
+            | BuiltinFunction::TypingParamSpec
+            | BuiltinFunction::TypingTypeVarTuple
+            | BuiltinFunction::TypingTypeAliasType
+            | BuiltinFunction::TypingNoDefaultNew
+            | BuiltinFunction::TypingNoDefaultRepr
+            | BuiltinFunction::TypingNoDefaultReduce
+            | BuiltinFunction::TypingTypeParamSubst
+            | BuiltinFunction::TypingTypeParamPrepareSubst
+            | BuiltinFunction::TypingTypeParamHasDefault
+            | BuiltinFunction::TypingGenericClassGetItem
+            | BuiltinFunction::TypingGenericInitSubclass => "typing",
             _ => "builtins",
         }
         .to_string();
@@ -1801,6 +1840,11 @@ impl Vm {
         {
             return Some(Value::Builtin(BuiltinFunction::ObjectReduceEx));
         }
+        if (self.class_has_builtin_list_base(class) || self.class_has_builtin_tuple_base(class))
+            && attr_name == "__reversed__"
+        {
+            return Some(Value::Builtin(BuiltinFunction::Reversed));
+        }
         if self.class_has_builtin_tuple_base(class) && attr_name == "count" {
             let receiver = match self
                 .heap
@@ -1891,6 +1935,9 @@ impl Vm {
         if attr_name == "__iter__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, list));
         }
+        if attr_name == "__reversed__" {
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Reversed, list));
+        }
         let kind = match attr_name {
             "__init__" => NativeMethodKind::ListInit,
             "__eq__" => NativeMethodKind::ListEq,
@@ -1932,6 +1979,9 @@ impl Vm {
         }
         if attr_name == "__iter__" {
             return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Iter, tuple));
+        }
+        if attr_name == "__reversed__" {
+            return Ok(self.alloc_builtin_bound_method(BuiltinFunction::Reversed, tuple));
         }
         let kind = match attr_name {
             "__eq__" => NativeMethodKind::TupleEq,
@@ -5496,7 +5546,7 @@ impl Vm {
             };
             Value::Int(itemsize)
         } else if attr_name == "__dict__" {
-            let (mut entries, is_user_class) = {
+            let (mut entries, is_user_class, slot_names) = {
                 let class_kind = class.kind();
                 let Object::Class(class_data) = &*class_kind else {
                     return Err(RuntimeError::attribute_error(
@@ -5526,7 +5576,8 @@ impl Vm {
                     class_data.attrs.get("__pyrs_user_class__"),
                     Some(Value::Bool(true))
                 );
-                (entries, is_user_class)
+                let slot_names = class_data.slots.clone().unwrap_or_default();
+                (entries, is_user_class, slot_names)
             };
             let has_mutable_builtin_none_hash_base = self.class_has_builtin_list_base(class)
                 || self.class_has_builtin_dict_base(class)
@@ -5540,6 +5591,21 @@ impl Vm {
                     .any(|(name, _)| matches!(name, Value::Str(key) if key == "__hash__"))
             {
                 entries.push((Value::Str("__hash__".to_string()), Value::None));
+            }
+            for slot_name in slot_names {
+                if matches!(slot_name.as_str(), "__dict__" | "__weakref__") {
+                    continue;
+                }
+                if entries
+                    .iter()
+                    .any(|(name, _)| matches!(name, Value::Str(key) if key == &slot_name))
+                {
+                    continue;
+                }
+                entries.push((
+                    Value::Str(slot_name.clone()),
+                    self.slot_member_descriptor_value(class, &slot_name),
+                ));
             }
             // Protocol subclass checks in typing.py rely on base.__dict__ lookups.
             // Surface slot-backed builtin methods here so runtime-checkable protocols
@@ -6757,15 +6823,21 @@ impl Vm {
             }
         }
 
+        let suppress_class_metadata = matches!(
+            attr_name,
+            "__name__" | "__qualname__" | "__base__" | "__bases__" | "__mro__" | "__flags__"
+        );
         let mut class_attr_owner: Option<ObjRef> = None;
-        let mut class_attr = class_attr_walk(&class_ref)
-            .into_iter()
-            .find_map(|candidate| {
+        let mut class_attr = if suppress_class_metadata {
+            None
+        } else {
+            class_attr_walk(&class_ref).into_iter().find_map(|candidate| {
                 class_attr_lookup_direct(&candidate, attr_name).inspect(|_value| {
                     class_attr_owner = Some(candidate);
                 })
-            });
-        if class_attr.is_none() {
+            })
+        };
+        if class_attr.is_none() && !suppress_class_metadata {
             for candidate in class_attr_walk(&class_ref) {
                 let is_proxy_class = matches!(
                     &*candidate.kind(),
@@ -6883,9 +6955,6 @@ impl Vm {
         let reduce_attr = reduce_ex_attr || attr_name == "__reduce__";
         let is_type_parameter_instance =
             self.is_type_parameter_value(&Value::Instance(instance.clone()));
-        let is_generic_alias_instance = self
-            .generic_alias_parts_from_value(&Value::Instance(instance.clone()))
-            .is_some();
         let is_types_generic_alias_instance =
             self.is_types_generic_alias_value(&Value::Instance(instance.clone()));
         if is_type_parameter_instance {
@@ -6945,7 +7014,7 @@ impl Vm {
                 instance.clone(),
             )));
         }
-        if reduce_ex_attr && is_generic_alias_instance {
+        if reduce_ex_attr && is_types_generic_alias_instance {
             return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
                 NativeMethodKind::GenericAliasReduceEx,
                 instance.clone(),

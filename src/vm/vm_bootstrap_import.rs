@@ -4094,7 +4094,7 @@ impl Vm {
             .alloc_class(ClassObject::new("mappingproxy".to_string(), Vec::new()));
         let union_type_class = self
             .heap
-            .alloc_class(ClassObject::new("UnionType".to_string(), Vec::new()));
+            .alloc_class(ClassObject::new("Union".to_string(), Vec::new()));
         if let Value::Class(class_obj) = &simple_namespace_class
             && let Object::Class(class_data) = &mut *class_obj.kind_mut()
         {
@@ -4212,13 +4212,13 @@ impl Vm {
         {
             class_data
                 .attrs
-                .insert("__module__".to_string(), Value::Str("types".to_string()));
+                .insert("__module__".to_string(), Value::Str("typing".to_string()));
             class_data
                 .attrs
-                .insert("__name__".to_string(), Value::Str("UnionType".to_string()));
+                .insert("__name__".to_string(), Value::Str("Union".to_string()));
             class_data.attrs.insert(
                 "__qualname__".to_string(),
-                Value::Str("UnionType".to_string()),
+                Value::Str("Union".to_string()),
             );
             class_data.attrs.insert(
                 "__pyrs_disallow_instantiation__".to_string(),
@@ -4391,7 +4391,7 @@ impl Vm {
                 ("GenericAlias", Value::Class(generic_alias_class.clone())),
                 ("MappingProxyType", mappingproxy_type_class.clone()),
                 ("__pyrs_mappingproxy_type__", mappingproxy_type_class),
-                ("UnionType", union_type_class),
+                ("UnionType", union_type_class.clone()),
                 ("MemberDescriptorType", member_descriptor_type_class),
                 (
                     "CellType",
@@ -4718,7 +4718,7 @@ impl Vm {
                 Value::Module(init_subclass_descriptor),
             );
         }
-        let typing_union_class = self.alloc_bootstrap_class_value("Union", "typing");
+        let typing_union_class = union_type_class.clone();
         let typing_nodefault = {
             let nodefault_type = self.alloc_bootstrap_class_value("NoDefaultType", "builtins");
             if let Value::Class(nodefault_type_class) = &nodefault_type

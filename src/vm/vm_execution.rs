@@ -122,6 +122,75 @@ impl Vm {
         }
     }
 
+    pub(super) fn class_assignment_is_global(&self, frame: &Frame, class_name: &str) -> bool {
+        for instr in frame
+            .code
+            .instructions
+            .iter()
+            .skip(frame.last_ip.saturating_add(1))
+        {
+            match instr.opcode {
+                Opcode::StoreGlobal => {
+                    let Some(name_idx) = instr.arg.map(|idx| idx as usize) else {
+                        continue;
+                    };
+                    if frame
+                        .code
+                        .names
+                        .get(name_idx)
+                        .is_some_and(|name| name == class_name)
+                    {
+                        return true;
+                    }
+                }
+                Opcode::StoreName => {
+                    let Some(name_idx) = instr.arg.map(|idx| idx as usize) else {
+                        continue;
+                    };
+                    if frame
+                        .code
+                        .names
+                        .get(name_idx)
+                        .is_some_and(|name| name == class_name)
+                    {
+                        return false;
+                    }
+                }
+                Opcode::StoreFast => {
+                    let Some(name_idx) = instr.arg.map(|idx| idx as usize) else {
+                        continue;
+                    };
+                    if frame
+                        .code
+                        .names
+                        .get(name_idx)
+                        .is_some_and(|name| name == class_name)
+                    {
+                        return false;
+                    }
+                }
+                Opcode::StoreDeref => {
+                    let Some(name_idx) = instr.arg.map(|idx| idx as usize) else {
+                        continue;
+                    };
+                    let maybe_name = if name_idx < frame.code.cellvars.len() {
+                        frame.code.cellvars.get(name_idx)
+                    } else {
+                        frame
+                            .code
+                            .freevars
+                            .get(name_idx.saturating_sub(frame.code.cellvars.len()))
+                    };
+                    if maybe_name.is_some_and(|name| name == class_name) {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     #[inline]
     fn nearest_active_exception(&self) -> Option<(Value, Option<usize>)> {
         for frame in self.frames.iter().rev() {
@@ -4984,23 +5053,10 @@ impl Vm {
                     );
                 }
 
-                let class_declared_global = self.frames.last().is_some_and(|frame| {
-                    let next_ip = frame.last_ip.saturating_add(1);
-                    let Some(next_instr) = frame.code.instructions.get(next_ip) else {
-                        return false;
-                    };
-                    if next_instr.opcode != Opcode::StoreGlobal {
-                        return false;
-                    }
-                    let Some(name_idx) = next_instr.arg.map(|idx| idx as usize) else {
-                        return false;
-                    };
-                    frame
-                        .code
-                        .names
-                        .get(name_idx)
-                        .is_some_and(|name| name == &class_name)
-                });
+                let class_declared_global = self
+                    .frames
+                    .last()
+                    .is_some_and(|frame| self.class_assignment_is_global(frame, &class_name));
 
                 let class_qualname = self
                     .frames
@@ -9918,6 +9974,7 @@ impl Vm {
         } else {
             bases.clone()
         };
+        self.ensure_unique_base_classes(&default_bases)?;
 
         let resolved_metaclass =
             self.resolve_class_metaclass(&default_bases, metaclass.as_ref())?;
@@ -10146,6 +10203,26 @@ impl Vm {
         metaclass: Option<ObjRef>,
         namespace: Option<&Value>,
     ) -> Result<Value, RuntimeError> {
+        self.ensure_unique_base_classes(&bases)?;
+        for base in &bases {
+            let Object::Class(class_data) = &*base.kind() else {
+                continue;
+            };
+            if !matches!(
+                class_data.attrs.get("__pyrs_disallow_subclassing__"),
+                Some(Value::Bool(true))
+            ) {
+                continue;
+            }
+            let module_name = match class_data.attrs.get("__module__") {
+                Some(Value::Str(module_name)) => module_name.as_str(),
+                _ => "builtins",
+            };
+            return Err(RuntimeError::type_error(format!(
+                "type '{}.{}' is not an acceptable base type",
+                module_name, class_data.name
+            )));
+        }
         let mut attrs = attrs;
         let class_cell = attrs.remove("__classcell__");
         let module_name = self
@@ -13765,6 +13842,12 @@ impl Vm {
     }
 
     pub(super) fn load_dunder_class_attr(&self, value: &Value) -> Result<Value, RuntimeError> {
+        if let Value::Module(module) = value
+            && let Object::Module(module_data) = &*module.kind()
+            && let Some(Value::Class(class)) = module_data.globals.get("__class__")
+        {
+            return Ok(Value::Class(class.clone()));
+        }
         if let Some(class) = self.class_of_value(value) {
             return Ok(Value::Class(class));
         }
