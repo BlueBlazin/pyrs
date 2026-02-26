@@ -3233,6 +3233,9 @@ pub enum BuiltinFunction {
     TypingParamSpec,
     TypingTypeVarTuple,
     TypingTypeAliasType,
+    TypingNoDefaultNew,
+    TypingNoDefaultRepr,
+    TypingNoDefaultReduce,
     TypingTypeParamSubst,
     TypingTypeParamPrepareSubst,
     TypingTypeParamHasDefault,
@@ -5365,6 +5368,16 @@ impl BuiltinFunction {
                 } else {
                     Ok(args[0].clone())
                 }
+            }
+            BuiltinFunction::TypingNoDefaultRepr => Ok(Value::Str("typing.NoDefault".to_string())),
+            BuiltinFunction::TypingNoDefaultReduce => Ok(Value::Str("NoDefault".to_string())),
+            BuiltinFunction::TypingNoDefaultNew => {
+                if args.len() != 1 {
+                    return Err(RuntimeError::type_error("NoDefaultType takes no arguments"));
+                }
+                Err(RuntimeError::new(
+                    "NoDefaultType singleton construction requires VM dispatch",
+                ))
             }
             BuiltinFunction::TypingTypeVar
             | BuiltinFunction::TypingParamSpec
@@ -8916,6 +8929,9 @@ fn builtin_function_display_name(builtin: BuiltinFunction) -> String {
         BuiltinFunction::CoroutineType => "coroutine".to_string(),
         BuiltinFunction::AsyncGeneratorType => "async_generator".to_string(),
         BuiltinFunction::TypeAnnotationsGet => "__annotations__.__get__".to_string(),
+        BuiltinFunction::TypingNoDefaultNew => "__new__".to_string(),
+        BuiltinFunction::TypingNoDefaultRepr => "__repr__".to_string(),
+        BuiltinFunction::TypingNoDefaultReduce => "__reduce__".to_string(),
         _ => format!("{builtin:?}").to_ascii_lowercase(),
     }
 }

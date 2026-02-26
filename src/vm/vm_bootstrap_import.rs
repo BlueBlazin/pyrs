@@ -4719,7 +4719,44 @@ impl Vm {
             );
         }
         let typing_union_class = self.alloc_bootstrap_class_value("Union", "typing");
-        let typing_nodefault_class = self.alloc_bootstrap_class_value("NoDefault", "_typing");
+        let typing_nodefault = {
+            let nodefault_type = self.alloc_bootstrap_class_value("NoDefaultType", "builtins");
+            if let Value::Class(nodefault_type_class) = &nodefault_type
+                && let Object::Class(class_data) = &mut *nodefault_type_class.kind_mut()
+            {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("typing".to_string()));
+                class_data.attrs.insert(
+                    "__doc__".to_string(),
+                    Value::Str("The type of the NoDefault singleton.".to_string()),
+                );
+                class_data.attrs.insert(
+                    "__new__".to_string(),
+                    Value::Builtin(BuiltinFunction::TypingNoDefaultNew),
+                );
+                class_data.attrs.insert(
+                    "__repr__".to_string(),
+                    Value::Builtin(BuiltinFunction::TypingNoDefaultRepr),
+                );
+                class_data.attrs.insert(
+                    "__reduce__".to_string(),
+                    Value::Builtin(BuiltinFunction::TypingNoDefaultReduce),
+                );
+                class_data
+                    .attrs
+                    .insert("__slots__".to_string(), self.heap.alloc_tuple(Vec::new()));
+                class_data.slots = Some(Vec::new());
+                // Match CPython static-type behavior: class attrs are immutable.
+                class_data.attrs.insert("__flags__".to_string(), Value::Int(0));
+            }
+            match nodefault_type {
+                Value::Class(nodefault_type_class) => {
+                    self.heap.alloc_instance(InstanceObject::new(nodefault_type_class))
+                }
+                other => other,
+            }
+        };
         self.install_builtin_module(
             "_typing",
             &[
@@ -4734,7 +4771,7 @@ impl Vm {
                 ("ParamSpecKwargs", typing_paramspec_kwargs_class),
                 ("Generic", typing_generic_class),
                 ("Union", typing_union_class),
-                ("NoDefault", typing_nodefault_class),
+                ("NoDefault", typing_nodefault),
             ],
         );
         self.install_builtin_module(

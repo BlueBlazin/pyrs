@@ -1545,6 +1545,23 @@ fn typing_namedtuple_set_name_lookup_propagates_custom_exception() {
 }
 
 #[test]
+fn typing_nodefault_singleton_semantics_match_cpython() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nimport pickle\nfrom typing import NoDefault\nok = True\nok = ok and (repr(NoDefault) == 'typing.NoDefault')\nok = ok and (NoDefault.__class__ is type(NoDefault))\nok = ok and (type(NoDefault)() is NoDefault)\nctor_kind = ''\ntry:\n    type(NoDefault)(1)\nexcept Exception as exc:\n    ctor_kind = type(exc).__name__\nok = ok and (ctor_kind == 'TypeError')\ncall_kind = ''\ntry:\n    NoDefault()\nexcept Exception as exc:\n    call_kind = type(exc).__name__\nok = ok and (call_kind == 'TypeError')\nassign_kind = ''\nlookup_kind = ''\ntry:\n    NoDefault.foo = 3\nexcept Exception as exc:\n    assign_kind = type(exc).__name__\ntry:\n    NoDefault.foo\nexcept Exception as exc:\n    lookup_kind = type(exc).__name__\nok = ok and (assign_kind == 'AttributeError' and lookup_kind == 'AttributeError')\nroundtrip = pickle.loads(pickle.dumps(NoDefault, pickle.HIGHEST_PROTOCOL))\nok = ok and (roundtrip is NoDefault)\n"
+    );
+    run_with_large_stack("vm-typing-nodefault-singleton", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
 fn python_function_too_many_positional_arguments_has_cpython_message_shape() {
     let source = "msg = ''\ntry:\n    def f(a, b=1):\n        pass\n    f(1, 2, 3)\nexcept TypeError as exc:\n    msg = str(exc)\nok = (msg == 'f() takes from 1 to 2 positional arguments but 3 were given')\n";
     let module = parser::parse_module(source).expect("parse should succeed");

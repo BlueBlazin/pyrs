@@ -7325,6 +7325,40 @@ impl Vm {
         None
     }
 
+    fn builtin_typing_nodefault_new(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::type_error("NoDefaultType takes no arguments"));
+        }
+        self.typing_no_default_marker()
+            .ok_or_else(|| RuntimeError::new("NoDefault singleton is unavailable"))
+    }
+
+    fn builtin_typing_nodefault_repr(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("NoDefaultType.__repr__() takes no arguments"));
+        }
+        Ok(Value::Str("typing.NoDefault".to_string()))
+    }
+
+    fn builtin_typing_nodefault_reduce(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("NoDefaultType.__reduce__() takes no arguments"));
+        }
+        Ok(Value::Str("NoDefault".to_string()))
+    }
+
     fn typing_param_kind_name(&self, value: &Value) -> Option<&'static str> {
         let Value::Instance(instance) = value else {
             return None;
@@ -11137,6 +11171,13 @@ impl Vm {
                     )));
                 }
                 Ok(marker)
+            }
+            BuiltinFunction::TypingNoDefaultNew => self.builtin_typing_nodefault_new(args, kwargs),
+            BuiltinFunction::TypingNoDefaultRepr => {
+                self.builtin_typing_nodefault_repr(args, kwargs)
+            }
+            BuiltinFunction::TypingNoDefaultReduce => {
+                self.builtin_typing_nodefault_reduce(args, kwargs)
             }
             BuiltinFunction::TypingTypeParamSubst => {
                 self.builtin_typing_typeparam_subst(args, kwargs)

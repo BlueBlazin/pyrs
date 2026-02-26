@@ -7804,7 +7804,7 @@ impl Vm {
             }
             let allowed = allowed_slots.iter().any(|name| name == attr_name);
             if !allowed {
-                return Err(RuntimeError::new(format!(
+                return Err(RuntimeError::attribute_error(format!(
                     "'{}' object has no attribute '{}'",
                     class_name_for_instance(instance).unwrap_or_else(|| "object".to_string()),
                     attr_name
