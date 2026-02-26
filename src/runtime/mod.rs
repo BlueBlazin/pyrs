@@ -3235,6 +3235,7 @@ pub enum BuiltinFunction {
     TypingTypeParamSubst,
     TypingTypeParamPrepareSubst,
     TypingTypeParamHasDefault,
+    TypingGenericClassGetItem,
     TypingGenericInitSubclass,
     InspectIsFunction,
     InspectIsMethod,
@@ -5410,6 +5411,7 @@ impl BuiltinFunction {
             BuiltinFunction::TypingTypeParamSubst
             | BuiltinFunction::TypingTypeParamPrepareSubst
             | BuiltinFunction::TypingTypeParamHasDefault
+            | BuiltinFunction::TypingGenericClassGetItem
             | BuiltinFunction::TypingGenericInitSubclass => {
                 Err(RuntimeError::new("typing helper is VM-only"))
             }

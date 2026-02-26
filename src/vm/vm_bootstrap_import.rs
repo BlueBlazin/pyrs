@@ -4695,6 +4695,10 @@ impl Vm {
             && let Object::Class(class_data) = &mut *class.kind_mut()
         {
             class_data.attrs.insert(
+                "__class_getitem__".to_string(),
+                Value::Builtin(BuiltinFunction::TypingGenericClassGetItem),
+            );
+            class_data.attrs.insert(
                 "__init_subclass__".to_string(),
                 Value::Builtin(BuiltinFunction::TypingGenericInitSubclass),
             );

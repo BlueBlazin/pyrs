@@ -7475,6 +7475,28 @@ impl Vm {
         Ok(Value::Bool(true))
     }
 
+    fn builtin_typing_generic_class_getitem(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let helper = match self.typing_helper_callable("_generic_class_getitem") {
+            Ok(value) => value,
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+                return Err(RuntimeError::type_error(
+                    "typing._generic_class_getitem is unavailable",
+                ));
+            }
+            Err(err) => return Err(err),
+        };
+        match self.call_internal(helper, args, kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("typing helper call failed"))
+            }
+        }
+    }
+
     fn builtin_typing_generic_init_subclass(
         &mut self,
         args: Vec<Value>,
@@ -10814,6 +10836,9 @@ impl Vm {
             }
             BuiltinFunction::TypingTypeParamHasDefault => {
                 self.builtin_typing_typeparam_has_default(args, kwargs)
+            }
+            BuiltinFunction::TypingGenericClassGetItem => {
+                self.builtin_typing_generic_class_getitem(args, kwargs)
             }
             BuiltinFunction::TypingGenericInitSubclass => {
                 self.builtin_typing_generic_init_subclass(args, kwargs)
