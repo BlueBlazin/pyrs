@@ -639,6 +639,40 @@ impl Vm {
                 Value::Builtin(BuiltinFunction::Iter),
             ));
         }
+        if builtin == BuiltinFunction::Str {
+            let startswith = match self
+                .heap
+                .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *startswith.kind_mut() {
+                module_data
+                    .globals
+                    .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+            }
+            entries.push((
+                Value::Str("startswith".to_string()),
+                self.alloc_native_bound_method(NativeMethodKind::StrStartsWith, startswith),
+            ));
+            let endswith = match self
+                .heap
+                .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *endswith.kind_mut() {
+                module_data
+                    .globals
+                    .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+            }
+            entries.push((
+                Value::Str("endswith".to_string()),
+                self.alloc_native_bound_method(NativeMethodKind::StrEndsWith, endswith),
+            ));
+        }
         if builtin == BuiltinFunction::Dict {
             entries.push((
                 Value::Str("fromkeys".to_string()),
@@ -1418,6 +1452,36 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(NativeMethodKind::StrIndex, receiver))
             }
+            "startswith" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrStartsWith, receiver))
+            }
+            "endswith" if builtin == BuiltinFunction::Str => {
+                let receiver = match self
+                    .heap
+                    .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+                {
+                    Value::Module(obj) => obj,
+                    _ => unreachable!(),
+                };
+                if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                    module_data
+                        .globals
+                        .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+                }
+                Ok(self.alloc_native_bound_method(NativeMethodKind::StrEndsWith, receiver))
+            }
             "translate" if builtin == BuiltinFunction::Str => {
                 let receiver = match self
                     .heap
@@ -1562,12 +1626,17 @@ impl Vm {
                 }
                 Ok(self.alloc_native_bound_method(kind, receiver))
             }
-            "__instancecheck__" if self.builtin_is_type_object(builtin) => Ok(self
-                .alloc_builtin_unbound_method(
-                    "__builtin_unbound_method__",
-                    Value::Builtin(builtin),
-                    BuiltinFunction::TypeInstanceCheck,
-                )),
+            "__instancecheck__" if self.builtin_is_type_object(builtin) => {
+                if builtin == BuiltinFunction::Type {
+                    Ok(Value::Builtin(BuiltinFunction::TypeInstanceCheck))
+                } else {
+                    Ok(self.alloc_builtin_unbound_method(
+                        "__builtin_unbound_method__",
+                        Value::Builtin(builtin),
+                        BuiltinFunction::TypeInstanceCheck,
+                    ))
+                }
+            }
             "__get__"
                 if matches!(
                     builtin,
@@ -1594,12 +1663,17 @@ impl Vm {
                 Ok(self
                     .alloc_native_bound_method(NativeMethodKind::FunctionDescriptorGet, receiver))
             }
-            "__subclasscheck__" if self.builtin_is_type_object(builtin) => Ok(self
-                .alloc_builtin_unbound_method(
-                    "__builtin_unbound_method__",
-                    Value::Builtin(builtin),
-                    BuiltinFunction::TypeSubclassCheck,
-                )),
+            "__subclasscheck__" if self.builtin_is_type_object(builtin) => {
+                if builtin == BuiltinFunction::Type {
+                    Ok(Value::Builtin(BuiltinFunction::TypeSubclassCheck))
+                } else {
+                    Ok(self.alloc_builtin_unbound_method(
+                        "__builtin_unbound_method__",
+                        Value::Builtin(builtin),
+                        BuiltinFunction::TypeSubclassCheck,
+                    ))
+                }
+            }
             "__prepare__" if self.builtin_is_type_object(builtin) => Ok(self
                 .alloc_builtin_unbound_method(
                     "__builtin_unbound_method__",
@@ -1762,6 +1836,28 @@ impl Vm {
                     .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
             }
             return Some(self.alloc_native_bound_method(NativeMethodKind::StrCount, receiver));
+        }
+        if self.class_has_builtin_str_base(class)
+            && matches!(attr_name, "startswith" | "endswith")
+        {
+            let receiver = match self
+                .heap
+                .alloc_module(ModuleObject::new("__str_unbound_method__".to_string()))
+            {
+                Value::Module(obj) => obj,
+                _ => unreachable!(),
+            };
+            if let Object::Module(module_data) = &mut *receiver.kind_mut() {
+                module_data
+                    .globals
+                    .insert("owner".to_string(), Value::Builtin(BuiltinFunction::Str));
+            }
+            let kind = if attr_name == "startswith" {
+                NativeMethodKind::StrStartsWith
+            } else {
+                NativeMethodKind::StrEndsWith
+            };
+            return Some(self.alloc_native_bound_method(kind, receiver));
         }
         None
     }
@@ -5388,31 +5484,38 @@ impl Vm {
             };
             Value::Int(itemsize)
         } else if attr_name == "__dict__" {
-            let class_kind = class.kind();
-            let Object::Class(class_data) = &*class_kind else {
-                return Err(RuntimeError::attribute_error(
-                    "attribute access unsupported type",
-                ));
+            let (mut entries, is_user_class) = {
+                let class_kind = class.kind();
+                let Object::Class(class_data) = &*class_kind else {
+                    return Err(RuntimeError::attribute_error(
+                        "attribute access unsupported type",
+                    ));
+                };
+                let entries = class_data
+                    .attrs
+                    .iter()
+                    .filter(|(name, _)| {
+                        !matches!(
+                            name.as_str(),
+                            "__name__"
+                                | "__qualname__"
+                                | "__bases__"
+                                | "__mro__"
+                                | "__base__"
+                                | "__flags__"
+                                | "__classdictcell__"
+                                | "__classcell__"
+                                | "__pyrs_user_class__"
+                        )
+                    })
+                    .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                    .collect::<Vec<_>>();
+                let is_user_class = matches!(
+                    class_data.attrs.get("__pyrs_user_class__"),
+                    Some(Value::Bool(true))
+                );
+                (entries, is_user_class)
             };
-            let mut entries = class_data
-                .attrs
-                .iter()
-                .filter(|(name, _)| {
-                    !matches!(
-                        name.as_str(),
-                        "__name__"
-                            | "__qualname__"
-                            | "__bases__"
-                            | "__mro__"
-                            | "__base__"
-                            | "__flags__"
-                            | "__classdictcell__"
-                            | "__classcell__"
-                            | "__pyrs_user_class__"
-                    )
-                })
-                .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
-                .collect::<Vec<_>>();
             let has_mutable_builtin_none_hash_base = self.class_has_builtin_list_base(class)
                 || self.class_has_builtin_dict_base(class)
                 || self.class_has_builtin_defaultdict_base(class)
@@ -5426,10 +5529,39 @@ impl Vm {
             {
                 entries.push((Value::Str("__hash__".to_string()), Value::None));
             }
-            let is_user_class = matches!(
-                class_data.attrs.get("__pyrs_user_class__"),
-                Some(Value::Bool(true))
-            );
+            // Protocol subclass checks in typing.py rely on base.__dict__ lookups.
+            // Surface slot-backed builtin methods here so runtime-checkable protocols
+            // can observe CPython-shaped method presence.
+            for method_name in [
+                "__iter__",
+                "__next__",
+                "__await__",
+                "send",
+                "throw",
+                "close",
+                "__aiter__",
+                "__anext__",
+                "asend",
+                "athrow",
+                "aclose",
+                "__len__",
+                "__contains__",
+                "__reversed__",
+                "__call__",
+                "read",
+                "write",
+                "startswith",
+            ] {
+                if entries
+                    .iter()
+                    .any(|(name, _)| matches!(name, Value::Str(key) if key == method_name))
+                {
+                    continue;
+                }
+                if let Some(value) = self.load_attr_class_builtin_base_method(class, method_name) {
+                    entries.push((Value::Str(method_name.to_string()), value));
+                }
+            }
             if !is_user_class
                 && !entries
                     .iter()

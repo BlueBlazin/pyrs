@@ -6359,16 +6359,84 @@ impl Vm {
                     }
                     ("TextIOBase", class)
                 },
-                (
-                    "Reader",
-                    self.heap
-                        .alloc_class(ClassObject::new("Reader".to_string(), Vec::new())),
-                ),
-                (
-                    "Writer",
-                    self.heap
-                        .alloc_class(ClassObject::new("Writer".to_string(), Vec::new())),
-                ),
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("Reader".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        class_data
+                            .attrs
+                            .insert("__slots__".to_string(), self.heap.alloc_tuple(Vec::new()));
+                        class_data.attrs.insert(
+                            "read".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileRead),
+                        );
+                        let class_getitem = if let Some(generic_alias_class) =
+                            self.types_module_class("GenericAlias")
+                        {
+                            let descriptor = match self
+                                .heap
+                                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+                            {
+                                Value::Module(module) => module,
+                                _ => unreachable!(),
+                            };
+                            if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
+                                module_data
+                                    .globals
+                                    .insert("__func__".to_string(), Value::Class(generic_alias_class));
+                            }
+                            Value::Module(descriptor)
+                        } else {
+                            Value::Builtin(BuiltinFunction::TypingGenericClassGetItem)
+                        };
+                        class_data
+                            .attrs
+                            .insert("__class_getitem__".to_string(), class_getitem);
+                    }
+                    ("Reader", class)
+                },
+                {
+                    let class = self
+                        .heap
+                        .alloc_class(ClassObject::new("Writer".to_string(), Vec::new()));
+                    if let Value::Class(class_ref) = &class
+                        && let Object::Class(class_data) = &mut *class_ref.kind_mut()
+                    {
+                        class_data
+                            .attrs
+                            .insert("__slots__".to_string(), self.heap.alloc_tuple(Vec::new()));
+                        class_data.attrs.insert(
+                            "write".to_string(),
+                            Value::Builtin(BuiltinFunction::IoFileWrite),
+                        );
+                        let class_getitem = if let Some(generic_alias_class) =
+                            self.types_module_class("GenericAlias")
+                        {
+                            let descriptor = match self
+                                .heap
+                                .alloc_module(ModuleObject::new("__classmethod__".to_string()))
+                            {
+                                Value::Module(module) => module,
+                                _ => unreachable!(),
+                            };
+                            if let Object::Module(module_data) = &mut *descriptor.kind_mut() {
+                                module_data
+                                    .globals
+                                    .insert("__func__".to_string(), Value::Class(generic_alias_class));
+                            }
+                            Value::Module(descriptor)
+                        } else {
+                            Value::Builtin(BuiltinFunction::TypingGenericClassGetItem)
+                        };
+                        class_data
+                            .attrs
+                            .insert("__class_getitem__".to_string(), class_getitem);
+                    }
+                    ("Writer", class)
+                },
                 {
                     let class = self.heap.alloc_class(ClassObject::new(
                         "IncrementalNewlineDecoder".to_string(),
