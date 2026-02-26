@@ -18,6 +18,7 @@ Build a production-grade Python interpreter in Rust with source + bytecode compa
 
 ## Reporting Discipline
 - End each progress update with the immediate next `3-6` concrete steps.
+- Create a git commit after each completed piece of work or subtask; do not let progress sit uncommitted for long stretches.
 
 ## Command Execution Hygiene
 - Prefer direct command execution from the existing working directory (no wrapper like `zsh -lc 'cd ... && ...'` unless direct execution fails).
