@@ -2945,10 +2945,49 @@ impl Vm {
                 };
                 Ok(resolved)
             }
-            _ => Err(RuntimeError::attribute_error(format!(
-                "function has no attribute '{}'",
-                attr_name
-            ))),
+            _ => {
+                let function_type_class = self
+                    .types_module_or_private_class("FunctionType")
+                    .unwrap_or_else(|| self.fallback_function_type_class());
+                if let Some(attr) = class_attr_lookup(&function_type_class, attr_name) {
+                    if let Some(bound) = self.bind_classmethod_attr(&function_type_class, &attr) {
+                        return Ok(bound);
+                    }
+                    if let Some(unwrapped) = self.unwrap_staticmethod_attr(&attr) {
+                        return Ok(unwrapped);
+                    }
+                    if let Value::Function(method_func) = attr.clone() {
+                        return Ok(self
+                            .heap
+                            .alloc_bound_method(BoundMethod::new(method_func, function_type_class)));
+                    }
+                    if let Value::Builtin(builtin) = attr.clone() {
+                        return Ok(self.alloc_builtin_bound_method(builtin, function_type_class));
+                    }
+                    let (getter, _setter, _deleter) = self.descriptor_hooks(&attr)?;
+                    if let Some(getter) = getter {
+                        return match self.call_internal_preserving_caller(
+                            getter,
+                            vec![
+                                Value::Function(func.clone()),
+                                Value::Class(function_type_class.clone()),
+                            ],
+                            HashMap::new(),
+                        )? {
+                            InternalCallOutcome::Value(value) => Ok(value),
+                            InternalCallOutcome::CallerExceptionHandled => Err(self
+                                .runtime_error_from_active_exception(
+                                    "function descriptor access failed",
+                                )),
+                        };
+                    }
+                    return Ok(attr);
+                }
+                Err(RuntimeError::attribute_error(format!(
+                    "function has no attribute '{}'",
+                    attr_name
+                )))
+            }
         }
     }
 

@@ -1466,6 +1466,34 @@ fn runtime_user_generic_class_subscript_uses_typing_generic_alias() {
 }
 
 #[test]
+fn typing_namedtuple_new_without_args_raises_typeerror() {
+    let Some(lib_path) = cpython_lib_path() else {
+        return;
+    };
+    let source = format!(
+        "import sys\nsys.path = [{lib_path:?}]\nfrom typing import NamedTuple\nkind = ''\ntry:\n    NamedTuple.__new__()\nexcept Exception as exc:\n    kind = type(exc).__name__\nok = (kind == 'TypeError')\n"
+    );
+    run_with_large_stack("vm-typing-namedtuple-new", move || {
+        let module = parser::parse_module(&source).expect("parse should succeed");
+        let code = compiler::compile_module(&module).expect("compile should succeed");
+        let mut vm = Vm::new();
+        vm.execute(&code).expect("execution should succeed");
+        assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+    });
+}
+
+#[test]
+fn python_function_too_many_positional_arguments_has_cpython_message_shape() {
+    let source = "msg = ''\ntry:\n    def f(a, b=1):\n        pass\n    f(1, 2, 3)\nexcept TypeError as exc:\n    msg = str(exc)\nok = (msg == 'f() takes from 1 to 2 positional arguments but 3 were given')\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn runtime_subscript_supports_starred_type_arg_unpacking() {
     let source = "class C:\n    def __getitem__(self, item):\n        return item\nc = C()\nresult = c[float, *tuple[int, ...]]\nmarker = result[1]\nok = (isinstance(result, tuple) and len(result) == 2 and result[0] is float and type(marker).__name__ == 'GenericAlias' and getattr(marker, '__origin__', None) is tuple and getattr(marker, '__args__', None) == (int, ...) and getattr(marker, '__unpacked__', False) is True and getattr(marker, '__typing_unpacked_tuple_args__', None) == (int, ...))\n";
     let module = parser::parse_module(source).expect("parse should succeed");

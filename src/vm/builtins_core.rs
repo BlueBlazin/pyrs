@@ -7150,6 +7150,10 @@ impl Vm {
         let member_descriptor_class = self.alloc_synthetic_class("member_descriptor");
         if let Object::Class(class_data) = &mut *class.kind_mut() {
             class_data.attrs.insert(
+                "__new__".to_string(),
+                Value::Builtin(BuiltinFunction::TypesFunctionType),
+            );
+            class_data.attrs.insert(
                 "__code__".to_string(),
                 self.heap
                     .alloc_instance(InstanceObject::new(getset_descriptor_class)),

@@ -9951,6 +9951,28 @@ fn format_missing_positional_arguments_error(function_name: &str, missing: &[Str
     }
 }
 
+fn format_too_many_positional_arguments_error(
+    function_name: &str,
+    min_expected: usize,
+    max_expected: usize,
+    given: usize,
+) -> String {
+    let given_verb = if given == 1 { "was" } else { "were" };
+    if min_expected == max_expected {
+        let arg_word = if max_expected == 1 {
+            "argument"
+        } else {
+            "arguments"
+        };
+        return format!(
+            "{function_name}() takes {max_expected} positional {arg_word} but {given} {given_verb} given"
+        );
+    }
+    format!(
+        "{function_name}() takes from {min_expected} to {max_expected} positional arguments but {given} {given_verb} given"
+    )
+}
+
 fn bind_arguments(
     func: &FunctionObject,
     heap: &Heap,
@@ -9983,7 +10005,28 @@ fn bind_arguments(
                     func.code.params
                 );
             }
-            return Err(RuntimeError::new("argument count mismatch"));
+            if positional.len() < total_positional {
+                let missing = (positional.len()..total_positional)
+                    .map(|idx| {
+                        if idx < posonly_len {
+                            func.code.posonly_params[idx].clone()
+                        } else {
+                            func.code.params[idx - posonly_len].clone()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                return Err(RuntimeError::type_error(
+                    format_missing_positional_arguments_error(&func.code.name, &missing),
+                ));
+            }
+            return Err(RuntimeError::type_error(
+                format_too_many_positional_arguments_error(
+                    &func.code.name,
+                    total_positional,
+                    total_positional,
+                    positional.len(),
+                ),
+            ));
         }
         if posonly_len == 0 {
             return Ok(BoundArguments {
@@ -10020,7 +10063,15 @@ fn bind_arguments(
                     total_positional
                 );
             }
-            return Err(RuntimeError::new("argument count mismatch"));
+            let min_positional = total_positional.saturating_sub(defaults_len);
+            return Err(RuntimeError::type_error(
+                format_too_many_positional_arguments_error(
+                    &func.code.name,
+                    min_positional,
+                    total_positional,
+                    positional.len(),
+                ),
+            ));
         }
         extra_positional = positional.split_off(total_positional);
     }
