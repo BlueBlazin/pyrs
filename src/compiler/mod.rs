@@ -3717,7 +3717,7 @@ impl Compiler {
             ExprKind::Constant(Constant::Bool(value)) => value.to_string(),
             ExprKind::Constant(Constant::Int(value)) => value.to_string(),
             ExprKind::Constant(Constant::Float(value)) => value.value().to_string(),
-            ExprKind::Constant(Constant::Str(value)) => format!("{value:?}"),
+            ExprKind::Constant(Constant::Str(value)) => annotation_string_literal_repr(value),
             ExprKind::Attribute { value, name } => {
                 format!("{}.{}", self.annotation_expr_to_string(value), name)
             }
@@ -6262,6 +6262,35 @@ fn annotation_binary_op_symbol(op: &BinaryOp) -> &'static str {
         BinaryOp::NotIn => "not in",
         BinaryOp::Is => "is",
         BinaryOp::IsNot => "is not",
+    }
+}
+
+fn annotation_string_literal_repr(value: &str) -> String {
+    let mut out = String::new();
+    out.push('\'');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\'' => out.push_str("\\'"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => annotation_append_python_char_escape(&mut out, c),
+            c => out.push(c),
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn annotation_append_python_char_escape(out: &mut String, ch: char) {
+    let code = ch as u32;
+    if code <= 0xFF {
+        out.push_str(&format!("\\x{code:02x}"));
+    } else if code <= 0xFFFF {
+        out.push_str(&format!("\\u{code:04x}"));
+    } else {
+        out.push_str(&format!("\\U{code:08x}"));
     }
 }
 

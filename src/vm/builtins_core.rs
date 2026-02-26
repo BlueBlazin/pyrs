@@ -9041,7 +9041,7 @@ impl Vm {
         // `object.__init__` is exposed as a plain builtin in this VM, so
         // super() calls can reach it without an implicit `self` bind.
         if !kwargs.is_empty() || args.is_empty() {
-            return Err(RuntimeError::new(
+            return Err(RuntimeError::type_error(
                 "object.__init__() takes exactly one argument",
             ));
         }
@@ -9074,7 +9074,7 @@ impl Vm {
                         kwargs.len()
                     );
                 }
-                return Err(RuntimeError::new(
+                return Err(RuntimeError::type_error(
                     "object.__init__() takes exactly one argument",
                 ));
             }

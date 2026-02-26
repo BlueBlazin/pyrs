@@ -3767,9 +3767,7 @@ impl Vm {
                         return self.class_from_base_value(origin);
                     }
                 }
-                Err(RuntimeError::type_error(
-                    "class base must be a class object",
-                ))
+                Err(RuntimeError::type_error("bases must be types"))
             }
             Value::ExceptionType(name) => Ok(self.alloc_synthetic_exception_class(&name)),
             Value::Builtin(BuiltinFunction::Type) => Ok(self
@@ -3882,9 +3880,7 @@ impl Vm {
                     );
                 }
                 let _ = other;
-                Err(RuntimeError::type_error(
-                    "class base must be a class object",
-                ))
+                Err(RuntimeError::type_error("bases must be types"))
             }
         }
     }
