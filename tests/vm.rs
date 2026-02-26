@@ -1500,6 +1500,17 @@ fn typing_namedtuple_non_generic_subscript_is_generic_alias() {
 }
 
 #[test]
+fn class_methods_with_super_or_class_ref_expose_classcell_to_metaclass() {
+    let source = "checks = []\nclass Meta(type):\n    def __new__(mcls, name, bases, ns):\n        checks.append(('__classcell__' in ns, type(ns.get('__classcell__')).__name__ if '__classcell__' in ns else None))\n        return super().__new__(mcls, name, bases, ns)\nclass ViaSuper(metaclass=Meta):\n    def method(self):\n        return super()\nclass ViaClassRef(metaclass=Meta):\n    def method(self):\n        return __class__\nok = (checks == [(True, 'cell'), (True, 'cell')])\n";
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    let value = vm.execute(&code).expect("execution should succeed");
+    assert_eq!(value, Value::None);
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn class_set_name_failure_note_matches_namedtuple_shape() {
     let Some(lib_path) = cpython_lib_path() else {
         return;

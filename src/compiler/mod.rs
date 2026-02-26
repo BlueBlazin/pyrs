@@ -187,10 +187,18 @@ fn analyze_scope(
     locals.retain(|name| !globals.contains(name) && !nonlocals.contains(name));
 
     let mut available_nonlocal = enclosing.clone();
-    if matches!(scope_type, ScopeType::Function | ScopeType::Lambda) {
-        for name in &locals {
-            available_nonlocal.insert(name.clone());
+    match scope_type {
+        ScopeType::Function | ScopeType::Lambda => {
+            for name in &locals {
+                available_nonlocal.insert(name.clone());
+            }
         }
+        ScopeType::Class => {
+            // CPython injects a synthetic __class__ cell when method bodies
+            // reference __class__ or use zero-arg super().
+            available_nonlocal.insert("__class__".to_string());
+        }
+        ScopeType::Module => {}
     }
 
     let mut uses = HashSet::new();
@@ -222,9 +230,18 @@ fn analyze_scope(
                 freevar_set.insert(name);
             }
         }
-        ScopeType::Module | ScopeType::Class => {
+        ScopeType::Module => {
             for name in child_free {
                 freevar_set.insert(name);
+            }
+        }
+        ScopeType::Class => {
+            for name in child_free {
+                if name == "__class__" {
+                    cellvar_set.insert(name);
+                } else {
+                    freevar_set.insert(name);
+                }
             }
         }
     }
@@ -2158,6 +2175,12 @@ fn collect_uses_expr(
             collect_uses_expr(operand, uses, child_free, enclosing)?;
         }
         ExprKind::Call { func, args } => {
+            if let ExprKind::Name(name) = &func.node
+                && name == "super"
+                && args.is_empty()
+            {
+                uses.insert("__class__".to_string());
+            }
             collect_uses_expr(func, uses, child_free, enclosing)?;
             for arg in args {
                 match arg {
@@ -4391,6 +4414,12 @@ impl Compiler {
         }
         for stmt in body {
             compiler.compile_stmt(stmt)?;
+        }
+        if compiler.scope.is_cell("__class__") {
+            let class_deref = compiler.deref_index("__class__")?;
+            compiler.emit(Opcode::LoadClosure, Some(class_deref));
+            let classcell_idx = compiler.code.add_name("__classcell__".to_string());
+            compiler.emit(Opcode::StoreName, Some(classcell_idx));
         }
         Ok(compiler.finish())
     }
