@@ -2597,7 +2597,26 @@ impl Vm {
         let caller_locals = if caller_is_module {
             HashMap::new()
         } else {
-            self.frames[caller_index].locals.clone()
+            let frame = &self.frames[caller_index];
+            let mut locals = frame.locals.clone();
+            for (idx, slot) in frame.fast_locals.iter().enumerate() {
+                if let Some(value) = slot
+                    && let Some(name) = frame.code.names.get(idx)
+                {
+                    locals.insert(name.clone(), value.clone());
+                }
+            }
+            for name in &frame.code.cellvars {
+                if let Some(value) = frame_cell_value(frame, name) {
+                    locals.insert(name.clone(), value);
+                }
+            }
+            for name in &frame.code.freevars {
+                if let Some(value) = frame_cell_value(frame, name) {
+                    locals.insert(name.clone(), value);
+                }
+            }
+            locals
         };
 
         let mut globals_module = caller_globals.clone();
