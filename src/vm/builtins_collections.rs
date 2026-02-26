@@ -3,10 +3,10 @@ use super::{
     HashMap, Heap, InstanceObject, InternalCallOutcome, IteratorKind, IteratorObject,
     MAPPING_PROXY_STORAGE_ATTR, ModuleObject, NativeMethodKind, ObjRef, Object, RuntimeError,
     Value, Vm, add_values, and_values, binary_operator, bytes_like_from_value, class_attr_lookup,
-    class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_get_value,
-    dict_remove_value, dict_set_value_checked, div_values, ensure_hashable, floor_div_values,
-    format_repr, is_missing_attribute_error, is_truthy, lshift_values, mod_values,
-    mul_values, pow_values, rshift_values, sub_values, unary_predicate, value_to_int, xor_values,
+    class_name_for_instance, compare_ge, compare_gt, compare_le, compare_lt, dict_remove_value,
+    dict_set_value_checked, div_values, ensure_hashable, floor_div_values, format_repr,
+    is_missing_attribute_error, is_truthy, lshift_values, mod_values, mul_values, pow_values,
+    rshift_values, sub_values, unary_predicate, value_to_int, xor_values,
 };
 use crate::runtime::FunctionObject;
 
@@ -2449,14 +2449,54 @@ impl Vm {
                 "_count_elements() expects mapping and iterable arguments",
             ));
         }
-        let mapping = match &args[0] {
-            Value::Dict(dict) => dict.clone(),
-            _ => return Err(RuntimeError::new("_count_elements() mapping must be dict")),
+        let mapping = args[0].clone();
+        let iterable = args[1].clone();
+        let bound_get = self.builtin_getattr(
+            vec![mapping.clone(), Value::Str("get".to_string())],
+            HashMap::new(),
+        )?;
+        let bound_setitem = self.lookup_bound_special_method(&mapping, "__setitem__")?;
+        let dict_backing = match &mapping {
+            Value::Dict(dict) => Some(dict.clone()),
+            Value::Instance(instance) => self.instance_backing_dict(instance),
+            _ => None,
         };
-        for item in self.collect_iterable_values(args[1].clone())? {
-            let current = dict_get_value(&mapping, &item).unwrap_or(Value::Int(0));
+        if bound_setitem.is_none() && dict_backing.is_none() {
+            return Err(RuntimeError::new(
+                "_count_elements() mapping must support __setitem__",
+            ));
+        }
+
+        for item in self.collect_iterable_values(iterable)? {
+            let current = match self.call_internal(
+                bound_get.clone(),
+                vec![item.clone(), Value::Int(0)],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(self.runtime_error_from_active_exception(
+                        "_count_elements() mapping.get() failed",
+                    ));
+                }
+            };
             let next = add_values(current, Value::Int(1), &self.heap)?;
-            dict_set_value_checked(&mapping, item, next)?;
+            if let Some(bound_setitem) = &bound_setitem {
+                match self.call_internal(
+                    bound_setitem.clone(),
+                    vec![item, next],
+                    HashMap::new(),
+                )? {
+                    InternalCallOutcome::Value(_) => {}
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self.runtime_error_from_active_exception(
+                            "_count_elements() mapping.__setitem__() failed",
+                        ));
+                    }
+                }
+            } else if let Some(backing_dict) = &dict_backing {
+                self.dict_set_value_checked_runtime(backing_dict, item, next)?;
+            }
         }
         Ok(Value::None)
     }

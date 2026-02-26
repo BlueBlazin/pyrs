@@ -5646,6 +5646,29 @@ impl Vm {
                         "__annotate__() takes at most one positional argument",
                     ));
                 }
+                let format = if let Some(value) = args.pop() {
+                    let mut parsed = value_to_int(value.clone())?;
+                    if parsed == 0
+                        && let Value::Instance(instance) = value
+                        && let Object::Instance(instance_data) = &*instance.kind()
+                        && let Some(raw_value) = instance_data
+                            .attrs
+                            .get("_value_")
+                            .or_else(|| instance_data.attrs.get("value"))
+                        && let Ok(unwrapped) = value_to_int(raw_value.clone())
+                    {
+                        parsed = unwrapped;
+                    }
+                    parsed
+                } else {
+                    1
+                };
+                if !matches!(format, 1..=4) {
+                    return Err(RuntimeError::value_error(format!(
+                        "invalid annotation format {}",
+                        format
+                    )));
+                }
                 let receiver_kind = receiver.kind();
                 let Object::Module(module_data) = &*receiver_kind else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
@@ -5655,12 +5678,12 @@ impl Vm {
                 else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
-                let annotations = {
+                let (annotations, function_module, annotation_locals) = {
                     let mut function_ref = function_obj.kind_mut();
                     let Object::Function(func_data) = &mut *function_ref else {
                         return Err(RuntimeError::new("function annotate receiver is invalid"));
                     };
-                    if let Some(existing) = func_data.annotations.clone() {
+                    let annotations = if let Some(existing) = func_data.annotations.clone() {
                         existing
                     } else {
                         let dict = self.heap.alloc_dict(Vec::new());
@@ -5669,14 +5692,9 @@ impl Vm {
                         };
                         func_data.annotations = Some(dict_obj.clone());
                         dict_obj
-                    }
-                };
-                let function_module = match &*function_obj.kind() {
-                    Object::Function(func_data) => func_data.module.clone(),
-                    _ => return Err(RuntimeError::new("function annotate receiver is invalid")),
-                };
-                let annotation_locals = match &*function_obj.kind() {
-                    Object::Function(func_data) => func_data
+                    };
+                    let module = func_data.module.clone();
+                    let locals = func_data
                         .dict
                         .as_ref()
                         .and_then(|dict| {
@@ -5688,8 +5706,8 @@ impl Vm {
                         .and_then(|value| match value {
                             Value::Dict(dict) => Some(dict),
                             _ => None,
-                        }),
-                    _ => None,
+                        });
+                    (annotations, module, locals)
                 };
 
                 let mut resolved_entries = Vec::new();
@@ -5698,18 +5716,21 @@ impl Vm {
                         let Value::Str(name) = key else {
                             continue;
                         };
-                        let resolved_value = if let Value::Str(text) = value {
-                            let mut eval_args = vec![
-                                Value::Str(text.clone()),
-                                Value::Module(function_module.clone()),
-                            ];
-                            if let Some(locals_dict) = &annotation_locals {
-                                eval_args.push(Value::Dict(locals_dict.clone()));
-                            }
-                            self.builtin_eval(eval_args, HashMap::new())
-                                .unwrap_or_else(|_| value.clone())
-                        } else {
-                            value.clone()
+                        let resolved_value = match (format, value) {
+                            (4, Value::Str(text)) => Value::Str(text.clone()),
+                            (4, other) => self.builtin_repr(vec![other.clone()], HashMap::new())?,
+                            (1, Value::Str(text)) => self.function_annotation_eval_value(
+                                text,
+                                &function_module,
+                                annotation_locals.as_ref(),
+                            )?,
+                            (2 | 3, Value::Str(text)) => self.function_annotation_eval_forward_ref(
+                                text,
+                                &function_module,
+                                annotation_locals.as_ref(),
+                                Value::Function(function_obj.clone()),
+                            )?,
+                            (_, other) => other.clone(),
                         };
                         resolved_entries.push((Value::Str(name.clone()), resolved_value));
                     }
@@ -5835,6 +5856,57 @@ impl Vm {
                     .get("__args__")
                     .cloned()
                     .ok_or_else(|| RuntimeError::new("GenericAlias reduce receiver is invalid"))?;
+                let is_typing_annotated_alias = match &*instance_data.class.kind() {
+                    Object::Class(class_data) => {
+                        if class_data.name != "_AnnotatedAlias" {
+                            false
+                        } else {
+                            matches!(
+                                class_data.attrs.get("__module__"),
+                                Some(Value::Str(module_name))
+                                    if module_name == "typing" || module_name == "_typing"
+                            )
+                        }
+                    }
+                    _ => false,
+                };
+                if is_typing_annotated_alias {
+                    let metadata_values = match instance_data.attrs.get("__metadata__") {
+                        Some(Value::Tuple(metadata_obj)) => match &*metadata_obj.kind() {
+                            Object::Tuple(values) => values.clone(),
+                            _ => {
+                                return Err(RuntimeError::new(
+                                    "GenericAlias reduce receiver is invalid",
+                                ));
+                            }
+                        },
+                        Some(other) => vec![other.clone()],
+                        None => Vec::new(),
+                    };
+                    let typing_module = if let Some(module) = self.modules.get("typing").cloned() {
+                        module
+                    } else {
+                        self.load_module("typing")?
+                    };
+                    let annotated = self.builtin_getattr(
+                        vec![
+                            Value::Module(typing_module),
+                            Value::Str("Annotated".to_string()),
+                        ],
+                        HashMap::new(),
+                    )?;
+                    let mut annotated_args = Vec::with_capacity(metadata_values.len() + 1);
+                    annotated_args.push(origin);
+                    annotated_args.extend(metadata_values);
+                    let params = self.heap.alloc_tuple(annotated_args);
+                    let ctor_args = self.heap.alloc_tuple(vec![annotated, params]);
+                    return Ok(NativeCallResult::Value(
+                        self.heap.alloc_tuple(vec![
+                            Value::Builtin(BuiltinFunction::OperatorGetItem),
+                            ctor_args,
+                        ]),
+                    ));
+                }
                 let args_value = match args_value {
                     Value::Tuple(_) => args_value,
                     other => self.heap.alloc_tuple(vec![other]),
@@ -7017,6 +7089,357 @@ impl Vm {
             kind: IteratorKind::List(list),
             index: 0,
         }))
+    }
+
+    fn typing_no_default_marker(&mut self) -> Option<Value> {
+        for module_name in ["_typing", "typing"] {
+            let Some(module) = self.modules.get(module_name).cloned() else {
+                continue;
+            };
+            let Object::Module(module_data) = &*module.kind() else {
+                continue;
+            };
+            if let Some(value) = module_data.globals.get("NoDefault").cloned() {
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    fn typing_param_kind_name(&self, value: &Value) -> Option<&'static str> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return None;
+        };
+        let class_kind = instance_data.class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return None;
+        };
+        let module_name = match class_data.attrs.get("__module__") {
+            Some(Value::Str(name)) => Some(name.as_str()),
+            _ => None,
+        };
+        if !matches!(module_name, Some("typing" | "_typing")) {
+            return None;
+        }
+        match class_data.name.as_str() {
+            "TypeVar" => Some("TypeVar"),
+            "ParamSpec" => Some("ParamSpec"),
+            "TypeVarTuple" => Some("TypeVarTuple"),
+            _ => None,
+        }
+    }
+
+    fn typing_helper_callable(&mut self, helper_name: &str) -> Result<Value, RuntimeError> {
+        let module = if let Some(module) = self.modules.get("typing").cloned() {
+            module
+        } else {
+            self.load_module("typing")?
+        };
+        self.builtin_getattr(
+            vec![
+                Value::Module(module),
+                Value::Str(helper_name.to_string()),
+            ],
+            HashMap::new(),
+        )
+    }
+
+    fn call_typing_helper(
+        &mut self,
+        helper_name: &str,
+        helper_args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let callable = self.typing_helper_callable(helper_name)?;
+        match self.call_internal(callable, helper_args, HashMap::new())? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("typing helper call failed"))
+            }
+        }
+    }
+
+    fn typing_sequence_items(value: &Value) -> Result<Vec<Value>, RuntimeError> {
+        match value {
+            Value::Tuple(tuple_obj) => match &*tuple_obj.kind() {
+                Object::Tuple(items) => Ok(items.clone()),
+                _ => Err(RuntimeError::type_error("typing parameters must be a sequence")),
+            },
+            Value::List(list_obj) => match &*list_obj.kind() {
+                Object::List(items) => Ok(items.clone()),
+                _ => Err(RuntimeError::type_error("typing parameters must be a sequence")),
+            },
+            _ => Err(RuntimeError::type_error("typing parameters must be a sequence")),
+        }
+    }
+
+    fn typing_param_default(&self, value: &Value) -> Option<Value> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return None;
+        };
+        instance_data.attrs.get("__default__").cloned()
+    }
+
+    fn typing_marker_is_same(left: &Value, right: &Value) -> bool {
+        match (left, right) {
+            (Value::Class(left), Value::Class(right)) => left.id() == right.id(),
+            (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
+            (Value::Module(left), Value::Module(right)) => left.id() == right.id(),
+            _ => left == right,
+        }
+    }
+
+    fn parse_name_error_missing_name(message: &str) -> Option<String> {
+        let marker = "name '";
+        let start = message.find(marker)? + marker.len();
+        let tail = &message[start..];
+        let end = tail.find('\'')?;
+        Some(tail[..end].to_string())
+    }
+
+    fn name_error_missing_name(&self, err: &RuntimeError) -> Option<String> {
+        if !runtime_error_matches_exception(err, "NameError") {
+            return None;
+        }
+        if let Some(exception) = err.exception.as_ref() {
+            if let Some(Value::Str(name)) = exception.attrs.borrow().get("name").cloned() {
+                return Some(name);
+            }
+            if let Some(message) = exception.message.as_ref()
+                && let Some(name) = Self::parse_name_error_missing_name(message)
+            {
+                return Some(name);
+            }
+        }
+        Self::parse_name_error_missing_name(&err.message)
+    }
+
+    fn function_annotation_locals_from_dict(
+        &self,
+        annotation_locals: Option<&ObjRef>,
+    ) -> HashMap<String, Value> {
+        let mut out = HashMap::new();
+        let Some(locals_dict) = annotation_locals else {
+            return out;
+        };
+        let Object::Dict(entries) = &*locals_dict.kind() else {
+            return out;
+        };
+        for (key, value) in entries {
+            if let Value::Str(name) = key {
+                out.insert(name.clone(), value.clone());
+            }
+        }
+        out
+    }
+
+    fn function_annotation_forward_ref(
+        &mut self,
+        name: &str,
+        function_owner: Value,
+    ) -> Result<Value, RuntimeError> {
+        let annotationlib = if let Some(module) = self.modules.get("annotationlib").cloned() {
+            module
+        } else {
+            self.load_module("annotationlib")?
+        };
+        let forward_ref_ctor = self.builtin_getattr(
+            vec![
+                Value::Module(annotationlib),
+                Value::Str("ForwardRef".to_string()),
+            ],
+            HashMap::new(),
+        )?;
+        let mut kwargs = HashMap::new();
+        kwargs.insert("owner".to_string(), function_owner);
+        match self.call_internal(forward_ref_ctor, vec![Value::Str(name.to_string())], kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => Err(
+                self.runtime_error_from_active_exception("annotationlib.ForwardRef() failed"),
+            ),
+        }
+    }
+
+    fn function_annotation_eval_value(
+        &mut self,
+        text: &str,
+        function_module: &ObjRef,
+        annotation_locals: Option<&ObjRef>,
+    ) -> Result<Value, RuntimeError> {
+        let mut eval_args = vec![
+            Value::Str(text.to_string()),
+            Value::Module(function_module.clone()),
+        ];
+        if let Some(locals_dict) = annotation_locals {
+            eval_args.push(Value::Dict(locals_dict.clone()));
+        }
+        self.builtin_eval(eval_args, HashMap::new())
+    }
+
+    fn function_annotation_eval_forward_ref(
+        &mut self,
+        text: &str,
+        function_module: &ObjRef,
+        annotation_locals: Option<&ObjRef>,
+        function_owner: Value,
+    ) -> Result<Value, RuntimeError> {
+        let mut locals = self.function_annotation_locals_from_dict(annotation_locals);
+        for _ in 0..32 {
+            let mut eval_args = vec![
+                Value::Str(text.to_string()),
+                Value::Module(function_module.clone()),
+            ];
+            if !locals.is_empty() {
+                let entries = locals
+                    .iter()
+                    .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                    .collect::<Vec<_>>();
+                eval_args.push(self.heap.alloc_dict(entries));
+            }
+            match self.builtin_eval(eval_args, HashMap::new()) {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    let Some(name) = self.name_error_missing_name(&err) else {
+                        return Ok(Value::Str(text.to_string()));
+                    };
+                    if locals.contains_key(&name) {
+                        return Ok(Value::Str(text.to_string()));
+                    }
+                    let forward_ref =
+                        self.function_annotation_forward_ref(&name, function_owner.clone())?;
+                    locals.insert(name, forward_ref);
+                }
+            }
+        }
+        Ok(Value::Str(text.to_string()))
+    }
+
+    fn builtin_typing_typeparam_has_default(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        kwargs.clear();
+        if args.len() != 1 {
+            return Err(RuntimeError::type_error("has_default() expects one argument"));
+        }
+        let type_param = args.remove(0);
+        let Some(default_value) = self.typing_param_default(&type_param) else {
+            return Ok(Value::Bool(false));
+        };
+        if let Some(marker) = self.typing_no_default_marker()
+            && Self::typing_marker_is_same(&default_value, &marker)
+        {
+            return Ok(Value::Bool(false));
+        }
+        if matches!(default_value, Value::None) {
+            return Ok(Value::Bool(false));
+        }
+        Ok(Value::Bool(true))
+    }
+
+    fn builtin_typing_typeparam_subst(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        kwargs.clear();
+        if args.len() != 2 {
+            return Err(RuntimeError::type_error(
+                "__typing_subst__() expects self and arg",
+            ));
+        }
+        let type_param = args.remove(0);
+        let arg = args.remove(0);
+        match self.typing_param_kind_name(&type_param) {
+            Some("TypeVar") => self.call_typing_helper("_typevar_subst", vec![type_param, arg]),
+            Some("ParamSpec") => self.call_typing_helper("_paramspec_subst", vec![type_param, arg]),
+            Some("TypeVarTuple") => Err(RuntimeError::type_error(
+                "Substitution of bare TypeVarTuple is not supported",
+            )),
+            _ => Err(RuntimeError::type_error(
+                "__typing_subst__() receiver must be a type parameter",
+            )),
+        }
+    }
+
+    fn builtin_typing_typeparam_prepare_subst(
+        &mut self,
+        mut args: Vec<Value>,
+        mut kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        kwargs.clear();
+        if args.len() != 3 {
+            return Err(RuntimeError::type_error(
+                "__typing_prepare_subst__() expects self, alias, and args",
+            ));
+        }
+        let type_param = args.remove(0);
+        let alias = args.remove(0);
+        let subst_args = args.remove(0);
+        match self.typing_param_kind_name(&type_param) {
+            Some("TypeVar") => {
+                let params_value = self.builtin_getattr(
+                    vec![alias.clone(), Value::Str("__parameters__".to_string())],
+                    HashMap::new(),
+                )?;
+                let params = Self::typing_sequence_items(&params_value)?;
+                let mut index = None;
+                for (i, param) in params.iter().enumerate() {
+                    let equals = self.compare_eq_runtime(param.clone(), type_param.clone())?;
+                    if self.truthy_from_value(&equals)? {
+                        index = Some(i);
+                        break;
+                    }
+                }
+                let Some(index) = index else {
+                    return Err(RuntimeError::type_error(
+                        "__typing_prepare_subst__() receiver missing from alias parameters",
+                    ));
+                };
+                let mut subst_items = Self::typing_sequence_items(&subst_args)?;
+                if index < subst_items.len() {
+                    return Ok(subst_args);
+                }
+                if index == subst_items.len() {
+                    let has_default = self.builtin_typing_typeparam_has_default(
+                        vec![type_param.clone()],
+                        HashMap::new(),
+                    )?;
+                    if matches!(has_default, Value::Bool(true))
+                        && let Some(default_value) = self.typing_param_default(&type_param)
+                    {
+                        subst_items.push(default_value);
+                        return Ok(self.heap.alloc_tuple(subst_items));
+                    }
+                }
+                Err(RuntimeError::type_error(format!(
+                    "Too few arguments for {}; actual {}, expected at least {}",
+                    format_value(&alias),
+                    subst_items.len(),
+                    index + 1
+                )))
+            }
+            Some("ParamSpec") => {
+                self.call_typing_helper("_paramspec_prepare_subst", vec![type_param, alias, subst_args])
+            }
+            Some("TypeVarTuple") => {
+                self.call_typing_helper(
+                    "_typevartuple_prepare_subst",
+                    vec![type_param, alias, subst_args],
+                )
+            }
+            _ => Err(RuntimeError::type_error(
+                "__typing_prepare_subst__() receiver must be a type parameter",
+            )),
+        }
     }
 
     fn mappingproxy_mapping_value(&self, receiver: &ObjRef) -> Result<Value, RuntimeError> {
@@ -10118,8 +10541,23 @@ impl Vm {
                     instance_data
                         .attrs
                         .insert("__module__".to_string(), Value::Str(module_name));
+                    if !instance_data.attrs.contains_key("__default__") {
+                        let default_marker = self.typing_no_default_marker().unwrap_or(Value::None);
+                        instance_data
+                            .attrs
+                            .insert("__default__".to_string(), default_marker);
+                    }
                 }
                 Ok(marker)
+            }
+            BuiltinFunction::TypingTypeParamSubst => {
+                self.builtin_typing_typeparam_subst(args, kwargs)
+            }
+            BuiltinFunction::TypingTypeParamPrepareSubst => {
+                self.builtin_typing_typeparam_prepare_subst(args, kwargs)
+            }
+            BuiltinFunction::TypingTypeParamHasDefault => {
+                self.builtin_typing_typeparam_has_default(args, kwargs)
             }
             BuiltinFunction::Range => self.builtin_range(args, kwargs),
             _ => {

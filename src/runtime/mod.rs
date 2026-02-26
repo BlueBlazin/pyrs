@@ -1424,6 +1424,17 @@ impl Heap {
             Value::Class(class) => class,
             _ => unreachable!(),
         };
+        if let Object::Class(class_data) = &mut *class.kind_mut() {
+            class_data
+                .attrs
+                .insert("__module__".to_string(), Value::Str("builtins".to_string()));
+            class_data
+                .attrs
+                .insert("__name__".to_string(), Value::Str("ellipsis".to_string()));
+            class_data
+                .attrs
+                .insert("__qualname__".to_string(), Value::Str("ellipsis".to_string()));
+        }
         let instance = match self.alloc_instance(InstanceObject::new(class.clone())) {
             Value::Instance(instance) => instance,
             _ => unreachable!(),
@@ -3219,6 +3230,9 @@ pub enum BuiltinFunction {
     TypingParamSpec,
     TypingTypeVarTuple,
     TypingTypeAliasType,
+    TypingTypeParamSubst,
+    TypingTypeParamPrepareSubst,
+    TypingTypeParamHasDefault,
     InspectIsFunction,
     InspectIsMethod,
     InspectIsRoutine,
@@ -5326,6 +5340,21 @@ impl BuiltinFunction {
                     class_data
                         .attrs
                         .insert("__module__".to_string(), Value::Str("_typing".to_string()));
+                    class_data
+                        .attrs
+                        .insert("__hash__".to_string(), Value::Builtin(BuiltinFunction::Id));
+                    class_data.attrs.insert(
+                        "__typing_subst__".to_string(),
+                        Value::Builtin(BuiltinFunction::TypingTypeParamSubst),
+                    );
+                    class_data.attrs.insert(
+                        "__typing_prepare_subst__".to_string(),
+                        Value::Builtin(BuiltinFunction::TypingTypeParamPrepareSubst),
+                    );
+                    class_data.attrs.insert(
+                        "has_default".to_string(),
+                        Value::Builtin(BuiltinFunction::TypingTypeParamHasDefault),
+                    );
                 }
                 let marker = match heap.alloc_instance(InstanceObject::new(class)) {
                     Value::Instance(obj) => obj,
@@ -5341,8 +5370,17 @@ impl BuiltinFunction {
                     instance_data
                         .attrs
                         .insert("__module__".to_string(), Value::Str("typing".to_string()));
+                    instance_data.attrs.insert("__bound__".to_string(), Value::None);
+                    instance_data
+                        .attrs
+                        .insert("__constraints__".to_string(), heap.alloc_tuple(Vec::new()));
                 }
                 Ok(Value::Instance(marker))
+            }
+            BuiltinFunction::TypingTypeParamSubst
+            | BuiltinFunction::TypingTypeParamPrepareSubst
+            | BuiltinFunction::TypingTypeParamHasDefault => {
+                Err(RuntimeError::new("typing helper is VM-only"))
             }
             BuiltinFunction::DivMod => {
                 if args.len() != 2 {

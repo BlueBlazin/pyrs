@@ -4899,6 +4899,24 @@ impl Vm {
                     );
                 }
 
+                let class_declared_global = self.frames.last().is_some_and(|frame| {
+                    let next_ip = frame.last_ip.saturating_add(1);
+                    let Some(next_instr) = frame.code.instructions.get(next_ip) else {
+                        return false;
+                    };
+                    if next_instr.opcode != Opcode::StoreGlobal {
+                        return false;
+                    }
+                    let Some(name_idx) = next_instr.arg.map(|idx| idx as usize) else {
+                        return false;
+                    };
+                    frame
+                        .code
+                        .names
+                        .get(name_idx)
+                        .is_some_and(|name| name == &class_name)
+                });
+
                 let class_qualname = self
                     .frames
                     .last()
@@ -4917,7 +4935,7 @@ impl Vm {
                                 .unwrap_or_else(|| module_data.name.clone());
                             return Some(format!("{outer_qualname}.{class_name}"));
                         }
-                        if frame.is_module {
+                        if frame.is_module || class_declared_global {
                             return None;
                         }
                         let mut outer_qualname = frame.code.name.clone();

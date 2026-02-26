@@ -17936,6 +17936,50 @@ ok = (f.__annotate__ is None and f.__annotations__ == {})
 }
 
 #[test]
+fn class_type_params_default_to_empty_tuple() {
+    let source = r#"ok = (object.__type_params__ == ())
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn global_class_definition_inside_function_uses_global_qualname() {
+    let source = r#"def define():
+    global GlobalBox
+    class GlobalBox:
+        pass
+    return (GlobalBox.__qualname__, GlobalBox.__module__)
+
+qualname, module_name = define()
+ok = (qualname == "GlobalBox" and module_name == "__main__")
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
+fn types_generic_alias_forwards_non_dunder_attrs_to_origin() {
+    let source = r#"import types
+class AliasCarrier:
+    x = 1
+alias = types.GenericAlias(AliasCarrier, (int,))
+ok = (alias.x == 1)
+"#;
+    let module = parser::parse_module(source).expect("parse should succeed");
+    let code = compiler::compile_module(&module).expect("compile should succeed");
+    let mut vm = Vm::new();
+    vm.execute(&code).expect("execution should succeed");
+    assert_eq!(vm.get_global("ok"), Some(Value::Bool(true)));
+}
+
+#[test]
 fn instance_class_assignment_matches_slot_layout_rules() {
     let source = r#"class A:
     __slots__ = ("x", "__weakref__")

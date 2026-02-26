@@ -1155,7 +1155,7 @@ impl Vm {
             return self.hash_union_args_runtime(value, &union_args);
         }
         if let Some((origin, args)) = self.generic_alias_parts_from_value(value) {
-            return self.hash_generic_alias_parts_runtime(&origin, &args);
+            return self.hash_generic_alias_parts_runtime(value, &origin, &args);
         }
         match value {
             Value::Instance(_) | Value::Class(_) | Value::Super(_) => {
@@ -1253,6 +1253,7 @@ impl Vm {
 
     fn hash_generic_alias_parts_runtime(
         &mut self,
+        value: &Value,
         origin: &Value,
         args: &[Value],
     ) -> Result<u64, RuntimeError> {
@@ -1262,6 +1263,12 @@ impl Vm {
         args.len().hash(&mut hasher);
         for item in args {
             self.hash_value_runtime_u64(item)?.hash(&mut hasher);
+        }
+        if let Some(metadata) = self.annotated_alias_metadata_from_value(value) {
+            metadata.len().hash(&mut hasher);
+            for item in metadata {
+                self.hash_value_runtime_u64(&item)?.hash(&mut hasher);
+            }
         }
         Ok(hasher.finish())
     }
@@ -11831,6 +11838,26 @@ impl Vm {
         let Some((right_origin, right_args)) = self.generic_alias_parts_from_value(right) else {
             return Ok(Some(false));
         };
+        match (
+            self.annotated_alias_metadata_from_value(left),
+            self.annotated_alias_metadata_from_value(right),
+        ) {
+            (Some(left_metadata), Some(right_metadata)) => {
+                if left_metadata.len() != right_metadata.len() {
+                    return Ok(Some(false));
+                }
+                for (left_item, right_item) in
+                    left_metadata.into_iter().zip(right_metadata.into_iter())
+                {
+                    let eq = self.compare_eq_runtime(left_item, right_item)?;
+                    if !self.truthy_from_value(&eq)? {
+                        return Ok(Some(false));
+                    }
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => return Ok(Some(false)),
+            (None, None) => {}
+        }
         if left_args.len() != right_args.len() {
             return Ok(Some(false));
         }
@@ -11848,6 +11875,34 @@ impl Vm {
             }
         }
         Ok(Some(true))
+    }
+
+    fn annotated_alias_metadata_from_value(&self, value: &Value) -> Option<Vec<Value>> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return None;
+        };
+        let class_kind = instance_data.class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return None;
+        };
+        let module_name = match class_data.attrs.get("__module__") {
+            Some(Value::Str(module)) => module.as_str(),
+            _ => return None,
+        };
+        if module_name != "typing" || class_data.name != "_AnnotatedAlias" {
+            return None;
+        }
+        let Value::Tuple(metadata_obj) = instance_data.attrs.get("__metadata__")? else {
+            return None;
+        };
+        let Object::Tuple(items) = &*metadata_obj.kind() else {
+            return None;
+        };
+        Some(items.clone())
     }
 
     fn type_parameter_values_match_by_name(&self, left: &Value, right: &Value) -> bool {
@@ -13165,6 +13220,27 @@ impl Vm {
                     BuiltinFunction::FrozenSet => self.class_has_builtin_frozenset_base(class),
                     BuiltinFunction::Bytes => self.class_has_builtin_bytes_base(class),
                     BuiltinFunction::ByteArray => self.class_has_builtin_bytearray_base(class),
+                    BuiltinFunction::TypingTypeVar
+                    | BuiltinFunction::TypingParamSpec
+                    | BuiltinFunction::TypingTypeVarTuple => {
+                        let expected_name = match expected_builtin {
+                            BuiltinFunction::TypingTypeVar => "TypeVar",
+                            BuiltinFunction::TypingParamSpec => "ParamSpec",
+                            BuiltinFunction::TypingTypeVarTuple => "TypeVarTuple",
+                            _ => unreachable!(),
+                        };
+                        self.class_mro_entries(class).iter().any(|entry| {
+                            let Object::Class(class_data) = &*entry.kind() else {
+                                return false;
+                            };
+                            class_data.name == expected_name
+                                && matches!(
+                                    class_data.attrs.get("__module__"),
+                                    Some(Value::Str(module))
+                                        if matches!(module.as_str(), "typing" | "_typing")
+                                )
+                        })
+                    }
                     _ => false,
                 }),
                 Value::ExceptionType(_) => Ok(false),
@@ -13359,6 +13435,36 @@ impl Vm {
             BuiltinFunction::TypesModuleType => matches!(value, Value::Module(_)),
             BuiltinFunction::TypesMethodType => {
                 matches!(value, Value::BoundMethod(method) if self.bound_method_is_python_method(method))
+            }
+            BuiltinFunction::TypingTypeVar
+            | BuiltinFunction::TypingParamSpec
+            | BuiltinFunction::TypingTypeVarTuple => {
+                let expected_name = match builtin {
+                    BuiltinFunction::TypingTypeVar => "TypeVar",
+                    BuiltinFunction::TypingParamSpec => "ParamSpec",
+                    BuiltinFunction::TypingTypeVarTuple => "TypeVarTuple",
+                    _ => unreachable!(),
+                };
+                matches!(
+                    value,
+                    Value::Instance(instance)
+                        if matches!(
+                            &*instance.kind(),
+                            Object::Instance(instance_data)
+                                if self.class_mro_entries(&instance_data.class).iter().any(|entry| {
+                                    matches!(
+                                        &*entry.kind(),
+                                        Object::Class(class_data)
+                                            if class_data.name == expected_name
+                                                && matches!(
+                                                    class_data.attrs.get("__module__"),
+                                                    Some(Value::Str(module))
+                                                        if matches!(module.as_str(), "typing" | "_typing")
+                                                )
+                                    )
+                                })
+                        )
+                )
             }
             BuiltinFunction::GeneratorType => {
                 matches!(

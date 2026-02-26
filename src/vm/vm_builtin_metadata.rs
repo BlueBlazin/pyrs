@@ -2740,6 +2740,25 @@ impl Vm {
             "__get__" => Ok(self
                 .alloc_native_bound_method(NativeMethodKind::FunctionDescriptorGet, func.clone())),
             "__annotate__" => {
+                let has_annotations = {
+                    let func_ref = func.kind();
+                    let Object::Function(func_data) = &*func_ref else {
+                        return Err(RuntimeError::attribute_error(
+                            "attribute access unsupported type",
+                        ));
+                    };
+                    func_data
+                        .annotations
+                        .as_ref()
+                        .and_then(|annotations| match &*annotations.kind() {
+                            Object::Dict(entries) => Some(!entries.is_empty()),
+                            _ => None,
+                        })
+                        .unwrap_or(false)
+                };
+                if !has_annotations {
+                    return Ok(Value::None);
+                }
                 let receiver = match self
                     .heap
                     .alloc_module(ModuleObject::new("__function_annotate__".to_string()))
@@ -5075,6 +5094,18 @@ impl Vm {
                 .get("__module__")
                 .cloned()
                 .unwrap_or(Value::None)
+        } else if attr_name == "__type_params__" {
+            let class_kind = class.kind();
+            let Object::Class(class_data) = &*class_kind else {
+                return Err(RuntimeError::attribute_error(
+                    "attribute access unsupported type",
+                ));
+            };
+            class_data
+                .attrs
+                .get("__type_params__")
+                .cloned()
+                .unwrap_or_else(|| self.heap.alloc_tuple(Vec::new()))
         } else if attr_name == "__basicsize__" {
             let basicsize = if self.class_has_builtin_type_base(class) {
                 936
@@ -6400,25 +6431,43 @@ impl Vm {
                 instance.clone(),
             )));
         }
-        if let Some(backing_list) = self.instance_backing_list(instance)
+        if is_types_generic_alias_instance
+            && !attr_name.starts_with("__")
+            && let Some((origin, _args)) =
+                self.generic_alias_parts_from_value(&Value::Instance(instance.clone()))
+        {
+            match self.builtin_getattr(
+                vec![origin, Value::Str(attr_name.to_string())],
+                HashMap::new(),
+            ) {
+                Ok(value) => return Ok(AttrAccessOutcome::Value(value)),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {}
+                Err(err) => return Err(err),
+            }
+        }
+        if class_attr.is_none()
+            && let Some(backing_list) = self.instance_backing_list(instance)
             && !reduce_attr
             && let Ok(bound_method) = self.load_attr_list_method(backing_list, attr_name)
         {
             return Ok(AttrAccessOutcome::Value(bound_method));
         }
-        if let Some(backing_tuple) = self.instance_backing_tuple(instance)
+        if class_attr.is_none()
+            && let Some(backing_tuple) = self.instance_backing_tuple(instance)
             && !reduce_attr
             && let Ok(bound_method) = self.load_attr_tuple_method(backing_tuple, attr_name)
         {
             return Ok(AttrAccessOutcome::Value(bound_method));
         }
-        if let Some(backing_str) = self.instance_backing_str(instance)
+        if class_attr.is_none()
+            && let Some(backing_str) = self.instance_backing_str(instance)
             && !reduce_attr
             && let Ok(bound_method) = self.load_attr_str_method(backing_str, attr_name)
         {
             return Ok(AttrAccessOutcome::Value(bound_method));
         }
-        if let Some(backing_dict) = self.instance_backing_dict(instance)
+        if class_attr.is_none()
+            && let Some(backing_dict) = self.instance_backing_dict(instance)
             && !reduce_attr
         {
             let is_exact_dict = matches!(
@@ -6436,13 +6485,15 @@ impl Vm {
                 return Ok(AttrAccessOutcome::Value(bound_method));
             }
         }
-        if let Some(backing_set) = self.instance_backing_set(instance)
+        if class_attr.is_none()
+            && let Some(backing_set) = self.instance_backing_set(instance)
             && !reduce_attr
             && let Ok(bound_method) = self.load_attr_set_method(backing_set, attr_name)
         {
             return Ok(AttrAccessOutcome::Value(bound_method));
         }
-        if let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
+        if class_attr.is_none()
+            && let Some(backing_frozenset) = self.instance_backing_frozenset(instance)
             && !reduce_attr
             && let Ok(bound_method) = self.load_attr_set_method(backing_frozenset, attr_name)
         {

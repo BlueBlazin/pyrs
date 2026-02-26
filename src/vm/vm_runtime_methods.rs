@@ -941,8 +941,7 @@ impl Vm {
                     {
                         return self.subscript_union_value(other, index);
                     }
-                    if self.generic_alias_parts_from_value(&other).is_some()
-                        && typing_alias_index_shape(&index)
+                    if self.is_types_generic_alias_value(&other) && typing_alias_index_shape(&index)
                     {
                         return self.subscript_generic_alias_value(other, index);
                     }
@@ -2394,6 +2393,19 @@ impl Vm {
                 Value::Class(obj) => obj,
                 _ => unreachable!(),
             };
+            if let Object::Class(class_data) = &mut *class.kind_mut() {
+                class_data
+                    .attrs
+                    .insert("__module__".to_string(), Value::Str("builtins".to_string()));
+                class_data.attrs.insert(
+                    "__name__".to_string(),
+                    Value::Str("NotImplementedType".to_string()),
+                );
+                class_data.attrs.insert(
+                    "__qualname__".to_string(),
+                    Value::Str("NotImplementedType".to_string()),
+                );
+            }
             self.heap.alloc_instance(InstanceObject::new(class))
         };
         self.builtins
