@@ -2619,6 +2619,20 @@ impl Vm {
                     globals_dict_writeback = Some((dict, module.clone()));
                     globals_module = module;
                 }
+                Value::Instance(instance) => {
+                    if let Some(dict) = self.instance_backing_dict(&instance) {
+                        let module = self.alloc_exec_namespace_module(
+                            "<eval_globals>",
+                            self.exec_namespace_map_from_dict(&dict, "globals")?,
+                        );
+                        globals_dict_writeback = Some((dict, module.clone()));
+                        globals_module = module;
+                    } else {
+                        return Err(RuntimeError::new(
+                            "eval() globals must be a dict or module",
+                        ));
+                    }
+                }
                 _ => {
                     return Err(RuntimeError::new("eval() globals must be a dict or module"));
                 }
@@ -2653,6 +2667,37 @@ impl Vm {
                             );
                             locals_dict_writeback = Some((dict, module.clone()));
                             locals_module = module;
+                        }
+                    }
+                    Value::Instance(instance) => {
+                        if let Some(dict) = self.instance_backing_dict(&instance) {
+                            let mut namespace =
+                                self.exec_namespace_map_from_dict(&dict, "locals")?;
+                            for name in &execution_code.names {
+                                if namespace.contains_key(name) {
+                                    continue;
+                                }
+                                match self.getitem_value(
+                                    Value::Instance(instance.clone()),
+                                    Value::Str(name.clone()),
+                                ) {
+                                    Ok(value) => {
+                                        namespace.insert(name.clone(), value);
+                                    }
+                                    Err(err) if runtime_error_matches_exception(&err, "KeyError") => {
+                                        self.clear_active_exception();
+                                    }
+                                    Err(err) => return Err(err),
+                                }
+                            }
+                            let module =
+                                self.alloc_exec_namespace_module("<eval_locals>", namespace);
+                            locals_dict_writeback = Some((dict, module.clone()));
+                            locals_module = module;
+                        } else {
+                            return Err(RuntimeError::new(
+                                "eval() locals must be a dict or module",
+                            ));
                         }
                     }
                     _ => {
