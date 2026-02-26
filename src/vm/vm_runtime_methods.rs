@@ -1795,6 +1795,9 @@ impl Vm {
             let instance_kind = instance.kind();
             if let Object::Instance(instance_data) = &*instance_kind {
                 maybe_parameters = instance_data.attrs.get("__parameters__").cloned();
+                if maybe_parameters.is_none() {
+                    maybe_parameters = class_attr_lookup(&instance_data.class, "__parameters__");
+                }
             }
         }
         if let Some(parameters) = maybe_parameters {
