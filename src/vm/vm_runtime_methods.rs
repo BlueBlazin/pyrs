@@ -2188,13 +2188,30 @@ impl Vm {
             return self.build_union_value_from_members(substituted);
         }
 
-        if let Some((origin, args)) = self.generic_alias_parts_from_value(&value) {
-            let mut substituted = Vec::with_capacity(args.len());
-            for item in args {
-                substituted.push(self.substitute_type_parameters_in_value(item, substitutions)?);
+        if self.generic_alias_parts_from_value(&value).is_some() {
+            let subparams = self
+                .optional_getattr_value(value.clone(), "__parameters__")?
+                .and_then(|value| Self::sequence_items_from_typing_value(&value))
+                .unwrap_or_default();
+            if subparams.is_empty() {
+                return Ok(value);
             }
-            let index = self.heap.alloc_tuple(substituted);
-            return Ok(self.alloc_generic_alias_instance(origin, index));
+            let mut subargs = Vec::new();
+            for subparam in subparams {
+                let replacement = self
+                    .generic_alias_substitution_lookup(&subparam, substitutions)?
+                    .unwrap_or(subparam.clone());
+                if typing_typevartuple_param_marker(&subparam) {
+                    if let Some(items) = Self::sequence_items_from_typing_value(&replacement) {
+                        subargs.extend(items);
+                    } else {
+                        subargs.push(replacement);
+                    }
+                } else {
+                    subargs.push(replacement);
+                }
+            }
+            return self.getitem_value(value, self.heap.alloc_tuple(subargs));
         }
 
         Ok(value)
