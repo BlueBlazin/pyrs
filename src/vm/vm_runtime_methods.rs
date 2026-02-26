@@ -2388,16 +2388,23 @@ impl Vm {
                     }
                 }
             } else {
-                let subparams = self
-                    .optional_getattr_value(item.clone(), "__parameters__")?
-                    .and_then(|value| Self::sequence_items_from_typing_value(&value))
-                    .unwrap_or_default();
-                if subparams.is_empty() {
+                let item_is_generic_alias = self.generic_alias_parts_from_value(&item).is_some();
+                if !item_is_generic_alias {
                     self.substitute_type_parameters_in_value(
                         direct_replacement.unwrap_or(item.clone()),
                         &substitutions,
                     )?
                 } else {
+                    let subparams = self
+                        .optional_getattr_value(item.clone(), "__parameters__")?
+                        .and_then(|value| Self::sequence_items_from_typing_value(&value))
+                        .unwrap_or_default();
+                    if subparams.is_empty() {
+                        self.substitute_type_parameters_in_value(
+                            direct_replacement.unwrap_or(item.clone()),
+                            &substitutions,
+                        )?
+                    } else {
                     let mut subargs = Vec::new();
                     for subparam in subparams {
                         let replacement = self
@@ -2418,6 +2425,7 @@ impl Vm {
                         eprintln!("[ga-sub] item_idx={item_idx} recurse_getitem subargs_len={}", subargs.len());
                     }
                     self.getitem_value(item.clone(), self.heap.alloc_tuple(subargs))?
+                    }
                 }
             };
             if self.value_is_unpacked_typevartuple_marker(&item)?
