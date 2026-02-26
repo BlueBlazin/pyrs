@@ -7958,7 +7958,13 @@ fn typing_special_form_display_name(instance_data: &InstanceObject) -> Option<St
         Some(Value::Str(name)) => name.as_str(),
         _ => return None,
     };
-    if !matches!(module, "typing" | "_typing") || class_data.name != "_SpecialForm" {
+    if !matches!(module, "typing" | "_typing") {
+        return None;
+    }
+    if !matches!(
+        class_data.name.as_str(),
+        "_SpecialForm" | "_SpecialGenericAlias" | "_DeprecatedGenericAlias" | "_TupleType" | "_CallableType"
+    ) {
         return None;
     }
     let form_name = match instance_data.attrs.get("_name") {
@@ -7970,7 +7976,23 @@ fn typing_special_form_display_name(instance_data: &InstanceObject) -> Option<St
 
 fn format_generic_alias_type_expr_from_instance(instance_data: &InstanceObject) -> Option<String> {
     let (origin, args) = generic_alias_parts_from_instance(instance_data)?;
-    let origin_text = format_type_expr_value(&origin);
+    let class_kind = instance_data.class.kind();
+    let origin_text = if let Object::Class(class_data) = &*class_kind {
+        let module = match class_data.attrs.get("__module__") {
+            Some(Value::Str(name)) => Some(name.as_str()),
+            _ => None,
+        };
+        if matches!(module, Some("typing" | "_typing"))
+            && let Some(Value::Str(name)) = instance_data.attrs.get("_name")
+            && !name.is_empty()
+        {
+            format!("typing.{name}")
+        } else {
+            format_type_expr_value(&origin)
+        }
+    } else {
+        format_type_expr_value(&origin)
+    };
     let rendered = if args.is_empty() {
         format!("{origin_text}[]")
     } else if args.len() == 1 {
