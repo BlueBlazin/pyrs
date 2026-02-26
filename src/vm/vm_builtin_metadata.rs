@@ -969,7 +969,10 @@ impl Vm {
                 Ok(Value::Builtin(BuiltinFunction::ObjectNew))
             }
             "__new__" => Ok(Value::Builtin(builtin)),
-            "__init__" if builtin == BuiltinFunction::Int => {
+            "__init__" if builtin == BuiltinFunction::Type => {
+                Ok(Value::Builtin(BuiltinFunction::TypeInit))
+            }
+            "__init__" if self.builtin_is_type_object(builtin) => {
                 Ok(Value::Builtin(BuiltinFunction::ObjectInit))
             }
             "__hash__" if self.builtin_type_has_none_hash(builtin) => Ok(Value::None),

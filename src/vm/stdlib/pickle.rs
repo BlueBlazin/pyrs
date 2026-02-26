@@ -3060,7 +3060,6 @@ impl Vm {
                 || self.instance_backing_float(instance).is_some()
                 || self.instance_backing_complex(instance).is_some()
                 || self.instance_backing_str(instance).is_some()
-                || self.instance_backing_tuple(instance).is_some()
                 || self.instance_backing_list(instance).is_some()
                 || self.instance_backing_dict(instance).is_some()
                 || self.instance_backing_set(instance).is_some()

@@ -5683,12 +5683,26 @@ impl Vm {
                 else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
-                let forward_ref_owner = module_data
+                let explicit_owner = module_data
                     .globals
                     .get("owner")
                     .cloned()
-                    .or_else(|| self.annotation_owner_from_call_stack())
-                    .unwrap_or_else(|| Value::Function(function_obj.clone()));
+                    .filter(|owner| !matches!(owner, Value::None));
+                let call_owner = if class_annotation_wrapper {
+                    self.annotation_call_owner_from_call_stack()
+                } else {
+                    None
+                };
+                let forward_ref_owner = if class_annotation_wrapper {
+                    explicit_owner
+                        .clone()
+                        .or_else(|| call_owner.clone())
+                        .unwrap_or(Value::None)
+                } else {
+                    explicit_owner
+                        .or_else(|| self.annotation_owner_from_call_stack())
+                        .unwrap_or_else(|| Value::Function(function_obj.clone()))
+                };
                 let (annotations, function_module, annotation_locals, future_annotations_import) = {
                     let mut function_ref = function_obj.kind_mut();
                     let Object::Function(func_data) = &mut *function_ref else {
@@ -5737,13 +5751,23 @@ impl Vm {
                                 Value::Str(text)
                                     if class_annotation_wrapper && future_annotations_import =>
                                 {
-                                    self.function_annotation_eval_forward_ref(
+                                    if let Some(owner) = call_owner.clone() {
+                                        let module_name = self.annotation_module_name_for_owner(&owner);
+                                        self.function_annotation_forward_ref(
+                                            text,
+                                            owner,
+                                            module_name,
+                                        )?
+                                    } else {
+                                        Value::Str(text.clone())
+                                    }
+                                }
+                                Value::Str(text) if class_annotation_wrapper => self
+                                    .class_annotation_eval_value_dynamic(
                                         text,
                                         &function_module,
                                         annotation_locals.as_ref(),
-                                        forward_ref_owner.clone(),
-                                    )?
-                                }
+                                    )?,
                                 Value::Str(text) if !future_annotations_import => self
                                     .function_annotation_eval_value(
                                         text,
@@ -5753,6 +5777,17 @@ impl Vm {
                                 other => other.clone(),
                             },
                             3 => match value {
+                                Value::Str(text)
+                                    if class_annotation_wrapper && future_annotations_import =>
+                                {
+                                    let module_name =
+                                        self.annotation_module_name_for_owner(&forward_ref_owner);
+                                    self.function_annotation_forward_ref(
+                                        text,
+                                        forward_ref_owner.clone(),
+                                        module_name,
+                                    )?
+                                }
                                 Value::Str(text) => self.function_annotation_eval_forward_ref(
                                     text,
                                     &function_module,
@@ -7445,6 +7480,28 @@ impl Vm {
         None
     }
 
+    fn annotation_call_owner_from_call_stack(&self) -> Option<Value> {
+        for frame in self.frames.iter().rev() {
+            if frame.code.name != "call_annotate_function" {
+                continue;
+            }
+            if let Some(owner_index) = frame.code.name_to_index.get("owner").copied()
+                && owner_index < frame.fast_locals.len()
+                && let Some(owner) = frame.fast_locals[owner_index].clone()
+                && !matches!(owner, Value::None)
+            {
+                return Some(owner);
+            }
+            if let Some(owner) = frame.locals.get("owner").cloned()
+                && !matches!(owner, Value::None)
+            {
+                return Some(owner);
+            }
+            return None;
+        }
+        None
+    }
+
     fn function_annotation_forward_ref(
         &mut self,
         name: &str,
@@ -7484,20 +7541,7 @@ impl Vm {
         function_owner: Value,
     ) -> Result<Value, RuntimeError> {
         let mut locals = self.function_annotation_locals_from_dict(annotation_locals);
-        let owner_module_name = match &function_owner {
-            Value::Class(class) => match &*class.kind() {
-                Object::Class(class_data) => class_data.attrs.get("__module__").and_then(|value| {
-                    if let Value::Str(name) = value {
-                        Some(name.clone())
-                    } else {
-                        None
-                    }
-                }),
-                _ => None,
-            },
-            _ => None,
-        };
-        let module_name = owner_module_name;
+        let module_name = self.annotation_module_name_for_owner(&function_owner);
         for _ in 0..32 {
             let mut eval_args = vec![
                 Value::Str(text.to_string()),
@@ -7532,6 +7576,22 @@ impl Vm {
         Ok(Value::Str(text.to_string()))
     }
 
+    fn annotation_module_name_for_owner(&self, owner: &Value) -> Option<String> {
+        match owner {
+            Value::Class(class) => match &*class.kind() {
+                Object::Class(class_data) => class_data.attrs.get("__module__").and_then(|value| {
+                    if let Value::Str(name) = value {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn function_annotation_eval_value(
         &mut self,
         text: &str,
@@ -7546,6 +7606,64 @@ impl Vm {
             eval_args.push(Value::Dict(annotation_locals.clone()));
         }
         self.builtin_eval(eval_args, HashMap::new())
+    }
+
+    fn class_annotation_eval_value_dynamic(
+        &mut self,
+        text: &str,
+        function_module: &ObjRef,
+        annotation_locals: Option<&ObjRef>,
+    ) -> Result<Value, RuntimeError> {
+        let mut locals = self.function_annotation_locals_from_dict(annotation_locals);
+        for _ in 0..32 {
+            let mut eval_args = vec![
+                Value::Str(text.to_string()),
+                Value::Module(function_module.clone()),
+            ];
+            if !locals.is_empty() {
+                let entries = locals
+                    .iter()
+                    .map(|(name, value)| (Value::Str(name.clone()), value.clone()))
+                    .collect::<Vec<_>>();
+                eval_args.push(self.heap.alloc_dict(entries));
+            }
+            match self.builtin_eval(eval_args, HashMap::new()) {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    let Some(name) = self.name_error_missing_name(&err) else {
+                        return Err(err);
+                    };
+                    if locals.contains_key(&name) {
+                        return Err(err);
+                    }
+                    let Some(value) = self.annotation_value_from_call_stack(&name) else {
+                        return Err(err);
+                    };
+                    locals.insert(name, value);
+                }
+            }
+        }
+        Err(RuntimeError::new("annotation evaluation exceeded lookup retries"))
+    }
+
+    fn annotation_value_from_call_stack(&self, name: &str) -> Option<Value> {
+        for frame in self.frames.iter().rev() {
+            if let Some(slot_index) = frame.code.name_to_index.get(name).copied()
+                && slot_index < frame.fast_locals.len()
+                && let Some(value) = frame.fast_locals[slot_index].clone()
+            {
+                return Some(value);
+            }
+            if let Some(value) = frame.locals.get(name).cloned() {
+                return Some(value);
+            }
+            if let Some(fallback) = &frame.locals_fallback
+                && let Some(value) = fallback.get(name).cloned()
+            {
+                return Some(value);
+            }
+        }
+        None
     }
 
     fn function_annotation_format_string(&self, text: &str) -> String {
