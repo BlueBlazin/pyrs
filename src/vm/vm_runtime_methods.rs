@@ -2413,7 +2413,30 @@ impl Vm {
             substituted_args.push(substituted);
         }
         let index_value = self.heap.alloc_tuple(substituted_args);
-        Ok(self.alloc_generic_alias_instance(origin, index_value))
+        let preserve_unpacked_marker = self.value_is_unpacked_typevartuple_marker(&value)?;
+        let result = self.alloc_generic_alias_instance(origin.clone(), index_value.clone());
+        if preserve_unpacked_marker
+            && let Value::Instance(instance) = &result
+            && let Object::Instance(instance_data) = &mut *instance.kind_mut()
+        {
+            instance_data
+                .attrs
+                .insert("__unpacked__".to_string(), Value::Bool(true));
+            let origin_is_tuple_alias = match &origin {
+                Value::Builtin(BuiltinFunction::Tuple) => true,
+                Value::Class(class) => {
+                    let class_kind = class.kind();
+                    matches!(&*class_kind, Object::Class(class_data) if class_data.name == "tuple")
+                }
+                _ => false,
+            };
+            if origin_is_tuple_alias {
+                instance_data
+                    .attrs
+                    .insert("__typing_unpacked_tuple_args__".to_string(), index_value);
+            }
+        }
+        Ok(result)
     }
 
     pub(super) fn collect_iterable_values(
