@@ -7,7 +7,7 @@ use super::{
     ModuleObject, NativeCallResult, NativeMethodKind, ObjRef, Object, Opcode, Ordering,
     PY_TPFLAGS_DISALLOW_INSTANTIATION, Rc, ReMode, RePatternValue, RuntimeError, Value, Vm,
     bigint_to_fixed_bytes, bytes_like_from_value, call_builtin_with_kwargs, class_attr_lookup,
-    class_name_for_instance, decode_text_bytes, dedup_hashable_values, dict_get_value,
+    class_name_for_instance, decode_text_bytes, dict_get_value,
     dict_remove_value, dict_set_value, dict_set_value_checked, encode_text_bytes, ensure_hashable,
     exception_is_named, find_bytes_subslice, format_value, is_truthy, memoryview_bounds,
     memoryview_decode_tolist, memoryview_format_for_view, memoryview_shape_and_strides_from_parts,
@@ -5830,6 +5830,21 @@ impl Vm {
                 let reduced = self.builtin_object_reduce_ex(forwarded, HashMap::new())?;
                 Ok(NativeCallResult::Value(reduced))
             }
+            NativeMethodKind::GenericAliasCall => {
+                let receiver_value = Value::Instance(receiver.clone());
+                if !self.is_types_generic_alias_value(&receiver_value) {
+                    return Err(RuntimeError::new("GenericAlias call receiver is invalid"));
+                }
+                let Some((origin, _)) = self.generic_alias_parts_from_value(&receiver_value) else {
+                    return Err(RuntimeError::new("GenericAlias call receiver is invalid"));
+                };
+                match self.call_internal(origin, args, kwargs)? {
+                    InternalCallOutcome::Value(value) => Ok(NativeCallResult::Value(value)),
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        Ok(NativeCallResult::PropagatedException)
+                    }
+                }
+            }
             NativeMethodKind::GenericAliasReduceEx => {
                 if args.len() > 1 {
                     return Err(RuntimeError::new(
@@ -6265,11 +6280,7 @@ impl Vm {
                     return Err(RuntimeError::new("__contains__() receiver must be set"));
                 };
                 ensure_hashable(&target)?;
-                let receiver_kind = container.kind();
-                let contains = match &*receiver_kind {
-                    Object::Set(values) | Object::FrozenSet(values) => values.contains(&target),
-                    _ => return Err(RuntimeError::new("__contains__() receiver must be set")),
-                };
+                let contains = self.set_contains_runtime(&container, &target)?;
                 Ok(NativeCallResult::Value(Value::Bool(contains)))
             }
             NativeMethodKind::SetAdd => {
@@ -6277,12 +6288,7 @@ impl Vm {
                     return Err(RuntimeError::new("add() expects one argument"));
                 }
                 let item = args.first().cloned().expect("checked len");
-                ensure_hashable(&item)?;
-                let mut receiver_kind = receiver.kind_mut();
-                let Object::Set(values) = &mut *receiver_kind else {
-                    return Err(RuntimeError::new("add() receiver must be set"));
-                };
-                values.insert(item);
+                self.set_insert_checked_runtime(&receiver, item)?;
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::SetDiscard => {
@@ -6290,12 +6296,7 @@ impl Vm {
                     return Err(RuntimeError::new("discard() expects one argument"));
                 }
                 let item = args.first().cloned().expect("checked len");
-                ensure_hashable(&item)?;
-                let mut receiver_kind = receiver.kind_mut();
-                let Object::Set(values) = &mut *receiver_kind else {
-                    return Err(RuntimeError::new("discard() receiver must be set"));
-                };
-                values.remove_value(&item);
+                let _ = self.set_remove_checked_runtime(&receiver, &item)?;
                 Ok(NativeCallResult::Value(Value::None))
             }
             NativeMethodKind::SetRemove => {
@@ -6303,12 +6304,7 @@ impl Vm {
                     return Err(RuntimeError::new("remove() expects one argument"));
                 }
                 let item = args.first().cloned().expect("checked len");
-                ensure_hashable(&item)?;
-                let mut receiver_kind = receiver.kind_mut();
-                let Object::Set(values) = &mut *receiver_kind else {
-                    return Err(RuntimeError::new("remove() receiver must be set"));
-                };
-                if values.remove_value(&item) {
+                if self.set_remove_checked_runtime(&receiver, &item)? {
                     Ok(NativeCallResult::Value(Value::None))
                 } else {
                     Err(RuntimeError::key_error("key not found"))
@@ -6333,13 +6329,8 @@ impl Vm {
                     return Err(RuntimeError::new("update() expects one argument"));
                 }
                 let items = self.collect_iterable_values(args[0].clone())?;
-                let mut receiver_kind = receiver.kind_mut();
-                let Object::Set(values) = &mut *receiver_kind else {
-                    return Err(RuntimeError::new("update() receiver must be set"));
-                };
                 for item in items {
-                    ensure_hashable(&item)?;
-                    values.insert(item);
+                    self.set_insert_checked_runtime(&receiver, item)?;
                 }
                 Ok(NativeCallResult::Value(Value::None))
             }
@@ -6348,10 +6339,11 @@ impl Vm {
                     Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("union() receiver must be set")),
                 };
+                out = self.dedup_hashable_values_runtime(out)?;
                 for iterable in args {
                     for item in self.collect_iterable_values(iterable)? {
                         ensure_hashable(&item)?;
-                        if !out.iter().any(|existing| existing == &item) {
+                        if !self.sequence_contains_runtime_value(&out, &item)? {
                             out.push(item);
                         }
                     }
@@ -6363,13 +6355,20 @@ impl Vm {
                 }
             }
             NativeMethodKind::SetIntersection => {
-                let mut out = match &*receiver.kind() {
+                let mut out = self.dedup_hashable_values_runtime(match &*receiver.kind() {
                     Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("intersection() receiver must be set")),
-                };
+                })?;
                 for iterable in args {
-                    let other = dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
-                    out.retain(|item| other.contains(item));
+                    let iterable_items = self.collect_iterable_values(iterable)?;
+                    let other = self.dedup_hashable_values_runtime(iterable_items)?;
+                    let mut filtered = Vec::new();
+                    for item in out.into_iter() {
+                        if self.sequence_contains_runtime_value(&other, &item)? {
+                            filtered.push(item);
+                        }
+                    }
+                    out = filtered;
                 }
                 if matches!(&*receiver.kind(), Object::FrozenSet(_)) {
                     Ok(NativeCallResult::Value(self.heap.alloc_frozenset(out)))
@@ -6378,13 +6377,20 @@ impl Vm {
                 }
             }
             NativeMethodKind::SetDifference => {
-                let mut out = match &*receiver.kind() {
+                let mut out = self.dedup_hashable_values_runtime(match &*receiver.kind() {
                     Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("difference() receiver must be set")),
-                };
+                })?;
                 for iterable in args {
-                    let other = dedup_hashable_values(self.collect_iterable_values(iterable)?)?;
-                    out.retain(|item| !other.contains(item));
+                    let iterable_items = self.collect_iterable_values(iterable)?;
+                    let other = self.dedup_hashable_values_runtime(iterable_items)?;
+                    let mut filtered = Vec::new();
+                    for item in out.into_iter() {
+                        if !self.sequence_contains_runtime_value(&other, &item)? {
+                            filtered.push(item);
+                        }
+                    }
+                    out = filtered;
                 }
                 if matches!(&*receiver.kind(), Object::FrozenSet(_)) {
                     Ok(NativeCallResult::Value(self.heap.alloc_frozenset(out)))
@@ -6396,16 +6402,15 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("issuperset() expects one argument"));
                 }
-                let other_values = self.collect_iterable_values(args[0].clone())?;
-                let receiver_values = receiver.kind();
-                let receiver_values = match &*receiver_values {
-                    Object::Set(values) | Object::FrozenSet(values) => values,
+                let other_items = self.collect_iterable_values(args[0].clone())?;
+                let other_values = self.dedup_hashable_values_runtime(other_items)?;
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("issuperset() receiver must be set")),
                 };
                 let mut is_superset = true;
                 for item in &other_values {
-                    ensure_hashable(item)?;
-                    if !receiver_values.contains(item) {
+                    if !self.sequence_contains_runtime_value(&receiver_values, item)? {
                         is_superset = false;
                         break;
                     }
@@ -6416,26 +6421,38 @@ impl Vm {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("issubset() expects one argument"));
                 }
-                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
-                let receiver_values = receiver.kind();
-                let receiver_values = match &*receiver_values {
-                    Object::Set(values) | Object::FrozenSet(values) => values,
+                let other_items = self.collect_iterable_values(args[0].clone())?;
+                let other = self.dedup_hashable_values_runtime(other_items)?;
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("issubset() receiver must be set")),
                 };
-                let is_subset = receiver_values.iter().all(|item| other.contains(item));
+                let mut is_subset = true;
+                for item in &receiver_values {
+                    if !self.sequence_contains_runtime_value(&other, item)? {
+                        is_subset = false;
+                        break;
+                    }
+                }
                 Ok(NativeCallResult::Value(Value::Bool(is_subset)))
             }
             NativeMethodKind::SetIsDisjoint => {
                 if args.len() != 1 {
                     return Err(RuntimeError::new("isdisjoint() expects one argument"));
                 }
-                let other = dedup_hashable_values(self.collect_iterable_values(args[0].clone())?)?;
-                let receiver_values = receiver.kind();
-                let receiver_values = match &*receiver_values {
-                    Object::Set(values) | Object::FrozenSet(values) => values,
+                let other_items = self.collect_iterable_values(args[0].clone())?;
+                let other = self.dedup_hashable_values_runtime(other_items)?;
+                let receiver_values = match &*receiver.kind() {
+                    Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
                     _ => return Err(RuntimeError::new("isdisjoint() receiver must be set")),
                 };
-                let is_disjoint = receiver_values.iter().all(|item| !other.contains(item));
+                let mut is_disjoint = true;
+                for item in &receiver_values {
+                    if self.sequence_contains_runtime_value(&other, item)? {
+                        is_disjoint = false;
+                        break;
+                    }
+                }
                 Ok(NativeCallResult::Value(Value::Bool(is_disjoint)))
             }
             NativeMethodKind::ClassRegister => {
@@ -7345,6 +7362,26 @@ impl Vm {
         Ok(Value::Bool(true))
     }
 
+    fn builtin_typing_generic_init_subclass(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let helper = match self.typing_helper_callable("_generic_init_subclass") {
+            Ok(value) => value,
+            Err(err) if runtime_error_matches_exception(&err, "AttributeError") => {
+                return Ok(Value::None);
+            }
+            Err(err) => return Err(err),
+        };
+        match self.call_internal(helper, args, kwargs)? {
+            InternalCallOutcome::Value(value) => Ok(value),
+            InternalCallOutcome::CallerExceptionHandled => {
+                Err(self.runtime_error_from_active_exception("typing helper call failed"))
+            }
+        }
+    }
+
     fn builtin_typing_typeparam_subst(
         &mut self,
         mut args: Vec<Value>,
@@ -7587,6 +7624,14 @@ impl Vm {
                     return Ok(iterator);
                 }
                 let other = Value::Instance(instance);
+                if self.typing_param_kind_name(&other) == Some("TypeVarTuple") {
+                    // CPython TypeVarTuple iteration compatibility yields a single
+                    // `typing.Unpack[Ts]` item so starred-unpack syntax (`*Ts`)
+                    // expands through normal iterable-unpack paths.
+                    let unpack = self.typing_helper_callable("Unpack")?;
+                    let unpacked = self.getitem_value(unpack, other.clone())?;
+                    return self.to_iterator_value(self.heap.alloc_tuple(vec![unpacked]));
+                }
                 if let Some(proxy_iter_result) = self.cpython_proxy_get_iter(&other) {
                     match proxy_iter_result {
                         Ok(iterable) => {
@@ -7862,11 +7907,104 @@ impl Vm {
             .collect()
     }
 
+    fn abstract_method_names_from_value(&self, value: &Value) -> Vec<String> {
+        let mut names = match value {
+            Value::Set(obj) => match &*obj.kind() {
+                Object::Set(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            Value::FrozenSet(obj) => match &*obj.kind() {
+                Object::FrozenSet(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        names.sort();
+        names.dedup();
+        names
+    }
+
     pub(super) fn class_disallow_instantiation_message(&self, class: &ObjRef) -> Option<String> {
         let class_kind = class.kind();
         let Object::Class(class_data) = &*class_kind else {
             return None;
         };
+        if let Some(abstract_methods) = class_data.attrs.get("__abstractmethods__") {
+            let names = self.abstract_method_names_from_value(abstract_methods);
+            if let Some(first) = names.first() {
+                let module_name = match class_data.attrs.get("__module__") {
+                    Some(Value::Str(name)) => name.clone(),
+                    _ => "builtins".to_string(),
+                };
+                let qualified_name = if module_name == "builtins" {
+                    class_data.name.clone()
+                } else {
+                    format!("{}.{}", module_name, class_data.name)
+                };
+                let methods = if names.len() == 1 {
+                    format!("'{first}'")
+                } else {
+                    names
+                        .iter()
+                        .map(|name| format!("'{name}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                return Some(format!(
+                    "Can't instantiate abstract class {} without an implementation for abstract method{} {}",
+                    qualified_name,
+                    if names.len() == 1 { "" } else { "s" },
+                    methods
+                ));
+            }
+            if is_truthy(abstract_methods) {
+                let module_name = match class_data.attrs.get("__module__") {
+                    Some(Value::Str(name)) => name.clone(),
+                    _ => "builtins".to_string(),
+                };
+                let qualified_name = if module_name == "builtins" {
+                    class_data.name.clone()
+                } else {
+                    format!("{}.{}", module_name, class_data.name)
+                };
+                return Some(format!(
+                    "Can't instantiate abstract class {}",
+                    qualified_name
+                ));
+            }
+        }
         let runtime_disallow = matches!(
             class_data.attrs.get("__pyrs_disallow_instantiation__"),
             Some(Value::Bool(true))
@@ -9992,7 +10130,9 @@ impl Vm {
             BuiltinFunction::CollectionsDequeIter => {
                 self.builtin_collections_deque_iter(args, kwargs)
             }
-            BuiltinFunction::CollectionsOrderedDict => self.builtin_dict(args, kwargs),
+            BuiltinFunction::CollectionsOrderedDict => {
+                self.builtin_collections_ordereddict(args, kwargs)
+            }
             BuiltinFunction::CollectionsChainMapInit => {
                 self.builtin_collections_chainmap_init(args, kwargs)
             }
@@ -10559,6 +10699,17 @@ impl Vm {
             BuiltinFunction::TypingTypeParamHasDefault => {
                 self.builtin_typing_typeparam_has_default(args, kwargs)
             }
+            BuiltinFunction::TypingGenericInitSubclass => {
+                self.builtin_typing_generic_init_subclass(args, kwargs)
+            }
+            BuiltinFunction::AbcGetCacheToken => self.builtin_abc_get_cache_token(args, kwargs),
+            BuiltinFunction::AbcInit => self.builtin_abc_init(args, kwargs),
+            BuiltinFunction::AbcRegister => self.builtin_abc_register(args, kwargs),
+            BuiltinFunction::AbcInstanceCheck => self.builtin_abc_instancecheck(args, kwargs),
+            BuiltinFunction::AbcSubclassCheck => self.builtin_abc_subclasscheck(args, kwargs),
+            BuiltinFunction::AbcGetDump => self.builtin_abc_get_dump(args, kwargs),
+            BuiltinFunction::AbcResetRegistry => self.builtin_abc_reset_registry(args, kwargs),
+            BuiltinFunction::AbcResetCaches => self.builtin_abc_reset_caches(args, kwargs),
             BuiltinFunction::Range => self.builtin_range(args, kwargs),
             _ => {
                 if kwargs.is_empty() {

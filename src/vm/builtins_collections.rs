@@ -253,7 +253,12 @@ impl Vm {
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new("operator.getitem expects two arguments"));
         }
-        self.getitem_value(args[0].clone(), args[1].clone())
+        let receiver = args[0].clone();
+        let index = args[1].clone();
+        if self.is_types_generic_alias_value(&receiver) {
+            return self.subscript_generic_alias_value(receiver, index);
+        }
+        self.getitem_value(receiver, index)
     }
 
     pub(super) fn builtin_operator_compare_digest(
@@ -2437,6 +2442,37 @@ impl Vm {
         self.defaultdict_factories
             .insert(dict.id(), default_factory);
         Ok(Value::Dict(dict))
+    }
+
+    pub(super) fn builtin_collections_ordereddict(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        let value = self.builtin_dict(args, kwargs)?;
+        let Value::Dict(dict) = &value else {
+            return Err(RuntimeError::new(
+                "OrderedDict() constructor returned non-dict",
+            ));
+        };
+        self.ordered_dict_instances.insert(dict.id());
+        Ok(value)
+    }
+
+    pub(super) fn builtin_collections_ordereddict_with_order(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+        kwargs_order: Option<Vec<String>>,
+    ) -> Result<Value, RuntimeError> {
+        let value = self.builtin_dict_with_order(args, kwargs, kwargs_order)?;
+        let Value::Dict(dict) = &value else {
+            return Err(RuntimeError::new(
+                "OrderedDict() constructor returned non-dict",
+            ));
+        };
+        self.ordered_dict_instances.insert(dict.id());
+        Ok(value)
     }
 
     pub(super) fn builtin_collections_count_elements(

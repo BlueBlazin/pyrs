@@ -42,8 +42,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use self::capi_registry::{CapiObjectRegistry, CapiPtrProvenance, CapiRefKind};
 use self::containers::{
-    dedup_hashable_values, dict_contains_key_checked, dict_get_value, dict_remove_value,
-    dict_set_value, dict_set_value_checked, ensure_hashable,
+    dict_contains_key_checked, dict_get_value, dict_remove_value, dict_set_value,
+    dict_set_value_checked, ensure_hashable,
 };
 use self::ops::{
     add_values, and_values, compare_ge, compare_gt, compare_in, compare_le, compare_lt,
@@ -1075,6 +1075,7 @@ pub struct Vm {
     pickle_copyreg_cache: HashMap<String, Value>,
     pickle_symbol_cache: HashMap<String, Value>,
     defaultdict_factories: HashMap<u64, Value>,
+    ordered_dict_instances: HashSet<u64>,
     synthetic_exception_classes: HashMap<String, ObjRef>,
     synthetic_builtin_classes: HashMap<String, ObjRef>,
     mappingproxy_type_class: Option<ObjRef>,
@@ -1128,6 +1129,11 @@ pub struct Vm {
     builtins_version: u64,
     class_attr_versions: HashMap<u64, u64>,
     type_cache_version_tag: u32,
+    abc_invalidation_counter: usize,
+    abc_registry: HashMap<u64, Vec<Value>>,
+    abc_cache: HashMap<u64, Vec<Value>>,
+    abc_negative_cache: HashMap<u64, Vec<Value>>,
+    abc_negative_cache_version: HashMap<u64, usize>,
     warnings_bless_my_loader_depth: usize,
     fast_local_unbound_marker: Value,
     traceback_caret_enabled: bool,
@@ -1343,6 +1349,7 @@ impl Vm {
             pickle_copyreg_cache: HashMap::new(),
             pickle_symbol_cache: HashMap::new(),
             defaultdict_factories: HashMap::new(),
+            ordered_dict_instances: HashSet::new(),
             synthetic_exception_classes: HashMap::new(),
             synthetic_builtin_classes: HashMap::new(),
             mappingproxy_type_class: None,
@@ -1407,6 +1414,11 @@ impl Vm {
             builtins_version: 1,
             class_attr_versions: HashMap::new(),
             type_cache_version_tag: 1,
+            abc_invalidation_counter: 0,
+            abc_registry: HashMap::new(),
+            abc_cache: HashMap::new(),
+            abc_negative_cache: HashMap::new(),
+            abc_negative_cache_version: HashMap::new(),
             warnings_bless_my_loader_depth: 0,
             fast_local_unbound_marker,
             traceback_caret_enabled: true,

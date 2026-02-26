@@ -1,10 +1,10 @@
 use super::{
     BigInt, BuiltinFunction, ClassObject, Frame, GeneratorResumeOutcome, HashMap, InstanceObject,
     InternalCallOutcome, IteratorKind, ModuleObject, NativeMethodKind, ObjRef, Object, Ordering,
-    RuntimeError, Value, Vm, builtin_exception_parent, class_name_for_instance, format_repr,
+    RuntimeError, Value, Vm, builtin_exception_parent, class_attr_lookup, class_name_for_instance, format_repr,
     memoryview_bounds, memoryview_decode_element, memoryview_element_offset,
     memoryview_format_for_view, memoryview_layout_1d, memoryview_logical_nbytes,
-    memoryview_shape_and_strides_from_parts, module_globals_version,
+    memoryview_shape_and_strides_from_parts, module_globals_version, ensure_hashable,
     runtime_error_matches_exception, slice_bounds_for_step_one, slice_indices, value_from_bigint,
     value_to_bytes_payload, value_to_int, with_bytes_like_source,
 };
@@ -117,6 +117,101 @@ impl Vm {
         }
         let (_, removed_value) = entries.remove(index);
         Ok(Some(removed_value))
+    }
+
+    pub(super) fn sequence_contains_runtime_value(
+        &mut self,
+        haystack: &[Value],
+        needle: &Value,
+    ) -> Result<bool, RuntimeError> {
+        for candidate in haystack {
+            let equals = self.compare_eq_runtime(candidate.clone(), needle.clone())?;
+            if self.truthy_from_value(&equals)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(super) fn dedup_hashable_values_runtime(
+        &mut self,
+        values: Vec<Value>,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        let mut deduped = Vec::new();
+        for value in values {
+            ensure_hashable(&value)?;
+            if !self.sequence_contains_runtime_value(&deduped, &value)? {
+                deduped.push(value);
+            }
+        }
+        Ok(deduped)
+    }
+
+    pub(super) fn set_contains_runtime(
+        &mut self,
+        set: &ObjRef,
+        needle: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let values = {
+            let set_kind = set.kind();
+            match &*set_kind {
+                Object::Set(values) | Object::FrozenSet(values) => values.to_vec(),
+                _ => return Err(RuntimeError::type_error("receiver must be set")),
+            }
+        };
+        self.sequence_contains_runtime_value(&values, needle)
+    }
+
+    pub(super) fn set_insert_checked_runtime(
+        &mut self,
+        set: &ObjRef,
+        value: Value,
+    ) -> Result<bool, RuntimeError> {
+        ensure_hashable(&value)?;
+        if self.set_contains_runtime(set, &value)? {
+            return Ok(false);
+        }
+        let mut set_kind = set.kind_mut();
+        let Object::Set(values) = &mut *set_kind else {
+            return Err(RuntimeError::type_error("receiver must be set"));
+        };
+        values.push(value);
+        Ok(true)
+    }
+
+    pub(super) fn set_remove_checked_runtime(
+        &mut self,
+        set: &ObjRef,
+        target: &Value,
+    ) -> Result<bool, RuntimeError> {
+        ensure_hashable(target)?;
+        let values_snapshot = {
+            let set_kind = set.kind();
+            let Object::Set(values) = &*set_kind else {
+                return Err(RuntimeError::type_error("receiver must be set"));
+            };
+            values.to_vec()
+        };
+        let mut remove_index = None;
+        for (index, candidate) in values_snapshot.into_iter().enumerate() {
+            let equals = self.compare_eq_runtime(candidate, target.clone())?;
+            if self.truthy_from_value(&equals)? {
+                remove_index = Some(index);
+                break;
+            }
+        }
+        let Some(remove_index) = remove_index else {
+            return Ok(false);
+        };
+        let mut set_kind = set.kind_mut();
+        let Object::Set(values) = &mut *set_kind else {
+            return Err(RuntimeError::type_error("receiver must be set"));
+        };
+        if remove_index >= values.len() {
+            return Ok(false);
+        }
+        let _ = values.remove(remove_index);
+        Ok(true)
     }
 
     fn dict_lookup_entry_runtime(
@@ -317,6 +412,13 @@ impl Vm {
         value: Value,
         index: Value,
     ) -> Result<Value, RuntimeError> {
+        if std::env::var_os("PYRS_TRACE_GETITEM_ENTRY").is_some() {
+            eprintln!(
+                "[getitem-entry] value_type={} index_type={}",
+                self.value_type_name_for_error(&value),
+                self.value_type_name_for_error(&index)
+            );
+        }
         if let Value::Instance(instance) = &value {
             if let Some(values) = self.namedtuple_instance_values(instance) {
                 return self.getitem_value(self.heap.alloc_tuple(values), index);
@@ -932,8 +1034,90 @@ impl Vm {
                         let members = self.subscript_items_from_index(index);
                         return self.build_union_value_from_members_with_forward(members, true);
                     }
-                    let origin = Value::Class(class.clone());
-                    Ok(self.alloc_generic_alias_instance(origin, index))
+                    let class_value = Value::Class(class.clone());
+                    if let Some(class_getitem) = class_attr_lookup(&class, "__class_getitem__")
+                        .map(|method| self.bind_descriptor_method(method, &class_value))
+                        .transpose()?
+                        .flatten()
+                    {
+                        return match self.call_internal(class_getitem, vec![index], HashMap::new())?
+                        {
+                            InternalCallOutcome::Value(value) => Ok(value),
+                            InternalCallOutcome::CallerExceptionHandled => Err(self
+                                .runtime_error_from_active_exception("subscript lookup failed")),
+                        };
+                    }
+                    if let Some(meta_getitem) =
+                        self.lookup_bound_special_method(&class_value, "__getitem__")?
+                    {
+                        return match self.call_internal(meta_getitem, vec![index], HashMap::new())?
+                        {
+                            InternalCallOutcome::Value(value) => Ok(value),
+                            InternalCallOutcome::CallerExceptionHandled => Err(self
+                                .runtime_error_from_active_exception("subscript lookup failed")),
+                        };
+                    }
+                    let (has_type_params, legacy_typing_generic_base, class_parameters) =
+                        match &*class.kind() {
+                        Object::Class(class_data) => {
+                            let class_parameters = match class_data.attrs.get("__parameters__") {
+                                Some(Value::Tuple(items_obj)) => {
+                                    match &*items_obj.kind() {
+                                        Object::Tuple(items) => Some(items.clone()),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            }
+                            .or_else(|| match class_data.attrs.get("__type_params__") {
+                                Some(Value::Tuple(items_obj)) => {
+                                    match &*items_obj.kind() {
+                                        Object::Tuple(items) => Some(items.clone()),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            });
+                            let has_type_params = match class_data.attrs.get("__type_params__") {
+                                Some(Value::Tuple(items_obj)) => {
+                                    matches!(&*items_obj.kind(), Object::Tuple(items) if !items.is_empty())
+                                }
+                                _ => false,
+                            };
+                            let legacy_typing_generic_base = class_data.mro.iter().any(|entry| {
+                                let Object::Class(entry_data) = &*entry.kind() else {
+                                    return false;
+                                };
+                                let module_name = match entry_data.attrs.get("__module__") {
+                                    Some(Value::Str(name)) => Some(name.as_str()),
+                                    _ => None,
+                                };
+                                matches!(
+                                    (module_name, entry_data.name.as_str()),
+                                    (Some("_typing" | "typing"), "Generic" | "Protocol")
+                                )
+                            });
+                            (
+                                has_type_params,
+                                legacy_typing_generic_base,
+                                class_parameters,
+                            )
+                        }
+                        _ => (false, false, None),
+                    };
+                    if has_type_params || legacy_typing_generic_base {
+                        if let Some(parameters) = class_parameters
+                            && !parameters.is_empty()
+                        {
+                            let template = self.alloc_generic_alias_instance(
+                                class_value.clone(),
+                                self.heap.alloc_tuple(parameters),
+                            );
+                            return self.subscript_generic_alias_value(template, index);
+                        }
+                        return Ok(self.alloc_generic_alias_instance(class_value, index));
+                    }
+                    Err(RuntimeError::type_error("subscript unsupported type"))
                 }
                 other => {
                     if self.union_args_from_value(&other).is_some()
@@ -941,7 +1125,8 @@ impl Vm {
                     {
                         return self.subscript_union_value(other, index);
                     }
-                    if self.is_types_generic_alias_value(&other) && typing_alias_index_shape(&index)
+                    if self.is_exact_types_generic_alias_value(&other)
+                        && typing_alias_index_shape(&index)
                     {
                         return self.subscript_generic_alias_value(other, index);
                     }
@@ -1047,6 +1232,10 @@ impl Vm {
                 "__qualname__".to_string(),
                 Value::Str("GenericAlias".to_string()),
             );
+            class_data.attrs.insert(
+                "__getitem__".to_string(),
+                Value::Builtin(BuiltinFunction::OperatorGetItem),
+            );
         }
         self.synthetic_builtin_classes
             .insert(CACHE_KEY.to_string(), class.clone());
@@ -1082,6 +1271,9 @@ impl Vm {
                 "__parameters__".to_string(),
                 self.heap.alloc_tuple(parameters),
             );
+            instance_data
+                .attrs
+                .insert("__unpacked__".to_string(), Value::Bool(false));
         }
         alias
     }
@@ -1326,6 +1518,17 @@ impl Vm {
             && self.generic_alias_parts_from_value(value).is_some()
     }
 
+    pub(super) fn is_exact_types_generic_alias_value(&self, value: &Value) -> bool {
+        let Value::Instance(instance) = value else {
+            return false;
+        };
+        let Object::Instance(instance_data) = &*instance.kind() else {
+            return false;
+        };
+        self.class_is_exact_types_generic_alias(&instance_data.class)
+            && self.generic_alias_parts_from_value(value).is_some()
+    }
+
     pub(super) fn class_has_generic_alias_base(&self, class: &ObjRef) -> bool {
         self.class_mro_entries(class).iter().any(|entry| {
             let entry_kind = entry.kind();
@@ -1336,10 +1539,24 @@ impl Vm {
                 return false;
             }
             match class_data.attrs.get("__module__") {
-                Some(Value::Str(module)) => module == "types",
+                Some(Value::Str(module)) => matches!(module.as_str(), "types" | "_types"),
                 _ => true,
             }
         })
+    }
+
+    pub(super) fn class_is_exact_types_generic_alias(&self, class: &ObjRef) -> bool {
+        let class_kind = class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return false;
+        };
+        if class_data.name != "GenericAlias" {
+            return false;
+        }
+        match class_data.attrs.get("__module__") {
+            Some(Value::Str(module)) => matches!(module.as_str(), "types" | "_types"),
+            _ => true,
+        }
     }
 
     pub(super) fn instantiate_generic_alias_class(
@@ -1379,6 +1596,9 @@ impl Vm {
                 "__parameters__".to_string(),
                 self.heap.alloc_tuple(parameters),
             );
+            instance_data
+                .attrs
+                .insert("__unpacked__".to_string(), Value::Bool(false));
             for (name, value) in kwargs {
                 instance_data.attrs.insert(name, value);
             }
@@ -1550,6 +1770,20 @@ impl Vm {
 
         if let Some((_origin, generic_args)) = self.generic_alias_parts_from_value(value) {
             for item in generic_args {
+                self.collect_union_type_parameters_from_value(&item, out);
+            }
+            return;
+        }
+
+        if let Some(items) = Self::tuple_items_from_value(value) {
+            for item in items {
+                self.collect_union_type_parameters_from_value(&item, out);
+            }
+            return;
+        }
+
+        if let Some(items) = Self::list_items_from_value(value) {
+            for item in items {
                 self.collect_union_type_parameters_from_value(&item, out);
             }
             return;
@@ -1849,6 +2083,75 @@ impl Vm {
         vec![index]
     }
 
+    fn sequence_items_from_typing_value(value: &Value) -> Option<Vec<Value>> {
+        Self::tuple_items_from_value(value).or_else(|| Self::list_items_from_value(value))
+    }
+
+    fn is_ellipsis_marker_value(&self, value: &Value) -> bool {
+        let Some(ellipsis) = self.builtins.get("Ellipsis") else {
+            return false;
+        };
+        match (value, ellipsis) {
+            (Value::Instance(left), Value::Instance(right)) => left.id() == right.id(),
+            _ => value == ellipsis,
+        }
+    }
+
+    fn generic_alias_substitution_lookup(
+        &mut self,
+        target: &Value,
+        substitutions: &[(Value, Value)],
+    ) -> Result<Option<Value>, RuntimeError> {
+        for (param, replacement) in substitutions {
+            let is_equal = self.compare_eq_runtime(target.clone(), param.clone())?;
+            if self.truthy_from_value(&is_equal)? {
+                return Ok(Some(replacement.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn value_is_unpacked_typevartuple_marker(&mut self, value: &Value) -> Result<bool, RuntimeError> {
+        if let Some(flag) = self.optional_getattr_value(
+            value.clone(),
+            "__typing_is_unpacked_typevartuple__",
+        )? {
+            return self.truthy_from_value(&flag);
+        }
+        if let Some(flag) = self.optional_getattr_value(value.clone(), "__unpacked__")? {
+            return self.truthy_from_value(&flag);
+        }
+        Ok(false)
+    }
+
+    fn generic_alias_preprocess_subscript_args(
+        &mut self,
+        args: Vec<Value>,
+    ) -> Result<Vec<Value>, RuntimeError> {
+        let mut processed = Vec::new();
+        for arg in args {
+            let Some(subargs_value) =
+                self.optional_getattr_value(arg.clone(), "__typing_unpacked_tuple_args__")?
+            else {
+                processed.push(arg);
+                continue;
+            };
+            let Some(subargs) = Self::sequence_items_from_typing_value(&subargs_value) else {
+                processed.push(arg);
+                continue;
+            };
+            let ends_with_ellipsis = subargs
+                .last()
+                .is_some_and(|last| self.is_ellipsis_marker_value(last));
+            if ends_with_ellipsis {
+                processed.push(arg);
+            } else {
+                processed.extend(subargs);
+            }
+        }
+        Ok(processed)
+    }
+
     fn substitute_type_parameters_in_value(
         &mut self,
         value: Value,
@@ -1859,6 +2162,22 @@ impl Vm {
             if self.truthy_from_value(&is_equal)? {
                 return Ok(replacement.clone());
             }
+        }
+
+        if let Some(items) = Self::tuple_items_from_value(&value) {
+            let mut substituted = Vec::with_capacity(items.len());
+            for item in items {
+                substituted.push(self.substitute_type_parameters_in_value(item, substitutions)?);
+            }
+            return Ok(self.heap.alloc_tuple(substituted));
+        }
+
+        if let Some(items) = Self::list_items_from_value(&value) {
+            let mut substituted = Vec::with_capacity(items.len());
+            for item in items {
+                substituted.push(self.substitute_type_parameters_in_value(item, substitutions)?);
+            }
+            return Ok(self.heap.alloc_list(substituted));
         }
 
         if let Some(items) = self.union_args_from_value(&value) {
@@ -1898,9 +2217,13 @@ impl Vm {
             return Err(RuntimeError::type_error("union is not a generic type"));
         }
         if parameters.len() != replacement_values.len() {
-            return Err(RuntimeError::type_error(
-                "incorrect number of generic arguments",
-            ));
+            let actual = replacement_values.len();
+            let expected = parameters.len();
+            let many_or_few = if actual > expected { "many" } else { "few" };
+            return Err(RuntimeError::type_error(format!(
+                "Too {many_or_few} arguments for {}; actual {actual}, expected {expected}",
+                format_repr(&value)
+            )));
         }
         let substitutions = parameters
             .into_iter()
@@ -1914,17 +2237,50 @@ impl Vm {
         self.build_union_value_from_members(substituted_args)
     }
 
-    fn subscript_generic_alias_value(
+    pub(super) fn subscript_generic_alias_value(
         &mut self,
         value: Value,
         index: Value,
     ) -> Result<Value, RuntimeError> {
+        let trace = std::env::var_os("PYRS_TRACE_GENERIC_ALIAS_SUBSCRIPT").is_some();
+        if trace {
+            eprintln!(
+                "[ga-sub] enter value_type={} index_type={}",
+                self.value_type_name_for_error(&value),
+                self.value_type_name_for_error(&index)
+            );
+        }
         let (origin, args) = self
             .generic_alias_parts_from_value(&value)
             .ok_or_else(|| RuntimeError::type_error("subscript unsupported type"))?;
-        let mut parameters = Vec::new();
-        for item in &args {
-            self.collect_union_type_parameters_from_value(item, &mut parameters);
+        let origin_is_collections_callable = match &origin {
+            Value::Class(class) => Self::class_name_and_module(class)
+                .is_some_and(|(name, module)| {
+                    name == "Callable"
+                        && matches!(
+                            module.as_deref(),
+                            Some("collections.abc" | "_collections_abc")
+                        )
+                }),
+            _ => false,
+        };
+        if trace {
+            eprintln!("[ga-sub] parts args_len={}", args.len());
+        }
+        let mut parameters = self
+            .optional_getattr_value(value.clone(), "__parameters__")?
+            .and_then(|value| Self::sequence_items_from_typing_value(&value))
+            .unwrap_or_default();
+        if trace {
+            eprintln!("[ga-sub] initial parameters_len={}", parameters.len());
+        }
+        if parameters.is_empty() {
+            for item in &args {
+                self.collect_union_type_parameters_from_value(item, &mut parameters);
+            }
+            if trace {
+                eprintln!("[ga-sub] collected parameters_len={}", parameters.len());
+            }
         }
         if parameters.is_empty() {
             return Err(RuntimeError::type_error(format!(
@@ -1932,19 +2288,112 @@ impl Vm {
                 format_repr(&value)
             )));
         }
-        let replacement_values = self.subscript_items_from_index(index);
+        let mut replacement_values =
+            self.generic_alias_preprocess_subscript_args(self.subscript_items_from_index(index))?;
+        if trace {
+            eprintln!("[ga-sub] replacement_len_prepared={}", replacement_values.len());
+        }
+        for param in parameters.iter().cloned() {
+            let Some(prepare) = self.optional_getattr_value(param, "__typing_prepare_subst__")?
+            else {
+                continue;
+            };
+            let prepared = match self.call_internal(
+                prepare,
+                vec![value.clone(), self.heap.alloc_tuple(replacement_values.clone())],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(
+                        self.runtime_error_from_active_exception("typing prepare_subst failed")
+                    );
+                }
+            };
+            replacement_values = Self::sequence_items_from_typing_value(&prepared).ok_or_else(|| {
+                RuntimeError::type_error("typing parameters must be a sequence")
+            })?;
+            if trace {
+                eprintln!("[ga-sub] replacement_len_after_prepare={}", replacement_values.len());
+            }
+        }
         if parameters.len() != replacement_values.len() {
-            return Err(RuntimeError::type_error(
-                "incorrect number of generic arguments",
-            ));
+            let actual = replacement_values.len();
+            let expected = parameters.len();
+            let many_or_few = if actual > expected { "many" } else { "few" };
+            return Err(RuntimeError::type_error(format!(
+                "Too {many_or_few} arguments for {}; actual {actual}, expected {expected}",
+                format_repr(&value)
+            )));
         }
         let substitutions = parameters
             .into_iter()
             .zip(replacement_values)
             .collect::<Vec<_>>();
         let mut substituted_args = Vec::with_capacity(args.len());
-        for item in args {
-            substituted_args.push(self.substitute_type_parameters_in_value(item, &substitutions)?);
+        for (item_idx, item) in args.into_iter().enumerate() {
+            if trace {
+                eprintln!("[ga-sub] item_idx={item_idx} item_type={}", self.value_type_name_for_error(&item));
+            }
+            let direct_replacement =
+                self.generic_alias_substitution_lookup(&item, &substitutions)?;
+            let substfunc = self.optional_getattr_value(item.clone(), "__typing_subst__")?;
+            let substituted = if let (Some(substfunc), Some(replacement)) =
+                (substfunc, direct_replacement.clone())
+            {
+                match self.call_internal(substfunc, vec![replacement], HashMap::new())? {
+                    InternalCallOutcome::Value(value) => value,
+                    InternalCallOutcome::CallerExceptionHandled => {
+                        return Err(self
+                            .runtime_error_from_active_exception("typing substitution failed"));
+                    }
+                }
+            } else {
+                let subparams = self
+                    .optional_getattr_value(item.clone(), "__parameters__")?
+                    .and_then(|value| Self::sequence_items_from_typing_value(&value))
+                    .unwrap_or_default();
+                if subparams.is_empty() {
+                    self.substitute_type_parameters_in_value(
+                        direct_replacement.unwrap_or(item.clone()),
+                        &substitutions,
+                    )?
+                } else {
+                    let mut subargs = Vec::new();
+                    for subparam in subparams {
+                        let replacement = self
+                            .generic_alias_substitution_lookup(&subparam, &substitutions)?
+                            .unwrap_or(subparam.clone());
+                        if typing_typevartuple_param_marker(&subparam) {
+                            if let Some(items) = Self::sequence_items_from_typing_value(&replacement)
+                            {
+                                subargs.extend(items);
+                            } else {
+                                subargs.push(replacement);
+                            }
+                        } else {
+                            subargs.push(replacement);
+                        }
+                    }
+                    if trace {
+                        eprintln!("[ga-sub] item_idx={item_idx} recurse_getitem subargs_len={}", subargs.len());
+                    }
+                    self.getitem_value(item.clone(), self.heap.alloc_tuple(subargs))?
+                }
+            };
+            if self.value_is_unpacked_typevartuple_marker(&item)?
+                && let Some(items) = Self::sequence_items_from_typing_value(&substituted)
+            {
+                substituted_args.extend(items);
+                continue;
+            }
+            if origin_is_collections_callable
+                && let Some(items) = Self::tuple_items_from_value(&substituted)
+            {
+                substituted_args.extend(items);
+                continue;
+            }
+            substituted_args.push(substituted);
         }
         let index_value = self.heap.alloc_tuple(substituted_args);
         Ok(self.alloc_generic_alias_instance(origin, index_value))
@@ -3360,6 +3809,9 @@ impl Vm {
             Value::Builtin(BuiltinFunction::CollectionsDefaultDict) => {
                 Ok(self.synthetic_builtin_class("defaultdict"))
             }
+            Value::Builtin(BuiltinFunction::CollectionsOrderedDict) => {
+                Ok(self.synthetic_builtin_class("OrderedDict"))
+            }
             other => {
                 if std::env::var_os("PYRS_TRACE_CLASS_BASE").is_some() {
                     eprintln!(
@@ -3394,6 +3846,10 @@ fn typing_alias_operand_value(value: &Value) -> bool {
     match value {
         Value::None | Value::Class(_) | Value::ExceptionType(_) => true,
         Value::Builtin(_) => true,
+        Value::List(obj) => match &*obj.kind() {
+            Object::List(items) => items.iter().all(typing_alias_operand_value),
+            _ => false,
+        },
         Value::Tuple(obj) => match &*obj.kind() {
             Object::Tuple(items) => items.iter().all(typing_alias_operand_value),
             _ => false,
@@ -3460,4 +3916,23 @@ fn typing_alias_marker_instance(instance: &ObjRef) -> bool {
         return true;
     }
     false
+}
+
+fn typing_typevartuple_param_marker(value: &Value) -> bool {
+    let Value::Instance(instance) = value else {
+        return false;
+    };
+    let Object::Instance(instance_data) = &*instance.kind() else {
+        return false;
+    };
+    let Object::Class(class_data) = &*instance_data.class.kind() else {
+        return false;
+    };
+    if class_data.name != "TypeVarTuple" {
+        return false;
+    }
+    matches!(
+        class_data.attrs.get("__module__"),
+        Some(Value::Str(module)) if matches!(module.as_str(), "typing" | "_typing")
+    )
 }

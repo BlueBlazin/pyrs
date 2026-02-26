@@ -346,6 +346,7 @@ pub enum NativeMethodKind {
     ObjectReduceExBound,
     BoundMethodReduceEx,
     ComplexReduceEx,
+    GenericAliasCall,
     GenericAliasReduceEx,
     GenericAliasMroEntries,
     TypeParamCopy,
@@ -3233,6 +3234,7 @@ pub enum BuiltinFunction {
     TypingTypeParamSubst,
     TypingTypeParamPrepareSubst,
     TypingTypeParamHasDefault,
+    TypingGenericInitSubclass,
     InspectIsFunction,
     InspectIsMethod,
     InspectIsRoutine,
@@ -3546,6 +3548,62 @@ pub enum BuiltinFunction {
     AbcResetCaches,
     AbcAbstractMethod,
     AbcUpdateAbstractMethods,
+}
+
+thread_local! {
+    static TYPING_TYPEPARAM_CLASS_CACHE: RefCell<HashMap<(usize, &'static str), ObjRef>> =
+        RefCell::new(HashMap::new());
+}
+
+fn typing_typeparam_class(heap: &Heap, kind_name: &'static str) -> ObjRef {
+    let heap_key = heap as *const Heap as usize;
+    if let Some(existing) = TYPING_TYPEPARAM_CLASS_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .get(&(heap_key, kind_name))
+            .cloned()
+    }) {
+        return existing;
+    }
+
+    let class = match heap.alloc_class(ClassObject::new(kind_name, Vec::new())) {
+        Value::Class(obj) => obj,
+        _ => unreachable!(),
+    };
+    if let Object::Class(class_data) = &mut *class.kind_mut() {
+        class_data
+            .attrs
+            .insert("__name__".to_string(), Value::Str(kind_name.to_string()));
+        class_data.attrs.insert(
+            "__qualname__".to_string(),
+            Value::Str(kind_name.to_string()),
+        );
+        class_data
+            .attrs
+            .insert("__module__".to_string(), Value::Str("typing".to_string()));
+        class_data
+            .attrs
+            .insert("__hash__".to_string(), Value::Builtin(BuiltinFunction::Id));
+        class_data.attrs.insert(
+            "__typing_subst__".to_string(),
+            Value::Builtin(BuiltinFunction::TypingTypeParamSubst),
+        );
+        class_data.attrs.insert(
+            "__typing_prepare_subst__".to_string(),
+            Value::Builtin(BuiltinFunction::TypingTypeParamPrepareSubst),
+        );
+        class_data.attrs.insert(
+            "has_default".to_string(),
+            Value::Builtin(BuiltinFunction::TypingTypeParamHasDefault),
+        );
+    }
+
+    TYPING_TYPEPARAM_CLASS_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert((heap_key, kind_name), class.clone());
+    });
+    class
 }
 
 impl BuiltinFunction {
@@ -5325,37 +5383,7 @@ impl BuiltinFunction {
                     BuiltinFunction::TypingTypeAliasType => "TypeAliasType",
                     _ => unreachable!(),
                 };
-                let class = match heap.alloc_class(ClassObject::new(kind_name, Vec::new())) {
-                    Value::Class(obj) => obj,
-                    _ => unreachable!(),
-                };
-                if let Object::Class(class_data) = &mut *class.kind_mut() {
-                    class_data
-                        .attrs
-                        .insert("__name__".to_string(), Value::Str(kind_name.to_string()));
-                    class_data.attrs.insert(
-                        "__qualname__".to_string(),
-                        Value::Str(kind_name.to_string()),
-                    );
-                    class_data
-                        .attrs
-                        .insert("__module__".to_string(), Value::Str("_typing".to_string()));
-                    class_data
-                        .attrs
-                        .insert("__hash__".to_string(), Value::Builtin(BuiltinFunction::Id));
-                    class_data.attrs.insert(
-                        "__typing_subst__".to_string(),
-                        Value::Builtin(BuiltinFunction::TypingTypeParamSubst),
-                    );
-                    class_data.attrs.insert(
-                        "__typing_prepare_subst__".to_string(),
-                        Value::Builtin(BuiltinFunction::TypingTypeParamPrepareSubst),
-                    );
-                    class_data.attrs.insert(
-                        "has_default".to_string(),
-                        Value::Builtin(BuiltinFunction::TypingTypeParamHasDefault),
-                    );
-                }
+                let class = typing_typeparam_class(heap, kind_name);
                 let marker = match heap.alloc_instance(InstanceObject::new(class)) {
                     Value::Instance(obj) => obj,
                     _ => unreachable!(),
@@ -5379,7 +5407,8 @@ impl BuiltinFunction {
             }
             BuiltinFunction::TypingTypeParamSubst
             | BuiltinFunction::TypingTypeParamPrepareSubst
-            | BuiltinFunction::TypingTypeParamHasDefault => {
+            | BuiltinFunction::TypingTypeParamHasDefault
+            | BuiltinFunction::TypingGenericInitSubclass => {
                 Err(RuntimeError::new("typing helper is VM-only"))
             }
             BuiltinFunction::DivMod => {
@@ -7861,6 +7890,12 @@ fn format_type_expr_value(value: &Value) -> String {
             .unwrap_or_else(|| format_value(value)),
         Value::Instance(obj) => match &*obj.kind() {
             Object::Instance(instance_data) => {
+                if let Some(rendered) = typing_type_param_display_name(instance_data) {
+                    return rendered;
+                }
+                if let Some(rendered) = typing_special_form_display_name(instance_data) {
+                    return rendered;
+                }
                 if let Some(rendered) = format_union_type_expr_from_instance(instance_data) {
                     return rendered;
                 }
@@ -7875,6 +7910,48 @@ fn format_type_expr_value(value: &Value) -> String {
         Value::Exception(exception) => format_exception_repr(exception),
         _ => format_value(value),
     }
+}
+
+fn typing_type_param_display_name(instance_data: &InstanceObject) -> Option<String> {
+    let class_kind = instance_data.class.kind();
+    let Object::Class(class_data) = &*class_kind else {
+        return None;
+    };
+    let module = match class_data.attrs.get("__module__") {
+        Some(Value::Str(name)) => name.as_str(),
+        _ => return None,
+    };
+    if !matches!(module, "typing" | "_typing") {
+        return None;
+    }
+    let name = match instance_data.attrs.get("__name__") {
+        Some(Value::Str(name)) => name.as_str(),
+        _ => return None,
+    };
+    match class_data.name.as_str() {
+        "TypeVar" | "ParamSpec" => Some(format!("~{name}")),
+        "TypeVarTuple" => Some(format!("*{name}")),
+        _ => None,
+    }
+}
+
+fn typing_special_form_display_name(instance_data: &InstanceObject) -> Option<String> {
+    let class_kind = instance_data.class.kind();
+    let Object::Class(class_data) = &*class_kind else {
+        return None;
+    };
+    let module = match class_data.attrs.get("__module__") {
+        Some(Value::Str(name)) => name.as_str(),
+        _ => return None,
+    };
+    if !matches!(module, "typing" | "_typing") || class_data.name != "_SpecialForm" {
+        return None;
+    }
+    let form_name = match instance_data.attrs.get("_name") {
+        Some(Value::Str(name)) => name,
+        _ => return None,
+    };
+    Some(format!("typing.{form_name}"))
 }
 
 fn format_generic_alias_type_expr_from_instance(instance_data: &InstanceObject) -> Option<String> {
@@ -8311,6 +8388,9 @@ pub fn format_value(value: &Value) -> String {
                     }
                     NativeMethodKind::ComplexReduceEx => {
                         "<bound method complex.__reduce_ex__>".to_string()
+                    }
+                    NativeMethodKind::GenericAliasCall => {
+                        "<bound method GenericAlias.__call__>".to_string()
                     }
                     NativeMethodKind::GenericAliasReduceEx => {
                         "<bound method GenericAlias.__reduce_ex__>".to_string()

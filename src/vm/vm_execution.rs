@@ -13,7 +13,7 @@ use super::{
     QuickenedSiteKind, Rc, RuntimeError, SOURCE_FILE_LOADER, SOURCELESS_FILE_LOADER, TraceFrame,
     Value, Vm, and_values, apply_bindings, bind_arguments, builtin_exception_parent,
     class_attr_lookup, class_attr_lookup_direct, decode_call_counts, deref_name, dict_get_value,
-    dict_remove_value, dict_set_value, dict_set_value_checked, ensure_hashable,
+    dict_remove_value, dict_set_value, dict_set_value_checked,
     exception_message_from_call_args, floor_div_values, format_repr, format_value,
     is_comprehension_code, is_import_error_family, is_os_error_family, is_truthy, lshift_values,
     memoryview_bounds, memoryview_element_offset, memoryview_encode_element,
@@ -3254,7 +3254,9 @@ impl Vm {
                     values.push(self.pop_value()?);
                 }
                 values.reverse();
-                self.push_value(self.heap.alloc_set(values));
+                let deduped = self.dedup_hashable_values_runtime(values)?;
+                let set_value = self.heap.alloc_set(deduped);
+                self.push_value(set_value);
             }
             Opcode::BuildTuple => {
                 let count = instr
@@ -3562,14 +3564,7 @@ impl Vm {
                 }
                 let value = self.pop_value()?;
                 let set = self.stack_set_target(oparg, "SET_ADD")?;
-                ensure_hashable(&value)?;
-                if let Object::Set(values) = &mut *set.kind_mut() {
-                    if !values.contains(&value) {
-                        values.push(value);
-                    }
-                } else {
-                    return Err(RuntimeError::new("SET_ADD expects set target"));
-                }
+                self.set_insert_checked_runtime(&set, value)?;
             }
             Opcode::ListExtend => {
                 let oparg = instr.arg.map(|value| value as usize).unwrap_or(1usize);
@@ -3597,15 +3592,8 @@ impl Vm {
                 let extra = self
                     .collect_iterable_values(other)
                     .map_err(|_| RuntimeError::new("set update expects iterable"))?;
-                if let Object::Set(values) = &mut *set.kind_mut() {
-                    for item in extra {
-                        ensure_hashable(&item)?;
-                        if !values.contains(&item) {
-                            values.push(item);
-                        }
-                    }
-                } else {
-                    return Err(RuntimeError::new("SET_UPDATE expects set target"));
+                for item in extra {
+                    self.set_insert_checked_runtime(&set, item)?;
                 }
             }
             Opcode::DictSet => {

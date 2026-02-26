@@ -183,6 +183,18 @@ fn function_docstring_from_code(code: &CodeObject) -> Option<Value> {
 }
 
 impl Vm {
+    fn builtin_type_has_none_hash(&self, builtin: BuiltinFunction) -> bool {
+        matches!(
+            builtin,
+            BuiltinFunction::List
+                | BuiltinFunction::Dict
+                | BuiltinFunction::CollectionsDefaultDict
+                | BuiltinFunction::CollectionsOrderedDict
+                | BuiltinFunction::Set
+                | BuiltinFunction::ByteArray
+        )
+    }
+
     fn builtin_module_binding(&self, builtin: BuiltinFunction) -> Option<(String, String)> {
         for (module_name, module) in &self.modules {
             let Object::Module(module_data) = &*module.kind() else {
@@ -608,6 +620,9 @@ impl Vm {
         builtin: BuiltinFunction,
     ) -> Vec<(Value, Value)> {
         let mut entries = Vec::new();
+        if self.builtin_type_has_none_hash(builtin) {
+            entries.push((Value::Str("__hash__".to_string()), Value::None));
+        }
         if matches!(
             builtin,
             BuiltinFunction::List
@@ -957,6 +972,7 @@ impl Vm {
             "__init__" if builtin == BuiltinFunction::Int => {
                 Ok(Value::Builtin(BuiltinFunction::ObjectInit))
             }
+            "__hash__" if self.builtin_type_has_none_hash(builtin) => Ok(Value::None),
             "__hash__" => {
                 let wrapper = match self
                     .heap
@@ -3605,6 +3621,18 @@ impl Vm {
         method: Value,
         receiver: &Value,
     ) -> Result<Option<Value>, RuntimeError> {
+        let owner_class = match receiver {
+            Value::Class(class) => Some(class.clone()),
+            _ => self.class_of_value(receiver),
+        };
+        if let Some(owner_class) = owner_class {
+            if let Some(bound) = self.bind_classmethod_attr(&owner_class, &method) {
+                return Ok(Some(bound));
+            }
+            if let Some(unwrapped) = self.unwrap_staticmethod_attr(&method) {
+                return Ok(Some(unwrapped));
+            }
+        }
         match method {
             Value::Function(func) => {
                 let receiver_ref = self.receiver_from_value(receiver)?;
@@ -3787,6 +3815,21 @@ impl Vm {
             Value::Builtin(builtin) => {
                 Some(self.alloc_builtin_bound_method(builtin, owner_class.clone()))
             }
+            Value::Class(callable)
+            | Value::Instance(callable)
+            | Value::Module(callable)
+            | Value::Generator(callable)
+            | Value::List(callable)
+            | Value::Tuple(callable)
+            | Value::Dict(callable)
+            | Value::Set(callable)
+            | Value::FrozenSet(callable)
+            | Value::Bytes(callable)
+            | Value::ByteArray(callable)
+            | Value::MemoryView(callable) => Some(
+                self.heap
+                    .alloc_bound_method(BoundMethod::new(callable, owner_class.clone())),
+            ),
             _ => Some(unwrapped),
         }
     }
@@ -3894,8 +3937,11 @@ impl Vm {
         kwargs_order: Option<Vec<String>>,
     ) -> Result<Value, RuntimeError> {
         match builtin {
-            BuiltinFunction::Dict | BuiltinFunction::CollectionsOrderedDict => {
+            BuiltinFunction::Dict => {
                 self.builtin_dict_with_order(args, kwargs, kwargs_order)
+            }
+            BuiltinFunction::CollectionsOrderedDict => {
+                self.builtin_collections_ordereddict_with_order(args, kwargs, kwargs_order)
             }
             BuiltinFunction::SimpleNamespaceInit => {
                 self.builtin_types_simplenamespace_init_with_order(args, kwargs, kwargs_order)
@@ -4256,7 +4302,7 @@ impl Vm {
                 if let Some(message) = self.class_disallow_instantiation_message(&class) {
                     return Err(RuntimeError::type_error(message));
                 }
-                if self.class_has_generic_alias_base(&class) {
+                if self.class_is_exact_types_generic_alias(&class) {
                     let value =
                         self.instantiate_generic_alias_class(class.clone(), args, kwargs)?;
                     return Ok(InternalCallOutcome::Value(value));
@@ -5198,11 +5244,6 @@ impl Vm {
             } else {
                 dict_value
             }
-        } else if attr_name == "register" {
-            return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
-                NativeMethodKind::ClassRegister,
-                class.clone(),
-            )));
         } else if attr_name == "__new__" {
             if is_cpython_proxy_class
                 && let Some(proxy_attr) = self.load_cpython_proxy_attr(class, attr_name)
@@ -5226,9 +5267,16 @@ impl Vm {
         } else if attr_name == "__getstate__" {
             Value::Builtin(BuiltinFunction::ObjectGetState)
         } else if attr_name == "__repr__" && !is_cpython_proxy_class {
-            return Ok(AttrAccessOutcome::Value(
-                self.alloc_builtin_bound_method(BuiltinFunction::Repr, class.clone()),
-            ));
+            if let Some(meta) = class_metaclass.clone()
+                && let Some(meta_attr) = class_attr_lookup(&meta, attr_name)
+            {
+                descriptor_owner = Some(meta);
+                meta_attr
+            } else {
+                return Ok(AttrAccessOutcome::Value(
+                    self.alloc_builtin_bound_method(BuiltinFunction::Repr, class.clone()),
+                ));
+            }
         } else if attr_name == "__str__" && !is_cpython_proxy_class {
             return Ok(AttrAccessOutcome::Value(
                 self.alloc_builtin_bound_method(BuiltinFunction::Str, class.clone()),
@@ -5555,6 +5603,24 @@ impl Vm {
             .iter()
             .any(|entry| match &*entry.kind() {
                 Object::Class(class_data) => class_data.name == "dict",
+                _ => false,
+            })
+    }
+
+    pub(super) fn class_has_builtin_defaultdict_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "defaultdict",
+                _ => false,
+            })
+    }
+
+    pub(super) fn class_has_builtin_ordereddict_base(&self, class: &ObjRef) -> bool {
+        self.class_mro_entries(class)
+            .iter()
+            .any(|entry| match &*entry.kind() {
+                Object::Class(class_data) => class_data.name == "OrderedDict",
                 _ => false,
             })
     }
@@ -6425,6 +6491,12 @@ impl Vm {
                 instance.clone(),
             )));
         }
+        if is_types_generic_alias_instance && attr_name == "__call__" {
+            return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
+                NativeMethodKind::GenericAliasCall,
+                instance.clone(),
+            )));
+        }
         if reduce_attr && is_generic_alias_instance {
             return Ok(AttrAccessOutcome::Value(self.alloc_native_bound_method(
                 NativeMethodKind::GenericAliasReduceEx,
@@ -6854,6 +6926,18 @@ impl Vm {
         if attr_name == "__prepare__" && self.class_has_builtin_type_base(&object_type) {
             return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
                 BuiltinFunction::TypePrepare,
+                receiver.clone(),
+            )));
+        }
+        if attr_name == "__instancecheck__" && self.class_has_builtin_type_base(&object_type) {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::TypeInstanceCheck,
+                receiver.clone(),
+            )));
+        }
+        if attr_name == "__subclasscheck__" && self.class_has_builtin_type_base(&object_type) {
+            return Ok(AttrAccessOutcome::Value(self.alloc_builtin_bound_method(
+                BuiltinFunction::TypeSubclassCheck,
                 receiver.clone(),
             )));
         }

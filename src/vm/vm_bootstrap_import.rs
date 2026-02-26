@@ -4687,11 +4687,19 @@ impl Vm {
             ],
         );
         let typing_paramspec_args_class =
-            self.alloc_bootstrap_class_value("ParamSpecArgs", "_typing");
+            self.alloc_bootstrap_class_value("ParamSpecArgs", "typing");
         let typing_paramspec_kwargs_class =
-            self.alloc_bootstrap_class_value("ParamSpecKwargs", "_typing");
-        let typing_generic_class = self.alloc_bootstrap_class_value("Generic", "_typing");
-        let typing_union_class = self.alloc_bootstrap_class_value("Union", "_typing");
+            self.alloc_bootstrap_class_value("ParamSpecKwargs", "typing");
+        let typing_generic_class = self.alloc_bootstrap_class_value("Generic", "typing");
+        if let Value::Class(class) = &typing_generic_class
+            && let Object::Class(class_data) = &mut *class.kind_mut()
+        {
+            class_data.attrs.insert(
+                "__init_subclass__".to_string(),
+                Value::Builtin(BuiltinFunction::TypingGenericInitSubclass),
+            );
+        }
+        let typing_union_class = self.alloc_bootstrap_class_value("Union", "typing");
         let typing_nodefault_class = self.alloc_bootstrap_class_value("NoDefault", "_typing");
         self.install_builtin_module(
             "_typing",

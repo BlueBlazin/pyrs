@@ -14,7 +14,7 @@ use super::{
     Value, Vm, Write, add_values, bigint_from_bytes, bytes_like_from_value,
     call_builtin_with_kwargs, class_attr_lookup, class_attr_walk, compare_ge,
     compare_gt, compare_in, compare_le, compare_lt, compare_order, compiler, decode_text_bytes,
-    dedup_hashable_values, dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
+    dict_remove_value, dict_set_value, dict_set_value_checked, div_values,
     encode_text_bytes, format_float_hex, format_repr, format_value, frame_cell_value, invert_value,
     is_import_error_family, is_missing_attribute_error, is_os_error_family,
     is_runtime_type_name_marker, matmul_values, mul_values, neg_value, normalize_codec_encoding,
@@ -39,6 +39,11 @@ use std::os::raw::{c_char, c_int};
 
 unsafe extern "C" {
     fn snprintf(buffer: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
+}
+
+thread_local! {
+    static TYPE_INSTANCECHECK_BYPASS_CUSTOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TYPE_SUBCLASSCHECK_BYPASS_CUSTOM: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone, Copy)]
@@ -702,7 +707,7 @@ impl Vm {
         if let Value::Exception(exception) = &value {
             return Ok(Value::Str(self.exception_repr_value(exception)));
         }
-        if matches!(&value, Value::Instance(_) | Value::Exception(_)) {
+        if matches!(&value, Value::Instance(_) | Value::Class(_) | Value::Exception(_)) {
             match self.builtin_getattr(
                 vec![value.clone(), Value::Str("__repr__".to_string())],
                 HashMap::new(),
@@ -723,19 +728,31 @@ impl Vm {
                         _ => false,
                     };
                     if !is_recursive_builtin_repr {
-                        match self.call_internal(repr_method, Vec::new(), HashMap::new())? {
-                            InternalCallOutcome::Value(Value::Str(text)) => {
-                                return Ok(Value::Str(text));
-                            }
+                        let repr_guard_id = match &value {
+                            Value::Class(class_ref) => Some(class_ref.id()),
+                            Value::Instance(instance_ref) => Some(instance_ref.id()),
+                            _ => None,
+                        };
+                        if let Some(id) = repr_guard_id
+                            && self.repr_in_progress.contains(&id)
+                        {
+                            return Ok(Value::Str(format_repr(&value)));
+                        }
+                        if let Some(id) = repr_guard_id {
+                            self.repr_in_progress.push(id);
+                        }
+                        let repr_outcome =
+                            self.call_internal(repr_method, Vec::new(), HashMap::new());
+                        if repr_guard_id.is_some() {
+                            self.repr_in_progress.pop();
+                        }
+                        match repr_outcome? {
+                            InternalCallOutcome::Value(Value::Str(text)) => return Ok(Value::Str(text)),
                             InternalCallOutcome::Value(_) => {
-                                return Err(RuntimeError::type_error(
-                                    "__repr__ returned non-string",
-                                ));
+                                return Err(RuntimeError::type_error("__repr__ returned non-string"));
                             }
                             InternalCallOutcome::CallerExceptionHandled => {
-                                return Err(
-                                    self.runtime_error_from_active_exception("repr() failed")
-                                );
+                                return Err(self.runtime_error_from_active_exception("repr() failed"));
                             }
                         }
                     }
@@ -7120,6 +7137,8 @@ impl Vm {
                 | BuiltinFunction::List
                 | BuiltinFunction::Tuple
                 | BuiltinFunction::Dict
+                | BuiltinFunction::CollectionsDefaultDict
+                | BuiltinFunction::CollectionsOrderedDict
                 | BuiltinFunction::Set
                 | BuiltinFunction::FrozenSet
                 | BuiltinFunction::Bytes
@@ -7231,6 +7250,9 @@ impl Vm {
                 }
                 Value::Dict(dict) if self.defaultdict_factories.contains_key(&dict.id()) => {
                     Some(Value::Builtin(BuiltinFunction::CollectionsDefaultDict))
+                }
+                Value::Dict(dict) if self.ordered_dict_instances.contains(&dict.id()) => {
+                    Some(Value::Builtin(BuiltinFunction::CollectionsOrderedDict))
                 }
                 Value::Code(_) => self
                     .types_module_or_private_class("CodeType")
@@ -7916,14 +7938,36 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        struct TypeInstancecheckBypassGuard;
+        impl TypeInstancecheckBypassGuard {
+            fn enter() -> Self {
+                TYPE_INSTANCECHECK_BYPASS_CUSTOM.with(|depth| {
+                    depth.set(depth.get().saturating_add(1));
+                });
+                Self
+            }
+        }
+        impl Drop for TypeInstancecheckBypassGuard {
+            fn drop(&mut self) {
+                TYPE_INSTANCECHECK_BYPASS_CUSTOM.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1));
+                });
+            }
+        }
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new(
                 "__instancecheck__() expects one argument",
             ));
         }
+        let _bypass_guard = TypeInstancecheckBypassGuard::enter();
         let classinfo = args.remove(0);
         let value = args.remove(0);
-        Ok(Value::Bool(self.value_is_instance_of(&value, &classinfo)?))
+        // CPython type.__instancecheck__ is defined in terms of
+        // issubclass(type(instance), cls).
+        let candidate_type = self.builtin_type(vec![value], HashMap::new())?;
+        Ok(Value::Bool(
+            self.class_value_is_subclass_of(&candidate_type, &classinfo)?,
+        ))
     }
 
     pub(super) fn builtin_issubclass(
@@ -7948,16 +7992,485 @@ impl Vm {
         mut args: Vec<Value>,
         kwargs: HashMap<String, Value>,
     ) -> Result<Value, RuntimeError> {
+        struct TypeSubclasscheckBypassGuard;
+        impl TypeSubclasscheckBypassGuard {
+            fn enter() -> Self {
+                TYPE_SUBCLASSCHECK_BYPASS_CUSTOM.with(|depth| {
+                    depth.set(depth.get().saturating_add(1));
+                });
+                Self
+            }
+        }
+        impl Drop for TypeSubclasscheckBypassGuard {
+            fn drop(&mut self) {
+                TYPE_SUBCLASSCHECK_BYPASS_CUSTOM.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1));
+                });
+            }
+        }
         if !kwargs.is_empty() || args.len() != 2 {
             return Err(RuntimeError::new(
                 "__subclasscheck__() expects one argument",
             ));
         }
+        let _bypass_guard = TypeSubclasscheckBypassGuard::enter();
         let classinfo = args.remove(0);
         let candidate = args.remove(0);
         Ok(Value::Bool(
             self.class_value_is_subclass_of(&candidate, &classinfo)?,
         ))
+    }
+
+    fn class_value_is_subclass_of_without_custom(
+        &mut self,
+        candidate: &Value,
+        classinfo: &Value,
+    ) -> Result<bool, RuntimeError> {
+        struct TypeSubclasscheckBypassGuard;
+        impl TypeSubclasscheckBypassGuard {
+            fn enter() -> Self {
+                TYPE_SUBCLASSCHECK_BYPASS_CUSTOM.with(|depth| {
+                    depth.set(depth.get().saturating_add(1));
+                });
+                Self
+            }
+        }
+        impl Drop for TypeSubclasscheckBypassGuard {
+            fn drop(&mut self) {
+                TYPE_SUBCLASSCHECK_BYPASS_CUSTOM.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1));
+                });
+            }
+        }
+
+        let _bypass_guard = TypeSubclasscheckBypassGuard::enter();
+        self.class_value_is_subclass_of(candidate, classinfo)
+    }
+
+    fn abc_type_identity_eq(left: &Value, right: &Value) -> bool {
+        match (left, right) {
+            (Value::Class(left_class), Value::Class(right_class)) => left_class.id() == right_class.id(),
+            (Value::Builtin(left_builtin), Value::Builtin(right_builtin)) => left_builtin == right_builtin,
+            (Value::ExceptionType(left_name), Value::ExceptionType(right_name)) => left_name == right_name,
+            (Value::Str(left_name), Value::Str(right_name)) => {
+                is_runtime_type_name_marker(left_name)
+                    && is_runtime_type_name_marker(right_name)
+                    && left_name == right_name
+            }
+            _ => false,
+        }
+    }
+
+    fn abc_vec_contains(values: &[Value], candidate: &Value) -> bool {
+        values
+            .iter()
+            .any(|value| Self::abc_type_identity_eq(value, candidate))
+    }
+
+    fn abc_vec_insert_unique(values: &mut Vec<Value>, candidate: Value) {
+        if !Self::abc_vec_contains(values, &candidate) {
+            values.push(candidate);
+        }
+    }
+
+    fn abc_is_type_value(&self, value: &Value) -> bool {
+        match value {
+            Value::Class(_) | Value::ExceptionType(_) => true,
+            Value::Builtin(builtin) => self.builtin_is_type_object(*builtin),
+            Value::Str(name) => is_runtime_type_name_marker(name),
+            _ => false,
+        }
+    }
+
+    fn class_uses_abc_meta(&self, class: &ObjRef) -> bool {
+        let Some(meta_class) = self.class_of_value(&Value::Class(class.clone())) else {
+            return false;
+        };
+        self.class_mro_entries(&meta_class).iter().any(|entry| {
+            let Object::Class(class_data) = &*entry.kind() else {
+                return false;
+            };
+            class_data.name == "ABCMeta"
+                && matches!(
+                    class_data.attrs.get("__module__"),
+                    Some(Value::Str(module_name)) if module_name == "abc"
+                )
+        })
+    }
+
+    fn abc_abstract_method_names(&self, value: &Value) -> Vec<String> {
+        let mut names = match value {
+            Value::Set(obj) => match &*obj.kind() {
+                Object::Set(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            Value::FrozenSet(obj) => match &*obj.kind() {
+                Object::FrozenSet(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            Value::Tuple(obj) => match &*obj.kind() {
+                Object::Tuple(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            Value::List(obj) => match &*obj.kind() {
+                Object::List(values) => values
+                    .iter()
+                    .filter_map(|item| match item {
+                        Value::Str(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn abc_class_ref_arg<'a>(&self, value: &'a Value, name: &str) -> Result<&'a ObjRef, RuntimeError> {
+        match value {
+            Value::Class(class) => Ok(class),
+            _ => Err(RuntimeError::type_error(format!("{name} must be a class"))),
+        }
+    }
+
+    fn abc_subclasscheck_internal(
+        &mut self,
+        cls: &Value,
+        subclass: &Value,
+    ) -> Result<bool, RuntimeError> {
+        let cls_ref = self.abc_class_ref_arg(cls, "_abc_subclasscheck() arg 1")?;
+        if !self.abc_is_type_value(subclass) {
+            return Err(RuntimeError::type_error(
+                "issubclass() arg 1 must be a class",
+            ));
+        }
+        let cls_id = cls_ref.id();
+        let subclass_is_marker =
+            matches!(subclass, Value::Str(name) if is_runtime_type_name_marker(name));
+        if let Some(cache) = self.abc_cache.get(&cls_id)
+            && Self::abc_vec_contains(cache, subclass)
+        {
+            return Ok(true);
+        }
+
+        let stale_negative_cache = self
+            .abc_negative_cache_version
+            .get(&cls_id)
+            .copied()
+            .unwrap_or(self.abc_invalidation_counter)
+            < self.abc_invalidation_counter;
+        if stale_negative_cache {
+            self.abc_negative_cache.insert(cls_id, Vec::new());
+            self.abc_negative_cache_version
+                .insert(cls_id, self.abc_invalidation_counter);
+        } else if let Some(negative_cache) = self.abc_negative_cache.get(&cls_id)
+            && Self::abc_vec_contains(negative_cache, subclass)
+        {
+            return Ok(false);
+        }
+
+        if !subclass_is_marker {
+            let subclasshook = match self.builtin_getattr(
+                vec![cls.clone(), Value::Str("__subclasshook__".to_string())],
+                HashMap::new(),
+            ) {
+                Ok(value) => Some(value),
+                Err(err) if runtime_error_matches_exception(&err, "AttributeError") => None,
+                Err(err) => return Err(err),
+            };
+            if let Some(subclasshook) = subclasshook {
+            let hook_result = match self.call_internal(
+                subclasshook,
+                vec![subclass.clone()],
+                HashMap::new(),
+            )? {
+                InternalCallOutcome::Value(value) => value,
+                InternalCallOutcome::CallerExceptionHandled => {
+                    return Err(
+                        self.runtime_error_from_active_exception("_abc_subclasscheck failed")
+                    );
+                }
+            };
+            if !self.is_not_implemented_singleton(&hook_result) {
+                let accepted = self.truthy_from_value(&hook_result)?;
+                if accepted {
+                    let cache = self.abc_cache.entry(cls_id).or_default();
+                    Self::abc_vec_insert_unique(cache, subclass.clone());
+                } else {
+                    let negative_cache = self.abc_negative_cache.entry(cls_id).or_default();
+                    Self::abc_vec_insert_unique(negative_cache, subclass.clone());
+                }
+                return Ok(accepted);
+            }
+        }
+        }
+
+        if !subclass_is_marker && self.class_value_is_subclass_of_without_custom(subclass, cls)? {
+            let cache = self.abc_cache.entry(cls_id).or_default();
+            Self::abc_vec_insert_unique(cache, subclass.clone());
+            return Ok(true);
+        }
+
+        if let Some(registry) = self.abc_registry.get(&cls_id).cloned() {
+            for registered in registry {
+                if Self::abc_type_identity_eq(subclass, &registered) {
+                    let cache = self.abc_cache.entry(cls_id).or_default();
+                    Self::abc_vec_insert_unique(cache, subclass.clone());
+                    return Ok(true);
+                }
+                let registered_is_marker =
+                    matches!(&registered, Value::Str(name) if is_runtime_type_name_marker(name));
+                if !subclass_is_marker
+                    && !registered_is_marker
+                    && self.class_value_is_subclass_of(subclass, &registered)?
+                {
+                    let cache = self.abc_cache.entry(cls_id).or_default();
+                    Self::abc_vec_insert_unique(cache, subclass.clone());
+                    return Ok(true);
+                }
+            }
+        }
+
+        let negative_cache = self.abc_negative_cache.entry(cls_id).or_default();
+        Self::abc_vec_insert_unique(negative_cache, subclass.clone());
+        Ok(false)
+    }
+
+    pub(super) fn builtin_abc_get_cache_token(
+        &mut self,
+        args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || !args.is_empty() {
+            return Err(RuntimeError::new("get_cache_token() expects no arguments"));
+        }
+        Ok(Value::Int(self.abc_invalidation_counter as i64))
+    }
+
+    pub(super) fn builtin_abc_init(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_abc_init() expects one argument"));
+        }
+        let cls = args.remove(0);
+        let cls_ref = self.abc_class_ref_arg(&cls, "_abc_init() arg 1")?.clone();
+        let cls_value = Value::Class(cls_ref.clone());
+        let cls_id = cls_ref.id();
+        self.abc_registry.entry(cls_id).or_default();
+        self.abc_cache.entry(cls_id).or_default();
+        self.abc_negative_cache.entry(cls_id).or_default();
+        self.abc_negative_cache_version
+            .insert(cls_id, self.abc_invalidation_counter);
+
+        let mut abstract_names = Vec::<String>::new();
+        let base_classes = match &*cls_ref.kind() {
+            Object::Class(class_data) => {
+                for (name, value) in &class_data.attrs {
+                    if let Some(is_abstract) =
+                        self.optional_getattr_value(value.clone(), "__isabstractmethod__")?
+                        && self.truthy_from_value(&is_abstract)?
+                    {
+                        if !abstract_names.contains(name) {
+                            abstract_names.push(name.clone());
+                        }
+                    }
+                }
+                class_data.bases.clone()
+            }
+            _ => Vec::new(),
+        };
+        for base in base_classes {
+            let Some(base_methods_value) =
+                self.optional_getattr_value(Value::Class(base), "__abstractmethods__")?
+            else {
+                continue;
+            };
+            for name in self.abc_abstract_method_names(&base_methods_value) {
+                let Some(attr_value) =
+                    self.optional_getattr_value(cls_value.clone(), name.as_str())?
+                else {
+                    continue;
+                };
+                if let Some(is_abstract) =
+                    self.optional_getattr_value(attr_value, "__isabstractmethod__")?
+                    && self.truthy_from_value(&is_abstract)?
+                    && !abstract_names.contains(&name)
+                {
+                    abstract_names.push(name);
+                }
+            }
+        }
+        abstract_names.sort();
+        let abstract_values = abstract_names
+            .into_iter()
+            .map(Value::Str)
+            .collect::<Vec<_>>();
+        if let Object::Class(class_data) = &mut *cls_ref.kind_mut() {
+            class_data.attrs.insert(
+                "__abstractmethods__".to_string(),
+                self.heap.alloc_frozenset(abstract_values),
+            );
+        }
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_abc_register(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("_abc_register() expects two arguments"));
+        }
+        let cls = args.remove(0);
+        let subclass = args.remove(0);
+        let cls_ref = self.abc_class_ref_arg(&cls, "_abc_register() arg 1")?;
+        if !self.abc_is_type_value(&subclass) {
+            return Err(RuntimeError::type_error("Can only register classes"));
+        }
+        let subclass_is_marker =
+            matches!(&subclass, Value::Str(name) if is_runtime_type_name_marker(name));
+        if !subclass_is_marker {
+            if self.class_value_is_subclass_of(&subclass, &cls)? {
+                return Ok(subclass);
+            }
+            if self.class_value_is_subclass_of_without_custom(&cls, &subclass)? {
+                return Err(RuntimeError::runtime_error(
+                    "Refusing to create an inheritance cycle",
+                ));
+            }
+        }
+
+        let mut registry_targets = Vec::new();
+        registry_targets.push(cls_ref.id());
+        for base in self.class_mro_entries(cls_ref) {
+            if self.class_uses_abc_meta(&base) {
+                registry_targets.push(base.id());
+            }
+        }
+        registry_targets.sort_unstable();
+        registry_targets.dedup();
+        for cls_id in registry_targets {
+            let registry = self.abc_registry.entry(cls_id).or_default();
+            Self::abc_vec_insert_unique(registry, subclass.clone());
+        }
+
+        self.abc_invalidation_counter = self.abc_invalidation_counter.saturating_add(1);
+        Ok(subclass)
+    }
+
+    pub(super) fn builtin_abc_instancecheck(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("_abc_instancecheck() expects two arguments"));
+        }
+        let cls = args.remove(0);
+        let instance = args.remove(0);
+        let subclass = self.call_builtin(BuiltinFunction::Type, vec![instance], HashMap::new())?;
+        Ok(Value::Bool(self.abc_subclasscheck_internal(&cls, &subclass)?))
+    }
+
+    pub(super) fn builtin_abc_subclasscheck(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 2 {
+            return Err(RuntimeError::new("_abc_subclasscheck() expects two arguments"));
+        }
+        let cls = args.remove(0);
+        let subclass = args.remove(0);
+        Ok(Value::Bool(self.abc_subclasscheck_internal(&cls, &subclass)?))
+    }
+
+    pub(super) fn builtin_abc_get_dump(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_get_dump() expects one argument"));
+        }
+        let cls = args.remove(0);
+        let cls_ref = self.abc_class_ref_arg(&cls, "_get_dump() arg 1")?;
+        let cls_id = cls_ref.id();
+        let registry = self.abc_registry.get(&cls_id).cloned().unwrap_or_default();
+        let cache = self.abc_cache.get(&cls_id).cloned().unwrap_or_default();
+        let negative_cache = self
+            .abc_negative_cache
+            .get(&cls_id)
+            .cloned()
+            .unwrap_or_default();
+        let version = self
+            .abc_negative_cache_version
+            .get(&cls_id)
+            .copied()
+            .unwrap_or(self.abc_invalidation_counter);
+        Ok(self.heap.alloc_tuple(vec![
+            self.heap.alloc_set(registry),
+            self.heap.alloc_set(cache),
+            self.heap.alloc_set(negative_cache),
+            Value::Int(version as i64),
+        ]))
+    }
+
+    pub(super) fn builtin_abc_reset_registry(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_reset_registry() expects one argument"));
+        }
+        let cls = args.remove(0);
+        let cls_ref = self.abc_class_ref_arg(&cls, "_reset_registry() arg 1")?;
+        self.abc_registry.insert(cls_ref.id(), Vec::new());
+        Ok(Value::None)
+    }
+
+    pub(super) fn builtin_abc_reset_caches(
+        &mut self,
+        mut args: Vec<Value>,
+        kwargs: HashMap<String, Value>,
+    ) -> Result<Value, RuntimeError> {
+        if !kwargs.is_empty() || args.len() != 1 {
+            return Err(RuntimeError::new("_reset_caches() expects one argument"));
+        }
+        let cls = args.remove(0);
+        let cls_ref = self.abc_class_ref_arg(&cls, "_reset_caches() arg 1")?;
+        let cls_id = cls_ref.id();
+        self.abc_cache.insert(cls_id, Vec::new());
+        self.abc_negative_cache.insert(cls_id, Vec::new());
+        self.abc_negative_cache_version
+            .insert(cls_id, self.abc_invalidation_counter);
+        Ok(Value::None)
     }
 
     pub(super) fn builtin_property(
@@ -8038,17 +8551,27 @@ impl Vm {
         // `super(...).__new__(cls)` can arrive here as a bound built-in call shape
         // where the explicit `cls` argument is still present in `args`.
         if let Some(explicit_class) = args.first().cloned() {
-            match explicit_class {
-                Value::Class(explicit_class) => {
-                    class_ref = explicit_class;
-                    args.remove(0);
-                }
+            let explicit_class_ref = match explicit_class {
+                Value::Class(explicit_class) => Some(explicit_class),
                 Value::Builtin(builtin) if self.builtin_is_type_object(builtin) => {
-                    class_ref = self.class_from_base_value(Value::Builtin(builtin))?;
+                    Some(self.class_from_base_value(Value::Builtin(builtin))?)
+                }
+                _ => None,
+            };
+            if let Some(explicit_class_ref) = explicit_class_ref {
+                let explicit_is_compatible = explicit_class_ref.id() == class_ref.id()
+                    || self
+                        .class_mro_entries(&explicit_class_ref)
+                        .iter()
+                        .any(|entry| entry.id() == class_ref.id());
+                if explicit_is_compatible {
+                    class_ref = explicit_class_ref;
                     args.remove(0);
                 }
-                _ => {}
             }
+        }
+        if self.class_has_generic_alias_base(&class_ref) {
+            return self.instantiate_generic_alias_class(class_ref, args, kwargs);
         }
         if let Some(message) = self.class_disallow_instantiation_message(&class_ref) {
             return Err(RuntimeError::type_error(message));
@@ -9464,7 +9987,8 @@ impl Vm {
                 "set() expects at most one argument",
             ));
         };
-        Ok(self.heap.alloc_set(dedup_hashable_values(values)?))
+        let deduped = self.dedup_hashable_values_runtime(values)?;
+        Ok(self.heap.alloc_set(deduped))
     }
 
     pub(super) fn builtin_frozenset(
@@ -9521,7 +10045,8 @@ impl Vm {
                 "frozenset() expects at most one argument",
             ));
         };
-        Ok(self.heap.alloc_frozenset(dedup_hashable_values(values)?))
+        let deduped = self.dedup_hashable_values_runtime(values)?;
+        Ok(self.heap.alloc_frozenset(deduped))
     }
 
     pub(super) fn builtin_set_reduce(
@@ -10271,6 +10796,103 @@ impl Vm {
         ))
     }
 
+    fn format_str_with_spec(&self, text: &str, spec: &str) -> Result<String, RuntimeError> {
+        if spec.is_empty() || spec == "s" {
+            return Ok(text.to_string());
+        }
+        let chars: Vec<char> = spec.chars().collect();
+        let mut index = 0usize;
+        let mut fill = ' ';
+        let mut align = None;
+
+        if chars.len() >= 2 && matches!(chars[1], '<' | '>' | '^' | '=') {
+            fill = chars[0];
+            align = Some(chars[1]);
+            index = 2;
+        } else if chars.first().is_some_and(|ch| matches!(ch, '<' | '>' | '^' | '=')) {
+            align = chars.first().copied();
+            index = 1;
+        }
+
+        let width_start = index;
+        while index < chars.len() && chars[index].is_ascii_digit() {
+            index += 1;
+        }
+        let width = if index > width_start {
+            chars[width_start..index]
+                .iter()
+                .collect::<String>()
+                .parse::<usize>()
+                .ok()
+        } else {
+            None
+        };
+
+        let mut precision = None;
+        if index < chars.len() && chars[index] == '.' {
+            index += 1;
+            let precision_start = index;
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+            if index == precision_start {
+                return Err(RuntimeError::value_error(format!(
+                    "unsupported format string passed to str.__format__: '{spec}'"
+                )));
+            }
+            precision = chars[precision_start..index]
+                .iter()
+                .collect::<String>()
+                .parse::<usize>()
+                .ok();
+        }
+
+        let ty = if index < chars.len() {
+            let ty = chars[index];
+            index += 1;
+            Some(ty)
+        } else {
+            None
+        };
+        if index != chars.len()
+            || matches!(ty, Some(ch) if ch != 's')
+            || matches!(align, Some('='))
+        {
+            return Err(RuntimeError::value_error(format!(
+                "unsupported format string passed to str.__format__: '{spec}'"
+            )));
+        }
+
+        let mut rendered = match precision {
+            Some(limit) => text.chars().take(limit).collect::<String>(),
+            None => text.to_string(),
+        };
+        if let Some(target_width) = width {
+            let current = rendered.chars().count();
+            if target_width > current {
+                let padding = target_width - current;
+                let align = align.unwrap_or('<');
+                let left_padding = match align {
+                    '<' => 0,
+                    '>' => padding,
+                    '^' => padding / 2,
+                    _ => {
+                        return Err(RuntimeError::value_error(format!(
+                            "unsupported format string passed to str.__format__: '{spec}'"
+                        )));
+                    }
+                };
+                let right_padding = padding.saturating_sub(left_padding);
+                let mut out = String::new();
+                out.push_str(&fill.to_string().repeat(left_padding));
+                out.push_str(&rendered);
+                out.push_str(&fill.to_string().repeat(right_padding));
+                rendered = out;
+            }
+        }
+        Ok(rendered)
+    }
+
     pub(super) fn builtin_format(
         &mut self,
         mut args: Vec<Value>,
@@ -10309,15 +10931,7 @@ impl Vm {
                 }
             }
             Value::BigInt(number) => self.format_bigint_with_spec(number, &spec)?,
-            Value::Str(text) => {
-                if spec.is_empty() || spec == "s" {
-                    text.clone()
-                } else {
-                    return Err(RuntimeError::value_error(format!(
-                        "unsupported format string passed to str.__format__: '{spec}'"
-                    )));
-                }
-            }
+            Value::Str(text) => self.format_str_with_spec(text, &spec)?,
             Value::Float(number) => {
                 if spec.is_empty() {
                     format_value(&value)
@@ -12506,6 +13120,7 @@ impl Vm {
             Value::Instance(instance) => match &*instance.kind() {
                 Object::Instance(instance_data) => {
                     class_attr_lookup(&instance_data.class, "__call__").is_some()
+                        || self.is_types_generic_alias_value(value)
                         || Self::cpython_proxy_raw_ptr_from_value(value)
                             .is_some_and(Self::cpython_proxy_raw_ptr_is_callable)
                 }
@@ -12520,25 +13135,15 @@ impl Vm {
         class: &ObjRef,
         value: &Value,
     ) -> Result<Option<bool>, RuntimeError> {
+        if TYPE_INSTANCECHECK_BYPASS_CUSTOM.with(|depth| depth.get() > 0) {
+            return Ok(None);
+        }
         let Some(meta_class) = self.class_of_value(&Value::Class(class.clone())) else {
             return Ok(None);
         };
         if let Object::Class(class_data) = &*meta_class.kind()
             && class_data.name == "type"
         {
-            return Ok(None);
-        }
-        let meta_is_abc_meta = match &*meta_class.kind() {
-            Object::Class(class_data) => {
-                class_data.name == "ABCMeta"
-                    && matches!(
-                        class_data.attrs.get("__module__"),
-                        Some(Value::Str(module_name)) if module_name == "abc"
-                    )
-            }
-            _ => false,
-        };
-        if meta_is_abc_meta {
             return Ok(None);
         }
         let Some(raw_instancecheck) = class_attr_lookup(&meta_class, "__instancecheck__") else {
@@ -12569,25 +13174,15 @@ impl Vm {
         class: &ObjRef,
         candidate: &Value,
     ) -> Result<Option<bool>, RuntimeError> {
+        if TYPE_SUBCLASSCHECK_BYPASS_CUSTOM.with(|depth| depth.get() > 0) {
+            return Ok(None);
+        }
         let Some(meta_class) = self.class_of_value(&Value::Class(class.clone())) else {
             return Ok(None);
         };
         if let Object::Class(class_data) = &*meta_class.kind()
             && class_data.name == "type"
         {
-            return Ok(None);
-        }
-        let meta_is_abc_meta = match &*meta_class.kind() {
-            Object::Class(class_data) => {
-                class_data.name == "ABCMeta"
-                    && matches!(
-                        class_data.attrs.get("__module__"),
-                        Some(Value::Str(module_name)) if module_name == "abc"
-                    )
-            }
-            _ => false,
-        };
-        if meta_is_abc_meta {
             return Ok(None);
         }
         let Some(raw_subclasscheck) = class_attr_lookup(&meta_class, "__subclasscheck__") else {
@@ -12801,13 +13396,38 @@ impl Vm {
                         "Awaitable" => self.value_matches_awaitable_protocol(value),
                         "Coroutine" => self.value_matches_coroutine_protocol(value),
                         "Generator" => self.value_matches_generator_protocol(value),
+                        "Hashable" => self.hash_value_runtime(value).is_ok(),
+                        "AsyncIterable" => self.value_supports_attr_runtime(value, "__aiter__"),
+                        "AsyncIterator" => {
+                            self.value_supports_attr_runtime(value, "__aiter__")
+                                && self.value_supports_attr_runtime(value, "__anext__")
+                        }
+                        "AsyncGenerator" => {
+                            self.value_supports_attr_runtime(value, "__aiter__")
+                                && self.value_supports_attr_runtime(value, "__anext__")
+                                && self.value_supports_attr_runtime(value, "asend")
+                                && self.value_supports_attr_runtime(value, "athrow")
+                                && self.value_supports_attr_runtime(value, "aclose")
+                        }
                         "Iterable" => self.value_has_iter_protocol(value),
                         "Sized" => self.value_has_len_protocol(value),
+                        "Container" => self.value_has_contains_protocol(value),
+                        "Collection" => {
+                            self.value_has_len_protocol(value)
+                                && self.value_has_iter_protocol(value)
+                                && self.value_has_contains_protocol(value)
+                        }
                         "Sequence" => {
                             self.value_has_len_protocol(value)
                                 && self.value_has_getitem_protocol(value)
                         }
+                        "Callable" => self.is_callable_value(value),
                         "Mapping" => matches!(value, Value::Dict(_)),
+                        "Set" => matches!(value, Value::Set(_) | Value::FrozenSet(_)),
+                        "MutableSet" => matches!(value, Value::Set(_)),
+                        "MutableMapping" => matches!(value, Value::Dict(_)),
+                        "MutableSequence" => matches!(value, Value::List(_)),
+                        "ByteString" => matches!(value, Value::Bytes(_) | Value::ByteArray(_)),
                         _ => false,
                     };
                     if marker_match {
@@ -12859,9 +13479,26 @@ impl Vm {
                 Value::ExceptionType(_) => Ok(false),
                 _ => Ok(false),
             },
-            _ => Err(RuntimeError::type_error(
-                "isinstance() arg 2 must be a type or tuple of types",
-            )),
+            other => {
+                if let Some(instancecheck) =
+                    self.lookup_bound_special_method(other, "__instancecheck__")?
+                {
+                    return match self.call_internal(
+                        instancecheck,
+                        vec![value.clone()],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(result) => Ok(self.truthy_from_value(&result)?),
+                        InternalCallOutcome::CallerExceptionHandled => Err(self
+                            .runtime_error_from_active_exception(
+                                "isinstance() custom __instancecheck__ failed",
+                            )),
+                    };
+                }
+                Err(RuntimeError::type_error(
+                    "isinstance() arg 2 must be a type or tuple of types",
+                ))
+            }
         }
     }
 
@@ -12969,6 +13606,28 @@ impl Vm {
         }
     }
 
+    pub(super) fn value_has_contains_protocol(&self, value: &Value) -> bool {
+        match value {
+            Value::List(_)
+            | Value::Tuple(_)
+            | Value::Dict(_)
+            | Value::DictKeys(_)
+            | Value::Set(_)
+            | Value::FrozenSet(_)
+            | Value::Bytes(_)
+            | Value::ByteArray(_)
+            | Value::MemoryView(_)
+            | Value::Str(_) => true,
+            Value::Instance(instance) => match &*instance.kind() {
+                Object::Instance(instance_data) => {
+                    class_attr_lookup(&instance_data.class, "__contains__").is_some()
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     pub(super) fn class_value_is_subclass_of(
         &mut self,
         candidate: &Value,
@@ -13039,13 +13698,15 @@ impl Vm {
                 )),
             },
             Value::Class(expected) => {
-                if matches!(
+                let candidate_allows_custom_subclasscheck = matches!(
                     candidate,
                     Value::Class(_)
                         | Value::Builtin(_)
                         | Value::Exception(_)
                         | Value::ExceptionType(_)
-                ) && let Some(custom_result) =
+                ) || matches!(candidate, Value::Str(name) if is_runtime_type_name_marker(name));
+                if candidate_allows_custom_subclasscheck
+                    && let Some(custom_result) =
                     self.try_custom_subclasscheck(expected, candidate)?
                 {
                     return Ok(custom_result);
@@ -13080,19 +13741,111 @@ impl Vm {
                         {
                             return Ok(true);
                         }
+                        if expected_data.name == "AsyncIterable"
+                            && class_attr_lookup(class, "__aiter__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "AsyncIterator"
+                            && class_attr_lookup(class, "__aiter__").is_some()
+                            && class_attr_lookup(class, "__anext__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "AsyncGenerator"
+                            && class_attr_lookup(class, "__aiter__").is_some()
+                            && class_attr_lookup(class, "__anext__").is_some()
+                            && class_attr_lookup(class, "asend").is_some()
+                            && class_attr_lookup(class, "athrow").is_some()
+                            && class_attr_lookup(class, "aclose").is_some()
+                        {
+                            return Ok(true);
+                        }
                         if expected_data.name == "Sized"
                             && class_attr_lookup(class, "__len__").is_some()
                         {
                             return Ok(true);
                         }
+                        if expected_data.name == "Hashable"
+                            && matches!(class_attr_lookup(class, "__hash__"), Some(value) if !matches!(value, Value::None))
+                        {
+                            return Ok(true);
+                        }
                         if expected_data.name == "Sequence"
+                            && ((class_attr_lookup(class, "__len__").is_some()
+                                && class_attr_lookup(class, "__getitem__").is_some())
+                                || self.class_has_builtin_list_base(class)
+                                || self.class_has_builtin_tuple_base(class)
+                                || self.class_has_builtin_str_base(class)
+                                || self.class_has_builtin_bytes_base(class)
+                                || self.class_has_builtin_bytearray_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Callable" {
+                            if class_attr_lookup(class, "__call__").is_some() {
+                                return Ok(true);
+                            }
+                            let class_is_builtin_callable_type = matches!(
+                                &*class.kind(),
+                                Object::Class(class_data)
+                                    if matches!(
+                                        class_data.name.as_str(),
+                                        "function"
+                                            | "builtin_function_or_method"
+                                            | "method_descriptor"
+                                            | "method-wrapper"
+                                    ) && matches!(
+                                        class_data.attrs.get("__module__"),
+                                        Some(Value::Str(module_name))
+                                            if matches!(module_name.as_str(), "types" | "_types")
+                                    )
+                            );
+                            if class_is_builtin_callable_type {
+                                return Ok(true);
+                            }
+                        }
+                        if expected_data.name == "Container"
+                            && class_attr_lookup(class, "__contains__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Collection"
                             && class_attr_lookup(class, "__len__").is_some()
-                            && class_attr_lookup(class, "__getitem__").is_some()
+                            && class_attr_lookup(class, "__iter__").is_some()
+                            && class_attr_lookup(class, "__contains__").is_some()
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "Set"
+                            && (self.class_has_builtin_set_base(class)
+                                || self.class_has_builtin_frozenset_base(class))
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "MutableSet"
+                            && self.class_has_builtin_set_base(class)
                         {
                             return Ok(true);
                         }
                         if expected_data.name == "Mapping"
                             && self.class_has_builtin_dict_base(class)
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "MutableMapping"
+                            && self.class_has_builtin_dict_base(class)
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "MutableSequence"
+                            && self.class_has_builtin_list_base(class)
+                        {
+                            return Ok(true);
+                        }
+                        if expected_data.name == "ByteString"
+                            && (self.class_has_builtin_bytes_base(class)
+                                || self.class_has_builtin_bytearray_base(class))
                         {
                             return Ok(true);
                         }
@@ -13138,14 +13891,62 @@ impl Vm {
                             candidate,
                             Value::Builtin(BuiltinFunction::GeneratorType)
                         ),
+                        "Hashable" => !matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::List
+                                    | BuiltinFunction::Dict
+                                    | BuiltinFunction::Set
+                                    | BuiltinFunction::ByteArray
+                                    | BuiltinFunction::CollectionsDefaultDict
+                            )
+                        ),
+                        "AsyncIterable" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::AsyncGeneratorType)
+                        ),
+                        "AsyncIterator" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::AsyncGeneratorType)
+                        ),
+                        "AsyncGenerator" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::AsyncGeneratorType)
+                        ),
                         "Iterable" => matches!(
                             candidate,
                             Value::Builtin(
                                 BuiltinFunction::List
                                     | BuiltinFunction::Tuple
-                                    | BuiltinFunction::Dict
                                     | BuiltinFunction::Set
                                     | BuiltinFunction::FrozenSet
+                                    | BuiltinFunction::Dict
+                                    | BuiltinFunction::Str
+                                    | BuiltinFunction::Bytes
+                                    | BuiltinFunction::ByteArray
+                            )
+                        ),
+                        "Container" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::List
+                                    | BuiltinFunction::Tuple
+                                    | BuiltinFunction::Set
+                                    | BuiltinFunction::FrozenSet
+                                    | BuiltinFunction::Dict
+                                    | BuiltinFunction::Str
+                                    | BuiltinFunction::Bytes
+                                    | BuiltinFunction::ByteArray
+                            )
+                        ),
+                        "Collection" => matches!(
+                            candidate,
+                            Value::Builtin(
+                                BuiltinFunction::List
+                                    | BuiltinFunction::Tuple
+                                    | BuiltinFunction::Set
+                                    | BuiltinFunction::FrozenSet
+                                    | BuiltinFunction::Dict
                                     | BuiltinFunction::Str
                                     | BuiltinFunction::Bytes
                                     | BuiltinFunction::ByteArray
@@ -13176,9 +13977,27 @@ impl Vm {
                                     | BuiltinFunction::MemoryView
                             )
                         ),
+                        "Callable" => {
+                            matches!(candidate, Value::Builtin(BuiltinFunction::TypesFunctionType))
+                        }
+                        "Set" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::Set | BuiltinFunction::FrozenSet)
+                        ),
+                        "MutableSet" => matches!(candidate, Value::Builtin(BuiltinFunction::Set)),
                         "Mapping" => {
                             matches!(candidate, Value::Builtin(BuiltinFunction::Dict))
                         }
+                        "MutableMapping" => {
+                            matches!(candidate, Value::Builtin(BuiltinFunction::Dict))
+                        }
+                        "MutableSequence" => {
+                            matches!(candidate, Value::Builtin(BuiltinFunction::List))
+                        }
+                        "ByteString" => matches!(
+                            candidate,
+                            Value::Builtin(BuiltinFunction::Bytes | BuiltinFunction::ByteArray)
+                        ),
                         _ => false,
                     })
                 }
@@ -13216,6 +14035,12 @@ impl Vm {
                     BuiltinFunction::List => self.class_has_builtin_list_base(class),
                     BuiltinFunction::Tuple => self.class_has_builtin_tuple_base(class),
                     BuiltinFunction::Dict => self.class_has_builtin_dict_base(class),
+                    BuiltinFunction::CollectionsDefaultDict => {
+                        self.class_has_builtin_defaultdict_base(class)
+                    }
+                    BuiltinFunction::CollectionsOrderedDict => {
+                        self.class_has_builtin_ordereddict_base(class)
+                    }
                     BuiltinFunction::Set => self.class_has_builtin_set_base(class),
                     BuiltinFunction::FrozenSet => self.class_has_builtin_frozenset_base(class),
                     BuiltinFunction::Bytes => self.class_has_builtin_bytes_base(class),
@@ -13258,9 +14083,26 @@ impl Vm {
                 }
                 _ => Ok(false),
             },
-            _ => Err(RuntimeError::type_error(
-                "issubclass() arg 2 must be a type or tuple of types",
-            )),
+            other => {
+                if let Some(subclasscheck) =
+                    self.lookup_bound_special_method(other, "__subclasscheck__")?
+                {
+                    return match self.call_internal(
+                        subclasscheck,
+                        vec![candidate.clone()],
+                        HashMap::new(),
+                    )? {
+                        InternalCallOutcome::Value(result) => Ok(self.truthy_from_value(&result)?),
+                        InternalCallOutcome::CallerExceptionHandled => Err(self
+                            .runtime_error_from_active_exception(
+                                "issubclass() custom __subclasscheck__ failed",
+                            )),
+                    };
+                }
+                Err(RuntimeError::type_error(
+                    "issubclass() arg 2 must be a type or tuple of types",
+                ))
+            }
         }
     }
 
@@ -13358,6 +14200,10 @@ impl Vm {
             BuiltinFunction::CollectionsDefaultDict => matches!(
                 value,
                 Value::Dict(obj) if self.defaultdict_factories.contains_key(&obj.id())
+            ),
+            BuiltinFunction::CollectionsOrderedDict => matches!(
+                value,
+                Value::Dict(obj) if self.ordered_dict_instances.contains(&obj.id())
             ),
             BuiltinFunction::Set => {
                 matches!(value, Value::Set(_))
