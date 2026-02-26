@@ -12412,6 +12412,9 @@ impl Vm {
         if let Some(result) = self.compare_eq_via_union_values(&left, &right)? {
             return Ok(Value::Bool(result));
         }
+        if let Some(result) = self.compare_eq_via_paramspec_attr_values(&left, &right)? {
+            return Ok(Value::Bool(result));
+        }
         if let Some(result) = self.compare_eq_via_generic_alias_values(&left, &right)? {
             return Ok(Value::Bool(result));
         }
@@ -12562,6 +12565,52 @@ impl Vm {
             }
         }
         Ok(Some(true))
+    }
+
+    fn paramspec_attr_origin_info(&self, value: &Value) -> Option<(&'static str, Value)> {
+        let Value::Instance(instance) = value else {
+            return None;
+        };
+        let instance_kind = instance.kind();
+        let Object::Instance(instance_data) = &*instance_kind else {
+            return None;
+        };
+        let class_kind = instance_data.class.kind();
+        let Object::Class(class_data) = &*class_kind else {
+            return None;
+        };
+        let module_name = match class_data.attrs.get("__module__") {
+            Some(Value::Str(module_name)) => module_name.as_str(),
+            _ => return None,
+        };
+        if module_name != "typing" && module_name != "_typing" {
+            return None;
+        }
+        let kind = match class_data.name.as_str() {
+            "ParamSpecArgs" => "args",
+            "ParamSpecKwargs" => "kwargs",
+            _ => return None,
+        };
+        let origin = instance_data.attrs.get("__origin__")?.clone();
+        Some((kind, origin))
+    }
+
+    fn compare_eq_via_paramspec_attr_values(
+        &mut self,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Option<bool>, RuntimeError> {
+        let Some((left_kind, left_origin)) = self.paramspec_attr_origin_info(left) else {
+            return Ok(None);
+        };
+        let Some((right_kind, right_origin)) = self.paramspec_attr_origin_info(right) else {
+            return Ok(Some(false));
+        };
+        if left_kind != right_kind {
+            return Ok(Some(false));
+        }
+        let origin_eq = self.compare_eq_runtime(left_origin, right_origin)?;
+        Ok(Some(self.truthy_from_value(&origin_eq)?))
     }
 
     fn compare_eq_via_generic_alias_values(

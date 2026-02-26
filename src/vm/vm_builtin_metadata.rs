@@ -4386,6 +4386,31 @@ impl Vm {
                             }
                         }
                     }
+                    let is_typing_paramspec_attr_class = match &*class.kind() {
+                        Object::Class(class_data) => {
+                            matches!(
+                                class_data.name.as_str(),
+                                "ParamSpecArgs" | "ParamSpecKwargs"
+                            ) && matches!(
+                                class_data.attrs.get("__module__"),
+                                Some(Value::Str(module_name))
+                                    if module_name == "typing" || module_name == "_typing"
+                            )
+                        }
+                        _ => false,
+                    };
+                    if is_typing_paramspec_attr_class
+                        && !used_custom_new
+                        && kwargs.is_empty()
+                        && args.len() == 1
+                    {
+                        if let Object::Instance(instance_data) = &mut *instance.kind_mut() {
+                            instance_data
+                                .attrs
+                                .insert("__origin__".to_string(), args[0].clone());
+                        }
+                        return Ok(InternalCallOutcome::Value(Value::Instance(instance)));
+                    }
                     let mut init = class_attr_lookup(&class, "__init__");
                     if matches!(init, Some(Value::Builtin(BuiltinFunction::ObjectInit)))
                         && !used_custom_new

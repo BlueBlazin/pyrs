@@ -5323,6 +5323,9 @@ impl Vm {
                 "__module__".to_string(),
                 Value::Str(module_name.to_string()),
             );
+            class_data
+                .attrs
+                .insert("__flags__".to_string(), Value::Int(PY_TPFLAGS_HEAPTYPE));
             class_data.attrs.insert(
                 "__bases__".to_string(),
                 self.heap
