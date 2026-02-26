@@ -3736,11 +3736,22 @@ impl Compiler {
                 self.annotation_expr_to_string(value),
                 self.annotation_expr_to_string(index)
             ),
-            ExprKind::Tuple(items) => items
-                .iter()
-                .map(|item| self.annotation_expr_to_string(item))
-                .collect::<Vec<_>>()
-                .join(", "),
+            ExprKind::Tuple(items) => {
+                if items.is_empty() {
+                    "()".to_string()
+                } else {
+                    let rendered = items
+                        .iter()
+                        .map(|item| self.annotation_expr_to_string(item))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if items.len() == 1 {
+                        format!("({rendered},)")
+                    } else {
+                        format!("({rendered})")
+                    }
+                }
+            }
             ExprKind::List(items) => format!(
                 "[{}]",
                 items

@@ -1905,68 +1905,43 @@ impl Vm {
         Self::tuple_items_from_value(args)
     }
 
-    fn literal_value_strict_equal(left: &Value, right: &Value) -> bool {
-        use std::mem::discriminant;
-        if discriminant(left) != discriminant(right) {
-            return false;
+    fn literal_value_type_pairs_runtime(
+        &mut self,
+        args: &[Value],
+    ) -> Result<Vec<Value>, RuntimeError> {
+        let mut pairs = Vec::with_capacity(args.len());
+        for arg in args {
+            let arg_type = self.builtin_type(vec![arg.clone()], HashMap::new())?;
+            pairs.push(self.heap.alloc_tuple(vec![arg.clone(), arg_type]));
         }
-        match (left, right) {
-            (Value::Tuple(left_tuple), Value::Tuple(right_tuple)) => {
-                let (Object::Tuple(left_items), Object::Tuple(right_items)) =
-                    (&*left_tuple.kind(), &*right_tuple.kind())
-                else {
-                    return false;
-                };
-                left_items.len() == right_items.len()
-                    && left_items
-                        .iter()
-                        .zip(right_items.iter())
-                        .all(|(left_item, right_item)| {
-                            Self::literal_value_strict_equal(left_item, right_item)
-                        })
-            }
-            (Value::List(left_list), Value::List(right_list)) => {
-                let (Object::List(left_items), Object::List(right_items)) =
-                    (&*left_list.kind(), &*right_list.kind())
-                else {
-                    return false;
-                };
-                left_items.len() == right_items.len()
-                    && left_items
-                        .iter()
-                        .zip(right_items.iter())
-                        .all(|(left_item, right_item)| {
-                            Self::literal_value_strict_equal(left_item, right_item)
-                        })
-            }
-            (Value::Dict(left_dict), Value::Dict(right_dict)) => {
-                let (Object::Dict(left_items), Object::Dict(right_items)) =
-                    (&*left_dict.kind(), &*right_dict.kind())
-                else {
-                    return false;
-                };
-                if left_items.len() != right_items.len() {
-                    return false;
-                }
-                left_items.iter().zip(right_items.iter()).all(
-                    |((left_key, left_value), (right_key, right_value))| {
-                        Self::literal_value_strict_equal(left_key, right_key)
-                            && Self::literal_value_strict_equal(left_value, right_value)
-                    },
-                )
-            }
-            _ => left == right,
-        }
+        self.dedup_hashable_values_runtime(pairs)
     }
 
-    pub(super) fn literal_args_strict_equal(left: &[Value], right: &[Value]) -> bool {
-        left.len() == right.len()
-            && left
-                .iter()
-                .zip(right.iter())
-                .all(|(left_item, right_item)| {
-                    Self::literal_value_strict_equal(left_item, right_item)
-                })
+    pub(super) fn literal_alias_args_equal_runtime(
+        &mut self,
+        left: &[Value],
+        right: &[Value],
+    ) -> Result<bool, RuntimeError> {
+        let left_pairs = self.literal_value_type_pairs_runtime(left)?;
+        let right_pairs = self.literal_value_type_pairs_runtime(right)?;
+        if left_pairs.len() != right_pairs.len() {
+            return Ok(false);
+        }
+        for left_pair in &left_pairs {
+            if !self.sequence_contains_runtime_value(&right_pairs, left_pair)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub(super) fn literal_alias_args_hash_runtime(
+        &mut self,
+        args: &[Value],
+    ) -> Result<u64, RuntimeError> {
+        let pairs = self.literal_value_type_pairs_runtime(args)?;
+        let pair_set = self.heap.alloc_frozenset(pairs);
+        self.hash_value_runtime(&pair_set).map(|hash| hash as u64)
     }
 
     fn forward_ref_value_from_string(&mut self, text: String) -> Value {
@@ -2060,7 +2035,7 @@ impl Vm {
                 self.literal_alias_args_from_value(existing),
                 self.literal_alias_args_from_value(&normalized),
             ) {
-                if Self::literal_args_strict_equal(&left_literal_args, &right_literal_args) {
+                if self.literal_alias_args_equal_runtime(&left_literal_args, &right_literal_args)? {
                     return Ok(());
                 }
                 continue;

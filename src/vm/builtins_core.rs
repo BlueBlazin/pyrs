@@ -1321,6 +1321,9 @@ impl Vm {
         origin: &Value,
         args: &[Value],
     ) -> Result<u64, RuntimeError> {
+        if let Some(literal_args) = self.literal_alias_args_from_value(value) {
+            return self.literal_alias_args_hash_runtime(&literal_args);
+        }
         let mut hasher = DefaultHasher::new();
         13u8.hash(&mut hasher);
         self.hash_value_runtime_u64(origin)?.hash(&mut hasher);
@@ -7479,6 +7482,9 @@ impl Vm {
                 explicit_metaclass,
                 class_keywords,
                 Some(namespace_value),
+                None,
+                None,
+                false,
             )? {
                 ClassBuildOutcome::Value(value) => {
                     self.preserve_type_bases_tuple_subclass(&value, &args[1]);
@@ -10109,7 +10115,7 @@ impl Vm {
             _ => unreachable!(),
         };
         for key in keys {
-            dict_set_value_checked(&dict_obj, key, default.clone())?;
+            self.dict_set_value_checked_runtime(&dict_obj, key, default.clone())?;
         }
         if let Some(class) = dict_subclass {
             let instance = match self.heap.alloc_instance(InstanceObject::new(class)) {
@@ -12684,10 +12690,10 @@ impl Vm {
             self.literal_alias_args_from_value(left),
             self.literal_alias_args_from_value(right),
         ) {
-            return Ok(Some(Vm::literal_args_strict_equal(
+            return Ok(Some(self.literal_alias_args_equal_runtime(
                 &left_literal_args,
                 &right_literal_args,
-            )));
+            )?));
         }
         let Some((left_origin, left_args)) = self.generic_alias_parts_from_value(left) else {
             return Ok(None);

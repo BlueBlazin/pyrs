@@ -16,6 +16,8 @@ use super::{
     runtime_error_matches_exception, split_formatter_field_name, value_from_bigint,
     value_to_bigint, value_to_int, with_bytes_like_source,
 };
+use crate::ast::{Constant, ExprKind};
+use crate::parser;
 
 unsafe extern "C" {
     fn PyErr_Clear();
@@ -5675,11 +5677,18 @@ impl Vm {
                 let Object::Module(module_data) = &*receiver_kind else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
+                let class_annotation_wrapper = module_data.name == "__class_annotate__";
                 let Some(Value::Function(function_obj)) =
                     module_data.globals.get("function").cloned()
                 else {
                     return Err(RuntimeError::new("function annotate receiver is invalid"));
                 };
+                let forward_ref_owner = module_data
+                    .globals
+                    .get("owner")
+                    .cloned()
+                    .or_else(|| self.annotation_owner_from_call_stack())
+                    .unwrap_or_else(|| Value::Function(function_obj.clone()));
                 let (annotations, function_module, annotation_locals, future_annotations_import) = {
                     let mut function_ref = function_obj.kind_mut();
                     let Object::Function(func_data) = &mut *function_ref else {
@@ -5725,6 +5734,16 @@ impl Vm {
                         };
                         let resolved_value = match format {
                             1 | 2 => match value {
+                                Value::Str(text)
+                                    if class_annotation_wrapper && future_annotations_import =>
+                                {
+                                    self.function_annotation_eval_forward_ref(
+                                        text,
+                                        &function_module,
+                                        annotation_locals.as_ref(),
+                                        forward_ref_owner.clone(),
+                                    )?
+                                }
                                 Value::Str(text) if !future_annotations_import => self
                                     .function_annotation_eval_value(
                                         text,
@@ -5738,12 +5757,14 @@ impl Vm {
                                     text,
                                     &function_module,
                                     annotation_locals.as_ref(),
-                                    Value::Function(function_obj.clone()),
+                                    forward_ref_owner.clone(),
                                 )?,
                                 other => other.clone(),
                             },
                             4 => match value {
-                                Value::Str(text) => Value::Str(text.clone()),
+                                Value::Str(text) => {
+                                    Value::Str(self.function_annotation_format_string(text))
+                                }
                                 other => self.builtin_repr(vec![other.clone()], HashMap::new())?,
                             },
                             _ => unreachable!(),
@@ -7406,10 +7427,29 @@ impl Vm {
         out
     }
 
+    fn annotation_owner_from_call_stack(&self) -> Option<Value> {
+        for frame in self.frames.iter().rev() {
+            if let Some(owner_index) = frame.code.name_to_index.get("owner").copied()
+                && owner_index < frame.fast_locals.len()
+                && let Some(owner) = frame.fast_locals[owner_index].clone()
+                && !matches!(owner, Value::None)
+            {
+                return Some(owner);
+            }
+            if let Some(owner) = frame.locals.get("owner").cloned()
+                && !matches!(owner, Value::None)
+            {
+                return Some(owner);
+            }
+        }
+        None
+    }
+
     fn function_annotation_forward_ref(
         &mut self,
         name: &str,
         function_owner: Value,
+        module_name: Option<String>,
     ) -> Result<Value, RuntimeError> {
         let annotationlib = if let Some(module) = self.modules.get("annotationlib").cloned() {
             module
@@ -7425,6 +7465,9 @@ impl Vm {
         )?;
         let mut kwargs = HashMap::new();
         kwargs.insert("owner".to_string(), function_owner);
+        if let Some(module_name) = module_name {
+            kwargs.insert("module".to_string(), Value::Str(module_name));
+        }
         match self.call_internal(forward_ref_ctor, vec![Value::Str(name.to_string())], kwargs)? {
             InternalCallOutcome::Value(value) => Ok(value),
             InternalCallOutcome::CallerExceptionHandled => {
@@ -7441,6 +7484,20 @@ impl Vm {
         function_owner: Value,
     ) -> Result<Value, RuntimeError> {
         let mut locals = self.function_annotation_locals_from_dict(annotation_locals);
+        let owner_module_name = match &function_owner {
+            Value::Class(class) => match &*class.kind() {
+                Object::Class(class_data) => class_data.attrs.get("__module__").and_then(|value| {
+                    if let Value::Str(name) = value {
+                        Some(name.clone())
+                    } else {
+                        None
+                    }
+                }),
+                _ => None,
+            },
+            _ => None,
+        };
+        let module_name = owner_module_name;
         for _ in 0..32 {
             let mut eval_args = vec![
                 Value::Str(text.to_string()),
@@ -7463,7 +7520,11 @@ impl Vm {
                         return Ok(Value::Str(text.to_string()));
                     }
                     let forward_ref =
-                        self.function_annotation_forward_ref(&name, function_owner.clone())?;
+                        self.function_annotation_forward_ref(
+                            &name,
+                            function_owner.clone(),
+                            module_name.clone(),
+                        )?;
                     locals.insert(name, forward_ref);
                 }
             }
@@ -7485,6 +7546,15 @@ impl Vm {
             eval_args.push(Value::Dict(annotation_locals.clone()));
         }
         self.builtin_eval(eval_args, HashMap::new())
+    }
+
+    fn function_annotation_format_string(&self, text: &str) -> String {
+        if let Ok(expr) = parser::parse_expression(text)
+            && let ExprKind::Constant(Constant::Str(value)) = expr.node
+        {
+            return value;
+        }
+        text.to_string()
     }
 
     fn builtin_typing_typeparam_has_default(

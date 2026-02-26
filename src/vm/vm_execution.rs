@@ -810,6 +810,9 @@ impl Vm {
                         frame.class_metaclass,
                         frame.class_keywords,
                         frame.class_namespace,
+                        Some(frame.function_globals.clone()),
+                        frame.locals_fallback.clone(),
+                        frame.code.future_annotations_import,
                     )? {
                         ClassBuildOutcome::Value(value) => value,
                         ClassBuildOutcome::ExceptionHandled => continue,
@@ -7595,6 +7598,9 @@ impl Vm {
                         frame.class_metaclass,
                         frame.class_keywords,
                         frame.class_namespace,
+                        Some(frame.function_globals.clone()),
+                        frame.locals_fallback.clone(),
+                        frame.code.future_annotations_import,
                     )? {
                         ClassBuildOutcome::Value(value) => value,
                         ClassBuildOutcome::ExceptionHandled => return Ok(None),
@@ -7784,6 +7790,9 @@ impl Vm {
                         frame.class_metaclass,
                         frame.class_keywords,
                         frame.class_namespace,
+                        Some(frame.function_globals.clone()),
+                        frame.locals_fallback.clone(),
+                        frame.code.future_annotations_import,
                     )? {
                         ClassBuildOutcome::Value(value) => value,
                         ClassBuildOutcome::ExceptionHandled => return Ok(None),
@@ -9678,6 +9687,146 @@ impl Vm {
         }
     }
 
+    fn maybe_promote_class_annotations_to_annotate(
+        &mut self,
+        namespace: &Value,
+        class_body_module: &ObjRef,
+        defining_globals: Option<&ObjRef>,
+        defining_locals: Option<&HashMap<String, Value>>,
+        future_annotations_import: bool,
+    ) -> Result<(), RuntimeError> {
+        let Some(namespace_dict) = self.class_namespace_backing_dict(namespace) else {
+            return Ok(());
+        };
+        if dict_get_value(&namespace_dict, &Value::Str("__annotate__".to_string())).is_some()
+            || dict_get_value(&namespace_dict, &Value::Str("__annotate_func__".to_string()))
+                .is_some()
+        {
+            return Ok(());
+        }
+        let annotations_key = Value::Str("__annotations__".to_string());
+        let Some(Value::Dict(annotations_dict)) = dict_get_value(&namespace_dict, &annotations_key)
+        else {
+            return Ok(());
+        };
+        let has_deferred_strings = match &*annotations_dict.kind() {
+            Object::Dict(entries) => entries.iter().any(|(_key, value)| matches!(value, Value::Str(_))),
+            _ => false,
+        };
+        if !has_deferred_strings {
+            return Ok(());
+        }
+
+        let annotation_module = defining_globals
+            .cloned()
+            .or_else(|| {
+                dict_get_value(&namespace_dict, &Value::Str("__module__".to_string())).and_then(
+                    |value| match value {
+                        Value::Str(module_name) => self.modules.get(&module_name).cloned(),
+                        _ => None,
+                    },
+                )
+            })
+            .unwrap_or_else(|| class_body_module.clone());
+        let mut annotate_code = CodeObject::new("__annotate__", "<class_annotations>");
+        annotate_code.params.push("format".to_string());
+        annotate_code.rebuild_layout_indexes();
+        annotate_code.fast_local_count = 1;
+        annotate_code.future_annotations_import = future_annotations_import;
+        let annotate_function = match self.heap.alloc_function(FunctionObject::new(
+            Rc::new(annotate_code),
+            annotation_module,
+            Vec::new(),
+            HashMap::new(),
+            Vec::new(),
+            None,
+        )) {
+            Value::Function(function) => function,
+            _ => unreachable!(),
+        };
+        if let Object::Function(function_data) = &mut *annotate_function.kind_mut() {
+            function_data.annotations = Some(annotations_dict);
+        }
+        let function_dict = self.ensure_function_dict(&annotate_function)?;
+        let mut annotation_locals_entries = match &*namespace_dict.kind() {
+            Object::Dict(entries) => entries.to_vec(),
+            _ => Vec::new(),
+        };
+        let mut annotation_local_names = annotation_locals_entries
+            .iter()
+            .filter_map(|(key, _value)| match key {
+                Value::Str(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        if let Some(type_params) =
+            dict_get_value(&namespace_dict, &Value::Str("__type_params__".to_string()))
+        {
+            let type_param_items = match type_params {
+                Value::Tuple(tuple) => match &*tuple.kind() {
+                    Object::Tuple(items) => Some(items.clone()),
+                    _ => None,
+                },
+                Value::List(list) => match &*list.kind() {
+                    Object::List(items) => Some(items.clone()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(type_param_items) = type_param_items {
+                for type_param in type_param_items {
+                    let name = self
+                        .optional_getattr_value(type_param.clone(), "__name__")?
+                        .and_then(|value| match value {
+                            Value::Str(name) => Some(name),
+                            _ => None,
+                        });
+                    if let Some(name) = name
+                        && !annotation_local_names.contains(&name)
+                    {
+                        annotation_local_names.insert(name.clone());
+                        annotation_locals_entries.push((Value::Str(name), type_param));
+                    }
+                }
+            }
+        }
+        if let Some(defining_locals) = defining_locals {
+            for (name, value) in defining_locals {
+                if annotation_local_names.contains(name) {
+                    continue;
+                }
+                annotation_local_names.insert(name.clone());
+                annotation_locals_entries.push((Value::Str(name.clone()), value.clone()));
+            }
+        }
+        let annotation_locals = self.heap.alloc_dict(annotation_locals_entries);
+        self.dict_set_str_key(
+            &function_dict,
+            "__pyrs_annotation_locals__".to_string(),
+            annotation_locals,
+        )?;
+        let annotate_receiver = match self
+            .heap
+            .alloc_module(ModuleObject::new("__class_annotate__".to_string()))
+        {
+            Value::Module(obj) => obj,
+            _ => unreachable!(),
+        };
+        if let Object::Module(module_data) = &mut *annotate_receiver.kind_mut() {
+            module_data.globals.insert(
+                "function".to_string(),
+                Value::Function(annotate_function),
+            );
+        }
+        dict_set_value(
+            &namespace_dict,
+            Value::Str("__annotate__".to_string()),
+            self.alloc_native_bound_method(NativeMethodKind::FunctionAnnotate, annotate_receiver),
+        );
+        let _ = dict_remove_value(&namespace_dict, &annotations_key);
+        Ok(())
+    }
+
     pub(super) fn class_value_from_module(
         &mut self,
         module: &ObjRef,
@@ -9686,6 +9835,9 @@ impl Vm {
         metaclass: Option<Value>,
         class_keywords: HashMap<String, Value>,
         class_namespace: Option<Value>,
+        defining_globals: Option<ObjRef>,
+        defining_locals: Option<HashMap<String, Value>>,
+        future_annotations_import: bool,
     ) -> Result<ClassBuildOutcome, RuntimeError> {
         let (name, module_attrs) = match &*module.kind() {
             Object::Module(module_data) => (module_data.name.clone(), module_data.globals.clone()),
@@ -9706,6 +9858,13 @@ impl Vm {
                 orig_bases,
             )?;
         }
+        self.maybe_promote_class_annotations_to_annotate(
+            &namespace_value,
+            module,
+            defining_globals.as_ref(),
+            defining_locals.as_ref(),
+            future_annotations_import,
+        )?;
         let attrs = self.class_namespace_attrs_map(&namespace_value)?;
         let default_bases = if bases.is_empty() {
             if let Some(Value::Class(object_class)) = self.builtins.get("object") {
@@ -10050,6 +10209,7 @@ impl Vm {
                     ),
                 );
             }
+            self.update_class_annotate_owner(class_ref);
             self.attach_owner_class_to_attrs(class_ref);
             if let Ok(mro) = self.build_class_mro(class_ref, &bases)
                 && let Object::Class(class_data) = &mut *class_ref.kind_mut()
@@ -10064,6 +10224,41 @@ impl Vm {
             self.record_exception_parent_for_class(class_ref);
         }
         Ok(class_value)
+    }
+
+    fn update_class_annotate_owner(&mut self, class_ref: &ObjRef) {
+        let annotate = match &*class_ref.kind() {
+            Object::Class(class_data) => class_data
+                .attrs
+                .get("__annotate__")
+                .or_else(|| class_data.attrs.get("__annotate_func__"))
+                .cloned(),
+            _ => None,
+        };
+        let Some(Value::BoundMethod(bound_method)) = annotate else {
+            return;
+        };
+        let (function, receiver) = match &*bound_method.kind() {
+            Object::BoundMethod(bound_data) => {
+                (bound_data.function.clone(), bound_data.receiver.clone())
+            }
+            _ => return,
+        };
+        let is_function_annotate = matches!(
+            &*function.kind(),
+            Object::NativeMethod(native_data)
+                if native_data.kind == NativeMethodKind::FunctionAnnotate
+        );
+        if !is_function_annotate {
+            return;
+        }
+        if let Object::Module(module_data) = &mut *receiver.kind_mut()
+            && module_data.name == "__class_annotate__"
+        {
+            module_data
+                .globals
+                .insert("owner".to_string(), Value::Class(class_ref.clone()));
+        }
     }
 
     pub(super) fn call_class_set_name_hooks(
